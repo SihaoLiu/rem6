@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/rem6-cache",
+    "crates/rem6-coherence",
     "crates/rem6-kernel",
     "crates/rem6-memory",
     "crates/rem6-protocol-msi",

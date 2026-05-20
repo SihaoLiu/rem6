@@ -12,6 +12,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-coherence"
+version = "0.1.0"
+dependencies = [
+ "rem6-cache",
+ "rem6-kernel",
+ "rem6-memory",
+ "rem6-protocol-msi",
+ "rem6-transport",
+]
+
+[[package]]
 name = "rem6-kernel"
 version = "0.1.0"
 
