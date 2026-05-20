@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCpuError,
-    RiscvDataAccessEventKind,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
+    RiscvCpuError, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -129,6 +129,40 @@ fn loaded_store_with_data(
     Arc::new(Mutex::new(store))
 }
 
+fn loaded_program_store(
+    entry: u64,
+    instructions: &[u32],
+    data_segments: &[(u64, Vec<u8>)],
+) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+
+    let mut instruction_bytes = Vec::new();
+    for instruction in instructions {
+        instruction_bytes.extend(word(*instruction));
+    }
+    let mut image = BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), instruction_bytes)
+        .unwrap();
+    for (address, data) in data_segments {
+        image = image
+            .add_segment(Address::new(*address), data.clone())
+            .unwrap();
+    }
+    image
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
 fn data_routes() -> (
     PartitionedScheduler,
     MemoryTransport,
@@ -189,6 +223,45 @@ fn fetch_one(
     scheduler.run_until_idle_conservative();
 }
 
+fn drive_one_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> Option<RiscvCoreDriveAction> {
+    let fetch_store = store.clone();
+    let data_store = store;
+    core.drive_next_action(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            let response = fetch_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+        move |delivery, _context| {
+            let response = data_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+}
+
 fn issue_one_data_access(
     core: &RiscvCore,
     store: Arc<Mutex<PartitionedMemoryStore>>,
@@ -210,6 +283,120 @@ fn issue_one_data_access(
     .unwrap()
     .unwrap();
     scheduler.run_until_idle_conservative();
+}
+
+#[test]
+fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(7, 0, 0x0, 1, 0x13),
+            i_type(8, 2, 0x3, 5, 0x03),
+            i_type(9, 0, 0x0, 6, 0x13),
+        ],
+        &[(0x9008, vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11])],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
+        panic!("expected completed instruction execution");
+    };
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 7);
+    assert_eq!(core.pc(), Address::new(0x8004));
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(load) = action else {
+        panic!("expected completed load execution");
+    };
+    assert!(matches!(
+        load.execution().memory_access(),
+        Some(MemoryAccessKind::Load { .. })
+    ));
+    assert_eq!(core.read_register(reg(5)), 0);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+
+    assert!(matches!(
+        drive_one_action(&core, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+}
+
+#[test]
+fn riscv_core_driver_waits_for_store_response_before_next_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    core.write_register(reg(3), 0x1122_3344_5566_7788);
+    let store = loaded_program_store(
+        0x8000,
+        &[s_type(8, 3, 2, 0x3, 0x23), i_type(4, 0, 0x0, 4, 0x13)],
+        &[(0x9000, vec![0; 16])],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+
+    scheduler.run_until_idle_conservative();
+    let line = store
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x9000))
+        .unwrap();
+    assert_eq!(
+        &line[8..16],
+        &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+    );
+    assert!(matches!(
+        drive_one_action(&core, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
 }
 
 #[test]

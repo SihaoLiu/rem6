@@ -197,6 +197,15 @@ impl CpuCore {
         self.state.lock().expect("cpu core lock").events.clone()
     }
 
+    fn has_pending_fetch(&self) -> bool {
+        !self
+            .state
+            .lock()
+            .expect("cpu core lock")
+            .outstanding
+            .is_empty()
+    }
+
     fn set_pc(&self, pc: Address) {
         self.state.lock().expect("cpu core lock").pc = pc;
     }
@@ -856,6 +865,40 @@ impl RiscvCore {
             .issue_next_fetch(scheduler, transport, trace, responder)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_next_action<F, D>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+    ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        if self.core.has_pending_fetch() || self.has_pending_data_access() {
+            return Ok(None);
+        }
+
+        if let Some(event) = self.execute_next_completed_fetch()? {
+            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(event)));
+        }
+
+        if let Some(event) =
+            self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
+        {
+            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
+        }
+
+        let event = self
+            .issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)
+            .map_err(RiscvCpuError::Cpu)?;
+        Ok(Some(RiscvCoreDriveAction::FetchIssued { event }))
+    }
+
     pub fn execute_next_completed_fetch(
         &self,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
@@ -1046,6 +1089,15 @@ impl RiscvCore {
             }
         }
     }
+
+    fn has_pending_data_access(&self) -> bool {
+        !self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .outstanding_data
+            .is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1154,6 +1206,13 @@ pub struct RiscvCpuExecutionEvent {
     fetch: CpuFetchEvent,
     instruction: RiscvInstruction,
     execution: RiscvExecutionRecord,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvCoreDriveAction {
+    FetchIssued { event: PartitionEventId },
+    InstructionExecuted(RiscvCpuExecutionEvent),
+    DataAccessIssued { event: PartitionEventId },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1377,6 +1436,7 @@ pub enum RiscvCpuError {
         expected: PartitionId,
         actual: PartitionId,
     },
+    Cpu(CpuError),
     Isa(RiscvError),
     Memory(MemoryError),
     Transport(TransportError),
@@ -1444,6 +1504,7 @@ impl fmt::Display for RiscvCpuError {
                 actual.index(),
                 expected.index()
             ),
+            Self::Cpu(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
@@ -1454,6 +1515,7 @@ impl fmt::Display for RiscvCpuError {
 impl Error for RiscvCpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Cpu(error) => Some(error),
             Self::Isa(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Transport(error) => Some(error),
