@@ -9,7 +9,8 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
-    PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
+    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
+    SchedulerContext, SchedulerError, Tick,
 };
 use rem6_stats::{StatId, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
@@ -194,6 +195,29 @@ impl GuestEventChannel {
     pub fn emit<F>(
         &self,
         context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+        handler: F,
+    ) -> Result<PartitionEventId, SystemError>
+    where
+        F: FnOnce(GuestEventDelivery) + Send + 'static,
+    {
+        let source_partition = context.partition();
+        let host_partition = self.host_partition;
+        context
+            .schedule_remote_after(self.host_partition, self.host_latency, move |context| {
+                handler(GuestEventDelivery::new(
+                    context.now(),
+                    source_partition,
+                    host_partition,
+                    event,
+                ));
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
+    pub fn emit_parallel<F>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
         event: GuestEvent,
         handler: F,
     ) -> Result<PartitionEventId, SystemError>
@@ -718,6 +742,20 @@ impl SystemEventPort {
                 .handle_delivery(delivery);
         })
     }
+
+    pub fn emit_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        event: GuestEvent,
+    ) -> Result<PartitionEventId, SystemError> {
+        let controller = Arc::clone(&self.controller);
+        self.channel.emit_parallel(context, event, move |delivery| {
+            controller
+                .lock()
+                .expect("system run controller lock")
+                .handle_delivery(delivery);
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -760,6 +798,20 @@ impl SystemHostEventPort {
     ) -> Result<PartitionEventId, SystemError> {
         let controller = Arc::clone(&self.controller);
         self.channel.emit(context, event, move |delivery| {
+            controller
+                .lock()
+                .expect("system host controller lock")
+                .handle_delivery(delivery);
+        })
+    }
+
+    pub fn emit_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        event: GuestEvent,
+    ) -> Result<PartitionEventId, SystemError> {
+        let controller = Arc::clone(&self.controller);
+        self.channel.emit_parallel(context, event, move |delivery| {
             controller
                 .lock()
                 .expect("system host controller lock")
@@ -980,6 +1032,90 @@ impl RiscvSystemRunDriver {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_until_host_stop_parallel<F, D, FR, DR, E>(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        max_turns: usize,
+        mut event_for: E,
+    ) -> Result<RiscvSystemRun, SystemError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        E: FnMut(CpuId) -> GuestEventId,
+    {
+        let mut turns = Vec::new();
+        let mut scheduled_traps = Vec::new();
+
+        if let Some(stop) = self.host_stop_request() {
+            return Ok(RiscvSystemRun::new(
+                turns,
+                scheduled_traps,
+                RiscvSystemRunStopReason::HostStop(stop),
+            ));
+        }
+
+        for _ in 0..max_turns {
+            let turn = cluster
+                .drive_turn_parallel(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    &mut fetch_responder,
+                    &mut data_responder,
+                )
+                .map_err(SystemError::RiscvCluster)?;
+            self.record_instruction_stats(&turn)?;
+            let trap_cores = pending_trap_cores_from_turn(cluster, &turn)?;
+            if !trap_cores.is_empty() {
+                scheduled_traps.extend(self.trap_port.schedule_pending_core_traps_parallel(
+                    scheduler,
+                    trap_cores,
+                    &mut event_for,
+                )?);
+            }
+
+            if let Some(stop) = self.host_stop_request() {
+                turns.push(turn);
+                return Ok(RiscvSystemRun::new(
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::HostStop(stop),
+                ));
+            }
+            if let Some(tick) = turn.idle_tick() {
+                turns.push(turn);
+                return Ok(RiscvSystemRun::new(
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::Idle { tick },
+                ));
+            }
+
+            turns.push(turn);
+        }
+
+        Err(SystemError::RiscvCluster(
+            RiscvClusterError::TurnLimitExceeded {
+                limit: max_turns,
+                completed: turns.len(),
+            },
+        ))
+    }
+
     fn host_stop_request(&self) -> Option<StopRequest> {
         self.trap_port
             .controller()
@@ -1091,6 +1227,24 @@ impl RiscvTrapEventPort {
         )
     }
 
+    pub fn emit_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        event: GuestEventId,
+        trap: RiscvTrap,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.host.emit_parallel(
+            context,
+            GuestEvent::new(
+                event,
+                self.source,
+                GuestEventKind::Trap {
+                    trap: guest_trap_from_riscv(trap),
+                },
+            ),
+        )
+    }
+
     pub fn emit_pending_core_trap(
         &self,
         context: &mut SchedulerContext<'_>,
@@ -1175,6 +1329,58 @@ impl RiscvTrapEventPort {
         Ok(scheduled)
     }
 
+    pub fn schedule_pending_core_traps_parallel<I, F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        cores: I,
+        mut event_for: F,
+    ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
+    where
+        I: IntoIterator<Item = RiscvCore>,
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        let mut pending = Vec::new();
+        for core in cores {
+            let Some(trap) = core.pending_trap() else {
+                continue;
+            };
+            let cpu = core.id();
+            let event = event_for(cpu);
+            let source = core.partition();
+            let source_tick = scheduler
+                .partition_now(source)
+                .map_err(SystemError::Scheduler)?;
+            self.validate_scheduled_emit(scheduler, source, source_tick)?;
+            pending.push(PendingRiscvTrapSchedule {
+                cpu,
+                event,
+                source,
+                source_tick,
+                trap,
+            });
+        }
+
+        let mut scheduled = Vec::new();
+        for pending in pending {
+            let scheduler_event = self.schedule_prevalidated_trap_parallel(
+                scheduler,
+                pending.event,
+                pending.source,
+                pending.source_tick,
+                pending.trap,
+            )?;
+            scheduled.push(ScheduledRiscvTrap::new(
+                pending.cpu,
+                pending.event,
+                pending.source,
+                scheduler_event,
+                guest_trap_from_riscv(pending.trap),
+            ));
+        }
+
+        Ok(scheduled)
+    }
+
     fn schedule_prevalidated_trap(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -1188,6 +1394,23 @@ impl RiscvTrapEventPort {
             .schedule_at(source, source_tick, move |context| {
                 port.emit(context, event, trap)
                     .expect("validated RISC-V trap event scheduling");
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
+    fn schedule_prevalidated_trap_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        trap: RiscvTrap,
+    ) -> Result<PartitionEventId, SystemError> {
+        let port = self.clone();
+        scheduler
+            .schedule_parallel_at(source, source_tick, move |context| {
+                port.emit_parallel(context, event, trap)
+                    .expect("validated parallel RISC-V trap event scheduling");
             })
             .map_err(SystemError::Scheduler)
     }
