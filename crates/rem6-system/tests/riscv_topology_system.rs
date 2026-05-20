@@ -228,6 +228,13 @@ fn loaded_program_store(
     instructions: &[(u64, u32)],
     data_segments: &[(u64, Vec<u8>)],
 ) -> Arc<Mutex<PartitionedMemoryStore>> {
+    Arc::new(Mutex::new(program_store(instructions, data_segments)))
+}
+
+fn program_store(
+    instructions: &[(u64, u32)],
+    data_segments: &[(u64, Vec<u8>)],
+) -> PartitionedMemoryStore {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
     store.add_partition(target, layout()).unwrap();
@@ -253,7 +260,7 @@ fn loaded_program_store(
     image
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
-    Arc::new(Mutex::new(store))
+    store
 }
 
 fn memory_response(
@@ -389,21 +396,7 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         .build()
         .unwrap();
 
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
-        topology,
-        RiscvClusterTopologyConfig::new([
-            core_config(0, 0, 7, 0x8000),
-            core_config(1, 1, 8, 0x9000),
-        ]),
-        2,
-    )
-    .unwrap()
-    .with_platform(platform)
-    .unwrap();
-    assert!(system.platform().is_some());
-    assert!(system.platform_bus().is_some());
-
-    let store = loaded_program_store(
+    let store = program_store(
         &[
             (0x8000, i_type(b'R'.into(), 0, 0x0, 3, 0x13)),
             (
@@ -416,6 +409,22 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         ],
         &[(0x9818, vec![0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab])],
     );
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_memory_store(store)
+    .unwrap();
+    assert!(system.platform().is_some());
+    assert!(system.platform_bus().is_some());
+    assert!(system.memory_store().is_some());
     system
         .cluster()
         .core(CpuId::new(0))
@@ -438,28 +447,12 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         source,
     );
     let driver = RiscvSystemRunDriver::new(trap_port);
-    let (cluster, scheduler, transport, bus) = system.execution_parts_with_mmio_mut().unwrap();
 
-    let run = driver
-        .drive_until_host_stop_parallel_with_mmio(
-            cluster,
-            scheduler,
-            transport,
-            bus,
+    let run = system
+        .drive_until_host_stop_parallel(
+            &driver,
             Default::default(),
             Default::default(),
-            |_cpu| {
-                let store = Arc::clone(&store);
-                move |delivery, _context: &mut rem6_kernel::ParallelSchedulerContext<'_>| {
-                    memory_response(&store, &delivery)
-                }
-            },
-            |_cpu| {
-                let store = Arc::clone(&store);
-                move |delivery, _context: &mut rem6_kernel::ParallelSchedulerContext<'_>| {
-                    memory_response(&store, &delivery)
-                }
-            },
             40,
             |cpu| GuestEventId::new(140 + u64::from(cpu.get())),
         )
