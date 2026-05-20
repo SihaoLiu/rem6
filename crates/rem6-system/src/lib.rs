@@ -401,6 +401,7 @@ pub struct SystemActionExecutor {
     checkpoints: CheckpointRegistry,
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
+    dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
 }
 
 impl SystemActionExecutor {
@@ -414,6 +415,7 @@ impl SystemActionExecutor {
             checkpoints,
             riscv_checkpoints: None,
             memory_checkpoints: None,
+            dram_memory_checkpoints: None,
         }
     }
 
@@ -427,6 +429,7 @@ impl SystemActionExecutor {
             checkpoints,
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
+            dram_memory_checkpoints: None,
         }
     }
 
@@ -440,6 +443,21 @@ impl SystemActionExecutor {
             checkpoints,
             riscv_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
+            dram_memory_checkpoints: None,
+        }
+    }
+
+    pub fn with_dram_memory_checkpoint_bank(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        dram_memory_checkpoints: DramMemoryCheckpointBank,
+    ) -> Self {
+        Self {
+            stats,
+            checkpoints,
+            riscv_checkpoints: None,
+            memory_checkpoints: None,
+            dram_memory_checkpoints: Some(dram_memory_checkpoints),
         }
     }
 
@@ -454,6 +472,22 @@ impl SystemActionExecutor {
             checkpoints,
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: Some(memory_checkpoints),
+            dram_memory_checkpoints: None,
+        }
+    }
+
+    pub fn with_riscv_and_dram_checkpoint_banks(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        riscv_checkpoints: RiscvCoreCheckpointBank,
+        dram_memory_checkpoints: DramMemoryCheckpointBank,
+    ) -> Self {
+        Self {
+            stats,
+            checkpoints,
+            riscv_checkpoints: Some(riscv_checkpoints),
+            memory_checkpoints: None,
+            dram_memory_checkpoints: Some(dram_memory_checkpoints),
         }
     }
 
@@ -479,6 +513,10 @@ impl SystemActionExecutor {
 
     pub const fn memory_checkpoint_bank(&self) -> Option<&MemoryStoreCheckpointBank> {
         self.memory_checkpoints.as_ref()
+    }
+
+    pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
+        self.dram_memory_checkpoints.as_ref()
     }
 
     pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
@@ -508,6 +546,11 @@ impl SystemActionExecutor {
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
+                if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
+                    dram_memory_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
                 self.checkpoints
                     .capture(label.clone(), record.tick())
                     .map(|manifest| SystemActionOutcome::Checkpoint {
@@ -531,6 +574,11 @@ impl SystemActionExecutor {
                     memory_checkpoints
                         .restore_all_from(&self.checkpoints)
                         .map_err(SystemError::MemoryCheckpoint)?;
+                }
+                if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
+                    dram_memory_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::DramMemoryCheckpoint)?;
                 }
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
@@ -1590,6 +1638,7 @@ pub enum SystemError {
     Checkpoint(CheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
+    DramMemoryCheckpoint(DramMemoryCheckpointError),
 }
 
 impl fmt::Display for SystemError {
@@ -1604,6 +1653,7 @@ impl fmt::Display for SystemError {
             Self::Checkpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
+            Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1617,6 +1667,7 @@ impl Error for SystemError {
             Self::Checkpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
+            Self::DramMemoryCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }
     }

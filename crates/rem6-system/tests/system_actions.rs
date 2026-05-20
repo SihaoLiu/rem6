@@ -4,16 +4,20 @@ use rem6_checkpoint::{
     CheckpointChunk, CheckpointComponentId, CheckpointManifest, CheckpointRegistry, CheckpointState,
 };
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
+use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_isa_riscv::Register;
 use rem6_kernel::PartitionId;
 use rem6_kernel::PartitionedScheduler;
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
-    GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
-    HostActionRecord, HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
-    RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor,
-    SystemActionOutcome, SystemHostController, SystemHostEventPort, SystemRunController,
+    DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEvent, GuestEventDelivery,
+    GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
+    RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
+    SystemHostController, SystemHostEventPort, SystemRunController,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -63,14 +67,51 @@ fn line_data(base: u8) -> Vec<u8> {
     (0..64).map(|offset| base.wrapping_add(offset)).collect()
 }
 
+fn memory_layout() -> CacheLineLayout {
+    CacheLineLayout::new(64).unwrap()
+}
+
+fn dram_geometry() -> DramGeometry {
+    DramGeometry::new(4, 256, 64).unwrap()
+}
+
+fn dram_timing() -> DramTiming {
+    DramTiming::new(3, 5, 7, 2, 4).unwrap()
+}
+
+fn request_id(sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(11), sequence)
+}
+
+fn dram_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::read_shared(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(size).unwrap(),
+        memory_layout(),
+    )
+    .unwrap()
+}
+
+fn dram_write(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
+    MemoryRequest::write(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(bytes.len() as u64).unwrap(),
+        bytes.to_vec(),
+        ByteMask::full(AccessSize::new(bytes.len() as u64).unwrap()).unwrap(),
+        memory_layout(),
+    )
+    .unwrap()
+}
+
 fn partitioned_memory_store() -> (
     rem6_memory::PartitionedMemoryStore,
     rem6_memory::MemoryTargetId,
 ) {
     let target = rem6_memory::MemoryTargetId::new(10);
     let mut store = rem6_memory::PartitionedMemoryStore::new();
-    let layout = CacheLineLayout::new(64).unwrap();
-    store.add_partition(target, layout).unwrap();
+    store.add_partition(target, memory_layout()).unwrap();
     store
         .map_region(
             target,
@@ -82,6 +123,30 @@ fn partitioned_memory_store() -> (
         .insert_line(target, Address::new(0x1000), line_data(0x10))
         .unwrap();
     (store, target)
+}
+
+fn dram_memory_controller() -> (DramMemoryController, rem6_memory::MemoryTargetId) {
+    let target = rem6_memory::MemoryTargetId::new(20);
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            memory_layout(),
+            dram_geometry(),
+            dram_timing(),
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    (controller, target)
 }
 
 #[test]
@@ -418,6 +483,104 @@ fn system_action_executor_refreshes_and_restores_live_memory_checkpoint() {
             .unwrap(),
         line_data(0x10)
     );
+}
+
+#[test]
+fn system_action_executor_refreshes_and_restores_live_dram_checkpoint() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(15);
+    let component = CheckpointComponentId::new("dram0").unwrap();
+    let (mut controller, target) = dram_memory_controller();
+    let first = controller.accept(0, &dram_read(0x1000, 8, 31)).unwrap();
+    assert_eq!(first.ready_cycle(), 8);
+    assert!(!first.dram_access().row_hit());
+    let controller = Arc::new(Mutex::new(controller));
+    let bank = DramMemoryCheckpointBank::new([DramMemoryCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&controller),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor = SystemActionExecutor::with_dram_memory_checkpoint_bank(
+        StatsRegistry::new(),
+        checkpoints,
+        bank,
+    );
+
+    let checkpoint = HostActionRecord::new(
+        104,
+        host,
+        host,
+        GuestEventId::new(13),
+        source,
+        HostAction::Checkpoint {
+            label: "with-dram-memory".to_string(),
+        },
+    );
+
+    let checkpoint_outcome = executor.apply(&checkpoint).unwrap();
+    let manifest = match checkpoint_outcome {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&component, "dram")
+            .unwrap()
+            .len()
+            > 192
+    );
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .accept(8, &dram_write(0x1000, &[0xaa, 0xbb, 0xcc, 0xdd], 32))
+            .unwrap();
+        assert_eq!(
+            &controller.line_data(target, Address::new(0x1000)).unwrap()[..4],
+            &[0xaa, 0xbb, 0xcc, 0xdd]
+        );
+    }
+
+    let restore = HostActionRecord::new(
+        116,
+        host,
+        host,
+        GuestEventId::new(14),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 116,
+            event: GuestEventId::new(14),
+            source,
+            manifest,
+        }
+    );
+    let mut controller = controller.lock().unwrap();
+    assert_eq!(
+        &controller.line_data(target, Address::new(0x1000)).unwrap()[..4],
+        &[0x10, 0x11, 0x12, 0x13]
+    );
+    let bank = controller
+        .dram_controller(target)
+        .unwrap()
+        .bank_state(0)
+        .unwrap();
+    assert_eq!(bank.open_row(), Some(4));
+    assert_eq!(bank.available_cycle(), 8);
+    let row_hit = controller.accept(8, &dram_read(0x1008, 4, 33)).unwrap();
+    assert!(row_hit.dram_access().row_hit());
+    assert_eq!(row_hit.ready_cycle(), 13);
 }
 
 #[test]
