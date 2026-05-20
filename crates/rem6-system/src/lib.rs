@@ -352,6 +352,7 @@ pub struct SystemRunController {
     policy: HostEventPolicy,
     deliveries: Vec<GuestEventDelivery>,
     actions: Vec<HostActionRecord>,
+    outcomes: Vec<SystemActionOutcome>,
     stop_request: Option<StopRequest>,
 }
 
@@ -361,6 +362,7 @@ impl SystemRunController {
             policy,
             deliveries: Vec::new(),
             actions: Vec::new(),
+            outcomes: Vec::new(),
             stop_request: None,
         }
     }
@@ -404,12 +406,30 @@ impl SystemRunController {
         produced
     }
 
+    pub fn execute_delivery(
+        &mut self,
+        delivery: GuestEventDelivery,
+        executor: &mut SystemActionExecutor,
+    ) -> Result<Vec<SystemActionOutcome>, SystemError> {
+        let records = self.handle_delivery(delivery);
+        let outcomes = records
+            .iter()
+            .map(|record| executor.apply(record))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.outcomes.extend(outcomes.iter().cloned());
+        Ok(outcomes)
+    }
+
     pub fn deliveries(&self) -> &[GuestEventDelivery] {
         &self.deliveries
     }
 
     pub fn action_records(&self) -> &[HostActionRecord] {
         &self.actions
+    }
+
+    pub fn action_outcomes(&self) -> &[SystemActionOutcome] {
+        &self.outcomes
     }
 
     pub const fn stop_request(&self) -> Option<&StopRequest> {

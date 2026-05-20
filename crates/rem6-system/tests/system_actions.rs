@@ -1,8 +1,9 @@
 use rem6_kernel::PartitionId;
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, StopRequest, SystemActionExecutor,
-    SystemActionOutcome,
+    GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
+    HostActionRecord, HostEventPolicy, StopRequest, SystemActionExecutor, SystemActionOutcome,
+    SystemRunController,
 };
 
 #[test]
@@ -109,5 +110,73 @@ fn system_action_executor_records_non_stats_control_outcomes() {
     assert_eq!(
         executor.apply(&stop).unwrap(),
         SystemActionOutcome::Stop(StopRequest::new(30, GuestEventId::new(5), source, 0))
+    );
+}
+
+#[test]
+fn system_run_controller_executes_delivered_stats_events() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(12);
+    let mut stats = StatsRegistry::new();
+    let insts = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    stats.increment(insts, 11).unwrap();
+    let mut executor = SystemActionExecutor::new(stats);
+    let mut controller = SystemRunController::new(HostEventPolicy);
+
+    let reset_outcomes = controller
+        .execute_delivery(
+            GuestEventDelivery::new(
+                40,
+                guest,
+                host,
+                GuestEvent::new(GuestEventId::new(6), source, GuestEventKind::RoiBegin),
+            ),
+            &mut executor,
+        )
+        .unwrap();
+    assert_eq!(
+        reset_outcomes,
+        vec![SystemActionOutcome::StatsReset(StatsResetRecord::new(
+            40,
+            1,
+            vec![(insts, 11)],
+        ))]
+    );
+
+    executor.stats_mut().increment(insts, 5).unwrap();
+    let dump_outcomes = controller
+        .execute_delivery(
+            GuestEventDelivery::new(
+                48,
+                guest,
+                host,
+                GuestEvent::new(GuestEventId::new(7), source, GuestEventKind::RoiEnd),
+            ),
+            &mut executor,
+        )
+        .unwrap();
+    assert_eq!(
+        dump_outcomes,
+        vec![SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
+            48,
+            1,
+            40,
+            vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+        ))]
+    );
+    assert_eq!(
+        controller.action_outcomes(),
+        &[
+            SystemActionOutcome::StatsReset(StatsResetRecord::new(40, 1, vec![(insts, 11)])),
+            SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
+                48,
+                1,
+                40,
+                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+            )),
+        ]
     );
 }
