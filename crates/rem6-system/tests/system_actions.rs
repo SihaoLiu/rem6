@@ -1,5 +1,8 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_checkpoint::{
+    CheckpointChunk, CheckpointComponentId, CheckpointManifest, CheckpointRegistry, CheckpointState,
+};
 use rem6_kernel::PartitionId;
 use rem6_kernel::PartitionedScheduler;
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
@@ -98,7 +101,7 @@ fn system_action_executor_records_non_stats_control_outcomes() {
             tick: 24,
             event: GuestEventId::new(4),
             source,
-            label: "after-boot".to_string(),
+            manifest: CheckpointManifest::new("after-boot", 24, Vec::new()),
         }
     );
 
@@ -113,6 +116,51 @@ fn system_action_executor_records_non_stats_control_outcomes() {
     assert_eq!(
         executor.apply(&stop).unwrap(),
         SystemActionOutcome::Stop(StopRequest::new(30, GuestEventId::new(5), source, 0))
+    );
+}
+
+#[test]
+fn system_action_executor_captures_checkpoint_manifest() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(10);
+    let cpu = CheckpointComponentId::new("cpu0").unwrap();
+    let memory = CheckpointComponentId::new("memory0").unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    checkpoints.register(memory.clone()).unwrap();
+    checkpoints.register(cpu.clone()).unwrap();
+    checkpoints.write_chunk(&cpu, "pc", vec![0x40]).unwrap();
+    checkpoints
+        .write_chunk(&memory, "lines", vec![0xaa])
+        .unwrap();
+    let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), checkpoints);
+
+    let checkpoint = HostActionRecord::new(
+        32,
+        guest,
+        host,
+        GuestEventId::new(6),
+        source,
+        HostAction::Checkpoint {
+            label: "roi-ready".to_string(),
+        },
+    );
+
+    assert_eq!(
+        executor.apply(&checkpoint).unwrap(),
+        SystemActionOutcome::Checkpoint {
+            tick: 32,
+            event: GuestEventId::new(6),
+            source,
+            manifest: CheckpointManifest::new(
+                "roi-ready",
+                32,
+                vec![
+                    CheckpointState::new(cpu, vec![CheckpointChunk::new("pc", vec![0x40])]),
+                    CheckpointState::new(memory, vec![CheckpointChunk::new("lines", vec![0xaa])],),
+                ],
+            ),
+        }
     );
 }
 

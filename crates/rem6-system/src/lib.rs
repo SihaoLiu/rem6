@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
 use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 
@@ -292,7 +293,7 @@ pub enum SystemActionOutcome {
         tick: Tick,
         event: GuestEventId,
         source: GuestSourceId,
-        label: String,
+        manifest: CheckpointManifest,
     },
     Stop(StopRequest),
 }
@@ -300,11 +301,16 @@ pub enum SystemActionOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemActionExecutor {
     stats: StatsRegistry,
+    checkpoints: CheckpointRegistry,
 }
 
 impl SystemActionExecutor {
-    pub const fn new(stats: StatsRegistry) -> Self {
-        Self { stats }
+    pub fn new(stats: StatsRegistry) -> Self {
+        Self::with_checkpoint(stats, CheckpointRegistry::new())
+    }
+
+    pub fn with_checkpoint(stats: StatsRegistry, checkpoints: CheckpointRegistry) -> Self {
+        Self { stats, checkpoints }
     }
 
     pub const fn stats(&self) -> &StatsRegistry {
@@ -313,6 +319,14 @@ impl SystemActionExecutor {
 
     pub const fn stats_mut(&mut self) -> &mut StatsRegistry {
         &mut self.stats
+    }
+
+    pub const fn checkpoints(&self) -> &CheckpointRegistry {
+        &self.checkpoints
+    }
+
+    pub const fn checkpoints_mut(&mut self) -> &mut CheckpointRegistry {
+        &mut self.checkpoints
     }
 
     pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
@@ -331,12 +345,16 @@ impl SystemActionExecutor {
                 .try_snapshot(record.tick())
                 .map(SystemActionOutcome::StatsSnapshot)
                 .map_err(SystemError::Stats),
-            HostAction::Checkpoint { label } => Ok(SystemActionOutcome::Checkpoint {
-                tick: record.tick(),
-                event: record.event(),
-                source: record.source(),
-                label: label.clone(),
-            }),
+            HostAction::Checkpoint { label } => self
+                .checkpoints
+                .capture(label.clone(), record.tick())
+                .map(|manifest| SystemActionOutcome::Checkpoint {
+                    tick: record.tick(),
+                    event: record.event(),
+                    source: record.source(),
+                    manifest,
+                })
+                .map_err(SystemError::Checkpoint),
             HostAction::Stop { code } => Ok(SystemActionOutcome::Stop(StopRequest::new(
                 record.tick(),
                 record.event(),
@@ -449,7 +467,7 @@ pub struct SystemHostController {
 }
 
 impl SystemHostController {
-    pub const fn new(policy: HostEventPolicy, stats: StatsRegistry) -> Self {
+    pub fn new(policy: HostEventPolicy, stats: StatsRegistry) -> Self {
         Self {
             run: SystemRunController::new(policy),
             executor: SystemActionExecutor::new(stats),
@@ -589,6 +607,7 @@ pub enum SystemError {
     ZeroHostLatency,
     Scheduler(SchedulerError),
     Stats(StatsError),
+    Checkpoint(CheckpointError),
 }
 
 impl fmt::Display for SystemError {
@@ -599,6 +618,7 @@ impl fmt::Display for SystemError {
             }
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
+            Self::Checkpoint(error) => write!(formatter, "{error}"),
         }
     }
 }
