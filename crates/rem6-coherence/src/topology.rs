@@ -1,4 +1,5 @@
 use rem6_dram::DramMemoryController;
+use rem6_fabric::VirtualNetworkId;
 use rem6_memory::{Address, AgentId, CacheLineLayout};
 use rem6_topology::{ComponentId, ComponentSpec, Endpoint, PortName, Topology, TopologyError};
 use rem6_transport::TransportEndpointId;
@@ -179,6 +180,10 @@ impl PartitionedDirectoryLineHarness {
             memory_path.response,
             memory.into_controller(),
         )
+        .with_virtual_networks(
+            memory_path.request_virtual_network,
+            memory_path.response_virtual_network,
+        )
         .with_route_hops(memory_path.route_hops);
 
         let mut agents = Vec::with_capacity(caches.len());
@@ -199,6 +204,10 @@ impl PartitionedDirectoryLineHarness {
                     transport_endpoint(cache.component())?,
                     cache_path.request,
                     cache_path.response,
+                )
+                .with_virtual_networks(
+                    cache_path.request_virtual_network,
+                    cache_path.response_virtual_network,
                 )
                 .with_route_hops(cache_path.route_hops),
             );
@@ -230,6 +239,8 @@ fn topology_component<'a>(
 struct TopologyRoutePath {
     request: u64,
     response: u64,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
     route_hops: Vec<PartitionedRouteHopConfig>,
 }
 
@@ -265,8 +276,28 @@ fn topology_route_path(
     Ok(TopologyRoutePath {
         request: path.request_latency(),
         response: path.response_latency(),
+        request_virtual_network: request_virtual_network(&path),
+        response_virtual_network: response_virtual_network(&path),
         route_hops,
     })
+}
+
+fn request_virtual_network(path: &rem6_topology::TopologyPath) -> VirtualNetworkId {
+    path.hops()
+        .iter()
+        .find(|hop| hop.request_fabric_path().is_some())
+        .map_or(VirtualNetworkId::new(0), |hop| {
+            hop.request_virtual_network()
+        })
+}
+
+fn response_virtual_network(path: &rem6_topology::TopologyPath) -> VirtualNetworkId {
+    path.hops()
+        .iter()
+        .find(|hop| hop.response_fabric_path().is_some())
+        .map_or(VirtualNetworkId::new(0), |hop| {
+            hop.response_virtual_network()
+        })
 }
 
 fn transport_endpoint(component: &ComponentId) -> Result<TransportEndpointId, HarnessError> {

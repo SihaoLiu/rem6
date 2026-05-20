@@ -9,7 +9,7 @@ use rem6_directory::{
     MsiDirectory,
 };
 use rem6_dram::DramMemoryController;
-use rem6_fabric::{FabricModel, FabricPath};
+use rem6_fabric::{FabricModel, FabricPath, VirtualNetworkId};
 use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -558,6 +558,8 @@ pub struct PartitionedCacheAgentConfig {
     endpoint: TransportEndpointId,
     request_latency: u64,
     response_latency: u64,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
     route_hops: Vec<PartitionedRouteHopConfig>,
 }
 
@@ -575,8 +577,20 @@ impl PartitionedCacheAgentConfig {
             endpoint,
             request_latency,
             response_latency,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
             route_hops: Vec::new(),
         }
+    }
+
+    pub fn with_virtual_networks(
+        mut self,
+        request_virtual_network: VirtualNetworkId,
+        response_virtual_network: VirtualNetworkId,
+    ) -> Self {
+        self.request_virtual_network = request_virtual_network;
+        self.response_virtual_network = response_virtual_network;
+        self
     }
 
     pub fn with_route_hops<I>(mut self, route_hops: I) -> Self
@@ -607,6 +621,14 @@ impl PartitionedCacheAgentConfig {
         self.response_latency
     }
 
+    pub const fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub const fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
+    }
+
     pub fn route_hops(&self) -> &[PartitionedRouteHopConfig] {
         &self.route_hops
     }
@@ -618,6 +640,8 @@ pub struct PartitionedMemoryConfig {
     endpoint: TransportEndpointId,
     request_latency: u64,
     response_latency: u64,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
     route_hops: Vec<PartitionedRouteHopConfig>,
 }
 
@@ -633,8 +657,20 @@ impl PartitionedMemoryConfig {
             endpoint,
             request_latency,
             response_latency,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
             route_hops: Vec::new(),
         }
+    }
+
+    pub fn with_virtual_networks(
+        mut self,
+        request_virtual_network: VirtualNetworkId,
+        response_virtual_network: VirtualNetworkId,
+    ) -> Self {
+        self.request_virtual_network = request_virtual_network;
+        self.response_virtual_network = response_virtual_network;
+        self
     }
 
     pub fn with_route_hops<I>(mut self, route_hops: I) -> Self
@@ -661,6 +697,14 @@ impl PartitionedMemoryConfig {
         self.response_latency
     }
 
+    pub const fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub const fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
+    }
+
     pub fn route_hops(&self) -> &[PartitionedRouteHopConfig] {
         &self.route_hops
     }
@@ -672,6 +716,8 @@ pub struct PartitionedDramMemoryConfig {
     endpoint: TransportEndpointId,
     request_latency: u64,
     response_latency: u64,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
     controller: DramMemoryController,
     route_hops: Vec<PartitionedRouteHopConfig>,
 }
@@ -689,9 +735,21 @@ impl PartitionedDramMemoryConfig {
             endpoint,
             request_latency,
             response_latency,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
             controller,
             route_hops: Vec::new(),
         }
+    }
+
+    pub fn with_virtual_networks(
+        mut self,
+        request_virtual_network: VirtualNetworkId,
+        response_virtual_network: VirtualNetworkId,
+    ) -> Self {
+        self.request_virtual_network = request_virtual_network;
+        self.response_virtual_network = response_virtual_network;
+        self
     }
 
     pub fn with_route_hops<I>(mut self, route_hops: I) -> Self
@@ -716,6 +774,14 @@ impl PartitionedDramMemoryConfig {
 
     pub const fn response_latency(&self) -> u64 {
         self.response_latency
+    }
+
+    pub const fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub const fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
     }
 
     pub fn route_hops(&self) -> &[PartitionedRouteHopConfig] {
@@ -972,6 +1038,8 @@ impl PartitionedDirectoryLineHarness {
                 memory.partition(),
                 memory.request_latency(),
                 memory.response_latency(),
+                memory.request_virtual_network(),
+                memory.response_virtual_network(),
                 memory.route_hops(),
             )
             .map_err(HarnessError::Transport)?;
@@ -999,6 +1067,8 @@ impl PartitionedDirectoryLineHarness {
                 memory.partition(),
                 memory.request_latency(),
                 memory.response_latency(),
+                memory.request_virtual_network(),
+                memory.response_virtual_network(),
                 memory.route_hops(),
             )
             .map_err(HarnessError::Transport)?;
@@ -1044,6 +1114,8 @@ impl PartitionedDirectoryLineHarness {
                         directory_partition,
                         config.request_latency(),
                         config.response_latency(),
+                        config.request_virtual_network(),
+                        config.response_virtual_network(),
                         config.route_hops(),
                     )
                     .map_err(HarnessError::Transport)?,
@@ -1283,17 +1355,20 @@ fn memory_route_from_config(
     target_partition: PartitionId,
     request_latency: u64,
     response_latency: u64,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
     route_hops: &[PartitionedRouteHopConfig],
 ) -> Result<MemoryRoute, TransportError> {
     if route_hops.is_empty() {
-        return MemoryRoute::new(
+        return Ok(MemoryRoute::new(
             source_endpoint,
             source_partition,
             target_endpoint,
             target_partition,
             request_latency,
             response_latency,
-        );
+        )?
+        .with_virtual_networks(request_virtual_network, response_virtual_network));
     }
 
     let hops = route_hops
@@ -1314,7 +1389,10 @@ fn memory_route_from_config(
             Ok(route_hop)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    MemoryRoute::new_path(source_endpoint, source_partition, hops)
+    Ok(
+        MemoryRoute::new_path(source_endpoint, source_partition, hops)?
+            .with_virtual_networks(request_virtual_network, response_virtual_network),
+    )
 }
 
 fn decision_uses_backing_memory(decision: &DirectoryDecision) -> bool {

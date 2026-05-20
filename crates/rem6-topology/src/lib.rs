@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use rem6_fabric::{FabricError, FabricLinkId, FabricPath, FabricPathHop};
+use rem6_fabric::{FabricError, FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_kernel::{ClockDomain, PartitionId, Tick};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -265,6 +265,51 @@ impl PortSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricConnectionConfig {
+    link: FabricLinkId,
+    bandwidth_bytes_per_tick: u64,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
+}
+
+impl FabricConnectionConfig {
+    pub fn new(link: FabricLinkId, bandwidth_bytes_per_tick: u64) -> Self {
+        Self {
+            link,
+            bandwidth_bytes_per_tick,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
+        }
+    }
+
+    pub fn with_virtual_networks(
+        mut self,
+        request_virtual_network: VirtualNetworkId,
+        response_virtual_network: VirtualNetworkId,
+    ) -> Self {
+        self.request_virtual_network = request_virtual_network;
+        self.response_virtual_network = response_virtual_network;
+        self
+    }
+
+    pub fn link(&self) -> &FabricLinkId {
+        &self.link
+    }
+
+    pub fn bandwidth_bytes_per_tick(&self) -> u64 {
+        self.bandwidth_bytes_per_tick
+    }
+
+    pub fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectionSpec {
     from: Endpoint,
     to: Endpoint,
@@ -272,6 +317,8 @@ pub struct ConnectionSpec {
     response_latency: Tick,
     request_fabric_path: Option<FabricPath>,
     response_fabric_path: Option<FabricPath>,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
 }
 
 impl ConnectionSpec {
@@ -302,6 +349,14 @@ impl ConnectionSpec {
     pub fn response_fabric_path(&self) -> Option<&FabricPath> {
         self.response_fabric_path.as_ref()
     }
+
+    pub fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -312,6 +367,8 @@ pub struct TopologyPathHop {
     response_latency: Tick,
     request_fabric_path: Option<FabricPath>,
     response_fabric_path: Option<FabricPath>,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
 }
 
 impl TopologyPathHop {
@@ -323,6 +380,8 @@ impl TopologyPathHop {
             response_latency: connection.response_latency(),
             request_fabric_path: connection.request_fabric_path().cloned(),
             response_fabric_path: connection.response_fabric_path().cloned(),
+            request_virtual_network: connection.request_virtual_network(),
+            response_virtual_network: connection.response_virtual_network(),
         }
     }
 
@@ -348,6 +407,14 @@ impl TopologyPathHop {
 
     pub fn response_fabric_path(&self) -> Option<&FabricPath> {
         self.response_fabric_path.as_ref()
+    }
+
+    pub fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
     }
 }
 
@@ -502,6 +569,8 @@ impl TopologyBuilder {
             response_latency: latency,
             request_fabric_path: None,
             response_fabric_path: None,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
         });
         Ok(self)
     }
@@ -521,12 +590,14 @@ impl TopologyBuilder {
             response_latency,
             request_fabric_path: None,
             response_fabric_path: None,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
         });
         Ok(self)
     }
 
     pub fn connect_with_fabric_latencies(
-        mut self,
+        self,
         from: Endpoint,
         to: Endpoint,
         request_latency: Tick,
@@ -534,18 +605,35 @@ impl TopologyBuilder {
         fabric_link: FabricLinkId,
         bandwidth_bytes_per_tick: u64,
     ) -> Result<Self, TopologyError> {
+        self.connect_with_fabric_config(
+            from,
+            to,
+            request_latency,
+            response_latency,
+            FabricConnectionConfig::new(fabric_link, bandwidth_bytes_per_tick),
+        )
+    }
+
+    pub fn connect_with_fabric_config(
+        mut self,
+        from: Endpoint,
+        to: Endpoint,
+        request_latency: Tick,
+        response_latency: Tick,
+        fabric: FabricConnectionConfig,
+    ) -> Result<Self, TopologyError> {
         self.validate_connection(&from, &to, request_latency, response_latency)?;
         let request_fabric_path = FabricPath::new([FabricPathHop::new(
-            fabric_link.clone(),
+            fabric.link().clone(),
             request_latency,
-            bandwidth_bytes_per_tick,
+            fabric.bandwidth_bytes_per_tick(),
         )
         .map_err(TopologyError::Fabric)?])
         .map_err(TopologyError::Fabric)?;
         let response_fabric_path = FabricPath::new([FabricPathHop::new(
-            fabric_link,
+            fabric.link().clone(),
             response_latency,
-            bandwidth_bytes_per_tick,
+            fabric.bandwidth_bytes_per_tick(),
         )
         .map_err(TopologyError::Fabric)?])
         .map_err(TopologyError::Fabric)?;
@@ -556,6 +644,8 @@ impl TopologyBuilder {
             response_latency,
             request_fabric_path: Some(request_fabric_path),
             response_fabric_path: Some(response_fabric_path),
+            request_virtual_network: fabric.request_virtual_network(),
+            response_virtual_network: fabric.response_virtual_network(),
         });
         Ok(self)
     }

@@ -5,7 +5,7 @@ use rem6_coherence::{
     TopologyDramMemoryConfig,
 };
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
-use rem6_fabric::FabricLinkId;
+use rem6_fabric::{FabricLinkId, VirtualNetworkId};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
@@ -13,8 +13,8 @@ use rem6_memory::{
 };
 use rem6_protocol_msi::MsiState;
 use rem6_topology::{
-    ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
-    TopologyBuilder, TopologyError,
+    ComponentId, ComponentKind, ComponentSpec, Endpoint, FabricConnectionConfig, PortDirection,
+    PortName, Topology, TopologyBuilder, TopologyError,
 };
 use rem6_transport::{MemoryTraceEvent, MemoryTraceKind, TransportEndpointId};
 
@@ -44,6 +44,10 @@ fn endpoint(component_name: &str) -> TransportEndpointId {
 
 fn fabric_link(name: &str) -> FabricLinkId {
     FabricLinkId::new(name).unwrap()
+}
+
+fn virtual_network(value: u16) -> VirtualNetworkId {
+    VirtualNetworkId::new(value)
 }
 
 fn agent(value: u32) -> AgentId {
@@ -442,6 +446,242 @@ fn topology_directory_harness_reserves_fabric_for_dram_fill_response() {
                 endpoint("l1d0"),
                 request_id(1, 0),
                 ResponseStatus::Completed,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn topology_directory_harness_uses_declared_fabric_virtual_networks() {
+    let topology = TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                component("l1d0"),
+                kind("l1_cache"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1d1"),
+                kind("l1_cache"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            Endpoint::new(component("l1d0"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            2,
+            2,
+            FabricConnectionConfig::new(fabric_link("mesh_shared"), 2)
+                .with_virtual_networks(virtual_network(0), virtual_network(1)),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            Endpoint::new(component("l1d1"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            2,
+            2,
+            FabricConnectionConfig::new(fabric_link("mesh_shared"), 2)
+                .with_virtual_networks(virtual_network(0), virtual_network(1)),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("dir0"), port("mem_side")),
+            Endpoint::new(component("mem0"), port("requests")),
+            7,
+            11,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut harness =
+        PartitionedDirectoryLineHarness::new_with_topology(&topology, harness_config()).unwrap();
+
+    harness
+        .submit_cpu_request(agent(1), read(1, 20, 0x1004, 4))
+        .unwrap();
+    harness
+        .submit_cpu_request(agent(2), read(2, 21, 0x1008, 4))
+        .unwrap();
+
+    let run = harness.run_until_idle();
+    assert_eq!(run.final_tick(), 126);
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![
+            CpuResponseRecord::new(
+                94,
+                CacheControllerResultKind::Fill,
+                request_id(1, 20),
+                ResponseStatus::Completed,
+                Some(vec![4, 5, 6, 7]),
+            ),
+            CpuResponseRecord::new(
+                126,
+                CacheControllerResultKind::Fill,
+                request_id(2, 21),
+                ResponseStatus::Completed,
+                Some(vec![8, 9, 10, 11]),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn topology_directory_harness_uses_virtual_networks_after_fixed_hops() {
+    let topology = TopologyBuilder::new(5)
+        .add_component(
+            ComponentSpec::new(
+                component("l1d0"),
+                kind("l1_cache"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1d1"),
+                kind("l1_cache"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mesh_r0"),
+                kind("mesh_router"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_in"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("dir_out"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(4),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("l1d0"), port("mem_side")),
+            Endpoint::new(component("mesh_r0"), port("cache_in")),
+            1,
+            1,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("l1d1"), port("mem_side")),
+            Endpoint::new(component("mesh_r0"), port("cache_in")),
+            1,
+            1,
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            Endpoint::new(component("mesh_r0"), port("dir_out")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            2,
+            2,
+            FabricConnectionConfig::new(fabric_link("mesh_shared"), 2)
+                .with_virtual_networks(virtual_network(0), virtual_network(1)),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("dir0"), port("mem_side")),
+            Endpoint::new(component("mem0"), port("requests")),
+            7,
+            11,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut harness =
+        PartitionedDirectoryLineHarness::new_with_topology(&topology, harness_config()).unwrap();
+
+    harness
+        .submit_cpu_request(agent(1), read(1, 30, 0x1004, 4))
+        .unwrap();
+    harness
+        .submit_cpu_request(agent(2), read(2, 31, 0x1008, 4))
+        .unwrap();
+
+    let run = harness.run_until_idle();
+    assert_eq!(run.final_tick(), 128);
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![
+            CpuResponseRecord::new(
+                96,
+                CacheControllerResultKind::Fill,
+                request_id(1, 30),
+                ResponseStatus::Completed,
+                Some(vec![4, 5, 6, 7]),
+            ),
+            CpuResponseRecord::new(
+                128,
+                CacheControllerResultKind::Fill,
+                request_id(2, 31),
+                ResponseStatus::Completed,
+                Some(vec![8, 9, 10, 11]),
             ),
         ]
     );
