@@ -14,6 +14,12 @@ use rem6_kernel::{
 use rem6_stats::{StatId, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod riscv_checkpoint;
+
+pub use riscv_checkpoint::{
+    RiscvCoreCheckpointError, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GuestEventId(u64);
 
