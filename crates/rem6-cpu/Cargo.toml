@@ -15,6 +15,7 @@ rem6-transport = { path = "../rem6-transport" }
 
 [dev-dependencies]
 rem6-cache = { path = "../rem6-cache" }
+rem6-topology = { path = "../rem6-topology" }
 
 [lints]
 workspace = true

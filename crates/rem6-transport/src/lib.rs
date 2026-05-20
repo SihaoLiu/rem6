@@ -10,6 +10,7 @@ use rem6_kernel::{
     SchedulerContext, SchedulerError, Tick,
 };
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
+use rem6_topology::{Endpoint, Topology, TopologyError, TopologyPath};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TransportEndpointId(String);
@@ -26,6 +27,15 @@ impl TransportEndpointId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn from_topology_endpoint(endpoint: &Endpoint) -> Result<Self, TopologyRouteError> {
+        Self::new(format!(
+            "{}.{}",
+            endpoint.component().as_str(),
+            endpoint.port().as_str()
+        ))
+        .map_err(TopologyRouteError::Transport)
     }
 }
 
@@ -116,6 +126,40 @@ impl Error for TransportError {
         match self {
             Self::Fabric(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TopologyRouteError {
+    MissingTopologyConnection { from: Endpoint, to: Endpoint },
+    Topology(TopologyError),
+    Transport(TransportError),
+}
+
+impl fmt::Display for TopologyRouteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingTopologyConnection { from, to } => write!(
+                formatter,
+                "topology connection {}.{} to {}.{} is not declared",
+                from.component().as_str(),
+                from.port().as_str(),
+                to.component().as_str(),
+                to.port().as_str()
+            ),
+            Self::Topology(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for TopologyRouteError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Topology(error) => Some(error),
+            Self::Transport(error) => Some(error),
             _ => None,
         }
     }
@@ -264,6 +308,53 @@ impl MemoryRoute {
         })
     }
 
+    pub fn from_topology(
+        topology: &Topology,
+        from: Endpoint,
+        to: Endpoint,
+    ) -> Result<Self, TopologyRouteError> {
+        let source_partition = topology_endpoint_partition(topology, &from)?;
+        topology_endpoint_partition(topology, &to)?;
+        let path = topology.find_endpoint_path(&from, &to).ok_or_else(|| {
+            TopologyRouteError::MissingTopologyConnection {
+                from: from.clone(),
+                to: to.clone(),
+            }
+        })?;
+        let hops = path
+            .hops()
+            .iter()
+            .map(|hop| {
+                let partition = topology_endpoint_partition(topology, hop.to())?;
+                let mut route_hop = MemoryRouteHop::new(
+                    TransportEndpointId::from_topology_endpoint(hop.to())?,
+                    partition,
+                    hop.request_latency(),
+                    hop.response_latency(),
+                )
+                .map_err(TopologyRouteError::Transport)?;
+                if let Some(path) = hop.request_fabric_path() {
+                    route_hop = route_hop.with_request_fabric_path(path.clone());
+                }
+                if let Some(path) = hop.response_fabric_path() {
+                    route_hop = route_hop.with_response_fabric_path(path.clone());
+                }
+                Ok(route_hop)
+            })
+            .collect::<Result<Vec<_>, TopologyRouteError>>()?;
+
+        Ok(Self::new_path(
+            TransportEndpointId::from_topology_endpoint(&from)?,
+            source_partition,
+            hops,
+        )
+        .map_err(TopologyRouteError::Transport)?
+        .with_virtual_networks(
+            topology_request_virtual_network(&path),
+            topology_response_virtual_network(&path),
+        ))
+    }
+
     pub fn with_virtual_networks(
         mut self,
         request_virtual_network: VirtualNetworkId,
@@ -362,6 +453,16 @@ impl MemoryTransport {
         self.next_route_id += 1;
         self.routes.push(StoredRoute { id, route });
         Ok(id)
+    }
+
+    pub fn add_topology_route(
+        &mut self,
+        topology: &Topology,
+        from: Endpoint,
+        to: Endpoint,
+    ) -> Result<MemoryRouteId, TopologyRouteError> {
+        let route = MemoryRoute::from_topology(topology, from, to)?;
+        self.add_route(route).map_err(TopologyRouteError::Transport)
     }
 
     pub fn route(&self, id: MemoryRouteId) -> Option<&MemoryRoute> {
@@ -768,6 +869,42 @@ impl MemoryTransport {
 
         Ok(())
     }
+}
+
+fn topology_endpoint_partition(
+    topology: &Topology,
+    endpoint: &Endpoint,
+) -> Result<PartitionId, TopologyRouteError> {
+    let component = topology.component(endpoint.component()).ok_or_else(|| {
+        TopologyRouteError::Topology(TopologyError::UnknownComponent {
+            component: endpoint.component().clone(),
+        })
+    })?;
+    component.port_direction(endpoint.port()).ok_or_else(|| {
+        TopologyRouteError::Topology(TopologyError::UnknownPort {
+            component: endpoint.component().clone(),
+            port: endpoint.port().clone(),
+        })
+    })?;
+    Ok(component.partition())
+}
+
+fn topology_request_virtual_network(path: &TopologyPath) -> VirtualNetworkId {
+    path.hops()
+        .iter()
+        .find(|hop| hop.request_fabric_path().is_some())
+        .map_or(VirtualNetworkId::new(0), |hop| {
+            hop.request_virtual_network()
+        })
+}
+
+fn topology_response_virtual_network(path: &TopologyPath) -> VirtualNetworkId {
+    path.hops()
+        .iter()
+        .find(|hop| hop.response_fabric_path().is_some())
+        .map_or(VirtualNetworkId::new(0), |hop| {
+            hop.response_virtual_network()
+        })
 }
 
 impl Default for MemoryTransport {

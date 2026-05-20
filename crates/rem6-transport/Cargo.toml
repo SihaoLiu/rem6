@@ -9,6 +9,7 @@ repository.workspace = true
 rem6-fabric = { path = "../rem6-fabric" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
+rem6-topology = { path = "../rem6-topology" }
 
 [lints]
 workspace = true
