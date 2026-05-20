@@ -13,6 +13,8 @@ use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, M
 pub const INTERRUPT_MMIO_REGISTER_BYTES: u64 = 8;
 pub const INTERRUPT_MMIO_PENDING_OFFSET: u64 = 0x00;
 pub const INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET: u64 = 0x08;
+pub const INTERRUPT_MMIO_PRIORITY_BASE_OFFSET: u64 = 0x100;
+pub const INTERRUPT_MMIO_PRIORITY_STRIDE: u64 = INTERRUPT_MMIO_REGISTER_BYTES;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct InterruptLineId(u64);
@@ -936,50 +938,7 @@ impl InterruptControllerMmioDevice {
         context: &mut SchedulerContext<'_>,
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
-        self.validate_size(request)?;
-        let offset = self.offset(request)?;
-        match (offset, request.operation()) {
-            (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Read) => {
-                let line = self
-                    .controller
-                    .lock()
-                    .expect("interrupt controller lock")
-                    .peek_claimable(self.target, self.target_partition)
-                    .map(|pending| pending.line().get())
-                    .unwrap_or_default();
-                Ok(MmioResponse::completed(request.id(), Some(le64(line))))
-            }
-            (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Write) => Err(MmioError::AccessDenied {
-                request: request.id(),
-                operation: MmioOperation::Write,
-                access: MmioAccess::ReadOnly,
-            }),
-            (INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, MmioOperation::Read) => {
-                let line = self
-                    .controller
-                    .lock()
-                    .expect("interrupt controller lock")
-                    .claim(self.target, self.target_partition, context.now())
-                    .map(|claim| claim.line().get())
-                    .unwrap_or_default();
-                Ok(MmioResponse::completed(request.id(), Some(le64(line))))
-            }
-            (INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, MmioOperation::Write) => {
-                let line = self.line_from_write(request)?;
-                self.controller
-                    .lock()
-                    .expect("interrupt controller lock")
-                    .complete(self.target, self.target_partition, line, context.now())
-                    .map_err(|error| MmioError::DeviceError {
-                        request: request.id(),
-                        message: error.to_string(),
-                    })?;
-                Ok(MmioResponse::completed(request.id(), None))
-            }
-            _ => Err(MmioError::UnmappedAddress {
-                address: request.range().start(),
-            }),
-        }
+        self.respond_at_tick(context.now(), request)
     }
 
     pub fn respond_parallel(
@@ -987,8 +946,20 @@ impl InterruptControllerMmioDevice {
         context: &mut ParallelSchedulerContext<'_>,
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
+        self.respond_at_tick(context.now(), request)
+    }
+
+    fn respond_at_tick(
+        &self,
+        tick: Tick,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
         self.validate_size(request)?;
         let offset = self.offset(request)?;
+        if let Some(line) = self.priority_line(request, offset)? {
+            return self.respond_priority(request, line);
+        }
+
         match (offset, request.operation()) {
             (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Read) => {
                 let line = self
@@ -1010,7 +981,7 @@ impl InterruptControllerMmioDevice {
                     .controller
                     .lock()
                     .expect("interrupt controller lock")
-                    .claim(self.target, self.target_partition, context.now())
+                    .claim(self.target, self.target_partition, tick)
                     .map(|claim| claim.line().get())
                     .unwrap_or_default();
                 Ok(MmioResponse::completed(request.id(), Some(le64(line))))
@@ -1020,7 +991,7 @@ impl InterruptControllerMmioDevice {
                 self.controller
                     .lock()
                     .expect("interrupt controller lock")
-                    .complete(self.target, self.target_partition, line, context.now())
+                    .complete(self.target, self.target_partition, line, tick)
                     .map_err(|error| MmioError::DeviceError {
                         request: request.id(),
                         message: error.to_string(),
@@ -1055,7 +1026,77 @@ impl InterruptControllerMmioDevice {
             })
     }
 
+    fn priority_line(
+        &self,
+        request: &MmioRequest,
+        offset: u64,
+    ) -> Result<Option<InterruptLineId>, MmioError> {
+        if offset < INTERRUPT_MMIO_PRIORITY_BASE_OFFSET {
+            return Ok(None);
+        }
+
+        let window_offset = offset - INTERRUPT_MMIO_PRIORITY_BASE_OFFSET;
+        if !window_offset.is_multiple_of(INTERRUPT_MMIO_PRIORITY_STRIDE) {
+            return Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            });
+        }
+
+        Ok(Some(InterruptLineId::new(
+            window_offset / INTERRUPT_MMIO_PRIORITY_STRIDE,
+        )))
+    }
+
+    fn respond_priority(
+        &self,
+        request: &MmioRequest,
+        line: InterruptLineId,
+    ) -> Result<MmioResponse, MmioError> {
+        match request.operation() {
+            MmioOperation::Read => {
+                let priority = self
+                    .controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .priority(line)
+                    .map_err(|error| MmioError::DeviceError {
+                        request: request.id(),
+                        message: error.to_string(),
+                    })?;
+                Ok(MmioResponse::completed(
+                    request.id(),
+                    Some(le64(u64::from(priority.get()))),
+                ))
+            }
+            MmioOperation::Write => {
+                let priority = self.priority_from_write(request)?;
+                self.controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .set_priority(line, priority)
+                    .map_err(|error| MmioError::DeviceError {
+                        request: request.id(),
+                        message: error.to_string(),
+                    })?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+        }
+    }
+
     fn line_from_write(&self, request: &MmioRequest) -> Result<InterruptLineId, MmioError> {
+        Ok(InterruptLineId::new(self.value_from_write(request)?))
+    }
+
+    fn priority_from_write(&self, request: &MmioRequest) -> Result<InterruptPriority, MmioError> {
+        let value = self.value_from_write(request)?;
+        let priority = u32::try_from(value).map_err(|_| MmioError::DeviceError {
+            request: request.id(),
+            message: format!("interrupt priority {value} does not fit u32"),
+        })?;
+        Ok(InterruptPriority::new(priority))
+    }
+
+    fn value_from_write(&self, request: &MmioRequest) -> Result<u64, MmioError> {
         let data = request.data().ok_or(MmioError::MissingWriteData {
             request: request.id(),
         })?;
@@ -1077,7 +1118,7 @@ impl InterruptControllerMmioDevice {
                 bytes[index] = *byte;
             }
         }
-        Ok(InterruptLineId::new(u64::from_le_bytes(bytes)))
+        Ok(u64::from_le_bytes(bytes))
     }
 }
 

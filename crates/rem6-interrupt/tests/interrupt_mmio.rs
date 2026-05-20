@@ -4,6 +4,7 @@ use rem6_interrupt::{
     InterruptClaim, InterruptController, InterruptControllerMmioDevice, InterruptEvent,
     InterruptEventKind, InterruptLineId, InterruptPriority, InterruptRoute, InterruptSourceId,
     InterruptTargetId, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, INTERRUPT_MMIO_PENDING_OFFSET,
+    INTERRUPT_MMIO_PRIORITY_BASE_OFFSET, INTERRUPT_MMIO_PRIORITY_STRIDE,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
@@ -290,5 +291,138 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
             ),
             InterruptEvent::routed(3, line_a, target, cpu, source_a, InterruptEventKind::Claim),
         ]
+    );
+}
+
+#[test]
+fn interrupt_parallel_mmio_programs_priority_before_claim() {
+    let cpu = PartitionId::new(0);
+    let controller_partition = PartitionId::new(1);
+    let target = InterruptTargetId::new(0);
+    let low_line = InterruptLineId::new(2);
+    let high_line = InterruptLineId::new(6);
+    let low_source = InterruptSourceId::new(20);
+    let high_source = InterruptSourceId::new(60);
+    let base = Address::new(0x3000);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .register_route(InterruptRoute::new(low_line, target, cpu))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(high_line, target, cpu))
+            .unwrap();
+        controller.assert(low_line, low_source, 0).unwrap();
+        controller.assert(high_line, high_source, 0).unwrap();
+    }
+
+    let device = InterruptControllerMmioDevice::new(Arc::clone(&controller), base, target, cpu);
+    let route = MmioRoute::new(cpu, controller_partition, 2, 2).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(base, AccessSize::new(0x200).unwrap()).unwrap(),
+        route,
+        device,
+    )
+    .unwrap();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    let priority_offset =
+        INTERRUPT_MMIO_PRIORITY_BASE_OFFSET + high_line.get() * INTERRUPT_MMIO_PRIORITY_STRIDE;
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 1, move |context| {
+            for (id, offset, operation) in [
+                (21, priority_offset, Some(9)),
+                (22, priority_offset, None),
+                (23, INTERRUPT_MMIO_PENDING_OFFSET, None),
+                (24, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, None),
+            ] {
+                let sink = Arc::clone(&completed);
+                let request = match operation {
+                    Some(priority) => MmioRequest::write(
+                        MmioRequestId::new(id),
+                        Address::new(base.get() + offset),
+                        le64(priority),
+                        full_mask(8),
+                    )
+                    .unwrap(),
+                    None => MmioRequest::read(
+                        MmioRequestId::new(id),
+                        Address::new(base.get() + offset),
+                        AccessSize::new(8).unwrap(),
+                    )
+                    .unwrap(),
+                };
+                bus.submit_parallel(context, request, move |completion| {
+                    sink.lock().unwrap().push(completion);
+                })
+                .unwrap();
+            }
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 9);
+    assert!(summary.final_tick() >= 5);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(21), None)),
+            ),
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(22),
+                    Some(le64(9)),
+                )),
+            ),
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(23),
+                    Some(le64(high_line.get())),
+                )),
+            ),
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(24),
+                    Some(le64(high_line.get())),
+                )),
+            ),
+        ]
+    );
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.priority(high_line).unwrap(),
+        InterruptPriority::new(9)
+    );
+    assert_eq!(
+        controller.pending(),
+        vec![rem6_interrupt::PendingInterrupt::routed(
+            low_line, target, cpu, low_source, 0,
+        )]
+    );
+    assert_eq!(
+        controller.claimed(),
+        vec![InterruptClaim::new(
+            high_line,
+            target,
+            cpu,
+            high_source,
+            0,
+            3,
+        )]
     );
 }
