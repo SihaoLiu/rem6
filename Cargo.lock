@@ -64,6 +64,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-system"
+version = "0.1.0"
+dependencies = [
+ "rem6-kernel",
+]
+
+[[package]]
 name = "rem6-topology"
 version = "0.1.0"
 dependencies = [
