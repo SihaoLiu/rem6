@@ -149,13 +149,16 @@ dependencies = [
  "rem6-boot",
  "rem6-checkpoint",
  "rem6-cpu",
+ "rem6-interrupt",
  "rem6-isa-riscv",
  "rem6-kernel",
  "rem6-memory",
  "rem6-mmio",
+ "rem6-platform",
  "rem6-stats",
  "rem6-topology",
  "rem6-transport",
+ "rem6-uart",
 ]
 
 [[package]]
