@@ -21,8 +21,9 @@ mod riscv_checkpoint;
 mod topology;
 
 pub use memory_checkpoint::{
-    MemoryStoreCheckpointBank, MemoryStoreCheckpointError, MemoryStoreCheckpointPort,
-    MemoryStoreCheckpointRecord,
+    DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
+    DramMemoryCheckpointRecord, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
+    MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
 };
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,

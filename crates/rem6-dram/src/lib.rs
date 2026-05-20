@@ -457,6 +457,13 @@ impl DramBankState {
         }
     }
 
+    pub const fn from_snapshot(open_row: Option<u64>, available_cycle: u64) -> Self {
+        Self {
+            open_row,
+            available_cycle,
+        }
+    }
+
     pub const fn open_row(self) -> Option<u64> {
         self.open_row
     }
