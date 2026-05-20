@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -257,7 +258,8 @@ impl PortSpec {
 pub struct ConnectionSpec {
     from: Endpoint,
     to: Endpoint,
-    latency: Tick,
+    request_latency: Tick,
+    response_latency: Tick,
 }
 
 impl ConnectionSpec {
@@ -270,7 +272,148 @@ impl ConnectionSpec {
     }
 
     pub fn latency(&self) -> Tick {
-        self.latency
+        self.request_latency
+    }
+
+    pub fn request_latency(&self) -> Tick {
+        self.request_latency
+    }
+
+    pub fn response_latency(&self) -> Tick {
+        self.response_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TopologyPathHop {
+    from: Endpoint,
+    to: Endpoint,
+    request_latency: Tick,
+    response_latency: Tick,
+}
+
+impl TopologyPathHop {
+    fn from_connection(connection: &ConnectionSpec) -> Self {
+        Self {
+            from: connection.from().clone(),
+            to: connection.to().clone(),
+            request_latency: connection.request_latency(),
+            response_latency: connection.response_latency(),
+        }
+    }
+
+    pub fn from(&self) -> &Endpoint {
+        &self.from
+    }
+
+    pub fn to(&self) -> &Endpoint {
+        &self.to
+    }
+
+    pub fn request_latency(&self) -> Tick {
+        self.request_latency
+    }
+
+    pub fn response_latency(&self) -> Tick {
+        self.response_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TopologyPath {
+    source: ComponentId,
+    target: ComponentId,
+    hops: Vec<TopologyPathHop>,
+    request_latency: Tick,
+    response_latency: Tick,
+}
+
+impl TopologyPath {
+    fn new(
+        source: ComponentId,
+        target: ComponentId,
+        hops: Vec<TopologyPathHop>,
+        request_latency: Tick,
+        response_latency: Tick,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            hops,
+            request_latency,
+            response_latency,
+        }
+    }
+
+    pub fn source(&self) -> &ComponentId {
+        &self.source
+    }
+
+    pub fn target(&self) -> &ComponentId {
+        &self.target
+    }
+
+    pub fn hops(&self) -> &[TopologyPathHop] {
+        &self.hops
+    }
+
+    pub fn request_latency(&self) -> Tick {
+        self.request_latency
+    }
+
+    pub fn response_latency(&self) -> Tick {
+        self.response_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PathSearchState {
+    cost: Tick,
+    request_latency: Tick,
+    response_latency: Tick,
+    hops: Vec<TopologyPathHop>,
+}
+
+impl PathSearchState {
+    fn root() -> Self {
+        Self {
+            cost: 0,
+            request_latency: 0,
+            response_latency: 0,
+            hops: Vec::new(),
+        }
+    }
+
+    fn extend(&self, connection: &ConnectionSpec) -> Option<Self> {
+        let request_latency = self
+            .request_latency
+            .checked_add(connection.request_latency())?;
+        let response_latency = self
+            .response_latency
+            .checked_add(connection.response_latency())?;
+        let cost = request_latency.checked_add(response_latency)?;
+        let mut hops = self.hops.clone();
+        hops.push(TopologyPathHop::from_connection(connection));
+        Some(Self {
+            cost,
+            request_latency,
+            response_latency,
+            hops,
+        })
+    }
+
+    fn is_better_than(&self, other: &Self) -> bool {
+        (
+            self.cost,
+            self.request_latency,
+            self.response_latency,
+            self.hops.len(),
+        ) < (
+            other.cost,
+            other.request_latency,
+            other.response_latency,
+            other.hops.len(),
+        )
     }
 }
 
@@ -319,22 +462,30 @@ impl TopologyBuilder {
         to: Endpoint,
         latency: Tick,
     ) -> Result<Self, TopologyError> {
-        if latency == 0 {
-            return Err(TopologyError::ZeroConnectionLatency);
-        }
+        self.validate_connection(&from, &to, latency, latency)?;
+        self.connections.push(ConnectionSpec {
+            from,
+            to,
+            request_latency: latency,
+            response_latency: latency,
+        });
+        Ok(self)
+    }
 
-        let from_direction = self.endpoint_direction(&from)?;
-        let to_direction = self.endpoint_direction(&to)?;
-        if from_direction != PortDirection::Initiator || to_direction != PortDirection::Target {
-            return Err(TopologyError::InvalidConnectionDirection {
-                from,
-                from_direction,
-                to,
-                to_direction,
-            });
-        }
-
-        self.connections.push(ConnectionSpec { from, to, latency });
+    pub fn connect_with_latencies(
+        mut self,
+        from: Endpoint,
+        to: Endpoint,
+        request_latency: Tick,
+        response_latency: Tick,
+    ) -> Result<Self, TopologyError> {
+        self.validate_connection(&from, &to, request_latency, response_latency)?;
+        self.connections.push(ConnectionSpec {
+            from,
+            to,
+            request_latency,
+            response_latency,
+        });
         Ok(self)
     }
 
@@ -351,6 +502,31 @@ impl TopologyBuilder {
             connections: self.connections,
             components_by_partition,
         })
+    }
+
+    fn validate_connection(
+        &self,
+        from: &Endpoint,
+        to: &Endpoint,
+        request_latency: Tick,
+        response_latency: Tick,
+    ) -> Result<(), TopologyError> {
+        if request_latency == 0 || response_latency == 0 {
+            return Err(TopologyError::ZeroConnectionLatency);
+        }
+
+        let from_direction = self.endpoint_direction(from)?;
+        let to_direction = self.endpoint_direction(to)?;
+        if from_direction != PortDirection::Initiator || to_direction != PortDirection::Target {
+            return Err(TopologyError::InvalidConnectionDirection {
+                from: from.clone(),
+                from_direction,
+                to: to.clone(),
+                to_direction,
+            });
+        }
+
+        Ok(())
     }
 
     fn endpoint_direction(&self, endpoint: &Endpoint) -> Result<PortDirection, TopologyError> {
@@ -418,4 +594,89 @@ impl Topology {
             .iter()
             .find(|connection| connection.from() == from && connection.to() == to)
     }
+
+    pub fn find_component_path(
+        &self,
+        source: &ComponentId,
+        target: &ComponentId,
+    ) -> Option<TopologyPath> {
+        self.component(source)?;
+        self.component(target)?;
+
+        if source == target {
+            return Some(TopologyPath::new(
+                source.clone(),
+                target.clone(),
+                Vec::new(),
+                0,
+                0,
+            ));
+        }
+
+        let mut best = BTreeMap::from([(source.clone(), PathSearchState::root())]);
+        let mut visited = BTreeSet::new();
+
+        while let Some(component) = next_search_component(&best, &visited) {
+            if component == *target {
+                let state = best.remove(&component)?;
+                return Some(TopologyPath::new(
+                    source.clone(),
+                    target.clone(),
+                    state.hops,
+                    state.request_latency,
+                    state.response_latency,
+                ));
+            }
+
+            visited.insert(component.clone());
+            let state = best.get(&component).cloned()?;
+            for connection in self
+                .connections
+                .iter()
+                .filter(|connection| connection.from().component() == &component)
+            {
+                let next = connection.to().component().clone();
+                if visited.contains(&next) {
+                    continue;
+                }
+
+                let Some(candidate) = state.extend(connection) else {
+                    continue;
+                };
+                if best
+                    .get(&next)
+                    .is_none_or(|existing| candidate.is_better_than(existing))
+                {
+                    best.insert(next, candidate);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+fn next_search_component(
+    best: &BTreeMap<ComponentId, PathSearchState>,
+    visited: &BTreeSet<ComponentId>,
+) -> Option<ComponentId> {
+    best.iter()
+        .filter(|(component, _)| !visited.contains(*component))
+        .min_by(|(left_component, left), (right_component, right)| {
+            (
+                left.cost,
+                left.request_latency,
+                left.response_latency,
+                left.hops.len(),
+                *left_component,
+            )
+                .cmp(&(
+                    right.cost,
+                    right.request_latency,
+                    right.response_latency,
+                    right.hops.len(),
+                    *right_component,
+                ))
+        })
+        .map(|(component, _)| component.clone())
 }

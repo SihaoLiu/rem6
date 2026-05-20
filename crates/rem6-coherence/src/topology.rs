@@ -164,7 +164,7 @@ impl PartitionedDirectoryLineHarness {
         let directory_component = topology_component(topology, directory.component())?;
         let directory_endpoint = transport_endpoint(directory.component())?;
         let memory_component = topology_component(topology, memory.component())?;
-        let memory_latency = topology_latency(
+        let memory_latency = topology_route_latency(
             topology,
             Endpoint::new(
                 directory.component().clone(),
@@ -175,15 +175,15 @@ impl PartitionedDirectoryLineHarness {
         let memory = PartitionedDramMemoryConfig::new(
             memory_component.partition(),
             transport_endpoint(memory.component())?,
-            memory_latency,
-            memory_latency,
+            memory_latency.request,
+            memory_latency.response,
             memory.into_controller(),
         );
 
         let mut agents = Vec::with_capacity(caches.len());
         for cache in caches {
             let cache_component = topology_component(topology, cache.component())?;
-            let cache_latency = topology_latency(
+            let cache_latency = topology_route_latency(
                 topology,
                 Endpoint::new(cache.component().clone(), cache.port().clone()),
                 Endpoint::new(
@@ -195,8 +195,8 @@ impl PartitionedDirectoryLineHarness {
                 cache.agent(),
                 cache_component.partition(),
                 transport_endpoint(cache.component())?,
-                cache_latency,
-                cache_latency,
+                cache_latency.request,
+                cache_latency.response,
             ));
         }
 
@@ -222,14 +222,23 @@ fn topology_component<'a>(
     })
 }
 
-fn topology_latency(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TopologyRouteLatency {
+    request: u64,
+    response: u64,
+}
+
+fn topology_route_latency(
     topology: &Topology,
     from: Endpoint,
     to: Endpoint,
-) -> Result<u64, HarnessError> {
+) -> Result<TopologyRouteLatency, HarnessError> {
     topology
         .connection_between(&from, &to)
-        .map(|connection| connection.latency())
+        .map(|connection| TopologyRouteLatency {
+            request: connection.request_latency(),
+            response: connection.response_latency(),
+        })
         .ok_or(HarnessError::MissingTopologyConnection { from, to })
 }
 

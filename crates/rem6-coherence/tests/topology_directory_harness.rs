@@ -115,22 +115,25 @@ fn topology() -> Topology {
             .unwrap(),
         )
         .unwrap()
-        .connect(
+        .connect_with_latencies(
             Endpoint::new(component("l1d0"), port("mem_side")),
             Endpoint::new(component("dir0"), port("cache_side")),
             3,
+            5,
         )
         .unwrap()
-        .connect(
+        .connect_with_latencies(
             Endpoint::new(component("l1d1"), port("mem_side")),
             Endpoint::new(component("dir0"), port("cache_side")),
             4,
+            6,
         )
         .unwrap()
-        .connect(
+        .connect_with_latencies(
             Endpoint::new(component("dir0"), port("mem_side")),
             Endpoint::new(component("mem0"), port("requests")),
             7,
+            11,
         )
         .unwrap()
         .build()
@@ -187,12 +190,12 @@ fn topology_directory_harness_builds_cache_directory_dram_path() {
 
     let run = harness.run_until_idle();
     assert_eq!(run.executed_events(), 6);
-    assert_eq!(run.final_tick(), 28);
+    assert_eq!(run.final_tick(), 34);
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Shared);
     assert_eq!(
         harness.cpu_responses(),
         vec![CpuResponseRecord::new(
-            28,
+            34,
             CacheControllerResultKind::Fill,
             request_id(1, 0),
             ResponseStatus::Completed,
@@ -246,14 +249,14 @@ fn topology_directory_harness_builds_cache_directory_dram_path() {
                 request_id(1, 0),
             ),
             MemoryTraceEvent::response(
-                25,
+                29,
                 memory_route,
                 endpoint("dir0"),
                 request_id(1, 0),
                 ResponseStatus::Completed,
             ),
             MemoryTraceEvent::response(
-                28,
+                34,
                 cache_route,
                 endpoint("l1d0"),
                 request_id(1, 0),

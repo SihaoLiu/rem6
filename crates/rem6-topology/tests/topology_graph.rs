@@ -95,6 +95,190 @@ fn topology_builds_valid_component_graph_with_stable_endpoints() {
 }
 
 #[test]
+fn topology_records_asymmetric_connection_latencies() {
+    let cache = ComponentId::new("l1d0").unwrap();
+    let directory = ComponentId::new("dir0").unwrap();
+    let mem_side = PortName::new("mem_side").unwrap();
+    let cache_side = PortName::new("cache_side").unwrap();
+
+    let topology = TopologyBuilder::new(2)
+        .add_component(
+            ComponentSpec::new(
+                cache.clone(),
+                ComponentKind::new("l1_cache").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(mem_side.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                directory.clone(),
+                ComponentKind::new("directory").unwrap(),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(cache_side.clone(), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(cache.clone(), mem_side.clone()),
+            Endpoint::new(directory.clone(), cache_side.clone()),
+            3,
+            11,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let connection = topology
+        .connection_between(
+            &Endpoint::new(cache, mem_side),
+            &Endpoint::new(directory, cache_side),
+        )
+        .unwrap();
+    assert_eq!(connection.request_latency(), 3);
+    assert_eq!(connection.response_latency(), 11);
+}
+
+#[test]
+fn topology_finds_lowest_latency_component_path() {
+    let cache = ComponentId::new("l1d0").unwrap();
+    let router = ComponentId::new("mesh_r0").unwrap();
+    let directory = ComponentId::new("dir0").unwrap();
+    let mem_side = PortName::new("mem_side").unwrap();
+    let ingress = PortName::new("ingress").unwrap();
+    let egress = PortName::new("egress").unwrap();
+    let cache_side = PortName::new("cache_side").unwrap();
+
+    let topology = TopologyBuilder::new(3)
+        .add_component(
+            ComponentSpec::new(
+                cache.clone(),
+                ComponentKind::new("l1_cache").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(mem_side.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                router.clone(),
+                ComponentKind::new("mesh_router").unwrap(),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(ingress.clone(), PortDirection::Target)
+            .unwrap()
+            .add_port(egress.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                directory.clone(),
+                ComponentKind::new("directory").unwrap(),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(cache_side.clone(), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(cache.clone(), mem_side.clone()),
+            Endpoint::new(directory.clone(), cache_side.clone()),
+            20,
+            21,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(cache.clone(), mem_side.clone()),
+            Endpoint::new(router.clone(), ingress.clone()),
+            3,
+            5,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(router.clone(), egress.clone()),
+            Endpoint::new(directory.clone(), cache_side.clone()),
+            7,
+            11,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let path = topology
+        .find_component_path(&cache, &directory)
+        .expect("component path");
+
+    assert_eq!(path.source(), &cache);
+    assert_eq!(path.target(), &directory);
+    assert_eq!(path.request_latency(), 10);
+    assert_eq!(path.response_latency(), 16);
+    assert_eq!(path.hops().len(), 2);
+    assert_eq!(
+        path.hops()[0].from(),
+        &Endpoint::new(cache.clone(), mem_side)
+    );
+    assert_eq!(path.hops()[0].to(), &Endpoint::new(router.clone(), ingress));
+    assert_eq!(path.hops()[0].request_latency(), 3);
+    assert_eq!(path.hops()[0].response_latency(), 5);
+    assert_eq!(path.hops()[1].from(), &Endpoint::new(router, egress));
+    assert_eq!(path.hops()[1].to(), &Endpoint::new(directory, cache_side));
+    assert_eq!(path.hops()[1].request_latency(), 7);
+    assert_eq!(path.hops()[1].response_latency(), 11);
+}
+
+#[test]
+fn topology_reports_absent_component_path() {
+    let cache = ComponentId::new("l1d0").unwrap();
+    let directory = ComponentId::new("dir0").unwrap();
+    let mem_side = PortName::new("mem_side").unwrap();
+    let cache_side = PortName::new("cache_side").unwrap();
+
+    let topology = TopologyBuilder::new(2)
+        .add_component(
+            ComponentSpec::new(
+                cache.clone(),
+                ComponentKind::new("l1_cache").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(mem_side.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                directory.clone(),
+                ComponentKind::new("directory").unwrap(),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(cache_side.clone(), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect(
+            Endpoint::new(cache.clone(), mem_side),
+            Endpoint::new(directory.clone(), cache_side),
+            3,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(topology.find_component_path(&directory, &cache), None);
+}
+
+#[test]
 fn topology_rejects_duplicate_components_and_ports() {
     let core = ComponentId::new("core0").unwrap();
     let requests = PortName::new("requests").unwrap();
