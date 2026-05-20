@@ -106,6 +106,62 @@ impl RiscvCluster {
             )
             .map_err(|error| RiscvClusterError::Core { cpu, error })
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_ready_cores<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        let mut actions = Vec::new();
+        for (cpu, core) in &self.cores {
+            if let Some(action) = core
+                .drive_next_action(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    fetch_responder(*cpu),
+                    data_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                actions.push(RiscvClusterDriveEvent::new(*cpu, action));
+            }
+        }
+
+        Ok(actions)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvClusterDriveEvent {
+    cpu: CpuId,
+    action: RiscvCoreDriveAction,
+}
+
+impl RiscvClusterDriveEvent {
+    pub const fn new(cpu: CpuId, action: RiscvCoreDriveAction) -> Self {
+        Self { cpu, action }
+    }
+
+    pub const fn cpu(&self) -> CpuId {
+        self.cpu
+    }
+
+    pub const fn action(&self) -> &RiscvCoreDriveAction {
+        &self.action
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -20,7 +20,7 @@ use rem6_transport::{
 
 mod riscv_cluster;
 
-pub use riscv_cluster::{RiscvCluster, RiscvClusterError};
+pub use riscv_cluster::{RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CpuId(u32);
