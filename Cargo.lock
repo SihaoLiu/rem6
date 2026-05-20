@@ -11,6 +11,13 @@ name = "rem6-memory"
 version = "0.1.0"
 
 [[package]]
+name = "rem6-protocol-msi"
+version = "0.1.0"
+dependencies = [
+ "rem6-memory",
+]
+
+[[package]]
 name = "rem6-topology"
 version = "0.1.0"
 dependencies = [
