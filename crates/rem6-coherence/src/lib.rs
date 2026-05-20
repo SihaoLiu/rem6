@@ -15,9 +15,17 @@ use rem6_memory::{
     MemoryRequestId, MemoryResponse, MemoryTargetId, ResponseStatus,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
+use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
     TargetOutcome, TransportEndpointId, TransportError,
+};
+
+mod topology;
+
+pub use topology::{
+    TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
+    TopologyDramMemoryConfig,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,6 +120,7 @@ pub enum HarnessError {
     LineBusy { state: MsiState },
     UnknownCache { agent: AgentId },
     DuplicateCache { agent: AgentId },
+    MissingTopologyConnection { from: Endpoint, to: Endpoint },
     MissingBackingMemory { line: Address },
     WrongLine { expected: Address, actual: Address },
     LineDataSizeMismatch { expected: u64, actual: u64 },
@@ -121,6 +130,7 @@ pub enum HarnessError {
     Directory(DirectoryError),
     Memory(MemoryError),
     Scheduler(SchedulerError),
+    Topology(TopologyError),
     Transport(TransportError),
 }
 
@@ -138,6 +148,14 @@ impl fmt::Display for HarnessError {
                     agent.get()
                 )
             }
+            Self::MissingTopologyConnection { from, to } => write!(
+                formatter,
+                "topology connection {}.{} to {}.{} is not declared",
+                from.component().as_str(),
+                from.port().as_str(),
+                to.component().as_str(),
+                to.port().as_str()
+            ),
             Self::MissingBackingMemory { line } => {
                 write!(formatter, "line {:#x} has no backing memory", line.get())
             }
@@ -167,6 +185,7 @@ impl fmt::Display for HarnessError {
             Self::Directory(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
@@ -179,6 +198,7 @@ impl Error for HarnessError {
             Self::Directory(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            Self::Topology(error) => Some(error),
             Self::Transport(error) => Some(error),
             _ => None,
         }
