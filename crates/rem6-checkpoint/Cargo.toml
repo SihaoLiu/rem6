@@ -1,0 +1,12 @@
+[package]
+name = "rem6-checkpoint"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rem6-kernel = { path = "../rem6-kernel" }
+
+[lints]
+workspace = true

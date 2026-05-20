@@ -12,6 +12,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-checkpoint"
+version = "0.1.0"
+dependencies = [
+ "rem6-kernel",
+]
+
+[[package]]
 name = "rem6-coherence"
 version = "0.1.0"
 dependencies = [
