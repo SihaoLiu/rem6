@@ -165,6 +165,7 @@ pub enum HostAction {
     ResetStats,
     DumpStats,
     Checkpoint { label: String },
+    RestoreCheckpoint { manifest: CheckpointManifest },
     Stop { code: i32 },
 }
 
@@ -295,6 +296,12 @@ pub enum SystemActionOutcome {
         source: GuestSourceId,
         manifest: CheckpointManifest,
     },
+    CheckpointRestored {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        manifest: CheckpointManifest,
+    },
     Stop(StopRequest),
 }
 
@@ -355,6 +362,16 @@ impl SystemActionExecutor {
                     manifest,
                 })
                 .map_err(SystemError::Checkpoint),
+            HostAction::RestoreCheckpoint { manifest } => self
+                .checkpoints
+                .restore(manifest)
+                .map(|()| SystemActionOutcome::CheckpointRestored {
+                    tick: record.tick(),
+                    event: record.event(),
+                    source: record.source(),
+                    manifest: manifest.clone(),
+                })
+                .map_err(SystemError::Checkpoint),
             HostAction::Stop { code } => Ok(SystemActionOutcome::Stop(StopRequest::new(
                 record.tick(),
                 record.event(),
@@ -402,26 +419,39 @@ impl SystemRunController {
             })
             .collect();
 
-        if self.stop_request.is_none() {
-            if let Some(record) = produced
-                .iter()
-                .find(|record| matches!(record.action(), HostAction::Stop { .. }))
-            {
-                let HostAction::Stop { code } = record.action() else {
-                    unreachable!("stop record was matched above");
-                };
-                self.stop_request = Some(StopRequest::new(
-                    record.tick(),
-                    record.event(),
-                    record.source(),
-                    *code,
-                ));
-            }
+        for record in &produced {
+            self.record_stop_request(record);
         }
 
         self.deliveries.push(delivery);
         self.actions.extend(produced.iter().cloned());
         produced
+    }
+
+    pub fn execute_record(
+        &mut self,
+        record: HostActionRecord,
+        executor: &mut SystemActionExecutor,
+    ) -> Result<SystemActionOutcome, SystemError> {
+        self.record_stop_request(&record);
+        self.actions.push(record.clone());
+        let outcome = executor.apply(&record)?;
+        self.outcomes.push(outcome.clone());
+        Ok(outcome)
+    }
+
+    fn record_stop_request(&mut self, record: &HostActionRecord) {
+        if self.stop_request.is_none() && matches!(record.action(), HostAction::Stop { .. }) {
+            let HostAction::Stop { code } = record.action() else {
+                unreachable!("stop record was matched above");
+            };
+            self.stop_request = Some(StopRequest::new(
+                record.tick(),
+                record.event(),
+                record.source(),
+                *code,
+            ));
+        }
     }
 
     pub fn execute_delivery(

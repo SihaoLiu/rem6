@@ -165,6 +165,59 @@ fn system_action_executor_captures_checkpoint_manifest() {
 }
 
 #[test]
+fn system_run_controller_records_and_executes_checkpoint_restore_action() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(11);
+    let cpu = CheckpointComponentId::new("cpu0").unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    checkpoints.register(cpu.clone()).unwrap();
+    checkpoints.write_chunk(&cpu, "pc", vec![0x10]).unwrap();
+    let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), checkpoints);
+    let mut controller = SystemRunController::new(HostEventPolicy);
+    let manifest = CheckpointManifest::new(
+        "resume",
+        40,
+        vec![CheckpointState::new(
+            cpu.clone(),
+            vec![CheckpointChunk::new("pc", vec![0x80])],
+        )],
+    );
+    let record = HostActionRecord::new(
+        64,
+        host,
+        host,
+        GuestEventId::new(7),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    assert_eq!(
+        controller
+            .execute_record(record.clone(), &mut executor)
+            .unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 64,
+            event: GuestEventId::new(7),
+            source,
+            manifest: manifest.clone(),
+        }
+    );
+    assert_eq!(executor.checkpoints().chunk(&cpu, "pc"), Some(&[0x80][..]));
+    assert_eq!(controller.action_records(), &[record]);
+    assert_eq!(
+        controller.action_outcomes(),
+        &[SystemActionOutcome::CheckpointRestored {
+            tick: 64,
+            event: GuestEventId::new(7),
+            source,
+            manifest,
+        }]
+    );
+}
+
+#[test]
 fn system_run_controller_executes_delivered_stats_events() {
     let guest = PartitionId::new(0);
     let host = PartitionId::new(1);
