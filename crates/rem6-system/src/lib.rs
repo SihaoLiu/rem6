@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -10,7 +11,7 @@ use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
     PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
 };
-use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
+use rem6_stats::{StatId, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -781,15 +782,33 @@ impl RiscvSystemRun {
 #[derive(Clone, Debug)]
 pub struct RiscvSystemRunDriver {
     trap_port: RiscvTrapEventPort,
+    instruction_stats: Option<RiscvInstructionStats>,
 }
 
 impl RiscvSystemRunDriver {
     pub const fn new(trap_port: RiscvTrapEventPort) -> Self {
-        Self { trap_port }
+        Self {
+            trap_port,
+            instruction_stats: None,
+        }
+    }
+
+    pub const fn with_instruction_stats(
+        trap_port: RiscvTrapEventPort,
+        instruction_stats: RiscvInstructionStats,
+    ) -> Self {
+        Self {
+            trap_port,
+            instruction_stats: Some(instruction_stats),
+        }
     }
 
     pub const fn trap_port(&self) -> &RiscvTrapEventPort {
         &self.trap_port
+    }
+
+    pub const fn instruction_stats(&self) -> Option<&RiscvInstructionStats> {
+        self.instruction_stats.as_ref()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -834,6 +853,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
+            self.record_instruction_stats(&turn)?;
             let trap_cores = pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.trap_port.schedule_pending_core_traps(
@@ -879,6 +899,51 @@ impl RiscvSystemRunDriver {
             .run()
             .stop_request()
             .copied()
+    }
+
+    fn record_instruction_stats(&self, turn: &RiscvClusterTurn) -> Result<(), SystemError> {
+        let Some(instruction_stats) = &self.instruction_stats else {
+            return Ok(());
+        };
+
+        let controller = self.trap_port.controller();
+        let mut controller = controller.lock().expect("system host controller lock");
+        for event in turn.core_events() {
+            if matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)) {
+                if let Some(stat) = instruction_stats.committed_stat(event.cpu()) {
+                    controller
+                        .executor_mut()
+                        .stats_mut()
+                        .increment(stat, 1)
+                        .map_err(SystemError::Stats)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RiscvInstructionStats {
+    committed: BTreeMap<CpuId, StatId>,
+}
+
+impl RiscvInstructionStats {
+    pub fn new<I>(committed: I) -> Self
+    where
+        I: IntoIterator<Item = (CpuId, StatId)>,
+    {
+        Self {
+            committed: committed.into_iter().collect(),
+        }
+    }
+
+    pub fn committed_stat(&self, cpu: CpuId) -> Option<StatId> {
+        self.committed.get(&cpu).copied()
+    }
+
+    pub fn committed_stats(&self) -> &BTreeMap<CpuId, StatId> {
+        &self.committed
     }
 }
 

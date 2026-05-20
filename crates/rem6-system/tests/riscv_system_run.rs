@@ -8,11 +8,11 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
 };
-use rem6_stats::StatsRegistry;
+use rem6_stats::{StatSample, StatSnapshot, StatsRegistry};
 use rem6_system::{
-    GuestEventId, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy, RiscvSystemRunDriver,
-    RiscvSystemRunStopReason, RiscvTrapEventPort, StopRequest, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort,
+    GuestEventId, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy, RiscvInstructionStats,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, StopRequest,
+    SystemActionOutcome, SystemHostController, SystemHostEventPort,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -209,4 +209,94 @@ fn riscv_system_run_driver_stops_after_cluster_traps_reach_host() {
         ]
     );
     assert_eq!(scheduler.now(), stop.tick());
+}
+
+#[test]
+fn riscv_system_run_driver_records_committed_instruction_stats() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(32);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000),
+        riscv_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000),
+    ])
+    .unwrap();
+    let store = loaded_program_store(&[(0x8000, 0x0000_0073), (0x9000, 0x0010_0073)]);
+    let mut stats = StatsRegistry::new();
+    let cpu0_committed = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    let cpu1_committed = stats
+        .register_counter("cpu1.committed_insts", "count")
+        .unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        stats,
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::with_instruction_stats(
+        trap_port,
+        RiscvInstructionStats::new([
+            (CpuId::new(0), cpu0_committed),
+            (CpuId::new(1), cpu1_committed),
+        ]),
+    );
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            20,
+            |cpu| GuestEventId::new(90 + u64::from(cpu.get())),
+        )
+        .unwrap();
+    let tick = run.final_tick().unwrap();
+
+    assert_eq!(
+        controller.lock().unwrap().executor().stats().snapshot(tick),
+        StatSnapshot::new(
+            tick,
+            0,
+            0,
+            vec![
+                StatSample::new(cpu0_committed, "cpu0.committed_insts", "count", 1),
+                StatSample::new(cpu1_committed, "cpu1.committed_insts", "count", 1),
+            ],
+        )
+    );
 }
