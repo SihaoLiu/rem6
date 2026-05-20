@@ -3,7 +3,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
@@ -228,6 +230,59 @@ impl InterruptLineChannel {
             )
             .map_err(InterruptError::Scheduler)
     }
+
+    pub fn assert_parallel<F>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        source: InterruptSourceId,
+        handler: F,
+    ) -> Result<PartitionEventId, InterruptError>
+    where
+        F: FnOnce(InterruptDelivery) + Send + 'static,
+    {
+        self.emit_parallel(context, source, InterruptEventKind::Assert, handler)
+    }
+
+    pub fn deassert_parallel<F>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        source: InterruptSourceId,
+        handler: F,
+    ) -> Result<PartitionEventId, InterruptError>
+    where
+        F: FnOnce(InterruptDelivery) + Send + 'static,
+    {
+        self.emit_parallel(context, source, InterruptEventKind::Deassert, handler)
+    }
+
+    pub fn emit_parallel<F>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+        handler: F,
+    ) -> Result<PartitionEventId, InterruptError>
+    where
+        F: FnOnce(InterruptDelivery) + Send + 'static,
+    {
+        let source_partition = context.partition();
+        let route = self.route;
+        context
+            .schedule_remote_after(
+                route.target_partition(),
+                self.signal_latency,
+                move |context| {
+                    handler(InterruptDelivery::new(
+                        context.now(),
+                        source_partition,
+                        route,
+                        source,
+                        kind,
+                    ));
+                },
+            )
+            .map_err(InterruptError::Scheduler)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -294,6 +349,45 @@ impl InterruptLinePort {
                     .push(error);
             }
         })
+    }
+
+    pub fn assert_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        source: InterruptSourceId,
+    ) -> Result<PartitionEventId, InterruptError> {
+        self.emit_parallel(context, source, InterruptEventKind::Assert)
+    }
+
+    pub fn deassert_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        source: InterruptSourceId,
+    ) -> Result<PartitionEventId, InterruptError> {
+        self.emit_parallel(context, source, InterruptEventKind::Deassert)
+    }
+
+    pub fn emit_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+    ) -> Result<PartitionEventId, InterruptError> {
+        let controller = Arc::clone(&self.controller);
+        let delivery_errors = Arc::clone(&self.delivery_errors);
+        self.channel
+            .emit_parallel(context, source, kind, move |delivery| {
+                let result = controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .apply_delivery(delivery);
+                if let Err(error) = result {
+                    delivery_errors
+                        .lock()
+                        .expect("interrupt delivery error lock")
+                        .push(error);
+                }
+            })
     }
 }
 
@@ -962,7 +1056,9 @@ pub enum InterruptError {
 impl fmt::Display for InterruptError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroSignalLatency => write!(formatter, "interrupt signal latency must be positive"),
+            Self::ZeroSignalLatency => {
+                write!(formatter, "interrupt signal latency must be positive")
+            }
             Self::DuplicateLine { line } => {
                 write!(
                     formatter,
@@ -999,7 +1095,8 @@ impl fmt::Display for InterruptError {
                 actual,
             } => write!(
                 formatter,
-                "interrupt line {} delivery route targets partition {} target {}, expected partition {} target {}",
+                "interrupt line {} delivery route targets partition {} target {}, \
+                 expected partition {} target {}",
                 line.get(),
                 actual.target_partition().index(),
                 actual.target().get(),

@@ -316,6 +316,60 @@ fn interrupt_line_port_delivers_signals_into_controller() {
 }
 
 #[test]
+fn interrupt_line_port_delivers_signals_into_controller_on_parallel_scheduler() {
+    let device = PartitionId::new(0);
+    let cpu = PartitionId::new(1);
+    let route = InterruptRoute::new(InterruptLineId::new(14), InterruptTargetId::new(3), cpu);
+    let mut controller = InterruptController::new();
+    controller.register_route(route).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let errors = port.delivery_errors();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(device, 9, move |context| {
+            port.assert_parallel(context, InterruptSourceId::new(12))
+                .unwrap();
+            port.deassert_parallel(context, InterruptSourceId::new(12))
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert!(summary.final_tick() >= 11);
+    assert!(errors.lock().unwrap().is_empty());
+    let controller = controller.lock().unwrap();
+    assert!(controller.pending().is_empty());
+    assert_eq!(
+        controller.history(),
+        &[
+            InterruptEvent::routed(
+                11,
+                InterruptLineId::new(14),
+                InterruptTargetId::new(3),
+                cpu,
+                InterruptSourceId::new(12),
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                11,
+                InterruptLineId::new(14),
+                InterruptTargetId::new(3),
+                cpu,
+                InterruptSourceId::new(12),
+                InterruptEventKind::Deassert,
+            ),
+        ]
+    );
+}
+
+#[test]
 fn interrupt_line_port_records_delivery_errors() {
     let device = PartitionId::new(0);
     let cpu = PartitionId::new(1);
