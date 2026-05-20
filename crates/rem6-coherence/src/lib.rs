@@ -9,6 +9,7 @@ use rem6_directory::{
     MsiDirectory,
 };
 use rem6_dram::DramMemoryController;
+use rem6_fabric::{FabricModel, FabricPath};
 use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -491,6 +492,8 @@ pub struct PartitionedRouteHopConfig {
     endpoint: TransportEndpointId,
     request_latency: u64,
     response_latency: u64,
+    request_fabric_path: Option<FabricPath>,
+    response_fabric_path: Option<FabricPath>,
 }
 
 impl PartitionedRouteHopConfig {
@@ -505,7 +508,19 @@ impl PartitionedRouteHopConfig {
             endpoint,
             request_latency,
             response_latency,
+            request_fabric_path: None,
+            response_fabric_path: None,
         }
+    }
+
+    pub fn with_request_fabric_path(mut self, path: FabricPath) -> Self {
+        self.request_fabric_path = Some(path);
+        self
+    }
+
+    pub fn with_response_fabric_path(mut self, path: FabricPath) -> Self {
+        self.response_fabric_path = Some(path);
+        self
     }
 
     pub const fn partition(&self) -> PartitionId {
@@ -522,6 +537,14 @@ impl PartitionedRouteHopConfig {
 
     pub const fn response_latency(&self) -> u64 {
         self.response_latency
+    }
+
+    pub fn request_fabric_path(&self) -> Option<&FabricPath> {
+        self.request_fabric_path.as_ref()
+    }
+
+    pub fn response_fabric_path(&self) -> Option<&FabricPath> {
+        self.response_fabric_path.as_ref()
     }
 }
 
@@ -907,7 +930,21 @@ impl PartitionedDirectoryLineHarness {
             .index()
             .checked_add(1)
             .ok_or(HarnessError::Scheduler(SchedulerError::NoPartitions))?;
-        let mut transport = MemoryTransport::new();
+        let agent_configs: Vec<_> = agents.into_iter().collect();
+        let uses_fabric = memory
+            .as_ref()
+            .is_some_and(|memory| route_hops_use_fabric(memory.route_hops()))
+            || dram_memory
+                .as_ref()
+                .is_some_and(|memory| route_hops_use_fabric(memory.route_hops()))
+            || agent_configs
+                .iter()
+                .any(|config| route_hops_use_fabric(config.route_hops()));
+        let mut transport = if uses_fabric {
+            MemoryTransport::with_fabric(FabricModel::new())
+        } else {
+            MemoryTransport::new()
+        };
         let mut caches = BTreeMap::new();
         let mut routes = BTreeMap::new();
         let mut memory_route = None;
@@ -969,7 +1006,7 @@ impl PartitionedDirectoryLineHarness {
             dram_controller = Some(Arc::new(Mutex::new(memory.into_controller())));
         }
 
-        for config in agents {
+        for config in agent_configs {
             partition_count = partition_count.max(
                 config
                     .partition()
@@ -1225,6 +1262,11 @@ fn expand_partition_count_for_hops(
     Ok(())
 }
 
+fn route_hops_use_fabric(hops: &[PartitionedRouteHopConfig]) -> bool {
+    hops.iter()
+        .any(|hop| hop.request_fabric_path().is_some() || hop.response_fabric_path().is_some())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn memory_route_from_config(
     source_endpoint: TransportEndpointId,
@@ -1249,12 +1291,19 @@ fn memory_route_from_config(
     let hops = route_hops
         .iter()
         .map(|hop| {
-            MemoryRouteHop::new(
+            let mut route_hop = MemoryRouteHop::new(
                 hop.endpoint().clone(),
                 hop.partition(),
                 hop.request_latency(),
                 hop.response_latency(),
-            )
+            )?;
+            if let Some(path) = hop.request_fabric_path() {
+                route_hop = route_hop.with_request_fabric_path(path.clone());
+            }
+            if let Some(path) = hop.response_fabric_path() {
+                route_hop = route_hop.with_response_fabric_path(path.clone());
+            }
+            Ok(route_hop)
         })
         .collect::<Result<Vec<_>, _>>()?;
     MemoryRoute::new_path(source_endpoint, source_partition, hops)

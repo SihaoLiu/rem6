@@ -5,6 +5,7 @@ use rem6_coherence::{
     TopologyDramMemoryConfig,
 };
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
+use rem6_fabric::FabricLinkId;
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
@@ -39,6 +40,10 @@ fn port(name: &str) -> PortName {
 
 fn endpoint(component_name: &str) -> TransportEndpointId {
     TransportEndpointId::new(component_name).unwrap()
+}
+
+fn fabric_link(name: &str) -> FabricLinkId {
+    FabricLinkId::new(name).unwrap()
 }
 
 fn agent(value: u32) -> AgentId {
@@ -175,6 +180,112 @@ fn harness_config() -> TopologyDirectoryHarnessConfig {
             TopologyCacheAgentConfig::new(agent(2), component("l1d1"), port("mem_side")),
         ],
     )
+}
+
+#[test]
+fn topology_directory_harness_reserves_declared_fabric_links() {
+    let topology = TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                component("l1d0"),
+                kind("l1_cache"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1d1"),
+                kind("l1_cache"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_fabric_latencies(
+            Endpoint::new(component("l1d0"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            2,
+            5,
+            fabric_link("mesh_shared"),
+            8,
+        )
+        .unwrap()
+        .connect_with_fabric_latencies(
+            Endpoint::new(component("l1d1"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            2,
+            5,
+            fabric_link("mesh_shared"),
+            8,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("dir0"), port("mem_side")),
+            Endpoint::new(component("mem0"), port("requests")),
+            7,
+            11,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut harness =
+        PartitionedDirectoryLineHarness::new_with_topology(&topology, harness_config()).unwrap();
+
+    harness
+        .submit_cpu_request(agent(1), read(1, 10, 0x1004, 16))
+        .unwrap();
+    harness
+        .submit_cpu_request(agent(2), read(2, 11, 0x1008, 16))
+        .unwrap();
+
+    harness.run_until_idle();
+
+    let route_a = harness.route(agent(1)).unwrap();
+    let route_b = harness.route(agent(2)).unwrap();
+    let arrivals: Vec<_> = harness
+        .trace()
+        .into_iter()
+        .filter(|event| event.kind() == MemoryTraceKind::RequestArrived)
+        .filter(|event| event.route() == route_a || event.route() == route_b)
+        .map(|event| (event.route(), event.tick(), event.request_id()))
+        .collect();
+    assert_eq!(
+        arrivals,
+        vec![
+            (route_a, 10, request_id(1, 0)),
+            (route_b, 18, request_id(2, 0)),
+        ]
+    );
 }
 
 #[test]

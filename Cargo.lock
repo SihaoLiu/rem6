@@ -18,6 +18,7 @@ dependencies = [
  "rem6-cache",
  "rem6-directory",
  "rem6-dram",
+ "rem6-fabric",
  "rem6-kernel",
  "rem6-memory",
  "rem6-protocol-msi",
@@ -66,6 +67,7 @@ dependencies = [
 name = "rem6-topology"
 version = "0.1.0"
 dependencies = [
+ "rem6-fabric",
  "rem6-kernel",
 ]
 

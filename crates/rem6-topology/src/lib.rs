@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use rem6_fabric::{FabricError, FabricLinkId, FabricPath, FabricPathHop};
 use rem6_kernel::{ClockDomain, PartitionId, Tick};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -113,6 +114,7 @@ pub enum TopologyError {
         to: Endpoint,
         to_direction: PortDirection,
     },
+    Fabric(FabricError),
 }
 
 impl fmt::Display for TopologyError {
@@ -163,11 +165,19 @@ impl fmt::Display for TopologyError {
                 to.component().as_str(),
                 to.port().as_str()
             ),
+            Self::Fabric(error) => write!(formatter, "{error}"),
         }
     }
 }
 
-impl Error for TopologyError {}
+impl Error for TopologyError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Fabric(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ComponentSpec {
@@ -260,6 +270,8 @@ pub struct ConnectionSpec {
     to: Endpoint,
     request_latency: Tick,
     response_latency: Tick,
+    request_fabric_path: Option<FabricPath>,
+    response_fabric_path: Option<FabricPath>,
 }
 
 impl ConnectionSpec {
@@ -282,6 +294,14 @@ impl ConnectionSpec {
     pub fn response_latency(&self) -> Tick {
         self.response_latency
     }
+
+    pub fn request_fabric_path(&self) -> Option<&FabricPath> {
+        self.request_fabric_path.as_ref()
+    }
+
+    pub fn response_fabric_path(&self) -> Option<&FabricPath> {
+        self.response_fabric_path.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -290,6 +310,8 @@ pub struct TopologyPathHop {
     to: Endpoint,
     request_latency: Tick,
     response_latency: Tick,
+    request_fabric_path: Option<FabricPath>,
+    response_fabric_path: Option<FabricPath>,
 }
 
 impl TopologyPathHop {
@@ -299,6 +321,8 @@ impl TopologyPathHop {
             to: connection.to().clone(),
             request_latency: connection.request_latency(),
             response_latency: connection.response_latency(),
+            request_fabric_path: connection.request_fabric_path().cloned(),
+            response_fabric_path: connection.response_fabric_path().cloned(),
         }
     }
 
@@ -316,6 +340,14 @@ impl TopologyPathHop {
 
     pub fn response_latency(&self) -> Tick {
         self.response_latency
+    }
+
+    pub fn request_fabric_path(&self) -> Option<&FabricPath> {
+        self.request_fabric_path.as_ref()
+    }
+
+    pub fn response_fabric_path(&self) -> Option<&FabricPath> {
+        self.response_fabric_path.as_ref()
     }
 }
 
@@ -468,6 +500,8 @@ impl TopologyBuilder {
             to,
             request_latency: latency,
             response_latency: latency,
+            request_fabric_path: None,
+            response_fabric_path: None,
         });
         Ok(self)
     }
@@ -485,6 +519,43 @@ impl TopologyBuilder {
             to,
             request_latency,
             response_latency,
+            request_fabric_path: None,
+            response_fabric_path: None,
+        });
+        Ok(self)
+    }
+
+    pub fn connect_with_fabric_latencies(
+        mut self,
+        from: Endpoint,
+        to: Endpoint,
+        request_latency: Tick,
+        response_latency: Tick,
+        fabric_link: FabricLinkId,
+        bandwidth_bytes_per_tick: u64,
+    ) -> Result<Self, TopologyError> {
+        self.validate_connection(&from, &to, request_latency, response_latency)?;
+        let request_fabric_path = FabricPath::new([FabricPathHop::new(
+            fabric_link.clone(),
+            request_latency,
+            bandwidth_bytes_per_tick,
+        )
+        .map_err(TopologyError::Fabric)?])
+        .map_err(TopologyError::Fabric)?;
+        let response_fabric_path = FabricPath::new([FabricPathHop::new(
+            fabric_link,
+            response_latency,
+            bandwidth_bytes_per_tick,
+        )
+        .map_err(TopologyError::Fabric)?])
+        .map_err(TopologyError::Fabric)?;
+        self.connections.push(ConnectionSpec {
+            from,
+            to,
+            request_latency,
+            response_latency,
+            request_fabric_path: Some(request_fabric_path),
+            response_fabric_path: Some(response_fabric_path),
         });
         Ok(self)
     }

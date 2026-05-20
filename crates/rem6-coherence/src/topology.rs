@@ -246,12 +246,19 @@ fn topology_route_path(
         .iter()
         .map(|hop| {
             let component = topology_component(topology, hop.to().component())?;
-            Ok(PartitionedRouteHopConfig::new(
+            let mut route_hop = PartitionedRouteHopConfig::new(
                 component.partition(),
                 transport_endpoint(hop.to().component())?,
                 hop.request_latency(),
                 hop.response_latency(),
-            ))
+            );
+            if let Some(path) = hop.request_fabric_path() {
+                route_hop = route_hop.with_request_fabric_path(path.clone());
+            }
+            if let Some(path) = hop.response_fabric_path() {
+                route_hop = route_hop.with_response_fabric_path(path.clone());
+            }
+            Ok(route_hop)
         })
         .collect::<Result<Vec<_>, HarnessError>>()?;
 
