@@ -327,6 +327,16 @@ pub trait MmioDevice: Send + Sync {
         context: &mut SchedulerContext<'_>,
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError>;
+
+    fn respond_parallel(
+        &self,
+        _context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        Err(MmioError::ParallelResponseUnsupported {
+            request: request.id(),
+        })
+    }
 }
 
 impl<T> MmioDevice for Arc<T>
@@ -340,12 +350,30 @@ where
     ) -> Result<MmioResponse, MmioError> {
         (**self).respond(context, request)
     }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        (**self).respond_parallel(context, request)
+    }
 }
 
 impl MmioDevice for Mutex<MmioRegisterBank> {
     fn respond(
         &self,
         _context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.lock()
+            .expect("mmio register bank device lock")
+            .respond(request)
+    }
+
+    fn respond_parallel(
+        &self,
+        _context: &mut ParallelSchedulerContext<'_>,
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         self.lock()
@@ -664,6 +692,25 @@ impl MmioBus {
         )
     }
 
+    pub fn submit_parallel<G>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: MmioRequest,
+        completion_sink: G,
+    ) -> Result<PartitionEventId, MmioError>
+    where
+        G: FnOnce(MmioCompletion) + Send + 'static,
+    {
+        let device = self.device_for(&request)?.clone();
+        let responder = Arc::clone(&device.device);
+        device.channel.submit_parallel(
+            context,
+            request,
+            move |delivery, context| responder.respond_parallel(context, delivery.request()),
+            completion_sink,
+        )
+    }
+
     fn device_for(&self, request: &MmioRequest) -> Result<&MmioDeviceEntry, MmioError> {
         let requested = request.range();
         for device in &self.devices {
@@ -778,6 +825,9 @@ pub enum MmioError {
     DeviceError {
         request: MmioRequestId,
         message: String,
+    },
+    ParallelResponseUnsupported {
+        request: MmioRequestId,
     },
     ZeroRouteLatency {
         latency: MmioRouteLatency,
@@ -934,6 +984,11 @@ impl fmt::Display for MmioError {
                     request.get()
                 )
             }
+            Self::ParallelResponseUnsupported { request } => write!(
+                formatter,
+                "MMIO request {} has no parallel device response",
+                request.get()
+            ),
             Self::ZeroRouteLatency { latency } => {
                 write!(formatter, "{latency:?} MMIO route latency must be positive")
             }
