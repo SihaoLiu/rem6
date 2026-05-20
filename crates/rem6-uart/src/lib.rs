@@ -258,6 +258,7 @@ impl UartMmioDevice {
         let result = match kind {
             InterruptEventKind::Assert => interrupt.port.assert(context, interrupt.source),
             InterruptEventKind::Deassert => interrupt.port.deassert(context, interrupt.source),
+            InterruptEventKind::Claim | InterruptEventKind::Complete => return,
         };
         if let Err(error) = result {
             self.state

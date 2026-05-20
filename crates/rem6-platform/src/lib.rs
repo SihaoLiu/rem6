@@ -4,8 +4,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
-    InterruptController, InterruptError, InterruptLineChannel, InterruptLineId, InterruptLinePort,
-    InterruptRoute, InterruptSourceId, InterruptTargetId,
+    InterruptController, InterruptControllerMmioDevice, InterruptError, InterruptLineChannel,
+    InterruptLineId, InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
 };
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
@@ -37,9 +37,18 @@ pub struct PlatformUartConfig {
     pub interrupt_latency: Tick,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformInterruptControllerConfig {
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub target: InterruptTargetId,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PlatformBuilder {
     partition_count: u32,
+    interrupt_controllers: Vec<PlatformInterruptControllerConfig>,
     timers: Vec<PlatformTimerConfig>,
     uarts: Vec<PlatformUartConfig>,
 }
@@ -48,9 +57,15 @@ impl PlatformBuilder {
     pub const fn new(partition_count: u32) -> Self {
         Self {
             partition_count,
+            interrupt_controllers: Vec::new(),
             timers: Vec::new(),
             uarts: Vec::new(),
         }
+    }
+
+    pub fn add_interrupt_controller(mut self, config: PlatformInterruptControllerConfig) -> Self {
+        self.interrupt_controllers.push(config);
+        self
     }
 
     pub fn add_timer(mut self, config: PlatformTimerConfig) -> Self {
@@ -72,6 +87,18 @@ impl PlatformBuilder {
         let mut bus = MmioBus::new();
         let mut timers = BTreeMap::new();
         let mut uarts = BTreeMap::new();
+
+        for config in self.interrupt_controllers {
+            validate_route(self.partition_count, config.route)?;
+            let device = InterruptControllerMmioDevice::new(
+                Arc::clone(&controller),
+                config.base,
+                config.target,
+                config.route.source_partition(),
+            );
+            bus.insert_device(region(config.base, config.size)?, config.route, device)
+                .map_err(PlatformError::Mmio)?;
+        }
 
         for config in self.timers {
             validate_route(self.partition_count, config.route)?;

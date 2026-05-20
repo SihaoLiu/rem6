@@ -60,6 +60,8 @@ name = "rem6-interrupt"
 version = "0.1.0"
 dependencies = [
  "rem6-kernel",
+ "rem6-memory",
+ "rem6-mmio",
 ]
 
 [[package]]

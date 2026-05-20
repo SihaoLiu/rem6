@@ -1,11 +1,14 @@
 use rem6_interrupt::{
     InterruptError, InterruptEvent, InterruptEventKind, InterruptLineId, InterruptSourceId,
-    InterruptTargetId,
+    InterruptTargetId, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, INTERRUPT_MMIO_PENDING_OFFSET,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
-use rem6_platform::{PlatformBuilder, PlatformError, PlatformTimerConfig, PlatformUartConfig};
+use rem6_platform::{
+    PlatformBuilder, PlatformError, PlatformInterruptControllerConfig, PlatformTimerConfig,
+    PlatformUartConfig,
+};
 use rem6_timer::{TimerArm, TimerExpiry, TimerId, TIMER_MMIO_DEADLINE_OFFSET};
 use rem6_uart::{UartId, UartRxByte, UartTxByte, UART_MMIO_DATA_OFFSET};
 
@@ -278,4 +281,180 @@ fn platform_builder_rejects_empty_and_unknown_partitions() {
         ),
         Ok(_) => panic!("unknown source partition was accepted"),
     }
+}
+
+#[test]
+fn platform_builder_maps_interrupt_controller_mmio() {
+    let cpu = PartitionId::new(0);
+    let interrupt_partition = PartitionId::new(1);
+    let timer_partition = PartitionId::new(2);
+    let target = InterruptTargetId::new(0);
+    let timer_id = TimerId::new(9);
+    let timer_line = InterruptLineId::new(80);
+    let timer_source = InterruptSourceId::new(90);
+
+    let platform = PlatformBuilder::new(3)
+        .add_interrupt_controller(PlatformInterruptControllerConfig {
+            base: Address::new(0x4000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
+            target,
+        })
+        .add_timer(PlatformTimerConfig {
+            id: timer_id,
+            base: Address::new(0x5000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: MmioRoute::new(cpu, timer_partition, 2, 1).unwrap(),
+            interrupt_line: timer_line,
+            interrupt_target: target,
+            interrupt_source: timer_source,
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap();
+
+    let timer = platform.timer(timer_id).unwrap().clone();
+    let controller = platform.interrupt_controller();
+    let bus = platform.mmio_bus().clone();
+    let timer_bus = bus.clone();
+    let interrupt_bus = bus;
+    let completions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            let first_completed = std::sync::Arc::clone(&completed);
+            timer_bus
+                .submit(
+                    context,
+                    MmioRequest::write(
+                        MmioRequestId::new(10),
+                        Address::new(0x5000 + TIMER_MMIO_DEADLINE_OFFSET),
+                        le64(7),
+                        full_mask(8),
+                    )
+                    .unwrap(),
+                    move |completion| first_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 10, move |context| {
+            let first_completed = std::sync::Arc::clone(&completed);
+            interrupt_bus
+                .submit(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(11),
+                        Address::new(0x4000 + INTERRUPT_MMIO_PENDING_OFFSET),
+                        AccessSize::new(8).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| first_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+
+            let second_completed = std::sync::Arc::clone(&completed);
+            interrupt_bus
+                .submit(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(12),
+                        Address::new(0x4000 + INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET),
+                        AccessSize::new(8).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| second_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+
+            interrupt_bus
+                .submit(
+                    context,
+                    MmioRequest::write(
+                        MmioRequestId::new(13),
+                        Address::new(0x4000 + INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET),
+                        le64(timer_line.get()),
+                        full_mask(8),
+                    )
+                    .unwrap(),
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 12);
+    assert_eq!(summary.final_tick(), 13);
+    assert_eq!(timer.snapshot().expiries(), &[TimerExpiry::new(1, 7)]);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                MmioRoute::new(cpu, timer_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(MmioRequestId::new(10), None)),
+            ),
+            MmioCompletion::new(
+                13,
+                MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(11),
+                    Some(le64(timer_line.get())),
+                )),
+            ),
+            MmioCompletion::new(
+                13,
+                MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(12),
+                    Some(le64(timer_line.get())),
+                )),
+            ),
+            MmioCompletion::new(
+                13,
+                MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(MmioRequestId::new(13), None)),
+            ),
+        ]
+    );
+
+    let controller = controller.lock().unwrap();
+    assert!(controller.pending().is_empty());
+    assert!(controller.claimed().is_empty());
+    assert_eq!(
+        controller.history(),
+        &[
+            InterruptEvent::routed(
+                9,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                12,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Claim,
+            ),
+            InterruptEvent::routed(
+                12,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Complete,
+            ),
+        ]
+    );
 }

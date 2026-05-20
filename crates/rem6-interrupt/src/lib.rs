@@ -4,6 +4,12 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_memory::{Address, ByteMask};
+use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
+
+pub const INTERRUPT_MMIO_REGISTER_BYTES: u64 = 8;
+pub const INTERRUPT_MMIO_PENDING_OFFSET: u64 = 0x00;
+pub const INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET: u64 = 0x08;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct InterruptLineId(u64);
@@ -81,6 +87,8 @@ impl InterruptRoute {
 pub enum InterruptEventKind {
     Assert,
     Deassert,
+    Claim,
+    Complete,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -422,6 +430,60 @@ impl PendingInterrupt {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterruptClaim {
+    line: InterruptLineId,
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+    source: InterruptSourceId,
+    asserted_tick: Tick,
+    claimed_tick: Tick,
+}
+
+impl InterruptClaim {
+    pub const fn new(
+        line: InterruptLineId,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        source: InterruptSourceId,
+        asserted_tick: Tick,
+        claimed_tick: Tick,
+    ) -> Self {
+        Self {
+            line,
+            target,
+            target_partition,
+            source,
+            asserted_tick,
+            claimed_tick,
+        }
+    }
+
+    pub const fn line(self) -> InterruptLineId {
+        self.line
+    }
+
+    pub const fn target(self) -> InterruptTargetId {
+        self.target
+    }
+
+    pub const fn target_partition(self) -> PartitionId {
+        self.target_partition
+    }
+
+    pub const fn source(self) -> InterruptSourceId {
+        self.source
+    }
+
+    pub const fn asserted_tick(self) -> Tick {
+        self.asserted_tick
+    }
+
+    pub const fn claimed_tick(self) -> Tick {
+        self.claimed_tick
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterruptSnapshot {
     tick: Tick,
@@ -459,6 +521,7 @@ impl InterruptSnapshot {
 pub struct InterruptController {
     routes: BTreeMap<InterruptLineId, InterruptRoute>,
     pending: BTreeMap<InterruptLineId, PendingInterrupt>,
+    claimed: BTreeMap<(InterruptTargetId, PartitionId), InterruptClaim>,
     history: Vec<InterruptEvent>,
 }
 
@@ -561,6 +624,11 @@ impl InterruptController {
             InterruptEventKind::Deassert => {
                 self.deassert(delivery.line(), delivery.source(), delivery.tick())
             }
+            InterruptEventKind::Claim | InterruptEventKind::Complete => {
+                Err(InterruptError::NonSignalDelivery {
+                    kind: delivery.kind(),
+                })
+            }
         }
     }
 
@@ -568,6 +636,94 @@ impl InterruptController {
         let mut pending = self.pending.values().cloned().collect::<Vec<_>>();
         pending.sort_by_key(|entry| (entry.target_partition(), entry.target(), entry.line()));
         pending
+    }
+
+    pub fn peek_claimable(
+        &self,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+    ) -> Option<PendingInterrupt> {
+        self.pending
+            .values()
+            .find(|pending| {
+                pending.target() == target && pending.target_partition() == target_partition
+            })
+            .cloned()
+    }
+
+    pub fn claim(
+        &mut self,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        tick: Tick,
+    ) -> Option<InterruptClaim> {
+        let key = (target, target_partition);
+        if let Some(claim) = self.claimed.get(&key) {
+            return Some(*claim);
+        }
+
+        let pending = self.peek_claimable(target, target_partition)?;
+        self.pending.remove(&pending.line());
+        let claim = InterruptClaim::new(
+            pending.line(),
+            target,
+            target_partition,
+            pending.source(),
+            pending.asserted_tick(),
+            tick,
+        );
+        self.claimed.insert(key, claim);
+        self.history.push(InterruptEvent::routed(
+            tick,
+            pending.line(),
+            target,
+            target_partition,
+            pending.source(),
+            InterruptEventKind::Claim,
+        ));
+        Some(claim)
+    }
+
+    pub fn complete(
+        &mut self,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        line: InterruptLineId,
+        tick: Tick,
+    ) -> Result<(), InterruptError> {
+        let key = (target, target_partition);
+        let claimed = self
+            .claimed
+            .get(&key)
+            .ok_or(InterruptError::NoClaimedInterrupt {
+                target,
+                target_partition,
+            })?;
+        if claimed.line() != line {
+            return Err(InterruptError::ClaimMismatch {
+                target,
+                target_partition,
+                expected: claimed.line(),
+                actual: line,
+            });
+        }
+
+        let claimed = self.claimed.remove(&key).expect("claimed interrupt exists");
+        self.history.push(InterruptEvent::routed(
+            tick,
+            claimed.line(),
+            target,
+            target_partition,
+            claimed.source(),
+            InterruptEventKind::Complete,
+        ));
+        Ok(())
+    }
+
+    pub fn claimed(&self) -> Vec<InterruptClaim> {
+        let mut claimed = self.claimed.values().copied().collect::<Vec<_>>();
+        claimed.sort_by_key(|entry| (entry.target_partition(), entry.target(), entry.line()));
+        claimed
     }
 
     pub fn history(&self) -> &[InterruptEvent] {
@@ -598,6 +754,169 @@ impl InterruptController {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct InterruptControllerMmioDevice {
+    controller: Arc<Mutex<InterruptController>>,
+    base: Address,
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+}
+
+impl InterruptControllerMmioDevice {
+    pub const fn new(
+        controller: Arc<Mutex<InterruptController>>,
+        base: Address,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+    ) -> Self {
+        Self {
+            controller,
+            base,
+            target,
+            target_partition,
+        }
+    }
+
+    pub fn controller(&self) -> Arc<Mutex<InterruptController>> {
+        Arc::clone(&self.controller)
+    }
+
+    pub const fn base(&self) -> Address {
+        self.base
+    }
+
+    pub const fn target(&self) -> InterruptTargetId {
+        self.target
+    }
+
+    pub const fn target_partition(&self) -> PartitionId {
+        self.target_partition
+    }
+
+    pub fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.validate_size(request)?;
+        let offset = self.offset(request)?;
+        match (offset, request.operation()) {
+            (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Read) => {
+                let line = self
+                    .controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .peek_claimable(self.target, self.target_partition)
+                    .map(|pending| pending.line().get())
+                    .unwrap_or_default();
+                Ok(MmioResponse::completed(request.id(), Some(le64(line))))
+            }
+            (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Write) => Err(MmioError::AccessDenied {
+                request: request.id(),
+                operation: MmioOperation::Write,
+                access: MmioAccess::ReadOnly,
+            }),
+            (INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, MmioOperation::Read) => {
+                let line = self
+                    .controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .claim(self.target, self.target_partition, context.now())
+                    .map(|claim| claim.line().get())
+                    .unwrap_or_default();
+                Ok(MmioResponse::completed(request.id(), Some(le64(line))))
+            }
+            (INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, MmioOperation::Write) => {
+                let line = self.line_from_write(request)?;
+                self.controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .complete(self.target, self.target_partition, line, context.now())
+                    .map_err(|error| MmioError::DeviceError {
+                        request: request.id(),
+                        message: error.to_string(),
+                    })?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+            _ => Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            }),
+        }
+    }
+
+    fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
+        if request.size().bytes() != INTERRUPT_MMIO_REGISTER_BYTES {
+            return Err(MmioError::AccessSizeMismatch {
+                request: request.id(),
+                expected: INTERRUPT_MMIO_REGISTER_BYTES,
+                actual: request.size().bytes(),
+            });
+        }
+        Ok(())
+    }
+
+    fn offset(&self, request: &MmioRequest) -> Result<u64, MmioError> {
+        request
+            .range()
+            .start()
+            .get()
+            .checked_sub(self.base.get())
+            .ok_or(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            })
+    }
+
+    fn line_from_write(&self, request: &MmioRequest) -> Result<InterruptLineId, MmioError> {
+        let data = request.data().ok_or(MmioError::MissingWriteData {
+            request: request.id(),
+        })?;
+        if data.len() as u64 != INTERRUPT_MMIO_REGISTER_BYTES {
+            return Err(MmioError::PayloadSizeMismatch {
+                request: request.id(),
+                expected: INTERRUPT_MMIO_REGISTER_BYTES,
+                actual: data.len() as u64,
+            });
+        }
+        let mask = request.byte_mask().ok_or(MmioError::MissingByteMask {
+            request: request.id(),
+        })?;
+        validate_interrupt_mmio_mask(request, mask)?;
+
+        let mut bytes = [0; 8];
+        for (index, byte) in data.iter().enumerate() {
+            if mask.bits()[index] {
+                bytes[index] = *byte;
+            }
+        }
+        Ok(InterruptLineId::new(u64::from_le_bytes(bytes)))
+    }
+}
+
+impl MmioDevice for InterruptControllerMmioDevice {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        InterruptControllerMmioDevice::respond(self, context, request)
+    }
+}
+
+fn le64(value: u64) -> Vec<u8> {
+    value.to_le_bytes().to_vec()
+}
+
+fn validate_interrupt_mmio_mask(request: &MmioRequest, mask: &ByteMask) -> Result<(), MmioError> {
+    if mask.len() != INTERRUPT_MMIO_REGISTER_BYTES {
+        return Err(MmioError::ByteMaskSizeMismatch {
+            request: request.id(),
+            expected: INTERRUPT_MMIO_REGISTER_BYTES,
+            actual: mask.len(),
+        });
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InterruptError {
     ZeroSignalLatency,
@@ -623,6 +942,19 @@ pub enum InterruptError {
         line: InterruptLineId,
         expected: InterruptRoute,
         actual: InterruptRoute,
+    },
+    NoClaimedInterrupt {
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+    },
+    ClaimMismatch {
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        expected: InterruptLineId,
+        actual: InterruptLineId,
+    },
+    NonSignalDelivery {
+        kind: InterruptEventKind,
     },
     Scheduler(SchedulerError),
 }
@@ -674,6 +1006,31 @@ impl fmt::Display for InterruptError {
                 expected.target_partition().index(),
                 expected.target().get()
             ),
+            Self::NoClaimedInterrupt {
+                target,
+                target_partition,
+            } => write!(
+                formatter,
+                "target {} partition {} has no claimed interrupt",
+                target.get(),
+                target_partition.index()
+            ),
+            Self::ClaimMismatch {
+                target,
+                target_partition,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "target {} partition {} claimed line {}, not line {}",
+                target.get(),
+                target_partition.index(),
+                expected.get(),
+                actual.get()
+            ),
+            Self::NonSignalDelivery { kind } => {
+                write!(formatter, "{kind:?} is not a signal delivery event")
+            }
             Self::Scheduler(error) => write!(formatter, "{error}"),
         }
     }
