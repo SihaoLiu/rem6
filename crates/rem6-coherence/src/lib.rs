@@ -1,14 +1,19 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_cache::{CacheControllerError, CacheControllerResultKind, MsiCacheController};
+use rem6_directory::{
+    DirectoryDataSource, DirectoryDecision, DirectoryError, DirectoryGrant, DirectoryLineState,
+    MsiDirectory,
+};
 use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
-    Address, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryResponse, ResponseStatus,
+    Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
+    MemoryRequestId, MemoryResponse, ResponseStatus,
 };
-use rem6_protocol_msi::MsiState;
+use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, TargetOutcome,
     TransportEndpointId, TransportError,
@@ -24,11 +29,21 @@ pub enum SubmitKind {
 pub struct SubmitResult {
     kind: SubmitKind,
     cache_result: CacheControllerResultKind,
+    directory_decision: Option<DirectoryDecision>,
 }
 
 impl SubmitResult {
     fn new(kind: SubmitKind, cache_result: CacheControllerResultKind) -> Self {
-        Self { kind, cache_result }
+        Self {
+            kind,
+            cache_result,
+            directory_decision: None,
+        }
+    }
+
+    fn with_directory_decision(mut self, decision: DirectoryDecision) -> Self {
+        self.directory_decision = Some(decision);
+        self
     }
 
     pub const fn kind(&self) -> SubmitKind {
@@ -37,6 +52,10 @@ impl SubmitResult {
 
     pub const fn cache_result(&self) -> CacheControllerResultKind {
         self.cache_result
+    }
+
+    pub const fn directory_decision(&self) -> Option<&DirectoryDecision> {
+        self.directory_decision.as_ref()
     }
 }
 
@@ -90,9 +109,13 @@ impl CpuResponseRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HarnessError {
     LineBusy { state: MsiState },
+    UnknownCache { agent: AgentId },
     WrongLine { expected: Address, actual: Address },
     LineDataSizeMismatch { expected: u64, actual: u64 },
+    MissingDirectoryGrant { request: MemoryRequestId },
+    GrantDataUnavailable { agent: AgentId, line: MsiLineId },
     Cache(CacheControllerError),
+    Directory(DirectoryError),
     Memory(MemoryError),
     Scheduler(SchedulerError),
     Transport(TransportError),
@@ -102,6 +125,9 @@ impl fmt::Display for HarnessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LineBusy { state } => write!(formatter, "cache line is busy in {state:?}"),
+            Self::UnknownCache { agent } => {
+                write!(formatter, "cache agent {} is not registered", agent.get())
+            }
             Self::WrongLine { expected, actual } => write!(
                 formatter,
                 "request for line {:#x} reached backing line {:#x}",
@@ -112,7 +138,20 @@ impl fmt::Display for HarnessError {
                 formatter,
                 "line data has {actual} bytes but line expects {expected}"
             ),
+            Self::MissingDirectoryGrant { request } => write!(
+                formatter,
+                "directory did not grant request {} from agent {}",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::GrantDataUnavailable { agent, line } => write!(
+                formatter,
+                "agent {} has no data for line {:#x}",
+                agent.get(),
+                line.address().get()
+            ),
             Self::Cache(error) => write!(formatter, "{error}"),
+            Self::Directory(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
@@ -124,6 +163,7 @@ impl Error for HarnessError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Cache(error) => Some(error),
+            Self::Directory(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Transport(error) => Some(error),
@@ -235,6 +275,186 @@ impl LineBackingStore {
 
         self.data = data.to_vec();
         Ok(())
+    }
+}
+
+pub struct DirectoryLineHarness {
+    layout: CacheLineLayout,
+    line: MsiLineId,
+    directory: MsiDirectory,
+    caches: BTreeMap<AgentId, MsiCacheController>,
+    backing: LineBackingStore,
+    cpu_responses: Vec<CpuResponseRecord>,
+    directory_decisions: Vec<DirectoryDecision>,
+}
+
+impl DirectoryLineHarness {
+    pub fn new<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        backing: LineBackingStore,
+        agents: I,
+    ) -> Result<Self, HarnessError>
+    where
+        I: IntoIterator<Item = AgentId>,
+    {
+        let line_address = layout.line_address(line_address);
+        if backing.line_address() != line_address {
+            return Err(HarnessError::WrongLine {
+                expected: line_address,
+                actual: backing.line_address(),
+            });
+        }
+
+        let line = MsiLineId::new(line_address);
+        let caches = agents
+            .into_iter()
+            .map(|agent| (agent, MsiCacheController::new(agent, layout, line_address)))
+            .collect();
+
+        Ok(Self {
+            layout,
+            line,
+            directory: MsiDirectory::new(),
+            caches,
+            backing,
+            cpu_responses: Vec::new(),
+            directory_decisions: Vec::new(),
+        })
+    }
+
+    pub fn submit_cpu_request(
+        &mut self,
+        agent: AgentId,
+        request: MemoryRequest,
+    ) -> Result<SubmitResult, HarnessError> {
+        let result = self
+            .cache_mut(agent)?
+            .accept_cpu_request(request)
+            .map_err(map_cache_error)?;
+        let cache_result = result.kind();
+
+        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+            self.record_cpu_response(0, cache_result, response);
+            return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
+        }
+
+        let downstream = result
+            .downstream_request()
+            .cloned()
+            .ok_or(HarnessError::Cache(CacheControllerError::NoPendingMiss))?;
+        let decision = self
+            .directory
+            .accept(downstream.clone())
+            .map_err(HarnessError::Directory)?;
+        let response = self.directory_response(&downstream, &decision)?;
+        self.directory_decisions.push(decision.clone());
+        let fill = self
+            .cache_mut(agent)?
+            .accept_fill(response)
+            .map_err(map_cache_error)?;
+        if let Some(TargetOutcome::Respond(response)) = fill.target_outcome() {
+            self.record_cpu_response(0, fill.kind(), response);
+        }
+
+        Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
+            .with_directory_decision(decision))
+    }
+
+    pub fn cache_state(&self, agent: AgentId) -> Result<MsiState, HarnessError> {
+        Ok(self.cache(agent)?.state())
+    }
+
+    pub fn directory_state(&self) -> DirectoryLineState {
+        self.directory.line_state(self.line)
+    }
+
+    pub fn cpu_responses(&self) -> Vec<CpuResponseRecord> {
+        self.cpu_responses.clone()
+    }
+
+    pub fn directory_decisions(&self) -> &[DirectoryDecision] {
+        &self.directory_decisions
+    }
+
+    pub fn cache_data(&self, agent: AgentId) -> Result<Option<Vec<u8>>, HarnessError> {
+        Ok(self.cache(agent)?.cached_data().map(<[u8]>::to_vec))
+    }
+
+    pub const fn line(&self) -> MsiLineId {
+        self.line
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    fn directory_response(
+        &mut self,
+        request: &MemoryRequest,
+        decision: &DirectoryDecision,
+    ) -> Result<MemoryResponse, HarnessError> {
+        let grant = decision
+            .grant()
+            .copied()
+            .ok_or(HarnessError::MissingDirectoryGrant {
+                request: request.id(),
+            })?;
+        let source_data = self.source_data(grant)?;
+
+        for snoop in decision.snoops() {
+            self.cache_mut(snoop.target())?
+                .accept_snoop(snoop.event())
+                .map_err(map_cache_error)?;
+        }
+
+        match grant.data_source() {
+            DirectoryDataSource::BackingMemory => self.backing.respond(request),
+            DirectoryDataSource::ModifiedOwner(_) => {
+                MemoryResponse::completed(request, source_data).map_err(HarnessError::Memory)
+            }
+            DirectoryDataSource::NoData => {
+                MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
+            }
+        }
+    }
+
+    fn source_data(&self, grant: DirectoryGrant) -> Result<Option<Vec<u8>>, HarnessError> {
+        match grant.data_source() {
+            DirectoryDataSource::BackingMemory | DirectoryDataSource::NoData => Ok(None),
+            DirectoryDataSource::ModifiedOwner(agent) => {
+                let data =
+                    self.cache(agent)?
+                        .cached_data()
+                        .ok_or(HarnessError::GrantDataUnavailable {
+                            agent,
+                            line: grant.line(),
+                        })?;
+                Ok(Some(data.to_vec()))
+            }
+        }
+    }
+
+    fn cache(&self, agent: AgentId) -> Result<&MsiCacheController, HarnessError> {
+        self.caches
+            .get(&agent)
+            .ok_or(HarnessError::UnknownCache { agent })
+    }
+
+    fn cache_mut(&mut self, agent: AgentId) -> Result<&mut MsiCacheController, HarnessError> {
+        self.caches
+            .get_mut(&agent)
+            .ok_or(HarnessError::UnknownCache { agent })
+    }
+
+    fn record_cpu_response(
+        &mut self,
+        tick: u64,
+        cache_result: CacheControllerResultKind,
+        response: &MemoryResponse,
+    ) {
+        self.cpu_responses
+            .push(response_record(tick, cache_result, response));
     }
 }
 
