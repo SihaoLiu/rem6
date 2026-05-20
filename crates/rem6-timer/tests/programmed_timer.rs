@@ -6,7 +6,9 @@ use rem6_interrupt::{
     PendingInterrupt,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
-use rem6_timer::{ProgrammableTimer, TimerArm, TimerError, TimerExpiry, TimerId, TimerSignalError};
+use rem6_timer::{
+    ProgrammableTimer, TimerArm, TimerError, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
+};
 
 #[test]
 fn programmed_timer_delivers_interrupt_at_deadline() {
@@ -211,6 +213,95 @@ fn programmed_timer_rejects_past_deadlines() {
     assert!(observed_timer.snapshot().arms().is_empty());
     assert!(observed_timer.snapshot().expiries().is_empty());
     assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn programmed_timer_snapshot_restore_reinstates_programmed_state() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(18);
+    let route = InterruptRoute::new(InterruptLineId::new(28), InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let timer = ProgrammableTimer::new(TimerId::new(8), timer_partition, source, port);
+    let observed_timer = timer.clone();
+    let captured = Arc::new(Mutex::new(None));
+    let captured_writer = Arc::clone(&captured);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 2, move |context| {
+            timer.arm_at(context, 12).unwrap();
+            *captured_writer.lock().unwrap() = Some(timer.snapshot());
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+    let captured = captured.lock().unwrap().clone().unwrap();
+    assert_ne!(observed_timer.snapshot(), captured);
+
+    observed_timer.restore(&captured).unwrap();
+
+    assert_eq!(observed_timer.snapshot(), captured);
+    assert_eq!(observed_timer.snapshot().next_deadline(), Some(12));
+    assert_eq!(observed_timer.snapshot().arms(), &[TimerArm::new(1, 2, 12)]);
+    assert!(observed_timer.snapshot().expiries().is_empty());
+
+    let rearmed = Arc::new(Mutex::new(None));
+    let rearmed_writer = Arc::clone(&rearmed);
+    let timer = observed_timer.clone();
+    scheduler
+        .schedule_at(cpu, 15, move |context| {
+            timer.arm_at(context, 20).unwrap();
+            *rearmed_writer.lock().unwrap() = Some(timer.snapshot());
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    let rearmed = rearmed.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        rearmed.arms(),
+        &[TimerArm::new(1, 2, 12), TimerArm::new(2, 15, 20)]
+    );
+}
+
+#[test]
+fn programmed_timer_restore_rejects_foreign_snapshot() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(19);
+    let route = InterruptRoute::new(InterruptLineId::new(29), InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let timer = ProgrammableTimer::new(TimerId::new(9), timer_partition, source, port);
+    let snapshot = TimerSnapshot::new(
+        TimerId::new(10),
+        timer_partition,
+        source,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(
+        timer.restore(&snapshot).unwrap_err(),
+        TimerError::SnapshotIdentityMismatch {
+            expected_id: TimerId::new(9),
+            actual_id: TimerId::new(10),
+            expected_partition: timer_partition,
+            actual_partition: timer_partition,
+            expected_source: source,
+            actual_source: source,
+        }
+    );
 }
 
 #[test]

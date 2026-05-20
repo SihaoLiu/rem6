@@ -297,6 +297,30 @@ impl ProgrammableTimer {
             state.signal_errors.clone(),
         )
     }
+
+    pub fn restore(&self, snapshot: &TimerSnapshot) -> Result<(), TimerError> {
+        self.validate_snapshot_identity(snapshot)?;
+        *self.state.lock().expect("timer state lock") = TimerState::from_snapshot(snapshot);
+        Ok(())
+    }
+
+    fn validate_snapshot_identity(&self, snapshot: &TimerSnapshot) -> Result<(), TimerError> {
+        if self.id == snapshot.id()
+            && self.partition == snapshot.partition()
+            && self.source == snapshot.source()
+        {
+            return Ok(());
+        }
+
+        Err(TimerError::SnapshotIdentityMismatch {
+            expected_id: self.id,
+            actual_id: snapshot.id(),
+            expected_partition: self.partition,
+            actual_partition: snapshot.partition(),
+            expected_source: self.source,
+            actual_source: snapshot.source(),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -496,6 +520,16 @@ impl TimerState {
         }
     }
 
+    fn from_snapshot(snapshot: &TimerSnapshot) -> Self {
+        Self {
+            generation: snapshot_generation(snapshot),
+            next_deadline: snapshot.next_deadline(),
+            arms: snapshot.arms().to_vec(),
+            expiries: snapshot.expiries().to_vec(),
+            signal_errors: snapshot.signal_errors().to_vec(),
+        }
+    }
+
     fn arm(&mut self, programmed_tick: Tick, deadline: Tick) -> u64 {
         self.generation += 1;
         self.next_deadline = Some(deadline);
@@ -520,9 +554,43 @@ impl TimerState {
     }
 }
 
+fn snapshot_generation(snapshot: &TimerSnapshot) -> u64 {
+    let arm_generation = snapshot
+        .arms()
+        .iter()
+        .map(|arm| arm.generation())
+        .max()
+        .unwrap_or_default();
+    let expiry_generation = snapshot
+        .expiries()
+        .iter()
+        .map(|expiry| expiry.generation())
+        .max()
+        .unwrap_or_default();
+    let signal_generation = snapshot
+        .signal_errors()
+        .iter()
+        .map(TimerSignalError::generation)
+        .max()
+        .unwrap_or_default();
+
+    arm_generation.max(expiry_generation).max(signal_generation)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TimerError {
-    DeadlineInPast { now: Tick, deadline: Tick },
+    DeadlineInPast {
+        now: Tick,
+        deadline: Tick,
+    },
+    SnapshotIdentityMismatch {
+        expected_id: TimerId,
+        actual_id: TimerId,
+        expected_partition: PartitionId,
+        actual_partition: PartitionId,
+        expected_source: InterruptSourceId,
+        actual_source: InterruptSourceId,
+    },
     Scheduler(SchedulerError),
     Interrupt(InterruptError),
 }
@@ -536,6 +604,23 @@ impl fmt::Display for TimerError {
                     "cannot arm timer for deadline {deadline}; current tick is {now}"
                 )
             }
+            Self::SnapshotIdentityMismatch {
+                expected_id,
+                actual_id,
+                expected_partition,
+                actual_partition,
+                expected_source,
+                actual_source,
+            } => write!(
+                formatter,
+                "timer snapshot identity mismatch: expected timer {} partition {} source {}, got timer {} partition {} source {}",
+                expected_id.get(),
+                expected_partition.index(),
+                expected_source.get(),
+                actual_id.get(),
+                actual_partition.index(),
+                actual_source.get()
+            ),
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Interrupt(error) => write!(formatter, "{error}"),
         }
