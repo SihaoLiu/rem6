@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
 use rem6_cpu::RiscvCore;
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
-use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_kernel::{
+    PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -721,6 +723,65 @@ impl RiscvTrapEventPort {
         };
 
         self.emit(context, event, trap).map(Some)
+    }
+
+    pub fn schedule_pending_core_trap(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        core: &RiscvCore,
+    ) -> Result<Option<PartitionEventId>, SystemError> {
+        let Some(trap) = core.pending_trap() else {
+            return Ok(None);
+        };
+
+        let source = core.partition();
+        let source_tick = scheduler
+            .partition_now(source)
+            .map_err(SystemError::Scheduler)?;
+        self.validate_scheduled_emit(scheduler, source, source_tick)?;
+
+        let port = self.clone();
+        scheduler
+            .schedule_at(source, source_tick, move |context| {
+                port.emit(context, event, trap)
+                    .expect("validated RISC-V trap event scheduling");
+            })
+            .map(Some)
+            .map_err(SystemError::Scheduler)
+    }
+
+    fn validate_scheduled_emit(
+        &self,
+        scheduler: &PartitionedScheduler,
+        source: PartitionId,
+        source_tick: Tick,
+    ) -> Result<(), SystemError> {
+        let channel = self.host.channel();
+        let host = channel.host_partition();
+        let latency = channel.host_latency();
+        scheduler
+            .partition_now(host)
+            .map_err(SystemError::Scheduler)?;
+
+        if host != source && latency < scheduler.min_remote_delay() {
+            return Err(SystemError::Scheduler(
+                SchedulerError::RemoteDelayBelowLookahead {
+                    source,
+                    target: host,
+                    delay: latency,
+                    minimum: scheduler.min_remote_delay(),
+                },
+            ));
+        }
+
+        source_tick
+            .checked_add(latency)
+            .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
+                now: source_tick,
+                delay: latency,
+            }))?;
+        Ok(())
     }
 }
 

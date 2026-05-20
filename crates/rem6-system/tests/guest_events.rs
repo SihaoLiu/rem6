@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
 };
@@ -591,4 +591,112 @@ fn riscv_trap_event_port_emits_pending_core_trap_into_host_controller() {
             0,
         ))]
     );
+}
+
+#[test]
+fn riscv_trap_event_port_schedules_pending_core_trap_from_core_partition() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(2);
+    let source = GuestSourceId::new(22);
+    let (mut scheduler, transport, fetch_route) = cpu_route();
+    let core = riscv_core(fetch_route, 0x8000);
+    let store = loaded_store(0x8000, 0x0000_0073);
+
+    assert!(matches!(
+        drive_one_action(&core, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    assert!(matches!(
+        action,
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+    assert!(core.has_pending_trap());
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let emit_tick = scheduler.partition_now(guest).unwrap();
+    let event = trap_port
+        .schedule_pending_core_trap(&mut scheduler, GuestEventId::new(61), &core)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(event.partition(), guest);
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert_eq!(summary.final_tick(), emit_tick + 2);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[GuestEventDelivery::new(
+            emit_tick + 2,
+            guest,
+            host,
+            GuestEvent::new(
+                GuestEventId::new(61),
+                source,
+                GuestEventKind::Trap {
+                    trap: GuestTrap::new(GuestTrapKind::EnvironmentCall, 0x8000),
+                },
+            ),
+        )]
+    );
+    assert_eq!(
+        controller.run().stop_request(),
+        Some(&StopRequest::new(
+            emit_tick + 2,
+            GuestEventId::new(61),
+            source,
+            0,
+        ))
+    );
+}
+
+#[test]
+fn riscv_trap_event_port_rejects_scheduled_core_trap_for_unknown_host_partition() {
+    let guest = PartitionId::new(0);
+    let missing_host = PartitionId::new(9);
+    let source = GuestSourceId::new(23);
+    let (mut scheduler, transport, fetch_route) = cpu_route();
+    let core = riscv_core(fetch_route, 0x8000);
+    let store = loaded_store(0x8000, 0x0000_0073);
+
+    assert!(matches!(
+        drive_one_action(&core, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    assert!(matches!(
+        action,
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port =
+        SystemHostEventPort::with_controller(missing_host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+
+    assert_eq!(
+        trap_port
+            .schedule_pending_core_trap(&mut scheduler, GuestEventId::new(62), &core)
+            .unwrap_err(),
+        SystemError::Scheduler(SchedulerError::UnknownPartition {
+            partition: missing_host,
+            partitions: 3,
+        })
+    );
+    assert_eq!(scheduler.next_pending_tick(guest).unwrap(), None);
+    assert!(controller.lock().unwrap().run().deliveries().is_empty());
 }
