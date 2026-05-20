@@ -9,6 +9,7 @@ members = [
     "crates/rem6-dram",
     "crates/rem6-fabric",
     "crates/rem6-interrupt",
+    "crates/rem6-isa-riscv",
     "crates/rem6-kernel",
     "crates/rem6-memory",
     "crates/rem6-mmio",
