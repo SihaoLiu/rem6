@@ -183,6 +183,35 @@ impl UartMmioDevice {
         }
     }
 
+    pub fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.validate_size(request)?;
+        let offset = self.offset(request)?;
+        match (offset, request.operation()) {
+            (UART_MMIO_DATA_OFFSET, MmioOperation::Read) => {
+                self.read_data_parallel(context, request)
+            }
+            (UART_MMIO_DATA_OFFSET, MmioOperation::Write) => {
+                self.write_data_parallel(context, request)
+            }
+            (UART_MMIO_STATUS_OFFSET, MmioOperation::Read) => {
+                let status = self.state.lock().expect("uart state lock").status();
+                Ok(MmioResponse::completed(request.id(), Some(vec![status])))
+            }
+            (UART_MMIO_STATUS_OFFSET, MmioOperation::Write) => Err(MmioError::AccessDenied {
+                request: request.id(),
+                operation: MmioOperation::Write,
+                access: MmioAccess::ReadOnly,
+            }),
+            _ => Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            }),
+        }
+    }
+
     fn read_data(
         &self,
         context: &mut SchedulerContext<'_>,
@@ -205,9 +234,61 @@ impl UartMmioDevice {
         Ok(MmioResponse::completed(request.id(), Some(vec![byte])))
     }
 
+    fn read_data_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        let mut state = self.state.lock().expect("uart state lock");
+        let byte = state
+            .rx_pending
+            .pop_front()
+            .ok_or_else(|| MmioError::DeviceError {
+                request: request.id(),
+                message: UartError::EmptyReceiveQueue.to_string(),
+            })?;
+        let should_deassert = state.rx_pending.is_empty();
+        state.rx_consumed.push(UartRxByte::new(context.now(), byte));
+        drop(state);
+        if should_deassert {
+            self.emit_interrupt_parallel(context, InterruptEventKind::Deassert);
+        }
+        Ok(MmioResponse::completed(request.id(), Some(vec![byte])))
+    }
+
     fn write_data(
         &self,
         context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        let data = request.data().ok_or(MmioError::MissingWriteData {
+            request: request.id(),
+        })?;
+        if data.len() as u64 != UART_MMIO_REGISTER_BYTES {
+            return Err(MmioError::PayloadSizeMismatch {
+                request: request.id(),
+                expected: UART_MMIO_REGISTER_BYTES,
+                actual: data.len() as u64,
+            });
+        }
+        let mask = request.byte_mask().ok_or(MmioError::MissingByteMask {
+            request: request.id(),
+        })?;
+        validate_uart_mask(request, mask)?;
+
+        if mask.bits()[0] {
+            self.state
+                .lock()
+                .expect("uart state lock")
+                .tx_bytes
+                .push(UartTxByte::new(context.now(), data[0]));
+        }
+        Ok(MmioResponse::completed(request.id(), None))
+    }
+
+    fn write_data_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         let data = request.data().ok_or(MmioError::MissingWriteData {
@@ -345,6 +426,14 @@ impl MmioDevice for UartMmioDevice {
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         UartMmioDevice::respond(self, context, request)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        UartMmioDevice::respond_parallel(self, context, request)
     }
 }
 

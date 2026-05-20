@@ -116,6 +116,75 @@ fn uart_mmio_bus_records_transmitted_bytes_and_status() {
 }
 
 #[test]
+fn uart_parallel_mmio_bus_records_transmitted_bytes_and_status() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let base = Address::new(0x6800);
+    let route = MmioRoute::new(cpu, uart_partition, 2, 2).unwrap();
+    let uart = UartMmioDevice::new(UartId::new(13), base);
+    let mut bus = MmioBus::new();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    bus.insert_device(uart_range(base), route, uart.clone())
+        .unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 3, move |context| {
+            let write_completed = Arc::clone(&completed);
+            bus.submit_parallel(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(14),
+                    Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                    vec![b'R'],
+                    byte_mask(),
+                )
+                .unwrap(),
+                move |completion| write_completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+            bus.submit_parallel(
+                context,
+                MmioRequest::read(
+                    MmioRequestId::new(15),
+                    Address::new(base.get() + UART_MMIO_STATUS_OFFSET),
+                    AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap(),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 5);
+    assert!(summary.final_tick() >= 7);
+    assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(5, b'R')]);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                7,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(14), None)),
+            ),
+            MmioCompletion::new(
+                7,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(15),
+                    Some(vec![UART_STATUS_TX_READY]),
+                )),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn uart_mmio_bus_reads_injected_rx_bytes_in_order() {
     let cpu = PartitionId::new(0);
     let uart_partition = PartitionId::new(1);
