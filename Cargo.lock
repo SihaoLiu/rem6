@@ -153,6 +153,7 @@ dependencies = [
  "rem6-memory",
  "rem6-mmio",
  "rem6-stats",
+ "rem6-topology",
  "rem6-transport",
 ]
 
