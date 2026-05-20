@@ -8,10 +8,11 @@ use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryError, DirectoryGrant, DirectoryLineState,
     MsiDirectory,
 };
+use rem6_dram::DramMemoryController;
 use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
-    MemoryRequestId, MemoryResponse, ResponseStatus,
+    MemoryRequestId, MemoryResponse, MemoryTargetId, ResponseStatus,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::{
@@ -111,6 +112,7 @@ pub enum HarnessError {
     LineBusy { state: MsiState },
     UnknownCache { agent: AgentId },
     DuplicateCache { agent: AgentId },
+    MissingBackingMemory { line: Address },
     WrongLine { expected: Address, actual: Address },
     LineDataSizeMismatch { expected: u64, actual: u64 },
     MissingDirectoryGrant { request: MemoryRequestId },
@@ -135,6 +137,9 @@ impl fmt::Display for HarnessError {
                     "cache agent {} is already registered",
                     agent.get()
                 )
+            }
+            Self::MissingBackingMemory { line } => {
+                write!(formatter, "line {:#x} has no backing memory", line.get())
             }
             Self::WrongLine { expected, actual } => write!(
                 formatter,
@@ -548,6 +553,53 @@ impl PartitionedMemoryConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedDramMemoryConfig {
+    partition: PartitionId,
+    endpoint: TransportEndpointId,
+    request_latency: u64,
+    response_latency: u64,
+    controller: DramMemoryController,
+}
+
+impl PartitionedDramMemoryConfig {
+    pub fn new(
+        partition: PartitionId,
+        endpoint: TransportEndpointId,
+        request_latency: u64,
+        response_latency: u64,
+        controller: DramMemoryController,
+    ) -> Self {
+        Self {
+            partition,
+            endpoint,
+            request_latency,
+            response_latency,
+            controller,
+        }
+    }
+
+    pub const fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn endpoint(&self) -> &TransportEndpointId {
+        &self.endpoint
+    }
+
+    pub const fn request_latency(&self) -> u64 {
+        self.request_latency
+    }
+
+    pub const fn response_latency(&self) -> u64 {
+        self.response_latency
+    }
+
+    fn into_controller(self) -> DramMemoryController {
+        self.controller
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryDecisionRecord {
     tick: u64,
     requester: AgentId,
@@ -576,6 +628,67 @@ impl DirectoryDecisionRecord {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemoryAccessRecord {
+    arrival_tick: u64,
+    target: MemoryTargetId,
+    request: MemoryRequestId,
+    bank: u32,
+    row: u64,
+    row_hit: bool,
+    ready_cycle: u64,
+}
+
+impl DramMemoryAccessRecord {
+    pub const fn new(
+        arrival_tick: u64,
+        target: MemoryTargetId,
+        request: MemoryRequestId,
+        bank: u32,
+        row: u64,
+        row_hit: bool,
+        ready_cycle: u64,
+    ) -> Self {
+        Self {
+            arrival_tick,
+            target,
+            request,
+            bank,
+            row,
+            row_hit,
+            ready_cycle,
+        }
+    }
+
+    pub const fn arrival_tick(&self) -> u64 {
+        self.arrival_tick
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn request(&self) -> MemoryRequestId {
+        self.request
+    }
+
+    pub const fn bank(&self) -> u32 {
+        self.bank
+    }
+
+    pub const fn row(&self) -> u64 {
+        self.row
+    }
+
+    pub const fn row_hit(&self) -> bool {
+        self.row_hit
+    }
+
+    pub const fn ready_cycle(&self) -> u64 {
+        self.ready_cycle
+    }
+}
+
 pub struct PartitionedDirectoryLineHarness {
     scheduler: PartitionedScheduler,
     transport: MemoryTransport,
@@ -583,12 +696,14 @@ pub struct PartitionedDirectoryLineHarness {
     directory: Arc<Mutex<MsiDirectory>>,
     caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
     routes: BTreeMap<AgentId, MemoryRouteId>,
-    backing: Arc<Mutex<LineBackingStore>>,
+    backing: Option<Arc<Mutex<LineBackingStore>>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     memory_route: Option<MemoryRouteId>,
     memory_route_info: Option<MemoryRoute>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
 }
 
 impl PartitionedDirectoryLineHarness {
@@ -606,9 +721,10 @@ impl PartitionedDirectoryLineHarness {
         Self::new_internal(
             layout,
             line_address,
-            backing,
+            Some(backing),
             directory_partition,
             directory_endpoint,
+            None,
             None,
             agents,
         )
@@ -629,32 +745,60 @@ impl PartitionedDirectoryLineHarness {
         Self::new_internal(
             layout,
             line_address,
-            backing,
+            Some(backing),
             directory_partition,
             directory_endpoint,
+            Some(memory),
+            None,
+            agents,
+        )
+    }
+
+    pub fn new_with_dram_memory<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        memory: PartitionedDramMemoryConfig,
+        agents: I,
+    ) -> Result<Self, HarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        Self::new_internal(
+            layout,
+            line_address,
+            None,
+            directory_partition,
+            directory_endpoint,
+            None,
             Some(memory),
             agents,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_internal<I>(
         layout: CacheLineLayout,
         line_address: Address,
-        backing: LineBackingStore,
+        backing: Option<LineBackingStore>,
         directory_partition: PartitionId,
         directory_endpoint: TransportEndpointId,
         memory: Option<PartitionedMemoryConfig>,
+        dram_memory: Option<PartitionedDramMemoryConfig>,
         agents: I,
     ) -> Result<Self, HarnessError>
     where
         I: IntoIterator<Item = PartitionedCacheAgentConfig>,
     {
         let line_address = layout.line_address(line_address);
-        if backing.line_address() != line_address {
-            return Err(HarnessError::WrongLine {
-                expected: line_address,
-                actual: backing.line_address(),
-            });
+        if let Some(backing) = &backing {
+            if backing.line_address() != line_address {
+                return Err(HarnessError::WrongLine {
+                    expected: line_address,
+                    actual: backing.line_address(),
+                });
+            }
         }
 
         let mut partition_count = directory_partition
@@ -666,6 +810,7 @@ impl PartitionedDirectoryLineHarness {
         let mut routes = BTreeMap::new();
         let mut memory_route = None;
         let mut memory_route_info = None;
+        let mut dram_controller = None;
 
         if let Some(memory) = memory {
             partition_count = partition_count.max(
@@ -690,6 +835,32 @@ impl PartitionedDirectoryLineHarness {
                     .map_err(HarnessError::Transport)?,
             );
             memory_route_info = Some(route);
+        }
+
+        if let Some(memory) = dram_memory {
+            partition_count = partition_count.max(
+                memory
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(HarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            let route = MemoryRoute::new(
+                directory_endpoint.clone(),
+                directory_partition,
+                memory.endpoint().clone(),
+                memory.partition(),
+                memory.request_latency(),
+                memory.response_latency(),
+            )
+            .map_err(HarnessError::Transport)?;
+            memory_route = Some(
+                transport
+                    .add_route(route.clone())
+                    .map_err(HarnessError::Transport)?,
+            );
+            memory_route_info = Some(route);
+            dram_controller = Some(Arc::new(Mutex::new(memory.into_controller())));
         }
 
         for config in agents {
@@ -739,12 +910,14 @@ impl PartitionedDirectoryLineHarness {
             directory: Arc::new(Mutex::new(MsiDirectory::new())),
             caches,
             routes,
-            backing: Arc::new(Mutex::new(backing)),
+            backing: backing.map(|backing| Arc::new(Mutex::new(backing))),
+            dram_memory: dram_controller,
             memory_route,
             memory_route_info,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            dram_accesses: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -790,8 +963,10 @@ impl PartitionedDirectoryLineHarness {
             }))?;
         let directory = Arc::clone(&self.directory);
         let caches = self.caches.clone();
-        let backing = Arc::clone(&self.backing);
+        let backing = self.backing.clone();
+        let dram_memory = self.dram_memory.clone();
         let decisions = Arc::clone(&self.directory_decisions);
+        let dram_accesses = Arc::clone(&self.dram_accesses);
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
         let memory_path = self.memory_route.zip(self.memory_route_info.clone()).map(
@@ -805,11 +980,13 @@ impl PartitionedDirectoryLineHarness {
         let deferred = memory_path.map(|path| DeferredMemoryWork {
             path,
             caches: caches.clone(),
-            backing: Arc::clone(&backing),
+            backing: backing.clone(),
+            dram_memory: dram_memory.clone(),
             trace: self.trace.clone(),
             response_cache: Arc::clone(&response_cache),
             responses: Arc::clone(&responses),
             decisions: Arc::clone(&decisions),
+            dram_accesses: Arc::clone(&dram_accesses),
         });
         self.transport
             .submit(
@@ -908,6 +1085,10 @@ impl PartitionedDirectoryLineHarness {
             .clone()
     }
 
+    pub fn dram_memory_accesses(&self) -> Vec<DramMemoryAccessRecord> {
+        self.dram_accesses.lock().expect("DRAM access lock").clone()
+    }
+
     pub const fn line(&self) -> MsiLineId {
         self.line
     }
@@ -931,11 +1112,13 @@ struct DeferredMemoryPath {
 struct DeferredMemoryWork {
     path: DeferredMemoryPath,
     caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
-    backing: Arc<Mutex<LineBackingStore>>,
+    backing: Option<Arc<Mutex<LineBackingStore>>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MsiCacheController>>,
     responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
 }
 
 impl DeferredMemoryWork {
@@ -967,9 +1150,11 @@ impl DeferredMemoryWork {
         let cache_route = self.path.cache_route.clone();
         let cache_route_id = self.path.cache_route_id;
         let trace = self.trace.clone();
-        let backing = Arc::clone(&self.backing);
+        let backing = self.backing.clone();
+        let dram_memory = self.dram_memory.clone();
         let response_cache = Arc::clone(&self.response_cache);
         let responses = Arc::clone(&self.responses);
+        let dram_accesses = Arc::clone(&self.dram_accesses);
         context
             .schedule_remote_after(
                 memory_route.target_partition(),
@@ -982,68 +1167,125 @@ impl DeferredMemoryWork {
                         MemoryTraceKind::RequestArrived,
                         request.id(),
                     ));
-                    let response = backing
-                        .lock()
-                        .expect("backing lock")
-                        .respond(&request)
-                        .expect("backing store response");
-                    let response_status = response.status();
-                    let response_request = response.request_id();
-                    let trace_to_directory = trace.clone();
-                    context
-                        .schedule_remote_after(
-                            memory_route.source_partition(),
-                            memory_route.response_latency(),
-                            move |context| {
-                                trace_to_directory.record(MemoryTraceEvent::response(
-                                    context.now(),
-                                    memory_route_id,
-                                    memory_route.source().clone(),
-                                    response_request,
-                                    response_status,
-                                ));
-                                let trace_to_cache = trace_to_directory.clone();
-                                let response_status = response.status();
-                                let response_request = response.request_id();
-                                context
-                                    .schedule_remote_after(
-                                        cache_route.source_partition(),
-                                        cache_route.response_latency(),
-                                        move |context| {
-                                            trace_to_cache.record(MemoryTraceEvent::response(
-                                                context.now(),
-                                                cache_route_id,
-                                                cache_route.source().clone(),
-                                                response_request,
-                                                response_status,
-                                            ));
-                                            let result = response_cache
-                                                .lock()
-                                                .expect("cache lock")
-                                                .accept_fill(response)
-                                                .expect("cache fill");
-                                            if let Some(TargetOutcome::Respond(response)) =
-                                                result.target_outcome()
-                                            {
-                                                responses.lock().expect("response lock").push(
-                                                    response_record(
-                                                        context.now(),
-                                                        result.kind(),
-                                                        response,
-                                                    ),
-                                                );
-                                            }
-                                        },
-                                    )
-                                    .expect("validated cache response latency");
-                            },
-                        )
-                        .expect("validated memory response latency");
+                    let response_work = DeferredMemoryResponseWork {
+                        memory_route_id,
+                        memory_route,
+                        cache_route_id,
+                        cache_route,
+                        trace,
+                        response_cache,
+                        responses,
+                    };
+
+                    if let Some(dram_memory) = dram_memory {
+                        let outcome = dram_memory
+                            .lock()
+                            .expect("DRAM memory lock")
+                            .accept(context.now(), &request)
+                            .expect("DRAM memory response");
+                        dram_accesses.lock().expect("DRAM access lock").push(
+                            DramMemoryAccessRecord::new(
+                                context.now(),
+                                outcome.target(),
+                                outcome.dram_access().request(),
+                                outcome.dram_access().bank(),
+                                outcome.dram_access().row(),
+                                outcome.dram_access().row_hit(),
+                                outcome.ready_cycle(),
+                            ),
+                        );
+                        let ready_delay = outcome
+                            .ready_cycle()
+                            .checked_sub(context.now())
+                            .expect("DRAM ready cycle is not in the past");
+                        let response = outcome
+                            .response()
+                            .cloned()
+                            .expect("directory backing read expects memory response");
+                        context
+                            .schedule_local_after(ready_delay, move |context| {
+                                response_work.schedule(context, response);
+                            })
+                            .expect("validated DRAM ready latency");
+                    } else {
+                        let response = backing
+                            .as_ref()
+                            .expect("line backing memory")
+                            .lock()
+                            .expect("backing lock")
+                            .respond(&request)
+                            .expect("backing store response");
+                        response_work.schedule(context, response);
+                    }
                 },
             )
             .expect("validated memory request latency");
 
         Ok(())
+    }
+}
+
+struct DeferredMemoryResponseWork {
+    memory_route_id: MemoryRouteId,
+    memory_route: MemoryRoute,
+    cache_route_id: MemoryRouteId,
+    cache_route: MemoryRoute,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<MsiCacheController>>,
+    responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
+}
+
+impl DeferredMemoryResponseWork {
+    fn schedule(self, context: &mut rem6_kernel::SchedulerContext<'_>, response: MemoryResponse) {
+        let response_status = response.status();
+        let response_request = response.request_id();
+        let trace_to_directory = self.trace.clone();
+        context
+            .schedule_remote_after(
+                self.memory_route.source_partition(),
+                self.memory_route.response_latency(),
+                move |context| {
+                    trace_to_directory.record(MemoryTraceEvent::response(
+                        context.now(),
+                        self.memory_route_id,
+                        self.memory_route.source().clone(),
+                        response_request,
+                        response_status,
+                    ));
+                    let trace_to_cache = trace_to_directory.clone();
+                    let response_status = response.status();
+                    let response_request = response.request_id();
+                    context
+                        .schedule_remote_after(
+                            self.cache_route.source_partition(),
+                            self.cache_route.response_latency(),
+                            move |context| {
+                                trace_to_cache.record(MemoryTraceEvent::response(
+                                    context.now(),
+                                    self.cache_route_id,
+                                    self.cache_route.source().clone(),
+                                    response_request,
+                                    response_status,
+                                ));
+                                let result = self
+                                    .response_cache
+                                    .lock()
+                                    .expect("cache lock")
+                                    .accept_fill(response)
+                                    .expect("cache fill");
+                                if let Some(TargetOutcome::Respond(response)) =
+                                    result.target_outcome()
+                                {
+                                    self.responses.lock().expect("response lock").push(
+                                        response_record(context.now(), result.kind(), response),
+                                    );
+                                }
+                            },
+                        )
+                        .expect("validated cache response latency");
+                },
+            )
+            .expect("validated memory response latency");
     }
 }
 
@@ -1077,7 +1319,7 @@ fn partitioned_directory_response(
     request: &MemoryRequest,
     decision: &DirectoryDecision,
     caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
-    backing: &Arc<Mutex<LineBackingStore>>,
+    backing: &Option<Arc<Mutex<LineBackingStore>>>,
 ) -> Result<MemoryResponse, HarnessError> {
     let grant = decision
         .grant()
@@ -1107,9 +1349,14 @@ fn partitioned_directory_response(
     apply_directory_snoops(decision, caches)?;
 
     match grant.data_source() {
-        DirectoryDataSource::BackingMemory => {
-            backing.lock().expect("backing lock").respond(request)
-        }
+        DirectoryDataSource::BackingMemory => backing
+            .as_ref()
+            .ok_or(HarnessError::MissingBackingMemory {
+                line: request.line_address(),
+            })?
+            .lock()
+            .expect("backing lock")
+            .respond(request),
         DirectoryDataSource::ModifiedOwner(_) => {
             MemoryResponse::completed(request, source_data).map_err(HarnessError::Memory)
         }
