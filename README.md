@@ -5,8 +5,10 @@ A Rust-reimplementation of gem5
 ## Workspace
 
 rem6 is organized as one Rust workspace with one crate per simulator subsystem.
-The initial subsystem crate is `crates/rem6-kernel`, which owns deterministic
-simulation time and event scheduling primitives.
+Current subsystem crates cover deterministic scheduling, typed topology,
+memory transactions and storage, transport, fabric timing, DRAM timing, MSI
+protocol state, cache controllers, directory arbitration, and coherence
+harnesses.
 
 Run the current verification suite with:
 
