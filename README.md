@@ -19,6 +19,3 @@ Run the current verification suite with:
 ```bash
 cargo test --workspace
 ```
-
-Code under `temp/` is scratch/reference material only. It is not part of the
-workspace and must not be used as a build dependency.
