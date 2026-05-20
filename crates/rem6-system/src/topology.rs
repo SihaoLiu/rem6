@@ -126,13 +126,18 @@ impl RiscvTopologyMemoryConfig {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvTopologyDramConfig {
+    targets: Vec<RiscvTopologyDramTargetConfig>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RiscvTopologyDramTargetConfig {
     memory: RiscvTopologyMemoryConfig,
     geometry: DramGeometry,
     timing: DramTiming,
 }
 
-impl RiscvTopologyDramConfig {
-    pub fn new(
+impl RiscvTopologyDramTargetConfig {
+    fn new(
         target: MemoryTargetId,
         line_layout: CacheLineLayout,
         geometry: DramGeometry,
@@ -145,45 +150,133 @@ impl RiscvTopologyDramConfig {
         }
     }
 
-    pub fn add_region(mut self, start: Address, size: AccessSize) -> Self {
-        self.memory = self.memory.add_region(start, size);
-        self
-    }
-
-    pub const fn target(&self) -> MemoryTargetId {
+    const fn target(&self) -> MemoryTargetId {
         self.memory.target()
     }
 
-    pub const fn line_layout(&self) -> CacheLineLayout {
+    const fn line_layout(&self) -> CacheLineLayout {
         self.memory.line_layout()
     }
 
-    pub const fn geometry(&self) -> DramGeometry {
+    const fn geometry(&self) -> DramGeometry {
         self.geometry
     }
 
-    pub const fn timing(&self) -> DramTiming {
+    const fn timing(&self) -> DramTiming {
         self.timing
     }
 
-    pub fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
+    fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
         self.memory.regions()
+    }
+}
+
+impl RiscvTopologyDramConfig {
+    pub fn new(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Self {
+        Self {
+            targets: vec![RiscvTopologyDramTargetConfig::new(
+                target,
+                line_layout,
+                geometry,
+                timing,
+            )],
+        }
+    }
+
+    pub fn add_region(mut self, start: Address, size: AccessSize) -> Self {
+        self.targets[0].memory = self.targets[0].memory.clone().add_region(start, size);
+        self
+    }
+
+    pub fn add_target(
+        mut self,
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Result<Self, MemoryError> {
+        if self.targets.iter().any(|config| config.target() == target) {
+            return Err(MemoryError::DuplicateMemoryTarget { target });
+        }
+
+        self.targets.push(RiscvTopologyDramTargetConfig::new(
+            target,
+            line_layout,
+            geometry,
+            timing,
+        ));
+        Ok(self)
+    }
+
+    pub fn add_region_for_target(
+        mut self,
+        target: MemoryTargetId,
+        start: Address,
+        size: AccessSize,
+    ) -> Result<Self, MemoryError> {
+        let Some(config) = self
+            .targets
+            .iter_mut()
+            .find(|config| config.target() == target)
+        else {
+            return Err(MemoryError::UnknownMemoryTarget { target });
+        };
+        config.memory = config.memory.clone().add_region(start, size);
+        Ok(self)
+    }
+
+    pub fn target(&self) -> MemoryTargetId {
+        self.targets[0].target()
+    }
+
+    pub fn line_layout(&self) -> CacheLineLayout {
+        self.targets[0].line_layout()
+    }
+
+    pub fn geometry(&self) -> DramGeometry {
+        self.targets[0].geometry()
+    }
+
+    pub fn timing(&self) -> DramTiming {
+        self.targets[0].timing()
+    }
+
+    pub fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
+        self.targets[0].regions()
     }
 
     fn build_staging_store(&self) -> Result<PartitionedMemoryStore, MemoryError> {
-        self.memory.build_store()
+        let mut store = PartitionedMemoryStore::new();
+        for target in &self.targets {
+            store.add_partition(target.target(), target.line_layout())?;
+        }
+        for target in &self.targets {
+            for region in target.regions() {
+                store.map_region(target.target(), region.start(), region.size())?;
+            }
+        }
+        Ok(store)
     }
 
     fn build_controller(&self) -> Result<DramMemoryController, DramMemoryError> {
         let mut controller = DramMemoryController::new();
-        controller.add_target(DramControllerConfig::new(
-            self.target(),
-            self.line_layout(),
-            self.geometry(),
-            self.timing(),
-        ))?;
-        for region in self.regions() {
-            controller.map_region(self.target(), region.start(), region.size())?;
+        for target in &self.targets {
+            controller.add_target(DramControllerConfig::new(
+                target.target(),
+                target.line_layout(),
+                target.geometry(),
+                target.timing(),
+            ))?;
+        }
+        for target in &self.targets {
+            for region in target.regions() {
+                controller.map_region(target.target(), region.start(), region.size())?;
+            }
         }
         Ok(controller)
     }
@@ -313,19 +406,16 @@ impl RiscvTopologySystem {
             .build_staging_store()
             .map_err(RiscvTopologySystemError::Memory)?;
         image
-            .load_into_partitioned_store(&mut staging, config.target())
+            .load_into_partitioned_store_by_address(&mut staging)
             .map_err(RiscvTopologySystemError::Boot)?;
 
         let mut controller = config
             .build_controller()
             .map_err(RiscvTopologySystemError::Dram)?;
         for partition in staging.snapshot().partitions() {
-            if partition.target() != config.target() {
-                continue;
-            }
             for line in partition.lines() {
                 controller
-                    .insert_line(config.target(), line.line(), line.data().to_vec())
+                    .insert_line(partition.target(), line.line(), line.data().to_vec())
                     .map_err(RiscvTopologySystemError::Dram)?;
             }
         }

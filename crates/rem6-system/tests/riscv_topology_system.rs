@@ -581,3 +581,89 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
     );
     assert!(data_trace.snapshot().is_empty());
 }
+
+#[test]
+fn topology_system_dram_boot_image_loads_segments_into_addressed_targets() {
+    let code_target = MemoryTargetId::new(0);
+    let data_target = MemoryTargetId::new(1);
+    let image = BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(i_type(8, 2, 0x3, 5, 0x03)))
+        .unwrap()
+        .add_segment(Address::new(0x8004), word(0x0000_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0xa008),
+            vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+        )
+        .unwrap();
+    let dram = RiscvTopologyDramConfig::new(
+        code_target,
+        layout(),
+        DramGeometry::new(2, 64, 16).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+    )
+    .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap())
+    .add_target(
+        data_target,
+        layout(),
+        DramGeometry::new(4, 128, 16).unwrap(),
+        DramTiming::new(2, 4, 6, 2, 1).unwrap(),
+    )
+    .unwrap()
+    .add_region_for_target(
+        data_target,
+        Address::new(0xa000),
+        AccessSize::new(0x1000).unwrap(),
+    )
+    .unwrap();
+    let source = GuestSourceId::new(44);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(dram, &image)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(3), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0xa000);
+
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            Default::default(),
+            Default::default(),
+            50,
+            |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.host_stop().map(|stop| stop.event()),
+        Some(GuestEventId::new(160))
+    );
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        0x1122_3344_5566_7788
+    );
+    let controller = system.dram_memory_controller().unwrap().lock().unwrap();
+    assert_eq!(controller.line_count(code_target).unwrap(), 1);
+    assert_eq!(controller.line_count(data_target).unwrap(), 1);
+    assert_eq!(
+        &controller
+            .line_data(data_target, Address::new(0xa000))
+            .unwrap()[8..16],
+        &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+}

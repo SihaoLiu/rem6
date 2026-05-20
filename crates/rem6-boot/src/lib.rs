@@ -88,6 +88,18 @@ impl BootImage {
 
         Ok(BootLoadReport::new(self.entry, writes))
     }
+
+    pub fn load_into_partitioned_store_by_address(
+        &self,
+        store: &mut PartitionedMemoryStore,
+    ) -> Result<BootLoadReport, BootError> {
+        let mut writes = Vec::new();
+        for segment in &self.segments {
+            load_segment_by_address(segment, store, &mut writes)?;
+        }
+
+        Ok(BootLoadReport::new(self.entry, writes))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -196,6 +208,56 @@ where
     }
 
     Ok(())
+}
+
+fn load_segment_by_address(
+    segment: &BootSegment,
+    store: &mut PartitionedMemoryStore,
+    writes: &mut Vec<BootLineWrite>,
+) -> Result<(), BootError> {
+    let mut cursor = segment.range().start().get();
+    let end = segment.range().end().get();
+    let mut data_offset = 0usize;
+
+    while cursor < end {
+        let address = Address::new(cursor);
+        let (target, region) = partitioned_target_at(store, address)?;
+        let layout = store.partition_layout(target).map_err(BootError::Memory)?;
+        let line = layout.line_address(address);
+        let line_offset = layout.line_offset(address);
+        let available_in_line = layout.bytes() - line_offset;
+        let available_in_region = region.end().get() - cursor;
+        let remaining = end - cursor;
+        let bytes = available_in_line.min(available_in_region).min(remaining);
+        let next_data_offset = data_offset + bytes as usize;
+
+        let mut line_data = store
+            .line_data(target, line)
+            .unwrap_or_else(|_| zero_line(layout));
+        let start = line_offset as usize;
+        line_data[start..start + bytes as usize]
+            .copy_from_slice(&segment.data()[data_offset..next_data_offset]);
+        store
+            .insert_line(target, line, line_data)
+            .map_err(BootError::Memory)?;
+        writes.push(BootLineWrite::new(line, line_offset, bytes));
+
+        cursor += bytes;
+        data_offset = next_data_offset;
+    }
+
+    Ok(())
+}
+
+fn partitioned_target_at(
+    store: &PartitionedMemoryStore,
+    address: Address,
+) -> Result<(MemoryTargetId, AddressRange), BootError> {
+    store
+        .regions()
+        .iter()
+        .find_map(|(target, region)| region.contains(address).then_some((*target, *region)))
+        .ok_or(BootError::Memory(MemoryError::UnmappedAddress { address }))
 }
 
 fn zero_line(layout: CacheLineLayout) -> Vec<u8> {

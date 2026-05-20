@@ -80,6 +80,55 @@ fn boot_image_loads_into_partitioned_store_target() {
 }
 
 #[test]
+fn boot_image_loads_partitioned_store_segments_by_address_region() {
+    let code = MemoryTargetId::new(1);
+    let data = MemoryTargetId::new(2);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(code, layout()).unwrap();
+    store.add_partition(data, layout()).unwrap();
+    store
+        .map_region(code, Address::new(0x8000), AccessSize::new(0x1000).unwrap())
+        .unwrap();
+    store
+        .map_region(data, Address::new(0xa000), AccessSize::new(0x1000).unwrap())
+        .unwrap();
+    store
+        .insert_line(data, Address::new(0xa000), line(0x77))
+        .unwrap();
+    let image = BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8004), vec![1, 2, 3, 4])
+        .unwrap()
+        .add_segment(Address::new(0xa00e), vec![0xa0, 0xa1, 0xa2, 0xa3])
+        .unwrap();
+
+    let report = image
+        .load_into_partitioned_store_by_address(&mut store)
+        .unwrap();
+
+    assert_eq!(
+        report,
+        BootLoadReport::new(
+            Address::new(0x8000),
+            vec![
+                BootLineWrite::new(Address::new(0x8000), 4, 4),
+                BootLineWrite::new(Address::new(0xa000), 14, 2),
+                BootLineWrite::new(Address::new(0xa010), 0, 2),
+            ],
+        )
+    );
+    assert_eq!(
+        &store.line_data(code, Address::new(0x8000)).unwrap()[4..8],
+        &[1, 2, 3, 4],
+    );
+    let first_data = store.line_data(data, Address::new(0xa000)).unwrap();
+    assert_eq!(&first_data[0..14], &[0x77; 14]);
+    assert_eq!(&first_data[14..16], &[0xa0, 0xa1]);
+    let second_data = store.line_data(data, Address::new(0xa010)).unwrap();
+    assert_eq!(&second_data[0..2], &[0xa2, 0xa3]);
+    assert_eq!(&second_data[2..16], &[0; 14]);
+}
+
+#[test]
 fn boot_image_rejects_bad_segments_and_unknown_partition() {
     assert_eq!(
         BootImage::new(Address::new(0)).add_segment(Address::new(0x1000), Vec::new()),
