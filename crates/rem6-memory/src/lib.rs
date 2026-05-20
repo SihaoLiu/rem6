@@ -199,6 +199,11 @@ pub enum MemoryError {
         address: Address,
         line_size: u64,
     },
+    LineLayoutMismatch {
+        request: MemoryRequestId,
+        expected: CacheLineLayout,
+        actual: CacheLineLayout,
+    },
     CrossLineAccess {
         request: MemoryRequestId,
         start: Address,
@@ -218,6 +223,12 @@ pub enum MemoryError {
     RequestCrossesAddressRegion {
         request: MemoryRequestId,
         range: AddressRange,
+    },
+    DuplicateMemoryTarget {
+        target: MemoryTargetId,
+    },
+    UnknownMemoryTarget {
+        target: MemoryTargetId,
     },
     MissingResponseData {
         request: MemoryRequestId,
@@ -290,6 +301,18 @@ impl fmt::Display for MemoryError {
                 "address {:#x} is not aligned to cache line size {line_size}",
                 address.get()
             ),
+            Self::LineLayoutMismatch {
+                request,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "request {} from agent {} uses {}-byte lines but target expects {}-byte lines",
+                request.sequence(),
+                request.agent().get(),
+                actual.bytes(),
+                expected.bytes()
+            ),
             Self::CrossLineAccess {
                 request,
                 start,
@@ -328,6 +351,16 @@ impl fmt::Display for MemoryError {
                 range.start().get(),
                 range.end().get()
             ),
+            Self::DuplicateMemoryTarget { target } => {
+                write!(
+                    formatter,
+                    "memory target {} is already declared",
+                    target.get()
+                )
+            }
+            Self::UnknownMemoryTarget { target } => {
+                write!(formatter, "memory target {} is not declared", target.get())
+            }
             Self::MissingResponseData { request } => write!(
                 formatter,
                 "response to request {} from agent {} requires payload data",
@@ -392,6 +425,7 @@ impl LineMemoryStore {
         &mut self,
         request: &MemoryRequest,
     ) -> Result<Option<MemoryResponse>, MemoryError> {
+        self.check_line_layout(request)?;
         self.check_single_line(request)?;
         match request.operation() {
             MemoryOperation::InstructionFetch
@@ -432,6 +466,19 @@ impl LineMemoryStore {
         if actual != self.layout.bytes() {
             return Err(MemoryError::PayloadSizeMismatch {
                 expected: AccessSize::new(self.layout.bytes())?,
+                actual,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn check_line_layout(&self, request: &MemoryRequest) -> Result<(), MemoryError> {
+        let actual = request.line_layout();
+        if actual != self.layout {
+            return Err(MemoryError::LineLayoutMismatch {
+                request: request.id(),
+                expected: self.layout,
                 actual,
             });
         }
@@ -660,6 +707,137 @@ impl AddressDecoder {
 
     pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
         &self.regions
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedMemoryOutcome {
+    target: MemoryTargetId,
+    response: Option<MemoryResponse>,
+}
+
+impl PartitionedMemoryOutcome {
+    fn new(target: MemoryTargetId, response: Option<MemoryResponse>) -> Self {
+        Self { target, response }
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub fn response(&self) -> Option<&MemoryResponse> {
+        self.response.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PartitionedMemoryStore {
+    decoder: AddressDecoder,
+    partitions: BTreeMap<MemoryTargetId, LineMemoryStore>,
+}
+
+impl PartitionedMemoryStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_partition(
+        &mut self,
+        target: MemoryTargetId,
+        layout: CacheLineLayout,
+    ) -> Result<(), MemoryError> {
+        if self.partitions.contains_key(&target) {
+            return Err(MemoryError::DuplicateMemoryTarget { target });
+        }
+
+        self.partitions.insert(target, LineMemoryStore::new(layout));
+        Ok(())
+    }
+
+    pub fn map_region(
+        &mut self,
+        target: MemoryTargetId,
+        start: Address,
+        size: AccessSize,
+    ) -> Result<(), MemoryError> {
+        self.require_partition(target)?;
+        self.decoder.insert(target, start, size)
+    }
+
+    pub fn insert_line(
+        &mut self,
+        target: MemoryTargetId,
+        line: Address,
+        data: Vec<u8>,
+    ) -> Result<(), MemoryError> {
+        self.partition_mut(target)?.insert_line(line, data)
+    }
+
+    pub fn respond(
+        &mut self,
+        request: &MemoryRequest,
+    ) -> Result<PartitionedMemoryOutcome, MemoryError> {
+        let target = self.decoder.decode_request(request)?;
+        let response = self.partition_mut(target)?.respond(request)?;
+        Ok(PartitionedMemoryOutcome::new(target, response))
+    }
+
+    pub fn line_data(&self, target: MemoryTargetId, line: Address) -> Result<Vec<u8>, MemoryError> {
+        let partition = self.partition(target)?;
+        partition.line_data(line).ok_or(MemoryError::UnmappedLine {
+            line: partition.layout().line_address(line),
+        })
+    }
+
+    pub fn line_count(&self, target: MemoryTargetId) -> Result<usize, MemoryError> {
+        Ok(self.partition(target)?.line_count())
+    }
+
+    pub fn contains_partition(&self, target: MemoryTargetId) -> bool {
+        self.partitions.contains_key(&target)
+    }
+
+    pub fn partition_layout(&self, target: MemoryTargetId) -> Result<CacheLineLayout, MemoryError> {
+        Ok(self.partition(target)?.layout())
+    }
+
+    pub fn partition_count(&self) -> usize {
+        self.partitions.len()
+    }
+
+    pub fn region_count(&self) -> usize {
+        self.decoder.region_count()
+    }
+
+    pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
+        self.decoder.regions()
+    }
+
+    pub fn decode_request(&self, request: &MemoryRequest) -> Result<MemoryTargetId, MemoryError> {
+        self.decoder.decode_request(request)
+    }
+
+    fn require_partition(&self, target: MemoryTargetId) -> Result<(), MemoryError> {
+        if self.partitions.contains_key(&target) {
+            return Ok(());
+        }
+
+        Err(MemoryError::UnknownMemoryTarget { target })
+    }
+
+    fn partition(&self, target: MemoryTargetId) -> Result<&LineMemoryStore, MemoryError> {
+        self.partitions
+            .get(&target)
+            .ok_or(MemoryError::UnknownMemoryTarget { target })
+    }
+
+    fn partition_mut(
+        &mut self,
+        target: MemoryTargetId,
+    ) -> Result<&mut LineMemoryStore, MemoryError> {
+        self.partitions
+            .get_mut(&target)
+            .ok_or(MemoryError::UnknownMemoryTarget { target })
     }
 }
 
@@ -927,6 +1105,10 @@ impl MemoryRequest {
 
     pub fn line_span(&self) -> u64 {
         self.line_layout.line_span(self.range)
+    }
+
+    pub const fn line_layout(&self) -> CacheLineLayout {
+        self.line_layout
     }
 
     pub const fn size(&self) -> AccessSize {

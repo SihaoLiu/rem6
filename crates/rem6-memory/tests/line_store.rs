@@ -155,3 +155,28 @@ fn line_store_validates_inserted_line_shape() {
         }
     );
 }
+
+#[test]
+fn line_store_rejects_requests_with_different_line_layout() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+
+    let actual = CacheLineLayout::new(128).unwrap();
+    let request = MemoryRequest::read_shared(
+        request_id(6),
+        Address::new(0x1008),
+        AccessSize::new(8).unwrap(),
+        actual,
+    )
+    .unwrap();
+    assert_eq!(
+        store.respond(&request).unwrap_err(),
+        MemoryError::LineLayoutMismatch {
+            request: request.id(),
+            expected: layout(),
+            actual,
+        }
+    );
+}
