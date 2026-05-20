@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
+use rem6_cache::{CacheControllerResultKind, MsiCacheController};
 use rem6_cpu::{
     CpuCore, CpuError, CpuFetchConfig, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, CpuId,
     CpuResetState,
@@ -21,6 +22,106 @@ fn endpoint(name: &str) -> TransportEndpointId {
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
+}
+
+#[test]
+fn cpu_fetch_can_complete_from_msi_cache_hit() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let core_endpoint = endpoint("cpu0.ifetch");
+    let cache_endpoint = endpoint("l1i0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core_endpoint.clone(),
+                PartitionId::new(0),
+                cache_endpoint.clone(),
+                PartitionId::new(1),
+                2,
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut cache = MsiCacheController::new(AgentId::new(20), layout(), Address::new(0x8000));
+    cache
+        .install_shared((0x30..0x40).collect::<Vec<u8>>())
+        .unwrap();
+    let cache = Arc::new(Mutex::new(cache));
+    let trace = MemoryTrace::new();
+    let core = CpuCore::new(
+        CpuResetState::new(
+            CpuId::new(0),
+            PartitionId::new(0),
+            AgentId::new(7),
+            Address::new(0x8004),
+        ),
+        CpuFetchConfig::new(
+            core_endpoint.clone(),
+            route,
+            layout(),
+            AccessSize::new(4).unwrap(),
+        ),
+    )
+    .unwrap();
+
+    let target_cache = Arc::clone(&cache);
+    core.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        trace.clone(),
+        move |delivery, _context| {
+            assert_eq!(delivery.endpoint(), &cache_endpoint);
+            assert_eq!(
+                delivery.request().operation(),
+                MemoryOperation::InstructionFetch
+            );
+            let cache_result = target_cache
+                .lock()
+                .unwrap()
+                .accept_cpu_request(delivery.request().clone())
+                .unwrap();
+            assert_eq!(cache_result.kind(), CacheControllerResultKind::Hit);
+            cache_result.target_outcome().cloned().unwrap()
+        },
+    )
+    .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(summary.final_tick(), 6);
+    assert_eq!(core.pc(), Address::new(0x8008));
+    assert_eq!(
+        core.fetch_events()[1].data(),
+        Some(&[0x34, 0x35, 0x36, 0x37][..])
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core_endpoint.clone(),
+                MemoryTraceKind::RequestSent,
+                core.fetch_events()[0].request_id(),
+            ),
+            MemoryTraceEvent::request(
+                2,
+                route,
+                endpoint("l1i0"),
+                MemoryTraceKind::RequestArrived,
+                core.fetch_events()[0].request_id(),
+            ),
+            MemoryTraceEvent::response(
+                6,
+                route,
+                core_endpoint,
+                core.fetch_events()[0].request_id(),
+                rem6_memory::ResponseStatus::Completed,
+            ),
+        ]
+    );
 }
 
 #[test]

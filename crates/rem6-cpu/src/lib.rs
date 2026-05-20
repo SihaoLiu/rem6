@@ -131,8 +131,25 @@ impl CpuCore {
         self.state.lock().expect("cpu core lock").reset.partition()
     }
 
+    pub fn agent(&self) -> AgentId {
+        self.state.lock().expect("cpu core lock").reset.agent()
+    }
+
     pub fn pc(&self) -> Address {
         self.state.lock().expect("cpu core lock").pc
+    }
+
+    pub fn fetch_endpoint(&self) -> TransportEndpointId {
+        self.state
+            .lock()
+            .expect("cpu core lock")
+            .fetch
+            .endpoint()
+            .clone()
+    }
+
+    pub fn fetch_route(&self) -> MemoryRouteId {
+        self.state.lock().expect("cpu core lock").fetch.route()
     }
 
     pub fn next_sequence(&self) -> u64 {
@@ -285,6 +302,82 @@ impl fmt::Debug for CpuCore {
             .field("pc", &state.pc)
             .field("next_sequence", &state.next_sequence)
             .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CpuCluster {
+    cores: BTreeMap<CpuId, CpuCore>,
+}
+
+impl CpuCluster {
+    pub fn new<I>(cores: I) -> Result<Self, CpuClusterError>
+    where
+        I: IntoIterator<Item = CpuCore>,
+    {
+        let mut by_cpu = BTreeMap::new();
+        let mut by_agent = BTreeMap::new();
+        let mut by_endpoint = BTreeMap::new();
+
+        for core in cores {
+            let cpu = core.id();
+            if by_cpu.contains_key(&cpu) {
+                return Err(CpuClusterError::DuplicateCpu { cpu });
+            }
+
+            let agent = core.agent();
+            if let Some(existing) = by_agent.insert(agent, cpu) {
+                return Err(CpuClusterError::DuplicateAgent {
+                    agent,
+                    existing,
+                    duplicate: cpu,
+                });
+            }
+
+            let endpoint = core.fetch_endpoint();
+            if let Some(existing) = by_endpoint.insert(endpoint.clone(), cpu) {
+                return Err(CpuClusterError::DuplicateFetchEndpoint {
+                    endpoint,
+                    existing,
+                    duplicate: cpu,
+                });
+            }
+
+            by_cpu.insert(cpu, core);
+        }
+
+        Ok(Self { cores: by_cpu })
+    }
+
+    pub fn core_count(&self) -> usize {
+        self.cores.len()
+    }
+
+    pub fn core_ids(&self) -> Vec<CpuId> {
+        self.cores.keys().copied().collect()
+    }
+
+    pub fn core(&self, cpu: CpuId) -> Result<CpuCore, CpuClusterError> {
+        self.cores
+            .get(&cpu)
+            .cloned()
+            .ok_or(CpuClusterError::UnknownCpu { cpu })
+    }
+
+    pub fn issue_next_fetch<F>(
+        &self,
+        cpu: CpuId,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<PartitionEventId, CpuClusterError>
+    where
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        self.core(cpu)?
+            .issue_next_fetch(scheduler, transport, trace, responder)
+            .map_err(CpuClusterError::Cpu)
     }
 }
 
@@ -518,6 +611,70 @@ pub enum CpuError {
     },
     Memory(MemoryError),
     Transport(TransportError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CpuClusterError {
+    DuplicateCpu {
+        cpu: CpuId,
+    },
+    DuplicateAgent {
+        agent: AgentId,
+        existing: CpuId,
+        duplicate: CpuId,
+    },
+    DuplicateFetchEndpoint {
+        endpoint: TransportEndpointId,
+        existing: CpuId,
+        duplicate: CpuId,
+    },
+    UnknownCpu {
+        cpu: CpuId,
+    },
+    Cpu(CpuError),
+}
+
+impl fmt::Display for CpuClusterError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateCpu { cpu } => {
+                write!(formatter, "CPU {} is already registered", cpu.get())
+            }
+            Self::DuplicateAgent {
+                agent,
+                existing,
+                duplicate,
+            } => write!(
+                formatter,
+                "agent {} is assigned to CPU {} and CPU {}",
+                agent.get(),
+                existing.get(),
+                duplicate.get()
+            ),
+            Self::DuplicateFetchEndpoint {
+                endpoint,
+                existing,
+                duplicate,
+            } => write!(
+                formatter,
+                "fetch endpoint {} is assigned to CPU {} and CPU {}",
+                endpoint.as_str(),
+                existing.get(),
+                duplicate.get()
+            ),
+            Self::UnknownCpu { cpu } => write!(formatter, "CPU {} is not registered", cpu.get()),
+            Self::Cpu(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for CpuClusterError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Cpu(error) => Some(error),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for CpuError {
