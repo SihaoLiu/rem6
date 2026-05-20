@@ -2,7 +2,7 @@ use rem6_cache::MesiCacheControllerResultKind;
 use rem6_coherence::{
     DramMemoryAccessRecord, LineBackingStore, MesiCpuResponseRecord, MesiDirectoryLineHarness,
     PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
-    PartitionedMesiDirectoryLineHarness, SubmitKind,
+    PartitionedMesiDirectoryLineHarness, PartitionedRouteHopConfig, SubmitKind,
 };
 use rem6_directory::{MesiDirectoryDataSource, MesiDirectoryLineState, MesiDirectorySnoop};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
@@ -154,6 +154,50 @@ fn partitioned_harness_with_dram_memory() -> PartitionedMesiDirectoryLineHarness
         PartitionedDramMemoryConfig::new(PartitionId::new(4), endpoint("mem0"), 7, 11, memory),
         [
             cache_config(1, 0, "l1d0", 3, 9),
+            cache_config(2, 1, "l1d1", 5, 7),
+            cache_config(3, 3, "l1d2", 2, 4),
+        ],
+    )
+    .unwrap()
+}
+
+fn partitioned_harness_with_dram_memory_hops() -> PartitionedMesiDirectoryLineHarness {
+    let target = dram_target();
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(4, 256, 64).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x8000).unwrap(),
+        )
+        .unwrap();
+    memory
+        .insert_line(target, Address::new(0x3000), line_data())
+        .unwrap();
+
+    PartitionedMesiDirectoryLineHarness::new_with_dram_memory(
+        layout(),
+        Address::new(0x3000),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedDramMemoryConfig::new(PartitionId::new(4), endpoint("mem0"), 12, 15, memory)
+            .with_route_hops([
+                PartitionedRouteHopConfig::new(PartitionId::new(6), endpoint("mesh_r1"), 4, 6),
+                PartitionedRouteHopConfig::new(PartitionId::new(4), endpoint("mem0"), 8, 9),
+            ]),
+        [
+            cache_config(1, 0, "l1d0", 7, 10).with_route_hops([
+                PartitionedRouteHopConfig::new(PartitionId::new(5), endpoint("mesh_r0"), 2, 3),
+                PartitionedRouteHopConfig::new(PartitionId::new(2), endpoint("dir0"), 5, 7),
+            ]),
             cache_config(2, 1, "l1d1", 5, 7),
             cache_config(3, 3, "l1d2", 2, 4),
         ],
@@ -633,6 +677,118 @@ fn partitioned_mesi_harness_routes_dram_backing_reads_in_parallel_epochs() {
             ),
             MemoryTraceEvent::response(
                 38,
+                cache_route,
+                endpoint("l1d0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_routes_dram_backing_reads_through_intermediate_hops() {
+    let mut harness = partitioned_harness_with_dram_memory_hops();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+    assert_eq!(run.final_tick(), 52);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![MesiCpuResponseRecord::new(
+            52,
+            MesiCacheControllerResultKind::Fill,
+            request_id(1, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 6, 7]),
+        )]
+    );
+    assert_eq!(
+        harness.dram_memory_accesses(),
+        vec![DramMemoryAccessRecord::new(
+            19,
+            dram_target(),
+            request_id(1, 0),
+            0,
+            12,
+            false,
+            27,
+        )]
+    );
+
+    let cache_route = harness.route(agent(1)).unwrap();
+    let memory_route = harness.memory_route().unwrap();
+    assert_eq!(
+        harness.trace(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                cache_route,
+                endpoint("l1d0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                2,
+                cache_route,
+                endpoint("mesh_r0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                7,
+                cache_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                7,
+                memory_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                11,
+                memory_route,
+                endpoint("mesh_r1"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                19,
+                memory_route,
+                endpoint("mem0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::response(
+                36,
+                memory_route,
+                endpoint("mesh_r1"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                42,
+                memory_route,
+                endpoint("dir0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                49,
+                cache_route,
+                endpoint("mesh_r0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                52,
                 cache_route,
                 endpoint("l1d0"),
                 request_id(1, 0),
