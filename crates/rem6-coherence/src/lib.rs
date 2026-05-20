@@ -110,6 +110,7 @@ impl CpuResponseRecord {
 pub enum HarnessError {
     LineBusy { state: MsiState },
     UnknownCache { agent: AgentId },
+    DuplicateCache { agent: AgentId },
     WrongLine { expected: Address, actual: Address },
     LineDataSizeMismatch { expected: u64, actual: u64 },
     MissingDirectoryGrant { request: MemoryRequestId },
@@ -127,6 +128,13 @@ impl fmt::Display for HarnessError {
             Self::LineBusy { state } => write!(formatter, "cache line is busy in {state:?}"),
             Self::UnknownCache { agent } => {
                 write!(formatter, "cache agent {} is not registered", agent.get())
+            }
+            Self::DuplicateCache { agent } => {
+                write!(
+                    formatter,
+                    "cache agent {} is already registered",
+                    agent.get()
+                )
             }
             Self::WrongLine { expected, actual } => write!(
                 formatter,
@@ -455,6 +463,376 @@ impl DirectoryLineHarness {
     ) {
         self.cpu_responses
             .push(response_record(tick, cache_result, response));
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedCacheAgentConfig {
+    agent: AgentId,
+    partition: PartitionId,
+    endpoint: TransportEndpointId,
+    request_latency: u64,
+    response_latency: u64,
+}
+
+impl PartitionedCacheAgentConfig {
+    pub fn new(
+        agent: AgentId,
+        partition: PartitionId,
+        endpoint: TransportEndpointId,
+        request_latency: u64,
+        response_latency: u64,
+    ) -> Self {
+        Self {
+            agent,
+            partition,
+            endpoint,
+            request_latency,
+            response_latency,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn endpoint(&self) -> &TransportEndpointId {
+        &self.endpoint
+    }
+
+    pub const fn request_latency(&self) -> u64 {
+        self.request_latency
+    }
+
+    pub const fn response_latency(&self) -> u64 {
+        self.response_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectoryDecisionRecord {
+    tick: u64,
+    requester: AgentId,
+    decision: DirectoryDecision,
+}
+
+impl DirectoryDecisionRecord {
+    pub const fn new(tick: u64, requester: AgentId, decision: DirectoryDecision) -> Self {
+        Self {
+            tick,
+            requester,
+            decision,
+        }
+    }
+
+    pub const fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    pub const fn requester(&self) -> AgentId {
+        self.requester
+    }
+
+    pub const fn decision(&self) -> &DirectoryDecision {
+        &self.decision
+    }
+}
+
+pub struct PartitionedDirectoryLineHarness {
+    scheduler: PartitionedScheduler,
+    transport: MemoryTransport,
+    line: MsiLineId,
+    layout: CacheLineLayout,
+    directory: Arc<Mutex<MsiDirectory>>,
+    caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+    routes: BTreeMap<AgentId, MemoryRouteId>,
+    backing: Arc<Mutex<LineBackingStore>>,
+    trace: MemoryTrace,
+    cpu_responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
+    directory_decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
+}
+
+impl PartitionedDirectoryLineHarness {
+    pub fn new<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        backing: LineBackingStore,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        agents: I,
+    ) -> Result<Self, HarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        let line_address = layout.line_address(line_address);
+        if backing.line_address() != line_address {
+            return Err(HarnessError::WrongLine {
+                expected: line_address,
+                actual: backing.line_address(),
+            });
+        }
+
+        let mut partition_count = directory_partition
+            .index()
+            .checked_add(1)
+            .ok_or(HarnessError::Scheduler(SchedulerError::NoPartitions))?;
+        let mut transport = MemoryTransport::new();
+        let mut caches = BTreeMap::new();
+        let mut routes = BTreeMap::new();
+
+        for config in agents {
+            partition_count = partition_count.max(
+                config
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(HarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            if caches
+                .insert(
+                    config.agent(),
+                    Arc::new(Mutex::new(MsiCacheController::new(
+                        config.agent(),
+                        layout,
+                        line_address,
+                    ))),
+                )
+                .is_some()
+            {
+                return Err(HarnessError::DuplicateCache {
+                    agent: config.agent(),
+                });
+            }
+            let route = transport
+                .add_route(
+                    MemoryRoute::new(
+                        config.endpoint().clone(),
+                        config.partition(),
+                        directory_endpoint.clone(),
+                        directory_partition,
+                        config.request_latency(),
+                        config.response_latency(),
+                    )
+                    .map_err(HarnessError::Transport)?,
+                )
+                .map_err(HarnessError::Transport)?;
+            routes.insert(config.agent(), route);
+        }
+
+        Ok(Self {
+            scheduler: PartitionedScheduler::with_min_remote_delay(partition_count, 1)
+                .map_err(HarnessError::Scheduler)?,
+            transport,
+            line: MsiLineId::new(line_address),
+            layout,
+            directory: Arc::new(Mutex::new(MsiDirectory::new())),
+            caches,
+            routes,
+            backing: Arc::new(Mutex::new(backing)),
+            trace: MemoryTrace::new(),
+            cpu_responses: Arc::new(Mutex::new(Vec::new())),
+            directory_decisions: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn submit_cpu_request(
+        &mut self,
+        agent: AgentId,
+        request: MemoryRequest,
+    ) -> Result<SubmitResult, HarnessError> {
+        let cache = self.cache_arc(agent)?;
+        let result = cache
+            .lock()
+            .expect("cache lock")
+            .accept_cpu_request(request)
+            .map_err(map_cache_error)?;
+        let cache_result = result.kind();
+
+        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+            self.cpu_responses
+                .lock()
+                .expect("response lock")
+                .push(response_record(
+                    self.scheduler.now(),
+                    cache_result,
+                    response,
+                ));
+            return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
+        }
+
+        let downstream = result
+            .downstream_request()
+            .cloned()
+            .ok_or(HarnessError::Cache(CacheControllerError::NoPendingMiss))?;
+        let route = *self
+            .routes
+            .get(&agent)
+            .ok_or(HarnessError::UnknownCache { agent })?;
+        let directory = Arc::clone(&self.directory);
+        let caches = self.caches.clone();
+        let backing = Arc::clone(&self.backing);
+        let decisions = Arc::clone(&self.directory_decisions);
+        let response_cache = Arc::clone(&cache);
+        let responses = Arc::clone(&self.cpu_responses);
+        self.transport
+            .submit(
+                &mut self.scheduler,
+                route,
+                downstream,
+                self.trace.clone(),
+                move |delivery| {
+                    let decision = directory
+                        .lock()
+                        .expect("directory lock")
+                        .accept(delivery.request().clone())
+                        .expect("directory decision");
+                    let response = partitioned_directory_response(
+                        delivery.request(),
+                        &decision,
+                        &caches,
+                        &backing,
+                    )
+                    .expect("directory response");
+                    decisions
+                        .lock()
+                        .expect("decision lock")
+                        .push(DirectoryDecisionRecord::new(
+                            delivery.tick(),
+                            delivery.request().id().agent(),
+                            decision,
+                        ));
+                    TargetOutcome::Respond(response)
+                },
+                move |delivery| {
+                    let result = response_cache
+                        .lock()
+                        .expect("cache lock")
+                        .accept_fill(delivery.response().clone())
+                        .expect("cache fill");
+                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+                        responses
+                            .lock()
+                            .expect("response lock")
+                            .push(response_record(delivery.tick(), result.kind(), response));
+                    }
+                },
+            )
+            .map_err(HarnessError::Transport)?;
+
+        Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result))
+    }
+
+    pub fn run_until_idle(&mut self) -> ConservativeRunSummary {
+        self.scheduler.run_until_idle_conservative()
+    }
+
+    pub fn cache_state(&self, agent: AgentId) -> Result<MsiState, HarnessError> {
+        Ok(self.cache_arc(agent)?.lock().expect("cache lock").state())
+    }
+
+    pub fn directory_state(&self) -> DirectoryLineState {
+        self.directory
+            .lock()
+            .expect("directory lock")
+            .line_state(self.line)
+    }
+
+    pub fn route(&self, agent: AgentId) -> Result<MemoryRouteId, HarnessError> {
+        self.routes
+            .get(&agent)
+            .copied()
+            .ok_or(HarnessError::UnknownCache { agent })
+    }
+
+    pub fn trace(&self) -> Vec<MemoryTraceEvent> {
+        self.trace.snapshot()
+    }
+
+    pub fn cpu_responses(&self) -> Vec<CpuResponseRecord> {
+        self.cpu_responses.lock().expect("response lock").clone()
+    }
+
+    pub fn directory_decisions(&self) -> Vec<DirectoryDecisionRecord> {
+        self.directory_decisions
+            .lock()
+            .expect("decision lock")
+            .clone()
+    }
+
+    pub const fn line(&self) -> MsiLineId {
+        self.line
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    fn cache_arc(&self, agent: AgentId) -> Result<Arc<Mutex<MsiCacheController>>, HarnessError> {
+        self.caches
+            .get(&agent)
+            .cloned()
+            .ok_or(HarnessError::UnknownCache { agent })
+    }
+}
+
+fn partitioned_directory_response(
+    request: &MemoryRequest,
+    decision: &DirectoryDecision,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+    backing: &Arc<Mutex<LineBackingStore>>,
+) -> Result<MemoryResponse, HarnessError> {
+    let grant = decision
+        .grant()
+        .copied()
+        .ok_or(HarnessError::MissingDirectoryGrant {
+            request: request.id(),
+        })?;
+    let source_data = match grant.data_source() {
+        DirectoryDataSource::BackingMemory | DirectoryDataSource::NoData => None,
+        DirectoryDataSource::ModifiedOwner(agent) => {
+            let cache = caches
+                .get(&agent)
+                .ok_or(HarnessError::UnknownCache { agent })?;
+            let locked = cache.lock().expect("cache lock");
+            Some(
+                locked
+                    .cached_data()
+                    .ok_or(HarnessError::GrantDataUnavailable {
+                        agent,
+                        line: grant.line(),
+                    })?
+                    .to_vec(),
+            )
+        }
+    };
+
+    for snoop in decision.snoops() {
+        let cache = caches
+            .get(&snoop.target())
+            .ok_or(HarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        cache
+            .lock()
+            .expect("cache lock")
+            .accept_snoop(snoop.event())
+            .map_err(map_cache_error)?;
+    }
+
+    match grant.data_source() {
+        DirectoryDataSource::BackingMemory => {
+            backing.lock().expect("backing lock").respond(request)
+        }
+        DirectoryDataSource::ModifiedOwner(_) => {
+            MemoryResponse::completed(request, source_data).map_err(HarnessError::Memory)
+        }
+        DirectoryDataSource::NoData => {
+            MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
+        }
     }
 }
 
