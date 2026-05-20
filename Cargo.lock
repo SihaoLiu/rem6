@@ -56,6 +56,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-interrupt"
+version = "0.1.0"
+dependencies = [
+ "rem6-kernel",
+]
+
+[[package]]
 name = "rem6-kernel"
 version = "0.1.0"
 
