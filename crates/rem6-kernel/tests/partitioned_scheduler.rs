@@ -146,3 +146,308 @@ fn scheduler_rejects_empty_partition_sets() {
         SchedulerError::NoPartitions
     );
 }
+
+#[test]
+fn scheduler_epoch_stops_at_deterministic_lookahead_barrier() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+
+    let core_log = Arc::clone(&observed);
+    let response_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(core, 4, move |context| {
+            core_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "core-request"));
+
+            context
+                .schedule_remote_after(memory, 5, move |context| {
+                    response_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "memory-receive",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let memory_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(memory, 6, move |context| {
+            memory_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "memory-local"));
+        })
+        .unwrap();
+
+    let first_epoch = scheduler.run_next_epoch();
+
+    assert_eq!(first_epoch.executed_events(), 1);
+    assert_eq!(first_epoch.final_tick(), 5);
+    assert_eq!(scheduler.now(), 5);
+    assert_eq!(scheduler.partition_now(core).unwrap(), 5);
+    assert_eq!(scheduler.partition_now(memory).unwrap(), 5);
+    assert_eq!(scheduler.next_pending_tick(memory).unwrap(), Some(6));
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[(4, core, "core-request")]
+    );
+
+    let second_epoch = scheduler.run_next_epoch();
+
+    assert_eq!(second_epoch.executed_events(), 2);
+    assert_eq!(second_epoch.final_tick(), 10);
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[
+            (4, core, "core-request"),
+            (6, memory, "memory-local"),
+            (9, memory, "memory-receive"),
+        ]
+    );
+}
+
+#[test]
+fn scheduler_rejects_remote_messages_below_configured_lookahead() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+
+    scheduler
+        .schedule_at(core, 1, move |context| {
+            let error = context
+                .schedule_remote_after(memory, 4, |_| {})
+                .unwrap_err();
+            assert_eq!(
+                error,
+                SchedulerError::RemoteDelayBelowLookahead {
+                    source: core,
+                    target: memory,
+                    delay: 4,
+                    minimum: 5
+                }
+            );
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+}
+
+#[test]
+fn scheduler_allows_local_events_below_remote_lookahead() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+
+    let core = PartitionId::new(0);
+
+    let start_log = Arc::clone(&observed);
+    let immediate_log = Arc::clone(&observed);
+    let short_delay_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(core, 3, move |context| {
+            start_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "start"));
+
+            context
+                .schedule_local_after(0, move |context| {
+                    immediate_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "local-immediate",
+                    ));
+                })
+                .unwrap();
+
+            context
+                .schedule_local_after(1, move |context| {
+                    short_delay_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "local-short",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let epoch = scheduler.run_next_epoch();
+
+    assert_eq!(epoch.executed_events(), 3);
+    assert_eq!(epoch.final_tick(), 5);
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[
+            (3, core, "start"),
+            (3, core, "local-immediate"),
+            (4, core, "local-short"),
+        ]
+    );
+}
+
+#[test]
+fn scheduler_delivers_remote_message_at_lookahead_boundary() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+
+    let send_log = Arc::clone(&observed);
+    let receive_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(core, 0, move |context| {
+            send_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "send"));
+
+            context
+                .schedule_remote_after(memory, 5, move |context| {
+                    receive_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "receive",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let epoch = scheduler.run_next_epoch();
+
+    assert_eq!(epoch.executed_events(), 2);
+    assert_eq!(epoch.final_tick(), 5);
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[(0, core, "send"), (5, memory, "receive")]
+    );
+}
+
+#[test]
+fn scheduler_rejects_zero_lookahead_configuration() {
+    assert_eq!(
+        PartitionedScheduler::with_min_remote_delay(2, 0).unwrap_err(),
+        SchedulerError::ZeroLookahead
+    );
+}
+
+#[test]
+fn scheduler_plans_next_epoch_without_dispatching_events() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let device = PartitionId::new(2);
+
+    let core_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(core, 4, move |context| {
+            core_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "core"));
+        })
+        .unwrap();
+    scheduler.schedule_at(memory, 6, |_| {}).unwrap();
+    scheduler.schedule_at(device, 5, |_| {}).unwrap();
+
+    let plan = scheduler.plan_next_epoch().unwrap();
+
+    assert_eq!(plan.horizon(), 5);
+    assert_eq!(
+        plan.ready_partitions(),
+        &[
+            rem6_kernel::ReadyPartition {
+                partition: core,
+                next_tick: 4
+            },
+            rem6_kernel::ReadyPartition {
+                partition: device,
+                next_tick: 5
+            },
+        ]
+    );
+    assert!(observed.lock().unwrap().is_empty());
+    assert_eq!(scheduler.now(), 0);
+}
+
+#[test]
+fn scheduler_conservative_runner_executes_epochs_until_idle() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+
+    let core_log = Arc::clone(&observed);
+    let response_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(core, 4, move |context| {
+            core_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "core-request"));
+
+            context
+                .schedule_remote_after(memory, 5, move |context| {
+                    response_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "memory-receive",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let memory_log = Arc::clone(&observed);
+    scheduler
+        .schedule_at(memory, 6, move |context| {
+            memory_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "memory-local"));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.epochs(), 2);
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(summary.final_tick(), 10);
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[
+            (4, core, "core-request"),
+            (6, memory, "memory-local"),
+            (9, memory, "memory-receive"),
+        ]
+    );
+    assert!(scheduler.is_idle());
+}
+
+#[test]
+fn scheduler_idle_epoch_does_not_advance_time() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+
+    assert!(scheduler.plan_next_epoch().is_none());
+
+    let epoch = scheduler.run_next_epoch();
+    assert_eq!(epoch.executed_events(), 0);
+    assert_eq!(epoch.final_tick(), 0);
+    assert_eq!(scheduler.now(), 0);
+
+    let all_epochs = scheduler.run_until_idle_conservative();
+    assert_eq!(all_epochs.epochs(), 0);
+    assert_eq!(all_epochs.executed_events(), 0);
+    assert_eq!(all_epochs.final_tick(), 0);
+}

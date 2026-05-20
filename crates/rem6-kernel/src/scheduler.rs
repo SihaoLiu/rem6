@@ -37,6 +37,7 @@ impl PartitionEventId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchedulerError {
     NoPartitions,
+    ZeroLookahead,
     UnknownPartition {
         partition: PartitionId,
         partitions: u32,
@@ -54,12 +55,19 @@ pub enum SchedulerError {
         source: PartitionId,
         target: PartitionId,
     },
+    RemoteDelayBelowLookahead {
+        source: PartitionId,
+        target: PartitionId,
+        delay: Tick,
+        minimum: Tick,
+    },
 }
 
 impl fmt::Display for SchedulerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoPartitions => write!(formatter, "scheduler requires at least one partition"),
+            Self::ZeroLookahead => write!(formatter, "scheduler lookahead must be positive"),
             Self::UnknownPartition {
                 partition,
                 partitions,
@@ -86,6 +94,17 @@ impl fmt::Display for SchedulerError {
                 source.index(),
                 target.index()
             ),
+            Self::RemoteDelayBelowLookahead {
+                source,
+                target,
+                delay,
+                minimum,
+            } => write!(
+                formatter,
+                "remote message from partition {} to {} has delay {delay}; configured lookahead is {minimum}",
+                source.index(),
+                target.index()
+            ),
         }
     }
 }
@@ -108,21 +127,76 @@ impl RunSummary {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConservativeRunSummary {
+    epochs: usize,
+    executed_events: usize,
+    final_tick: Tick,
+}
+
+impl ConservativeRunSummary {
+    pub const fn epochs(self) -> usize {
+        self.epochs
+    }
+
+    pub const fn executed_events(self) -> usize {
+        self.executed_events
+    }
+
+    pub const fn final_tick(self) -> Tick {
+        self.final_tick
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EpochPlan {
+    horizon: Tick,
+    ready_partitions: Vec<ReadyPartition>,
+}
+
+impl EpochPlan {
+    pub fn horizon(&self) -> Tick {
+        self.horizon
+    }
+
+    pub fn ready_partitions(&self) -> &[ReadyPartition] {
+        &self.ready_partitions
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadyPartition {
+    pub partition: PartitionId,
+    pub next_tick: Tick,
+}
+
 type SchedulerCallback = Box<dyn FnOnce(&mut SchedulerContext<'_>) + Send + 'static>;
 
 pub struct PartitionedScheduler {
     now: Tick,
+    min_remote_delay: Tick,
     partitions: Vec<PartitionQueue>,
 }
 
 impl PartitionedScheduler {
     pub fn new(partitions: u32) -> Result<Self, SchedulerError> {
+        Self::with_min_remote_delay(partitions, 1)
+    }
+
+    pub fn with_min_remote_delay(
+        partitions: u32,
+        min_remote_delay: Tick,
+    ) -> Result<Self, SchedulerError> {
         if partitions == 0 {
             return Err(SchedulerError::NoPartitions);
+        }
+        if min_remote_delay == 0 {
+            return Err(SchedulerError::ZeroLookahead);
         }
 
         Ok(Self {
             now: 0,
+            min_remote_delay,
             partitions: (0..partitions).map(|_| PartitionQueue::new()).collect(),
         })
     }
@@ -135,8 +209,33 @@ impl PartitionedScheduler {
         self.partitions.len() as u32
     }
 
+    pub fn min_remote_delay(&self) -> Tick {
+        self.min_remote_delay
+    }
+
     pub fn is_idle(&self) -> bool {
         self.partitions.iter().all(PartitionQueue::is_empty)
+    }
+
+    pub fn partition_now(&self, partition: PartitionId) -> Result<Tick, SchedulerError> {
+        self.partition(partition)
+            .map(|queue| queue.now)
+            .ok_or(SchedulerError::UnknownPartition {
+                partition,
+                partitions: self.partition_count(),
+            })
+    }
+
+    pub fn next_pending_tick(
+        &self,
+        partition: PartitionId,
+    ) -> Result<Option<Tick>, SchedulerError> {
+        self.partition(partition)
+            .map(PartitionQueue::peek_tick)
+            .ok_or(SchedulerError::UnknownPartition {
+                partition,
+                partitions: self.partition_count(),
+            })
     }
 
     pub fn schedule_at<F>(
@@ -182,30 +281,93 @@ impl PartitionedScheduler {
         let mut executed_events = 0;
 
         while let Some(partition) = self.next_partition_with_event() {
-            let mut event = self.partitions[partition.index() as usize]
-                .pop_next()
-                .expect("partition has pending event");
-
-            self.now = event.tick;
-            self.partitions[partition.index() as usize].now = event.tick;
+            self.dispatch_next_in_partition(partition);
             executed_events += 1;
-
-            let callback = event
-                .callback
-                .take()
-                .expect("scheduler callback is present");
-            let mut context = SchedulerContext {
-                scheduler: self,
-                partition,
-                now: event.tick,
-            };
-            callback(&mut context);
         }
 
         RunSummary {
             executed_events,
             final_tick: self.now,
         }
+    }
+
+    pub fn run_next_epoch(&mut self) -> RunSummary {
+        let Some(plan) = self.plan_next_epoch() else {
+            return RunSummary {
+                executed_events: 0,
+                final_tick: self.now,
+            };
+        };
+        let horizon = plan.horizon;
+
+        let mut executed_events = 0;
+        while let Some(partition) = self.next_partition_with_event_at_or_before(horizon) {
+            self.dispatch_next_in_partition(partition);
+            executed_events += 1;
+        }
+
+        for queue in &mut self.partitions {
+            if queue.now < horizon {
+                queue.now = horizon;
+            }
+        }
+        self.now = horizon;
+
+        RunSummary {
+            executed_events,
+            final_tick: self.now,
+        }
+    }
+
+    pub fn run_until_idle_conservative(&mut self) -> ConservativeRunSummary {
+        let mut epochs = 0;
+        let mut executed_events = 0;
+
+        while self.plan_next_epoch().is_some() {
+            let before = self.now;
+            let summary = self.run_next_epoch();
+            epochs += 1;
+            executed_events += summary.executed_events();
+
+            if summary.final_tick() == before && summary.executed_events() == 0 {
+                break;
+            }
+        }
+
+        ConservativeRunSummary {
+            epochs,
+            executed_events,
+            final_tick: self.now,
+        }
+    }
+
+    pub fn plan_next_epoch(&self) -> Option<EpochPlan> {
+        if self.is_idle() {
+            return None;
+        }
+
+        let horizon = self.next_epoch_horizon()?;
+        let ready_partitions = self
+            .partitions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, queue)| {
+                let next_tick = queue.peek_tick()?;
+                (next_tick <= horizon).then_some(ReadyPartition {
+                    partition: PartitionId::new(index as u32),
+                    next_tick,
+                })
+            })
+            .collect();
+
+        Some(EpochPlan {
+            horizon,
+            ready_partitions,
+        })
+    }
+
+    fn partition(&self, partition: PartitionId) -> Option<&PartitionQueue> {
+        self.partitions.get(partition.index() as usize)
     }
 
     fn partition_mut(&mut self, partition: PartitionId) -> Option<&mut PartitionQueue> {
@@ -224,6 +386,46 @@ impl PartitionedScheduler {
             .min_by_key(|(tick, partition)| (*tick, *partition))
             .map(|(_, partition)| partition)
     }
+
+    fn next_partition_with_event_at_or_before(&self, horizon: Tick) -> Option<PartitionId> {
+        self.partitions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, queue)| {
+                let tick = queue.peek_tick()?;
+                (tick <= horizon).then_some((tick, PartitionId::new(index as u32)))
+            })
+            .min_by_key(|(tick, partition)| (*tick, *partition))
+            .map(|(_, partition)| partition)
+    }
+
+    fn next_epoch_horizon(&self) -> Option<Tick> {
+        self.partitions
+            .iter()
+            .map(|queue| queue.now.checked_add(self.min_remote_delay))
+            .collect::<Option<Vec<_>>>()
+            .and_then(|horizons| horizons.into_iter().min())
+    }
+
+    fn dispatch_next_in_partition(&mut self, partition: PartitionId) {
+        let mut event = self.partitions[partition.index() as usize]
+            .pop_next()
+            .expect("partition has pending event");
+
+        self.now = event.tick;
+        self.partitions[partition.index() as usize].now = event.tick;
+
+        let callback = event
+            .callback
+            .take()
+            .expect("scheduler callback is present");
+        let mut context = SchedulerContext {
+            scheduler: self,
+            partition,
+            now: event.tick,
+        };
+        callback(&mut context);
+    }
 }
 
 impl fmt::Debug for PartitionedScheduler {
@@ -231,6 +433,7 @@ impl fmt::Debug for PartitionedScheduler {
         formatter
             .debug_struct("PartitionedScheduler")
             .field("now", &self.now)
+            .field("min_remote_delay", &self.min_remote_delay)
             .field("partition_count", &self.partition_count())
             .finish()
     }
@@ -275,6 +478,14 @@ impl SchedulerContext<'_> {
             return Err(SchedulerError::ZeroDelayRemoteMessage {
                 source: self.partition,
                 target,
+            });
+        }
+        if target != self.partition && delay < self.scheduler.min_remote_delay {
+            return Err(SchedulerError::RemoteDelayBelowLookahead {
+                source: self.partition,
+                target,
+                delay,
+                minimum: self.scheduler.min_remote_delay,
             });
         }
 
