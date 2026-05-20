@@ -441,6 +441,53 @@ impl SystemRunController {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemHostController {
+    run: SystemRunController,
+    executor: SystemActionExecutor,
+    action_errors: Vec<SystemError>,
+}
+
+impl SystemHostController {
+    pub const fn new(policy: HostEventPolicy, stats: StatsRegistry) -> Self {
+        Self {
+            run: SystemRunController::new(policy),
+            executor: SystemActionExecutor::new(stats),
+            action_errors: Vec::new(),
+        }
+    }
+
+    pub const fn run(&self) -> &SystemRunController {
+        &self.run
+    }
+
+    pub const fn run_mut(&mut self) -> &mut SystemRunController {
+        &mut self.run
+    }
+
+    pub const fn executor(&self) -> &SystemActionExecutor {
+        &self.executor
+    }
+
+    pub const fn executor_mut(&mut self) -> &mut SystemActionExecutor {
+        &mut self.executor
+    }
+
+    pub fn handle_delivery(&mut self, delivery: GuestEventDelivery) -> Vec<SystemActionOutcome> {
+        match self.run.execute_delivery(delivery, &mut self.executor) {
+            Ok(outcomes) => outcomes,
+            Err(error) => {
+                self.action_errors.push(error);
+                Vec::new()
+            }
+        }
+    }
+
+    pub fn action_errors(&self) -> &[SystemError] {
+        &self.action_errors
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SystemEventPort {
     channel: GuestEventChannel,
@@ -484,6 +531,54 @@ impl SystemEventPort {
             controller
                 .lock()
                 .expect("system run controller lock")
+                .handle_delivery(delivery);
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SystemHostEventPort {
+    channel: GuestEventChannel,
+    controller: Arc<Mutex<SystemHostController>>,
+}
+
+impl SystemHostEventPort {
+    pub fn new(channel: GuestEventChannel, controller: Arc<Mutex<SystemHostController>>) -> Self {
+        Self {
+            channel,
+            controller,
+        }
+    }
+
+    pub fn with_controller(
+        host_partition: PartitionId,
+        host_latency: Tick,
+        controller: Arc<Mutex<SystemHostController>>,
+    ) -> Result<Self, SystemError> {
+        Ok(Self::new(
+            GuestEventChannel::new(host_partition, host_latency)?,
+            controller,
+        ))
+    }
+
+    pub const fn channel(&self) -> GuestEventChannel {
+        self.channel
+    }
+
+    pub fn controller(&self) -> Arc<Mutex<SystemHostController>> {
+        Arc::clone(&self.controller)
+    }
+
+    pub fn emit(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+    ) -> Result<PartitionEventId, SystemError> {
+        let controller = Arc::clone(&self.controller);
+        self.channel.emit(context, event, move |delivery| {
+            controller
+                .lock()
+                .expect("system host controller lock")
                 .handle_delivery(delivery);
         })
     }

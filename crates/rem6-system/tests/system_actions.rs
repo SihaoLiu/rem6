@@ -1,9 +1,12 @@
+use std::sync::{Arc, Mutex};
+
 use rem6_kernel::PartitionId;
+use rem6_kernel::PartitionedScheduler;
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
     HostActionRecord, HostEventPolicy, StopRequest, SystemActionExecutor, SystemActionOutcome,
-    SystemRunController,
+    SystemHostController, SystemHostEventPort, SystemRunController,
 };
 
 #[test]
@@ -176,6 +179,78 @@ fn system_run_controller_executes_delivered_stats_events() {
                 1,
                 40,
                 vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+            )),
+        ]
+    );
+}
+
+#[test]
+fn system_host_event_port_delivers_and_executes_actions() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(20);
+    let mut stats = StatsRegistry::new();
+    let insts = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    stats.increment(insts, 9).unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        stats,
+    )));
+    let port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(guest, 5, move |context| {
+            port.emit(
+                context,
+                GuestEvent::new(GuestEventId::new(8), source, GuestEventKind::RoiBegin),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let controller_for_stats = Arc::clone(&controller);
+    scheduler
+        .schedule_at(host, 8, move |_context| {
+            controller_for_stats
+                .lock()
+                .unwrap()
+                .executor_mut()
+                .stats_mut()
+                .increment(insts, 4)
+                .unwrap();
+        })
+        .unwrap();
+
+    let controller_for_dump = Arc::clone(&controller);
+    scheduler
+        .schedule_at(guest, 9, move |context| {
+            SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller_for_dump))
+                .unwrap()
+                .emit(
+                    context,
+                    GuestEvent::new(GuestEventId::new(9), source, GuestEventKind::RoiEnd),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 11);
+    let controller = controller.lock().unwrap();
+    assert!(controller.action_errors().is_empty());
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[
+            SystemActionOutcome::StatsReset(StatsResetRecord::new(7, 1, vec![(insts, 9)])),
+            SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
+                11,
+                1,
+                7,
+                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 4)],
             )),
         ]
     );
