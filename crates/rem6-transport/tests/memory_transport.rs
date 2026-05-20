@@ -6,9 +6,9 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
-    RequestDelivery, ResponseDelivery, TargetOutcome, TransportEndpointId, TransportError,
-    TransportLatency,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
+    MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome, TransportEndpointId,
+    TransportError, TransportLatency,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -111,6 +111,235 @@ fn transport_routes_request_and_response_across_scheduler_partitions() {
     assert_eq!(received[0].1, route);
     assert_eq!(received[0].2, core);
     assert_eq!(received[0].3.data(), Some(&[0xde, 0xad, 0xbe, 0xef][..]));
+}
+
+#[test]
+fn transport_routes_request_and_response_across_path_hops() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    let core = endpoint("core0");
+    let router = endpoint("mesh_r0");
+    let memory = endpoint("memory0");
+    let route_spec = MemoryRoute::new_path(
+        core.clone(),
+        PartitionId::new(0),
+        [
+            MemoryRouteHop::new(router.clone(), PartitionId::new(1), 2, 3).unwrap(),
+            MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 5, 7).unwrap(),
+        ],
+    )
+    .unwrap();
+    assert_eq!(route_spec.source(), &core);
+    assert_eq!(route_spec.target(), &memory);
+    assert_eq!(route_spec.request_latency(), 7);
+    assert_eq!(route_spec.response_latency(), 10);
+    assert_eq!(route_spec.hops().len(), 2);
+
+    let route = transport.add_route(route_spec).unwrap();
+    let req = request(11, 0x1800, 4);
+    let response_log = Arc::clone(&responses);
+    let expected_memory = memory.clone();
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            move |delivery: RequestDelivery, _context| {
+                assert_eq!(delivery.tick(), 7);
+                assert_eq!(delivery.endpoint(), &expected_memory);
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(
+                        delivery.request(),
+                        Some(vec![0x10, 0x20, 0x30, 0x40]),
+                    )
+                    .unwrap(),
+                )
+            },
+            move |delivery: ResponseDelivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push((delivery.tick(), delivery.endpoint().clone()));
+            },
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.executed_events(), 5);
+    assert_eq!(summary.final_tick(), 18);
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id()
+            ),
+            MemoryTraceEvent::request(
+                2,
+                route,
+                router.clone(),
+                MemoryTraceKind::RequestArrived,
+                req.id()
+            ),
+            MemoryTraceEvent::request(7, route, memory, MemoryTraceKind::RequestArrived, req.id()),
+            MemoryTraceEvent::response(14, route, router, req.id(), ResponseStatus::Completed),
+            MemoryTraceEvent::response(
+                17,
+                route,
+                core.clone(),
+                req.id(),
+                ResponseStatus::Completed
+            ),
+        ]
+    );
+
+    assert_eq!(*responses.lock().unwrap(), vec![(17, core)]);
+}
+
+#[test]
+fn transport_path_allows_local_hops_below_remote_lookahead() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    let core = endpoint("core0");
+    let crossbar = endpoint("xbar0");
+    let memory = endpoint("memory0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                core.clone(),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(crossbar.clone(), PartitionId::new(0), 1, 1).unwrap(),
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(1), 4, 5).unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let req = request(12, 0x1900, 4);
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            |delivery, _context| {
+                assert_eq!(delivery.tick(), 5);
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(vec![1, 3, 5, 7])).unwrap(),
+                )
+            },
+            move |delivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push((delivery.tick(), delivery.endpoint().clone()));
+            },
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id()
+            ),
+            MemoryTraceEvent::request(
+                1,
+                route,
+                crossbar.clone(),
+                MemoryTraceKind::RequestArrived,
+                req.id()
+            ),
+            MemoryTraceEvent::request(5, route, memory, MemoryTraceKind::RequestArrived, req.id()),
+            MemoryTraceEvent::response(10, route, crossbar, req.id(), ResponseStatus::Completed),
+            MemoryTraceEvent::response(
+                11,
+                route,
+                core.clone(),
+                req.id(),
+                ResponseStatus::Completed
+            ),
+        ]
+    );
+    assert_eq!(*responses.lock().unwrap(), vec![(11, core)]);
+}
+
+#[test]
+fn transport_path_omits_response_hops_for_no_response_transactions() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+
+    let cache = endpoint("l1d0");
+    let router = endpoint("mesh_r0");
+    let memory = endpoint("memory0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                cache.clone(),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(router.clone(), PartitionId::new(1), 2, 3).unwrap(),
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 4, 5).unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = MemoryRequest::writeback_dirty(
+        MemoryRequestId::new(AgentId::new(7), 13),
+        Address::new(0x2000),
+        vec![0xaa; 64],
+        line_layout(),
+    )
+    .unwrap();
+
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            |delivery, _context| {
+                assert_eq!(delivery.tick(), 6);
+                assert!(!delivery.request().requires_response());
+                TargetOutcome::NoResponse
+            },
+            |_| panic!("response sink must not run for no response path transactions"),
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(0, route, cache, MemoryTraceKind::RequestSent, req.id()),
+            MemoryTraceEvent::request(2, route, router, MemoryTraceKind::RequestArrived, req.id()),
+            MemoryTraceEvent::request(6, route, memory, MemoryTraceKind::RequestArrived, req.id()),
+        ]
+    );
 }
 
 #[test]
@@ -399,6 +628,21 @@ fn transport_rejects_invalid_routes_and_submissions() {
             latency: TransportLatency::Request
         }
     );
+    assert_eq!(
+        MemoryRoute::new_path(
+            endpoint("core0"),
+            PartitionId::new(0),
+            Vec::<MemoryRouteHop>::new(),
+        )
+        .unwrap_err(),
+        TransportError::EmptyRoutePath
+    );
+    assert_eq!(
+        MemoryRouteHop::new(endpoint("mesh_r0"), PartitionId::new(1), 1, 0).unwrap_err(),
+        TransportError::ZeroRouteLatency {
+            latency: TransportLatency::Response
+        }
+    );
 
     let mut transport = MemoryTransport::new();
     let core = endpoint("core0");
@@ -466,6 +710,36 @@ fn transport_rejects_invalid_routes_and_submissions() {
         error,
         TransportError::LatencyBelowLookahead {
             route: short_route,
+            latency: TransportLatency::Request,
+            delay: 2,
+            minimum: 3,
+        }
+    );
+
+    let path_route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core2"),
+                PartitionId::new(0),
+                [MemoryRouteHop::new(endpoint("router2"), PartitionId::new(1), 2, 3).unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let error = transport
+        .submit(
+            &mut scheduler,
+            path_route,
+            request(42, 0x5010, 1),
+            MemoryTrace::new(),
+            |_, _| TargetOutcome::NoResponse,
+            |_| {},
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        TransportError::LatencyBelowLookahead {
+            route: path_route,
             latency: TransportLatency::Request,
             delay: 2,
             minimum: 3,
