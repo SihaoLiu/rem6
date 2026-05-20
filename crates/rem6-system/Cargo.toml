@@ -11,11 +11,11 @@ rem6-cpu = { path = "../rem6-cpu" }
 rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-stats = { path = "../rem6-stats" }
+rem6-transport = { path = "../rem6-transport" }
 
 [dev-dependencies]
 rem6-boot = { path = "../rem6-boot" }
 rem6-memory = { path = "../rem6-memory" }
-rem6-transport = { path = "../rem6-transport" }
 
 [lints]
 workspace = true

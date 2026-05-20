@@ -3,12 +3,15 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
-use rem6_cpu::{CpuId, RiscvCore};
+use rem6_cpu::{
+    CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
+};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
     PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
 };
 use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
+use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GuestEventId(u64);
@@ -722,6 +725,181 @@ impl ScheduledRiscvTrap {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvSystemRunStopReason {
+    HostStop(StopRequest),
+    Idle { tick: Tick },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSystemRun {
+    turns: Vec<RiscvClusterTurn>,
+    scheduled_traps: Vec<ScheduledRiscvTrap>,
+    stop_reason: RiscvSystemRunStopReason,
+}
+
+impl RiscvSystemRun {
+    pub const fn new(
+        turns: Vec<RiscvClusterTurn>,
+        scheduled_traps: Vec<ScheduledRiscvTrap>,
+        stop_reason: RiscvSystemRunStopReason,
+    ) -> Self {
+        Self {
+            turns,
+            scheduled_traps,
+            stop_reason,
+        }
+    }
+
+    pub fn turns(&self) -> &[RiscvClusterTurn] {
+        &self.turns
+    }
+
+    pub fn scheduled_traps(&self) -> &[ScheduledRiscvTrap] {
+        &self.scheduled_traps
+    }
+
+    pub const fn stop_reason(&self) -> RiscvSystemRunStopReason {
+        self.stop_reason
+    }
+
+    pub const fn host_stop(&self) -> Option<StopRequest> {
+        match self.stop_reason {
+            RiscvSystemRunStopReason::HostStop(stop) => Some(stop),
+            RiscvSystemRunStopReason::Idle { .. } => None,
+        }
+    }
+
+    pub const fn final_tick(&self) -> Option<Tick> {
+        match self.stop_reason {
+            RiscvSystemRunStopReason::HostStop(stop) => Some(stop.tick()),
+            RiscvSystemRunStopReason::Idle { tick } => Some(tick),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RiscvSystemRunDriver {
+    trap_port: RiscvTrapEventPort,
+}
+
+impl RiscvSystemRunDriver {
+    pub const fn new(trap_port: RiscvTrapEventPort) -> Self {
+        Self { trap_port }
+    }
+
+    pub const fn trap_port(&self) -> &RiscvTrapEventPort {
+        &self.trap_port
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_until_host_stop<F, D, FR, DR, E>(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        max_turns: usize,
+        mut event_for: E,
+    ) -> Result<RiscvSystemRun, SystemError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        E: FnMut(CpuId) -> GuestEventId,
+    {
+        let mut turns = Vec::new();
+        let mut scheduled_traps = Vec::new();
+
+        if let Some(stop) = self.host_stop_request() {
+            return Ok(RiscvSystemRun::new(
+                turns,
+                scheduled_traps,
+                RiscvSystemRunStopReason::HostStop(stop),
+            ));
+        }
+
+        for _ in 0..max_turns {
+            let turn = cluster
+                .drive_turn(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    &mut fetch_responder,
+                    &mut data_responder,
+                )
+                .map_err(SystemError::RiscvCluster)?;
+            let trap_cores = pending_trap_cores_from_turn(cluster, &turn)?;
+            if !trap_cores.is_empty() {
+                scheduled_traps.extend(self.trap_port.schedule_pending_core_traps(
+                    scheduler,
+                    trap_cores,
+                    &mut event_for,
+                )?);
+            }
+
+            if let Some(stop) = self.host_stop_request() {
+                turns.push(turn);
+                return Ok(RiscvSystemRun::new(
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::HostStop(stop),
+                ));
+            }
+            if let Some(tick) = turn.idle_tick() {
+                turns.push(turn);
+                return Ok(RiscvSystemRun::new(
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::Idle { tick },
+                ));
+            }
+
+            turns.push(turn);
+        }
+
+        Err(SystemError::RiscvCluster(
+            RiscvClusterError::TurnLimitExceeded {
+                limit: max_turns,
+                completed: turns.len(),
+            },
+        ))
+    }
+
+    fn host_stop_request(&self) -> Option<StopRequest> {
+        self.trap_port
+            .controller()
+            .lock()
+            .expect("system host controller lock")
+            .run()
+            .stop_request()
+            .copied()
+    }
+}
+
+fn pending_trap_cores_from_turn(
+    cluster: &RiscvCluster,
+    turn: &RiscvClusterTurn,
+) -> Result<Vec<RiscvCore>, SystemError> {
+    let mut cores = Vec::new();
+    for event in turn.core_events() {
+        if matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)) {
+            let core = cluster
+                .core(event.cpu())
+                .map_err(SystemError::RiscvCluster)?;
+            if core.has_pending_trap() {
+                cores.push(core);
+            }
+        }
+    }
+    Ok(cores)
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvTrapEventPort {
     host: SystemHostEventPort,
@@ -918,6 +1096,7 @@ pub const fn guest_trap_kind_from_riscv(kind: RiscvTrapKind) -> GuestTrapKind {
 pub enum SystemError {
     ZeroHostLatency,
     Scheduler(SchedulerError),
+    RiscvCluster(RiscvClusterError),
     Stats(StatsError),
     Checkpoint(CheckpointError),
 }
@@ -929,10 +1108,21 @@ impl fmt::Display for SystemError {
                 write!(formatter, "guest event channel latency must be positive")
             }
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
         }
     }
 }
 
-impl Error for SystemError {}
+impl Error for SystemError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Scheduler(error) => Some(error),
+            Self::RiscvCluster(error) => Some(error),
+            Self::Stats(error) => Some(error),
+            Self::Checkpoint(error) => Some(error),
+            Self::ZeroHostLatency => None,
+        }
+    }
+}
