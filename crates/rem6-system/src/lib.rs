@@ -1277,6 +1277,25 @@ impl RiscvTrapEventPort {
             .map(Some)
     }
 
+    pub fn schedule_pending_core_trap_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        core: &RiscvCore,
+    ) -> Result<Option<PartitionEventId>, SystemError> {
+        let Some(trap) = core.pending_trap() else {
+            return Ok(None);
+        };
+
+        let source = core.partition();
+        let source_tick = scheduler
+            .partition_now(source)
+            .map_err(SystemError::Scheduler)?;
+        self.validate_scheduled_emit(scheduler, source, source_tick)?;
+        self.schedule_prevalidated_trap_parallel(scheduler, event, source, source_tick, trap)
+            .map(Some)
+    }
+
     pub fn schedule_pending_core_traps<I, F>(
         &self,
         scheduler: &mut PartitionedScheduler,

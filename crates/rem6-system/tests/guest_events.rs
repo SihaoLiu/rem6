@@ -712,6 +712,73 @@ fn riscv_trap_event_port_schedules_pending_core_trap_from_core_partition() {
 }
 
 #[test]
+fn riscv_trap_event_port_schedules_pending_core_trap_on_parallel_scheduler() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(2);
+    let source = GuestSourceId::new(25);
+    let (mut scheduler, transport, fetch_route) = cpu_route();
+    let core = riscv_core(fetch_route, 0x8000);
+    let store = loaded_store(0x8000, 0x0000_0073);
+
+    assert!(matches!(
+        drive_one_action(&core, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    assert!(matches!(
+        action,
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+    assert!(core.has_pending_trap());
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let emit_tick = scheduler.partition_now(guest).unwrap();
+    let event = trap_port
+        .schedule_pending_core_trap_parallel(&mut scheduler, GuestEventId::new(63), &core)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(event.partition(), guest);
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert!(summary.final_tick() >= emit_tick + 2);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[GuestEventDelivery::new(
+            emit_tick + 2,
+            guest,
+            host,
+            GuestEvent::new(
+                GuestEventId::new(63),
+                source,
+                GuestEventKind::Trap {
+                    trap: GuestTrap::new(GuestTrapKind::EnvironmentCall, 0x8000),
+                },
+            ),
+        )]
+    );
+    assert_eq!(
+        controller.run().stop_request(),
+        Some(&StopRequest::new(
+            emit_tick + 2,
+            GuestEventId::new(63),
+            source,
+            0,
+        ))
+    );
+}
+
+#[test]
 fn riscv_trap_event_port_rejects_scheduled_core_trap_for_unknown_host_partition() {
     let guest = PartitionId::new(0);
     let missing_host = PartitionId::new(9);
