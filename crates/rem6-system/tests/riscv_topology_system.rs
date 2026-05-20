@@ -10,8 +10,8 @@ use rem6_platform::{PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvSystemRunStopReason,
-    RiscvTopologySystem, RiscvTrapEventPort, StopRequest, SystemHostController,
-    SystemHostEventPort,
+    RiscvTopologyHostConfig, RiscvTopologySystem, RiscvTrapEventPort, StopRequest,
+    SystemHostController, SystemHostEventPort,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -420,10 +420,16 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
     .unwrap()
     .with_platform(platform)
     .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, GuestSourceId::new(42)),
+        StatsRegistry::new(),
+    )
+    .unwrap()
     .with_memory_store(store)
     .unwrap();
     assert!(system.platform().is_some());
     assert!(system.platform_bus().is_some());
+    assert!(system.host_controller().is_some());
     assert!(system.memory_store().is_some());
     system
         .cluster()
@@ -436,21 +442,8 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         .unwrap()
         .write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
 
-    let controller = Arc::new(Mutex::new(SystemHostController::new(
-        HostEventPolicy,
-        StatsRegistry::new(),
-    )));
-    let source = GuestSourceId::new(42);
-    let trap_port = RiscvTrapEventPort::new(
-        SystemHostEventPort::with_controller(PartitionId::new(4), 2, Arc::clone(&controller))
-            .unwrap(),
-        source,
-    );
-    let driver = RiscvSystemRunDriver::new(trap_port);
-
     let run = system
-        .drive_until_host_stop_parallel(
-            &driver,
+        .drive_attached_until_host_stop_parallel(
             Default::default(),
             Default::default(),
             40,
@@ -458,8 +451,19 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         )
         .unwrap();
 
+    let source = GuestSourceId::new(42);
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(141), source, 1);
     assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert_eq!(
+        system
+            .host_controller()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .run()
+            .stop_request(),
+        Some(&stop)
+    );
     assert_eq!(
         system
             .platform()

@@ -28,7 +28,7 @@ pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
 };
-pub use topology::{RiscvTopologySystem, RiscvTopologySystemError};
+pub use topology::{RiscvTopologyHostConfig, RiscvTopologySystem, RiscvTopologySystemError};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GuestEventId(u64);
