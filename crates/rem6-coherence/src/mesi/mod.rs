@@ -7,6 +7,7 @@ use rem6_dram::DramMemoryError;
 use rem6_kernel::SchedulerError;
 use rem6_memory::{AgentId, MemoryError, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
+use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::TransportError;
 
 use crate::{HarnessError, SubmitKind};
@@ -22,6 +23,7 @@ pub enum MesiHarnessError {
     LineBusy { state: MesiState },
     UnknownCache { agent: AgentId },
     DuplicateCache { agent: AgentId },
+    MissingTopologyConnection { from: Endpoint, to: Endpoint },
     MissingDirectoryGrant { request: MemoryRequestId },
     GrantDataUnavailable { agent: AgentId, line: MesiLineId },
     UnexpectedGrantState { state: MesiState },
@@ -32,6 +34,7 @@ pub enum MesiHarnessError {
     Memory(MemoryError),
     Dram(DramMemoryError),
     Scheduler(SchedulerError),
+    Topology(TopologyError),
     Transport(TransportError),
     Backing(HarnessError),
 }
@@ -50,6 +53,14 @@ impl fmt::Display for MesiHarnessError {
                     agent.get()
                 )
             }
+            Self::MissingTopologyConnection { from, to } => write!(
+                formatter,
+                "topology connection {}.{} to {}.{} is not declared",
+                from.component().as_str(),
+                from.port().as_str(),
+                to.component().as_str(),
+                to.port().as_str()
+            ),
             Self::MissingDirectoryGrant { request } => write!(
                 formatter,
                 "directory did not grant request {} from agent {}",
@@ -81,6 +92,7 @@ impl fmt::Display for MesiHarnessError {
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),
         }
@@ -95,6 +107,7 @@ impl Error for MesiHarnessError {
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            Self::Topology(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Backing(error) => Some(error),
             _ => None,

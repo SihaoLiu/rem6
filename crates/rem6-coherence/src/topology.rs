@@ -5,8 +5,8 @@ use rem6_topology::{ComponentId, ComponentSpec, Endpoint, PortName, Topology, To
 use rem6_transport::TransportEndpointId;
 
 use crate::{
-    HarnessError, PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
-    PartitionedDramMemoryConfig, PartitionedRouteHopConfig,
+    HarnessError, MesiHarnessError, PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
+    PartitionedDramMemoryConfig, PartitionedMesiDirectoryLineHarness, PartitionedRouteHopConfig,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -224,6 +224,85 @@ impl PartitionedDirectoryLineHarness {
     }
 }
 
+impl PartitionedMesiDirectoryLineHarness {
+    pub fn new_with_topology(
+        topology: &Topology,
+        config: TopologyDirectoryHarnessConfig,
+    ) -> Result<Self, MesiHarnessError> {
+        let TopologyDirectoryHarnessConfig {
+            layout,
+            line_address,
+            directory,
+            memory,
+            caches,
+        } = config;
+        let directory_component =
+            topology_component(topology, directory.component()).map_err(map_mesi_topology_error)?;
+        let directory_endpoint = transport_endpoint_mesi(directory.component())?;
+        let memory_component =
+            topology_component(topology, memory.component()).map_err(map_mesi_topology_error)?;
+        let memory_path = topology_route_path(
+            topology,
+            Endpoint::new(
+                directory.component().clone(),
+                directory.memory_port().clone(),
+            ),
+            Endpoint::new(memory.component().clone(), memory.port().clone()),
+        )
+        .map_err(map_mesi_topology_error)?;
+        let memory = PartitionedDramMemoryConfig::new(
+            memory_component.partition(),
+            transport_endpoint_mesi(memory.component())?,
+            memory_path.request,
+            memory_path.response,
+            memory.into_controller(),
+        )
+        .with_virtual_networks(
+            memory_path.request_virtual_network,
+            memory_path.response_virtual_network,
+        )
+        .with_route_hops(memory_path.route_hops);
+
+        let mut agents = Vec::with_capacity(caches.len());
+        for cache in caches {
+            let cache_component =
+                topology_component(topology, cache.component()).map_err(map_mesi_topology_error)?;
+            let cache_path = topology_route_path(
+                topology,
+                Endpoint::new(cache.component().clone(), cache.port().clone()),
+                Endpoint::new(
+                    directory.component().clone(),
+                    directory.cache_port().clone(),
+                ),
+            )
+            .map_err(map_mesi_topology_error)?;
+            agents.push(
+                PartitionedCacheAgentConfig::new(
+                    cache.agent(),
+                    cache_component.partition(),
+                    transport_endpoint_mesi(cache.component())?,
+                    cache_path.request,
+                    cache_path.response,
+                )
+                .with_virtual_networks(
+                    cache_path.request_virtual_network,
+                    cache_path.response_virtual_network,
+                )
+                .with_route_hops(cache_path.route_hops),
+            );
+        }
+
+        Self::new_with_dram_memory(
+            layout,
+            line_address,
+            directory_component.partition(),
+            directory_endpoint,
+            memory,
+            agents,
+        )
+    }
+}
+
 fn topology_component<'a>(
     topology: &'a Topology,
     component: &ComponentId,
@@ -302,4 +381,21 @@ fn response_virtual_network(path: &rem6_topology::TopologyPath) -> VirtualNetwor
 
 fn transport_endpoint(component: &ComponentId) -> Result<TransportEndpointId, HarnessError> {
     TransportEndpointId::new(component.as_str()).map_err(HarnessError::Transport)
+}
+
+fn transport_endpoint_mesi(
+    component: &ComponentId,
+) -> Result<TransportEndpointId, MesiHarnessError> {
+    TransportEndpointId::new(component.as_str()).map_err(MesiHarnessError::Transport)
+}
+
+fn map_mesi_topology_error(error: HarnessError) -> MesiHarnessError {
+    match error {
+        HarnessError::MissingTopologyConnection { from, to } => {
+            MesiHarnessError::MissingTopologyConnection { from, to }
+        }
+        HarnessError::Topology(error) => MesiHarnessError::Topology(error),
+        HarnessError::Transport(error) => MesiHarnessError::Transport(error),
+        error => MesiHarnessError::Backing(error),
+    }
 }
