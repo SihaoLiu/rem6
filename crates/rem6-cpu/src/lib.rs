@@ -902,6 +902,28 @@ impl RiscvCore {
         self.pending_trap().is_some()
     }
 
+    pub fn has_pending_fetch(&self) -> bool {
+        self.core.has_pending_fetch()
+    }
+
+    pub fn has_pending_data_access(&self) -> bool {
+        !self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .outstanding_data
+            .is_empty()
+    }
+
+    pub fn has_unissued_data_access(&self) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        state.events.iter().any(|event| {
+            let fetch_request = event.fetch().request_id();
+            !state.issued_data_for_fetches.contains(&fetch_request)
+                && event.execution().memory_access().is_some()
+        })
+    }
+
     pub fn write_register(&self, register: Register, value: u64) {
         self.state
             .lock()
@@ -1195,15 +1217,6 @@ impl RiscvCore {
                 ));
             }
         }
-    }
-
-    fn has_pending_data_access(&self) -> bool {
-        !self
-            .state
-            .lock()
-            .expect("riscv core lock")
-            .outstanding_data
-            .is_empty()
     }
 }
 

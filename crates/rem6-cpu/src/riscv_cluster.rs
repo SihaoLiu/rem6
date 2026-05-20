@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use rem6_kernel::{PartitionedScheduler, RunSummary, SchedulerContext, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionedScheduler, RunSummary, SchedulerContext, SchedulerError,
+    Tick,
+};
 use rem6_memory::AgentId;
 use rem6_transport::{
     MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportEndpointId,
@@ -143,6 +146,60 @@ impl RiscvCluster {
         Ok(actions)
     }
 
+    pub fn drive_ready_cores_parallel_fetch<F, FR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        mut fetch_responder: F,
+    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let mut actions = Vec::new();
+        for (cpu, core) in &self.cores {
+            if core.has_pending_fetch()
+                || core.has_pending_data_access()
+                || core.has_unissued_data_access()
+                || core.has_pending_trap()
+            {
+                continue;
+            }
+
+            if let Some(event) = core
+                .execute_next_completed_fetch()
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                actions.push(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                ));
+                continue;
+            }
+
+            let event = core
+                .issue_next_fetch_parallel(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core {
+                    cpu: *cpu,
+                    error: RiscvCpuError::Cpu(error),
+                })?;
+            actions.push(RiscvClusterDriveEvent::new(
+                *cpu,
+                RiscvCoreDriveAction::FetchIssued { event },
+            ));
+        }
+
+        Ok(actions)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_turn<F, D, FR, DR>(
         &self,
@@ -176,6 +233,39 @@ impl RiscvCluster {
         }
 
         Ok(RiscvClusterTurn::scheduler(scheduler.run_next_epoch()))
+    }
+
+    pub fn drive_turn_parallel_fetch<F, FR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        fetch_responder: F,
+    ) -> Result<RiscvClusterTurn, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let core_events = self.drive_ready_cores_parallel_fetch(
+            scheduler,
+            transport,
+            fetch_trace,
+            fetch_responder,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(RiscvClusterTurn::core(core_events));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(RiscvClusterTurn::idle(scheduler.now()));
+        }
+
+        scheduler
+            .run_next_epoch_parallel()
+            .map(RiscvClusterTurn::scheduler)
+            .map_err(RiscvClusterError::Scheduler)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -367,6 +457,7 @@ pub enum RiscvClusterError {
         cpu: CpuId,
         error: RiscvCpuError,
     },
+    Scheduler(SchedulerError),
     TurnLimitExceeded {
         limit: usize,
         completed: usize,
@@ -416,6 +507,7 @@ impl fmt::Display for RiscvClusterError {
             Self::Core { cpu, error } => {
                 write!(formatter, "CPU {} action failed: {error}", cpu.get())
             }
+            Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::TurnLimitExceeded { limit, completed } => write!(
                 formatter,
                 "RISC-V cluster run reached turn limit {limit} after {completed} completed turns"
@@ -428,6 +520,7 @@ impl Error for RiscvClusterError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Core { error, .. } => Some(error),
+            Self::Scheduler(error) => Some(error),
             _ => None,
         }
     }
