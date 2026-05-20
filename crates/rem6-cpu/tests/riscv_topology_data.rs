@@ -1,6 +1,6 @@
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore,
-    RiscvDataAccessEventKind, RiscvDataAccessTarget,
+    RiscvCoreTopologyConfig, RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
 use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, Register};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
@@ -69,7 +69,20 @@ fn data_topology() -> Topology {
                 PartitionId::new(0),
                 clock(1),
             )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
             .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("icache0"),
+                kind("l1_instruction_cache"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
             .unwrap(),
         )
         .unwrap()
@@ -97,6 +110,13 @@ fn data_topology() -> Topology {
             .unwrap(),
         )
         .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "ifetch"),
+            endpoint("icache0", "requests"),
+            2,
+            2,
+        )
+        .unwrap()
         .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mesh0", "cpu_in"), 2, 4)
         .unwrap()
         .connect_with_latencies(
@@ -108,6 +128,44 @@ fn data_topology() -> Topology {
         .unwrap()
         .build()
         .unwrap()
+}
+
+#[test]
+fn riscv_core_from_topology_registers_fetch_and_data_routes() {
+    let topology = data_topology();
+    let mut transport = MemoryTransport::new();
+
+    let core = RiscvCore::from_topology(
+        &topology,
+        &mut transport,
+        RiscvCoreTopologyConfig::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(0x8000),
+            ),
+            endpoint("cpu0", "ifetch"),
+            endpoint("icache0", "requests"),
+            layout(),
+            AccessSize::new(4).unwrap(),
+        )
+        .with_data(
+            endpoint("cpu0", "dmem"),
+            endpoint("mem0", "requests"),
+            layout(),
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(transport.route_count(), 2);
+    assert_eq!(core.fetch_endpoint().as_str(), "cpu0.ifetch");
+    assert_eq!(core.data_endpoint().unwrap().as_str(), "cpu0.dmem");
+    assert_eq!(core.fetch_route().get(), 0);
+    assert_eq!(core.data_route().unwrap().get(), 1);
+    assert_eq!(core.partition(), PartitionId::new(0));
+    assert_eq!(core.agent(), AgentId::new(7));
+    assert_eq!(core.pc(), Address::new(0x8000));
 }
 
 #[test]
