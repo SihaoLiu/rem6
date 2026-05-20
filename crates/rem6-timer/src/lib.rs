@@ -355,6 +355,43 @@ impl TimerMmioDevice {
         }
     }
 
+    pub fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.validate_size(request)?;
+        let offset = self.offset(request)?;
+        match (offset, request.operation()) {
+            (TIMER_MMIO_TIME_OFFSET, MmioOperation::Read) => Ok(MmioResponse::completed(
+                request.id(),
+                Some(le64(context.now())),
+            )),
+            (TIMER_MMIO_TIME_OFFSET, MmioOperation::Write) => Err(MmioError::AccessDenied {
+                request: request.id(),
+                operation: MmioOperation::Write,
+                access: MmioAccess::ReadOnly,
+            }),
+            (TIMER_MMIO_DEADLINE_OFFSET, MmioOperation::Read) => {
+                let deadline = self.timer.snapshot().next_deadline().unwrap_or_default();
+                Ok(MmioResponse::completed(request.id(), Some(le64(deadline))))
+            }
+            (TIMER_MMIO_DEADLINE_OFFSET, MmioOperation::Write) => {
+                let deadline = self.deadline_from_write(request)?;
+                self.timer
+                    .arm_at_parallel(context, deadline)
+                    .map_err(|error| MmioError::DeviceError {
+                        request: request.id(),
+                        message: error.to_string(),
+                    })?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+            _ => Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            }),
+        }
+    }
+
     fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
         if request.size().bytes() != TIMER_MMIO_REGISTER_BYTES {
             return Err(MmioError::AccessSizeMismatch {
@@ -413,6 +450,14 @@ impl MmioDevice for TimerMmioDevice {
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         TimerMmioDevice::respond(self, context, request)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        TimerMmioDevice::respond_parallel(self, context, request)
     }
 }
 

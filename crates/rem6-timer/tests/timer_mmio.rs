@@ -168,6 +168,70 @@ fn timer_mmio_bus_decodes_timer_region_and_programs_deadline() {
 }
 
 #[test]
+fn timer_parallel_mmio_bus_write_deadline_arms_timer_and_delivers_interrupt() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(13);
+    let line = InterruptLineId::new(34);
+    let (timer, controller, device) = build_timer(cpu, timer_partition, line, source);
+    let route = MmioRoute::new(cpu, timer_partition, 3, 2).unwrap();
+    let mut bus = MmioBus::new();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    bus.insert_device(
+        AddressRange::new(Address::new(0x5000), AccessSize::new(0x100).unwrap()).unwrap(),
+        route,
+        device,
+    )
+    .unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 2, move |context| {
+            bus.submit_parallel(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(13),
+                    Address::new(0x5000 + TIMER_MMIO_DEADLINE_OFFSET),
+                    le64(10),
+                    full_u64_mask(),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 5);
+    assert!(summary.final_tick() >= 12);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[MmioCompletion::new(
+            7,
+            route,
+            Ok(MmioResponse::completed(MmioRequestId::new(13), None)),
+        )]
+    );
+    assert_eq!(timer.snapshot().arms(), &[TimerArm::new(1, 5, 10)]);
+    assert_eq!(timer.snapshot().expiries(), &[TimerExpiry::new(1, 10)]);
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            12,
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
 fn timer_mmio_reads_current_tick_and_programmed_deadline() {
     let cpu = PartitionId::new(0);
     let timer_partition = PartitionId::new(1);
