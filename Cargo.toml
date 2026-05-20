@@ -12,6 +12,7 @@ members = [
     "crates/rem6-protocol-msi",
     "crates/rem6-stats",
     "crates/rem6-system",
+    "crates/rem6-timer",
     "crates/rem6-topology",
     "crates/rem6-transport",
 ]
