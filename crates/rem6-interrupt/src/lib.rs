@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -43,6 +44,22 @@ impl InterruptTargetId {
 pub struct InterruptSourceId(u32);
 
 impl InterruptSourceId {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct InterruptPriority(u32);
+
+impl InterruptPriority {
+    pub const ZERO: Self = Self(0);
+    pub const DEFAULT: Self = Self(1);
+
     pub const fn new(value: u32) -> Self {
         Self(value)
     }
@@ -614,6 +631,7 @@ impl InterruptSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InterruptController {
     routes: BTreeMap<InterruptLineId, InterruptRoute>,
+    priorities: BTreeMap<InterruptLineId, InterruptPriority>,
     pending: BTreeMap<InterruptLineId, PendingInterrupt>,
     claimed: BTreeMap<(InterruptTargetId, PartitionId), InterruptClaim>,
     history: Vec<InterruptEvent>,
@@ -641,12 +659,29 @@ impl InterruptController {
             return Err(InterruptError::DuplicateLine { line: route.line() });
         }
 
-        self.routes.insert(route.line(), route);
+        let line = route.line();
+        self.routes.insert(line, route);
+        self.priorities.insert(line, InterruptPriority::DEFAULT);
         Ok(())
     }
 
     pub fn route(&self, line: InterruptLineId) -> Option<&InterruptRoute> {
         self.routes.get(&line)
+    }
+
+    pub fn priority(&self, line: InterruptLineId) -> Result<InterruptPriority, InterruptError> {
+        self.route_for(line)?;
+        Ok(self.priority_for(line))
+    }
+
+    pub fn set_priority(
+        &mut self,
+        line: InterruptLineId,
+        priority: InterruptPriority,
+    ) -> Result<(), InterruptError> {
+        self.route_for(line)?;
+        self.priorities.insert(line, priority);
+        Ok(())
     }
 
     pub fn assert(
@@ -739,9 +774,11 @@ impl InterruptController {
     ) -> Option<PendingInterrupt> {
         self.pending
             .values()
-            .find(|pending| {
+            .filter(|pending| {
                 pending.target() == target && pending.target_partition() == target_partition
             })
+            .filter(|pending| self.priority_for(pending.line()).get() > 0)
+            .min_by_key(|pending| (Reverse(self.priority_for(pending.line())), pending.line()))
             .cloned()
     }
 
@@ -833,6 +870,13 @@ impl InterruptController {
             .get(&line)
             .copied()
             .ok_or(InterruptError::UnknownLine { line })
+    }
+
+    fn priority_for(&self, line: InterruptLineId) -> InterruptPriority {
+        self.priorities
+            .get(&line)
+            .copied()
+            .unwrap_or(InterruptPriority::DEFAULT)
     }
 
     fn check_delivery_route(&self, route: InterruptRoute) -> Result<(), InterruptError> {

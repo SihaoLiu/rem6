@@ -19,10 +19,10 @@ timer, and UART RX signal delivery, host-stopped parallel RISC-V system cluster
 runs, RISC-V committed-instruction stats, host-integrated full-system checkpoint
 capture and restore, serial and parallel MMIO channels and buses, parallel timer
 MMIO programming, parallel interrupt-controller MMIO, parallel UART MMIO
-devices, platform assembly, memory transactions and storage, serial and parallel
-memory transport, memory store snapshots and checkpoints, fabric timing, DRAM
-timing, MSI protocol state, cache controllers, directory arbitration, and
-coherence harnesses.
+devices, priority-aware interrupt arbitration, platform assembly, memory
+transactions and storage, serial and parallel memory transport, memory store
+snapshots and checkpoints, fabric timing, DRAM timing, MSI protocol state, cache
+controllers, directory arbitration, and coherence harnesses.
 
 Run the current verification suite with:
 

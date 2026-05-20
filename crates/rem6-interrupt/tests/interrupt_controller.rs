@@ -1,7 +1,7 @@
 use rem6_interrupt::{
-    InterruptController, InterruptDelivery, InterruptError, InterruptEvent, InterruptEventKind,
-    InterruptLineChannel, InterruptLineId, InterruptLinePort, InterruptRoute, InterruptSourceId,
-    InterruptTargetId, PendingInterrupt,
+    InterruptClaim, InterruptController, InterruptDelivery, InterruptError, InterruptEvent,
+    InterruptEventKind, InterruptLineChannel, InterruptLineId, InterruptLinePort,
+    InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId, PendingInterrupt,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use std::sync::{Arc, Mutex};
@@ -146,6 +146,12 @@ fn interrupt_controller_rejects_duplicate_unknown_and_replayed_lines() {
             line: InterruptLineId::new(9),
         })
     );
+    assert_eq!(
+        controller.set_priority(InterruptLineId::new(9), InterruptPriority::new(2)),
+        Err(InterruptError::UnknownLine {
+            line: InterruptLineId::new(9),
+        })
+    );
 
     controller
         .assert(InterruptLineId::new(4), InterruptSourceId::new(2), 31)
@@ -194,6 +200,89 @@ fn interrupt_controller_records_explicit_target_partition_routes() {
             InterruptSourceId::new(3),
             InterruptEventKind::Assert,
         )]
+    );
+}
+
+#[test]
+fn interrupt_controller_claims_highest_priority_line_and_masks_zero_priority() {
+    let target = InterruptTargetId::new(0);
+    let cpu = PartitionId::new(3);
+    let masked_line = InterruptLineId::new(1);
+    let low_line = InterruptLineId::new(3);
+    let high_line = InterruptLineId::new(8);
+    let masked_source = InterruptSourceId::new(31);
+    let low_source = InterruptSourceId::new(32);
+    let high_source = InterruptSourceId::new(33);
+    let mut controller = InterruptController::new();
+
+    for line in [masked_line, low_line, high_line] {
+        controller
+            .register_route(InterruptRoute::new(line, target, cpu))
+            .unwrap();
+    }
+    assert_eq!(
+        controller.priority(low_line).unwrap(),
+        InterruptPriority::DEFAULT
+    );
+
+    controller
+        .set_priority(masked_line, InterruptPriority::ZERO)
+        .unwrap();
+    controller
+        .set_priority(low_line, InterruptPriority::new(2))
+        .unwrap();
+    controller
+        .set_priority(high_line, InterruptPriority::new(7))
+        .unwrap();
+    controller.assert(masked_line, masked_source, 1).unwrap();
+    controller.assert(low_line, low_source, 2).unwrap();
+    controller.assert(high_line, high_source, 3).unwrap();
+
+    assert_eq!(
+        controller.claim(target, cpu, 10),
+        Some(InterruptClaim::new(
+            high_line,
+            target,
+            cpu,
+            high_source,
+            3,
+            10
+        ))
+    );
+    controller.complete(target, cpu, high_line, 11).unwrap();
+    assert_eq!(
+        controller.claim(target, cpu, 12),
+        Some(InterruptClaim::new(
+            low_line, target, cpu, low_source, 2, 12
+        ))
+    );
+    controller.complete(target, cpu, low_line, 13).unwrap();
+    assert_eq!(controller.claim(target, cpu, 14), None);
+
+    assert_eq!(
+        controller.pending(),
+        vec![PendingInterrupt::routed(
+            masked_line,
+            target,
+            cpu,
+            masked_source,
+            1,
+        )]
+    );
+
+    controller
+        .set_priority(masked_line, InterruptPriority::new(9))
+        .unwrap();
+    assert_eq!(
+        controller.claim(target, cpu, 15),
+        Some(InterruptClaim::new(
+            masked_line,
+            target,
+            cpu,
+            masked_source,
+            1,
+            15,
+        ))
     );
 }
 

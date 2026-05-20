@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
     InterruptClaim, InterruptController, InterruptControllerMmioDevice, InterruptEvent,
-    InterruptEventKind, InterruptLineId, InterruptRoute, InterruptSourceId, InterruptTargetId,
-    INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, INTERRUPT_MMIO_PENDING_OFFSET,
+    InterruptEventKind, InterruptLineId, InterruptPriority, InterruptRoute, InterruptSourceId,
+    InterruptTargetId, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, INTERRUPT_MMIO_PENDING_OFFSET,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
@@ -177,6 +177,9 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
         controller
             .register_route(InterruptRoute::new(line_b, target, cpu))
             .unwrap();
+        controller
+            .set_priority(line_b, InterruptPriority::new(5))
+            .unwrap();
         controller.assert(line_b, source_b, 0).unwrap();
         controller.assert(line_a, source_a, 0).unwrap();
     }
@@ -199,7 +202,7 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
             for (id, offset, operation) in [
                 (11, INTERRUPT_MMIO_PENDING_OFFSET, None),
                 (12, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, None),
-                (13, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, Some(line_a.get())),
+                (13, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, Some(line_b.get())),
                 (14, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, None),
             ] {
                 let sink = Arc::clone(&completed);
@@ -238,7 +241,7 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
                 route,
                 Ok(MmioResponse::completed(
                     MmioRequestId::new(11),
-                    Some(le64(line_a.get())),
+                    Some(le64(line_b.get())),
                 )),
             ),
             MmioCompletion::new(
@@ -246,7 +249,7 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
                 route,
                 Ok(MmioResponse::completed(
                     MmioRequestId::new(12),
-                    Some(le64(line_a.get())),
+                    Some(le64(line_b.get())),
                 )),
             ),
             MmioCompletion::new(
@@ -259,7 +262,7 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
                 route,
                 Ok(MmioResponse::completed(
                     MmioRequestId::new(14),
-                    Some(le64(line_b.get())),
+                    Some(le64(line_a.get())),
                 )),
             ),
         ]
@@ -269,23 +272,23 @@ fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
     assert!(controller.pending().is_empty());
     assert_eq!(
         controller.claimed(),
-        vec![InterruptClaim::new(line_b, target, cpu, source_b, 0, 3)]
+        vec![InterruptClaim::new(line_a, target, cpu, source_a, 0, 3)]
     );
     assert_eq!(
         controller.history(),
         &[
             InterruptEvent::routed(0, line_b, target, cpu, source_b, InterruptEventKind::Assert),
             InterruptEvent::routed(0, line_a, target, cpu, source_a, InterruptEventKind::Assert),
-            InterruptEvent::routed(3, line_a, target, cpu, source_a, InterruptEventKind::Claim),
+            InterruptEvent::routed(3, line_b, target, cpu, source_b, InterruptEventKind::Claim,),
             InterruptEvent::routed(
                 3,
-                line_a,
+                line_b,
                 target,
                 cpu,
-                source_a,
+                source_b,
                 InterruptEventKind::Complete,
             ),
-            InterruptEvent::routed(3, line_b, target, cpu, source_b, InterruptEventKind::Claim),
+            InterruptEvent::routed(3, line_a, target, cpu, source_a, InterruptEventKind::Claim),
         ]
     );
 }
