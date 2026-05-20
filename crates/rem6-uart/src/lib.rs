@@ -3,7 +3,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{SchedulerContext, Tick};
+use rem6_interrupt::{InterruptError, InterruptEventKind, InterruptLinePort, InterruptSourceId};
+use rem6_kernel::{PartitionEventId, SchedulerContext, SchedulerError, Tick};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
@@ -70,6 +71,7 @@ impl UartRxByte {
 pub struct UartMmioDevice {
     id: UartId,
     base: Address,
+    interrupt: Option<UartInterrupt>,
     state: Arc<Mutex<UartState>>,
 }
 
@@ -78,6 +80,21 @@ impl UartMmioDevice {
         Self {
             id,
             base,
+            interrupt: None,
+            state: Arc::new(Mutex::new(UartState::new())),
+        }
+    }
+
+    pub fn with_interrupt(
+        id: UartId,
+        base: Address,
+        source: InterruptSourceId,
+        port: InterruptLinePort,
+    ) -> Self {
+        Self {
+            id,
+            base,
+            interrupt: Some(UartInterrupt { source, port }),
             state: Arc::new(Mutex::new(UartState::new())),
         }
     }
@@ -97,6 +114,24 @@ impl UartMmioDevice {
         let mut state = self.state.lock().expect("uart state lock");
         state.rx_pending.extend(bytes);
         Ok(())
+    }
+
+    pub fn inject_rx_after<I>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        delay: Tick,
+        bytes: I,
+    ) -> Result<PartitionEventId, UartError>
+    where
+        I: IntoIterator<Item = u8>,
+    {
+        let bytes = bytes.into_iter().collect::<Vec<_>>();
+        let uart = self.clone();
+        context
+            .schedule_local_after(delay, move |context| {
+                uart.inject_rx_now(context, bytes);
+            })
+            .map_err(UartError::Scheduler)
     }
 
     pub fn snapshot(&self) -> UartSnapshot {
@@ -141,7 +176,12 @@ impl UartMmioDevice {
                 request: request.id(),
                 message: UartError::EmptyReceiveQueue.to_string(),
             })?;
+        let should_deassert = state.rx_pending.is_empty();
         state.rx_consumed.push(UartRxByte::new(context.now(), byte));
+        drop(state);
+        if should_deassert {
+            self.emit_interrupt(context, InterruptEventKind::Deassert);
+        }
         Ok(MmioResponse::completed(request.id(), Some(vec![byte])))
     }
 
@@ -196,6 +236,42 @@ impl UartMmioDevice {
                 address: request.range().start(),
             })
     }
+
+    fn inject_rx_now(&self, context: &mut SchedulerContext<'_>, bytes: Vec<u8>) {
+        let mut state = self.state.lock().expect("uart state lock");
+        let was_empty = state.rx_pending.is_empty();
+        for byte in bytes {
+            state.rx_pending.push_back(byte);
+            state.rx_injected.push(UartRxByte::new(context.now(), byte));
+        }
+        let should_assert = was_empty && !state.rx_pending.is_empty();
+        drop(state);
+        if should_assert {
+            self.emit_interrupt(context, InterruptEventKind::Assert);
+        }
+    }
+
+    fn emit_interrupt(&self, context: &mut SchedulerContext<'_>, kind: InterruptEventKind) {
+        let Some(interrupt) = &self.interrupt else {
+            return;
+        };
+        let result = match kind {
+            InterruptEventKind::Assert => interrupt.port.assert(context, interrupt.source),
+            InterruptEventKind::Deassert => interrupt.port.deassert(context, interrupt.source),
+        };
+        if let Err(error) = result {
+            self.state
+                .lock()
+                .expect("uart state lock")
+                .interrupt_errors
+                .push(UartInterruptError::new(
+                    context.now(),
+                    interrupt.source,
+                    kind,
+                    error,
+                ));
+        }
+    }
 }
 
 impl MmioDevice for UartMmioDevice {
@@ -211,13 +287,19 @@ impl MmioDevice for UartMmioDevice {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UartSnapshot {
     tx_bytes: Vec<UartTxByte>,
+    rx_injected: Vec<UartRxByte>,
     rx_pending: Vec<u8>,
     rx_consumed: Vec<UartRxByte>,
+    interrupt_errors: Vec<UartInterruptError>,
 }
 
 impl UartSnapshot {
     pub fn tx_bytes(&self) -> &[UartTxByte] {
         &self.tx_bytes
+    }
+
+    pub fn rx_injected(&self) -> &[UartRxByte] {
+        &self.rx_injected
     }
 
     pub fn rx_pending(&self) -> &[u8] {
@@ -227,36 +309,99 @@ impl UartSnapshot {
     pub fn rx_consumed(&self) -> &[UartRxByte] {
         &self.rx_consumed
     }
+
+    pub fn interrupt_errors(&self) -> &[UartInterruptError] {
+        &self.interrupt_errors
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UartError {
     EmptyReceiveQueue,
+    Scheduler(SchedulerError),
 }
 
 impl fmt::Display for UartError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyReceiveQueue => write!(formatter, "UART receive queue is empty"),
+            Self::Scheduler(error) => write!(formatter, "{error}"),
         }
     }
 }
 
-impl Error for UartError {}
+impl Error for UartError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Scheduler(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct UartInterrupt {
+    source: InterruptSourceId,
+    port: InterruptLinePort,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UartInterruptError {
+    tick: Tick,
+    source: InterruptSourceId,
+    kind: InterruptEventKind,
+    error: InterruptError,
+}
+
+impl UartInterruptError {
+    pub const fn new(
+        tick: Tick,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+        error: InterruptError,
+    ) -> Self {
+        Self {
+            tick,
+            source,
+            kind,
+            error,
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn source(&self) -> InterruptSourceId {
+        self.source
+    }
+
+    pub const fn kind(&self) -> InterruptEventKind {
+        self.kind
+    }
+
+    pub const fn error(&self) -> &InterruptError {
+        &self.error
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct UartState {
     tx_bytes: Vec<UartTxByte>,
+    rx_injected: Vec<UartRxByte>,
     rx_pending: VecDeque<u8>,
     rx_consumed: Vec<UartRxByte>,
+    interrupt_errors: Vec<UartInterruptError>,
 }
 
 impl UartState {
     const fn new() -> Self {
         Self {
             tx_bytes: Vec::new(),
+            rx_injected: Vec::new(),
             rx_pending: VecDeque::new(),
             rx_consumed: Vec::new(),
+            interrupt_errors: Vec::new(),
         }
     }
 
@@ -271,8 +416,10 @@ impl UartState {
     fn snapshot(&self) -> UartSnapshot {
         UartSnapshot {
             tx_bytes: self.tx_bytes.clone(),
+            rx_injected: self.rx_injected.clone(),
             rx_pending: self.rx_pending.iter().copied().collect(),
             rx_consumed: self.rx_consumed.clone(),
+            interrupt_errors: self.interrupt_errors.clone(),
         }
     }
 }
