@@ -26,7 +26,8 @@ platform assembly, memory transactions and storage, serial and parallel memory
 transport, memory store snapshots and checkpoints, fabric timing, DRAM timing,
 typed MSI and MESI protocol state, MSI and MESI cache controllers, directory
 arbitration for MSI and MESI, MSI coherence harnesses, and serial, partitioned,
-and parallel-drain MESI directory harnesses with owner downgrade writeback.
+and parallel-drain MESI directory harnesses with owner downgrade writeback and
+memory-partition backing reads.
 
 Run the current verification suite with:
 
