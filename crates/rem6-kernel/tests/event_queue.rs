@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{EventQueue, ScheduleError};
+use rem6_kernel::{ClockDomain, ClockError, ClockScheduleError, Cycles, EventQueue, ScheduleError};
 
 #[test]
 fn event_queue_runs_events_by_tick_then_insertion_order() {
@@ -72,4 +72,54 @@ fn event_queue_schedules_relative_to_current_tick() {
 
     assert_eq!(observed.lock().unwrap().as_slice(), &[7]);
     assert_eq!(queue.now(), 7);
+}
+
+#[test]
+fn event_queue_schedules_clock_domain_deadlines() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut queue = EventQueue::new();
+    let cpu = ClockDomain::new(2).unwrap();
+    let accelerator = ClockDomain::new(5).unwrap();
+
+    let cpu_observed = Arc::clone(&observed);
+    queue
+        .schedule_at_clock_edge(cpu, Cycles::new(3), move |tick| {
+            cpu_observed.lock().unwrap().push((tick, "cpu"));
+        })
+        .unwrap();
+
+    let accelerator_observed = Arc::clone(&observed);
+    queue
+        .schedule_at_clock_edge(accelerator, Cycles::new(1), move |tick| {
+            accelerator_observed
+                .lock()
+                .unwrap()
+                .push((tick, "accelerator"));
+        })
+        .unwrap();
+
+    queue.run_until_empty();
+
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[(5, "accelerator"), (6, "cpu")]
+    );
+}
+
+#[test]
+fn event_queue_reports_clock_domain_deadline_errors() {
+    let mut queue = EventQueue::new();
+    let domain = ClockDomain::new(u64::MAX).unwrap();
+
+    let error = queue
+        .schedule_at_clock_edge(domain, Cycles::new(2), |_| {})
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        ClockScheduleError::Clock(ClockError::TickOverflow {
+            period: u64::MAX,
+            cycles: Cycles::new(2)
+        })
+    );
 }

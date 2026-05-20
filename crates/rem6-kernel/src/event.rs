@@ -3,6 +3,7 @@ use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
+use crate::clock::{ClockDomain, ClockError, Cycles};
 use crate::Tick;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -33,6 +34,30 @@ impl fmt::Display for ScheduleError {
 }
 
 impl Error for ScheduleError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClockScheduleError {
+    Clock(ClockError),
+    Schedule(ScheduleError),
+}
+
+impl fmt::Display for ClockScheduleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Clock(error) => write!(formatter, "{error}"),
+            Self::Schedule(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for ClockScheduleError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Clock(error) => Some(error),
+            Self::Schedule(error) => Some(error),
+        }
+    }
+}
 
 type EventCallback = Box<dyn FnOnce(Tick) + Send + 'static>;
 
@@ -93,6 +118,22 @@ impl EventQueue {
         F: FnOnce(Tick) + Send + 'static,
     {
         self.schedule_at(self.now + delay, callback)
+    }
+
+    pub fn schedule_at_clock_edge<F>(
+        &mut self,
+        domain: ClockDomain,
+        cycles: Cycles,
+        callback: F,
+    ) -> Result<EventId, ClockScheduleError>
+    where
+        F: FnOnce(Tick) + Send + 'static,
+    {
+        let tick = domain
+            .clock_edge(self.now, cycles)
+            .map_err(ClockScheduleError::Clock)?;
+        self.schedule_at(tick, callback)
+            .map_err(ClockScheduleError::Schedule)
     }
 
     pub fn run_until_empty(&mut self) {
