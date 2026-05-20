@@ -9,6 +9,7 @@ members = [
     "crates/rem6-interrupt",
     "crates/rem6-kernel",
     "crates/rem6-memory",
+    "crates/rem6-mmio",
     "crates/rem6-protocol-msi",
     "crates/rem6-stats",
     "crates/rem6-system",
