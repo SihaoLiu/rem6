@@ -1,7 +1,8 @@
 use rem6_cache::CacheControllerResultKind;
 use rem6_coherence::{
     CpuResponseRecord, DirectoryDecisionRecord, HarnessError, LineBackingStore,
-    PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness, SubmitKind,
+    PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness, PartitionedMemoryConfig,
+    SubmitKind,
 };
 use rem6_directory::{DirectoryDataSource, DirectoryLineState, DirectorySnoop};
 use rem6_kernel::PartitionId;
@@ -90,6 +91,22 @@ fn harness() -> PartitionedDirectoryLineHarness {
     .unwrap()
 }
 
+fn harness_with_memory() -> PartitionedDirectoryLineHarness {
+    PartitionedDirectoryLineHarness::new_with_memory(
+        layout(),
+        Address::new(0x1000),
+        LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap(),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedMemoryConfig::new(PartitionId::new(3), endpoint("mem0"), 7, 11),
+        [
+            cache_config(1, 0, "l1d0", 3, 5),
+            cache_config(2, 1, "l1d1", 3, 5),
+        ],
+    )
+    .unwrap()
+}
+
 #[test]
 fn partitioned_directory_harness_routes_write_miss_through_directory_partition() {
     let mut harness = harness();
@@ -151,6 +168,88 @@ fn partitioned_directory_harness_routes_write_miss_through_directory_partition()
             ),
         ]
     );
+}
+
+#[test]
+fn partitioned_directory_harness_routes_backing_read_through_memory_partition() {
+    let mut harness = harness_with_memory();
+
+    let submit = harness
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    assert_eq!(submit.kind(), SubmitKind::ScheduledMiss);
+    assert_eq!(submit.directory_decision(), None);
+    assert_eq!(harness.directory_state(), DirectoryLineState::new(line()));
+
+    let run = harness.run_until_idle();
+    assert_eq!(run.executed_events(), 5);
+    assert_eq!(run.final_tick(), 26);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Shared);
+    assert_eq!(
+        harness.directory_state(),
+        DirectoryLineState::new(line()).with_sharer(agent(1))
+    );
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![CpuResponseRecord::new(
+            26,
+            CacheControllerResultKind::Fill,
+            request_id(1, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 6, 7]),
+        )]
+    );
+
+    let cache_route = harness.route(agent(1)).unwrap();
+    let memory_route = harness.memory_route().unwrap();
+    assert_eq!(
+        harness.trace(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                cache_route,
+                endpoint("l1d0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                3,
+                cache_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                3,
+                memory_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                10,
+                memory_route,
+                endpoint("mem0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::response(
+                21,
+                memory_route,
+                endpoint("dir0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                26,
+                cache_route,
+                endpoint("l1d0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+        ]
+    );
+    assert_eq!(harness.directory_decisions()[0].tick(), 3);
 }
 
 #[test]

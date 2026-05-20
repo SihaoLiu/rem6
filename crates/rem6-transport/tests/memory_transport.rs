@@ -62,7 +62,7 @@ fn transport_routes_request_and_response_across_scheduler_partitions() {
             route,
             req.clone(),
             trace.clone(),
-            move |delivery: RequestDelivery| {
+            move |delivery: RequestDelivery, _context| {
                 assert_eq!(delivery.tick(), 3);
                 assert_eq!(delivery.route(), route);
                 assert_eq!(delivery.endpoint(), &expected_memory);
@@ -157,7 +157,7 @@ fn transport_preserves_scheduler_order_for_same_tick_targets() {
             route_a,
             req_a.clone(),
             trace.clone(),
-            |delivery| {
+            |delivery, _context| {
                 TargetOutcome::Respond(
                     MemoryResponse::completed(delivery.request(), Some(vec![0xa0])).unwrap(),
                 )
@@ -171,7 +171,7 @@ fn transport_preserves_scheduler_order_for_same_tick_targets() {
             route_b,
             req_b.clone(),
             trace.clone(),
-            |delivery| {
+            |delivery, _context| {
                 TargetOutcome::Respond(
                     MemoryResponse::completed(delivery.request(), Some(vec![0xb0])).unwrap(),
                 )
@@ -260,7 +260,7 @@ fn transport_allows_no_response_transactions() {
             route,
             req.clone(),
             trace.clone(),
-            |delivery| {
+            |delivery, _context| {
                 assert!(!delivery.request().requires_response());
                 TargetOutcome::NoResponse
             },
@@ -276,6 +276,105 @@ fn transport_allows_no_response_transactions() {
         vec![
             MemoryTraceEvent::request(0, route, core, MemoryTraceKind::RequestSent, req.id()),
             MemoryTraceEvent::request(2, route, memory, MemoryTraceKind::RequestArrived, req.id()),
+        ]
+    );
+}
+
+#[test]
+fn transport_responder_can_schedule_followup_remote_work() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let followups = Arc::new(Mutex::new(Vec::new()));
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    let core = endpoint("core0");
+    let directory = endpoint("dir0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                directory.clone(),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = request(35, 0x4800, 4);
+
+    let followup_log = Arc::clone(&followups);
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            move |delivery, context| {
+                assert_eq!(delivery.tick(), 2);
+                assert_eq!(context.now(), 2);
+                assert_eq!(context.partition(), PartitionId::new(1));
+                let request_id = delivery.request().id();
+                let followup_log = Arc::clone(&followup_log);
+                context
+                    .schedule_remote_after(PartitionId::new(2), 4, move |context| {
+                        followup_log.lock().unwrap().push((
+                            context.partition(),
+                            context.now(),
+                            request_id,
+                        ));
+                    })
+                    .unwrap();
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(vec![1, 2, 3, 4])).unwrap(),
+                )
+            },
+            move |delivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push((delivery.tick(), delivery.response().request_id()));
+            },
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.executed_events(), 4);
+    assert_eq!(summary.final_tick(), 6);
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(5, MemoryRequestId::new(AgentId::new(1), 35))]
+    );
+    assert_eq!(
+        *followups.lock().unwrap(),
+        vec![(
+            PartitionId::new(2),
+            6,
+            MemoryRequestId::new(AgentId::new(1), 35),
+        )]
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id()
+            ),
+            MemoryTraceEvent::request(
+                2,
+                route,
+                directory,
+                MemoryTraceKind::RequestArrived,
+                req.id()
+            ),
+            MemoryTraceEvent::response(5, route, core, req.id(), ResponseStatus::Completed),
         ]
     );
 }
@@ -329,7 +428,7 @@ fn transport_rejects_invalid_routes_and_submissions() {
             MemoryRouteId::new(99),
             request(40, 0x5000, 1),
             MemoryTrace::new(),
-            |_| TargetOutcome::NoResponse,
+            |_, _| TargetOutcome::NoResponse,
             |_| {},
         )
         .unwrap_err();
@@ -359,7 +458,7 @@ fn transport_rejects_invalid_routes_and_submissions() {
             short_route,
             request(41, 0x5008, 1),
             MemoryTrace::new(),
-            |_| TargetOutcome::NoResponse,
+            |_, _| TargetOutcome::NoResponse,
             |_| {},
         )
         .unwrap_err();

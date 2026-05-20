@@ -15,8 +15,8 @@ use rem6_memory::{
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, TargetOutcome,
-    TransportEndpointId, TransportError,
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
+    TargetOutcome, TransportEndpointId, TransportError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -287,7 +287,6 @@ impl LineBackingStore {
 }
 
 pub struct DirectoryLineHarness {
-    layout: CacheLineLayout,
     line: MsiLineId,
     directory: MsiDirectory,
     caches: BTreeMap<AgentId, MsiCacheController>,
@@ -321,7 +320,6 @@ impl DirectoryLineHarness {
             .collect();
 
         Ok(Self {
-            layout,
             line,
             directory: MsiDirectory::new(),
             caches,
@@ -391,10 +389,6 @@ impl DirectoryLineHarness {
 
     pub const fn line(&self) -> MsiLineId {
         self.line
-    }
-
-    pub const fn layout(&self) -> CacheLineLayout {
-        self.layout
     }
 
     fn directory_response(
@@ -514,6 +508,46 @@ impl PartitionedCacheAgentConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedMemoryConfig {
+    partition: PartitionId,
+    endpoint: TransportEndpointId,
+    request_latency: u64,
+    response_latency: u64,
+}
+
+impl PartitionedMemoryConfig {
+    pub fn new(
+        partition: PartitionId,
+        endpoint: TransportEndpointId,
+        request_latency: u64,
+        response_latency: u64,
+    ) -> Self {
+        Self {
+            partition,
+            endpoint,
+            request_latency,
+            response_latency,
+        }
+    }
+
+    pub const fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn endpoint(&self) -> &TransportEndpointId {
+        &self.endpoint
+    }
+
+    pub const fn request_latency(&self) -> u64 {
+        self.request_latency
+    }
+
+    pub const fn response_latency(&self) -> u64 {
+        self.response_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryDecisionRecord {
     tick: u64,
     requester: AgentId,
@@ -546,11 +580,12 @@ pub struct PartitionedDirectoryLineHarness {
     scheduler: PartitionedScheduler,
     transport: MemoryTransport,
     line: MsiLineId,
-    layout: CacheLineLayout,
     directory: Arc<Mutex<MsiDirectory>>,
     caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
     routes: BTreeMap<AgentId, MemoryRouteId>,
     backing: Arc<Mutex<LineBackingStore>>,
+    memory_route: Option<MemoryRouteId>,
+    memory_route_info: Option<MemoryRoute>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
@@ -563,6 +598,52 @@ impl PartitionedDirectoryLineHarness {
         backing: LineBackingStore,
         directory_partition: PartitionId,
         directory_endpoint: TransportEndpointId,
+        agents: I,
+    ) -> Result<Self, HarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        Self::new_internal(
+            layout,
+            line_address,
+            backing,
+            directory_partition,
+            directory_endpoint,
+            None,
+            agents,
+        )
+    }
+
+    pub fn new_with_memory<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        backing: LineBackingStore,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        memory: PartitionedMemoryConfig,
+        agents: I,
+    ) -> Result<Self, HarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        Self::new_internal(
+            layout,
+            line_address,
+            backing,
+            directory_partition,
+            directory_endpoint,
+            Some(memory),
+            agents,
+        )
+    }
+
+    fn new_internal<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        backing: LineBackingStore,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        memory: Option<PartitionedMemoryConfig>,
         agents: I,
     ) -> Result<Self, HarnessError>
     where
@@ -583,6 +664,33 @@ impl PartitionedDirectoryLineHarness {
         let mut transport = MemoryTransport::new();
         let mut caches = BTreeMap::new();
         let mut routes = BTreeMap::new();
+        let mut memory_route = None;
+        let mut memory_route_info = None;
+
+        if let Some(memory) = memory {
+            partition_count = partition_count.max(
+                memory
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(HarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            let route = MemoryRoute::new(
+                directory_endpoint.clone(),
+                directory_partition,
+                memory.endpoint().clone(),
+                memory.partition(),
+                memory.request_latency(),
+                memory.response_latency(),
+            )
+            .map_err(HarnessError::Transport)?;
+            memory_route = Some(
+                transport
+                    .add_route(route.clone())
+                    .map_err(HarnessError::Transport)?,
+            );
+            memory_route_info = Some(route);
+        }
 
         for config in agents {
             partition_count = partition_count.max(
@@ -628,11 +736,12 @@ impl PartitionedDirectoryLineHarness {
                 .map_err(HarnessError::Scheduler)?,
             transport,
             line: MsiLineId::new(line_address),
-            layout,
             directory: Arc::new(Mutex::new(MsiDirectory::new())),
             caches,
             routes,
             backing: Arc::new(Mutex::new(backing)),
+            memory_route,
+            memory_route_info,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -672,24 +781,56 @@ impl PartitionedDirectoryLineHarness {
             .routes
             .get(&agent)
             .ok_or(HarnessError::UnknownCache { agent })?;
+        let cache_route = self
+            .transport
+            .route(route)
+            .cloned()
+            .ok_or(HarnessError::Transport(TransportError::UnknownRoute {
+                route,
+            }))?;
         let directory = Arc::clone(&self.directory);
         let caches = self.caches.clone();
         let backing = Arc::clone(&self.backing);
         let decisions = Arc::clone(&self.directory_decisions);
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
+        let memory_path = self.memory_route.zip(self.memory_route_info.clone()).map(
+            |(memory_route, memory_route_info)| DeferredMemoryPath {
+                cache_route_id: route,
+                cache_route,
+                memory_route_id: memory_route,
+                memory_route: memory_route_info,
+            },
+        );
+        let deferred = memory_path.map(|path| DeferredMemoryWork {
+            path,
+            caches: caches.clone(),
+            backing: Arc::clone(&backing),
+            trace: self.trace.clone(),
+            response_cache: Arc::clone(&response_cache),
+            responses: Arc::clone(&responses),
+            decisions: Arc::clone(&decisions),
+        });
         self.transport
             .submit(
                 &mut self.scheduler,
                 route,
                 downstream,
                 self.trace.clone(),
-                move |delivery| {
+                move |delivery, context| {
                     let decision = directory
                         .lock()
                         .expect("directory lock")
                         .accept(delivery.request().clone())
                         .expect("directory decision");
+                    if decision_uses_backing_memory(&decision) {
+                        if let Some(deferred) = deferred {
+                            deferred
+                                .schedule(context, delivery.request().clone(), decision)
+                                .expect("deferred memory response");
+                            return TargetOutcome::NoResponse;
+                        }
+                    }
                     let response = partitioned_directory_response(
                         delivery.request(),
                         &decision,
@@ -748,6 +889,10 @@ impl PartitionedDirectoryLineHarness {
             .ok_or(HarnessError::UnknownCache { agent })
     }
 
+    pub const fn memory_route(&self) -> Option<MemoryRouteId> {
+        self.memory_route
+    }
+
     pub fn trace(&self) -> Vec<MemoryTraceEvent> {
         self.trace.snapshot()
     }
@@ -767,16 +912,165 @@ impl PartitionedDirectoryLineHarness {
         self.line
     }
 
-    pub const fn layout(&self) -> CacheLineLayout {
-        self.layout
-    }
-
     fn cache_arc(&self, agent: AgentId) -> Result<Arc<Mutex<MsiCacheController>>, HarnessError> {
         self.caches
             .get(&agent)
             .cloned()
             .ok_or(HarnessError::UnknownCache { agent })
     }
+}
+
+#[derive(Clone)]
+struct DeferredMemoryPath {
+    cache_route_id: MemoryRouteId,
+    cache_route: MemoryRoute,
+    memory_route_id: MemoryRouteId,
+    memory_route: MemoryRoute,
+}
+
+struct DeferredMemoryWork {
+    path: DeferredMemoryPath,
+    caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+    backing: Arc<Mutex<LineBackingStore>>,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<MsiCacheController>>,
+    responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
+    decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
+}
+
+impl DeferredMemoryWork {
+    fn schedule(
+        self,
+        context: &mut rem6_kernel::SchedulerContext<'_>,
+        request: MemoryRequest,
+        decision: DirectoryDecision,
+    ) -> Result<(), HarnessError> {
+        apply_directory_snoops(&decision, &self.caches)?;
+        self.decisions
+            .lock()
+            .expect("decision lock")
+            .push(DirectoryDecisionRecord::new(
+                context.now(),
+                request.id().agent(),
+                decision,
+            ));
+        self.trace.record(MemoryTraceEvent::request(
+            context.now(),
+            self.path.memory_route_id,
+            self.path.memory_route.source().clone(),
+            MemoryTraceKind::RequestSent,
+            request.id(),
+        ));
+
+        let memory_route = self.path.memory_route.clone();
+        let memory_route_id = self.path.memory_route_id;
+        let cache_route = self.path.cache_route.clone();
+        let cache_route_id = self.path.cache_route_id;
+        let trace = self.trace.clone();
+        let backing = Arc::clone(&self.backing);
+        let response_cache = Arc::clone(&self.response_cache);
+        let responses = Arc::clone(&self.responses);
+        context
+            .schedule_remote_after(
+                memory_route.target_partition(),
+                memory_route.request_latency(),
+                move |context| {
+                    trace.record(MemoryTraceEvent::request(
+                        context.now(),
+                        memory_route_id,
+                        memory_route.target().clone(),
+                        MemoryTraceKind::RequestArrived,
+                        request.id(),
+                    ));
+                    let response = backing
+                        .lock()
+                        .expect("backing lock")
+                        .respond(&request)
+                        .expect("backing store response");
+                    let response_status = response.status();
+                    let response_request = response.request_id();
+                    let trace_to_directory = trace.clone();
+                    context
+                        .schedule_remote_after(
+                            memory_route.source_partition(),
+                            memory_route.response_latency(),
+                            move |context| {
+                                trace_to_directory.record(MemoryTraceEvent::response(
+                                    context.now(),
+                                    memory_route_id,
+                                    memory_route.source().clone(),
+                                    response_request,
+                                    response_status,
+                                ));
+                                let trace_to_cache = trace_to_directory.clone();
+                                let response_status = response.status();
+                                let response_request = response.request_id();
+                                context
+                                    .schedule_remote_after(
+                                        cache_route.source_partition(),
+                                        cache_route.response_latency(),
+                                        move |context| {
+                                            trace_to_cache.record(MemoryTraceEvent::response(
+                                                context.now(),
+                                                cache_route_id,
+                                                cache_route.source().clone(),
+                                                response_request,
+                                                response_status,
+                                            ));
+                                            let result = response_cache
+                                                .lock()
+                                                .expect("cache lock")
+                                                .accept_fill(response)
+                                                .expect("cache fill");
+                                            if let Some(TargetOutcome::Respond(response)) =
+                                                result.target_outcome()
+                                            {
+                                                responses.lock().expect("response lock").push(
+                                                    response_record(
+                                                        context.now(),
+                                                        result.kind(),
+                                                        response,
+                                                    ),
+                                                );
+                                            }
+                                        },
+                                    )
+                                    .expect("validated cache response latency");
+                            },
+                        )
+                        .expect("validated memory response latency");
+                },
+            )
+            .expect("validated memory request latency");
+
+        Ok(())
+    }
+}
+
+fn decision_uses_backing_memory(decision: &DirectoryDecision) -> bool {
+    decision
+        .grant()
+        .is_some_and(|grant| grant.data_source() == DirectoryDataSource::BackingMemory)
+}
+
+fn apply_directory_snoops(
+    decision: &DirectoryDecision,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+) -> Result<(), HarnessError> {
+    for snoop in decision.snoops() {
+        let cache = caches
+            .get(&snoop.target())
+            .ok_or(HarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        cache
+            .lock()
+            .expect("cache lock")
+            .accept_snoop(snoop.event())
+            .map_err(map_cache_error)?;
+    }
+
+    Ok(())
 }
 
 fn partitioned_directory_response(
@@ -810,18 +1104,7 @@ fn partitioned_directory_response(
         }
     };
 
-    for snoop in decision.snoops() {
-        let cache = caches
-            .get(&snoop.target())
-            .ok_or(HarnessError::UnknownCache {
-                agent: snoop.target(),
-            })?;
-        cache
-            .lock()
-            .expect("cache lock")
-            .accept_snoop(snoop.event())
-            .map_err(map_cache_error)?;
-    }
+    apply_directory_snoops(decision, caches)?;
 
     match grant.data_source() {
         DirectoryDataSource::BackingMemory => {
@@ -927,7 +1210,7 @@ impl CoherentLineHarness {
                 self.route,
                 downstream,
                 self.trace.clone(),
-                move |delivery| {
+                move |delivery, _context| {
                     let response = backing
                         .lock()
                         .expect("backing lock")

@@ -2,7 +2,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError, Tick};
+use rem6_kernel::{
+    PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -225,7 +227,7 @@ impl MemoryTransport {
         response_sink: G,
     ) -> Result<PartitionEventId, TransportError>
     where
-        F: FnOnce(RequestDelivery) -> TargetOutcome + Send + 'static,
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         G: FnOnce(ResponseDelivery) + Send + 'static,
     {
         let route = self
@@ -269,7 +271,7 @@ impl MemoryTransport {
                                 request,
                             };
 
-                            match responder(delivery) {
+                            match responder(delivery, context) {
                                 TargetOutcome::Respond(response) => {
                                     let response_status = response.status();
                                     let source_endpoint = target_route.source().clone();
