@@ -1,7 +1,12 @@
 use std::error::Error;
 use std::fmt;
 
-use rem6_memory::{MemoryOperation, MemoryRequest, MemoryRequestId};
+use std::collections::BTreeMap;
+
+use rem6_memory::{
+    AccessSize, Address, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
+    MemoryRequestId, MemoryResponse, MemoryTargetId, PartitionedMemoryStore,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DramTimingField {
@@ -90,6 +95,56 @@ impl fmt::Display for DramError {
 }
 
 impl Error for DramError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DramMemoryError {
+    Memory(MemoryError),
+    Dram {
+        target: MemoryTargetId,
+        source: DramError,
+    },
+    TargetLineSizeMismatch {
+        target: MemoryTargetId,
+        layout: u64,
+        geometry: u64,
+    },
+}
+
+impl fmt::Display for DramMemoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Dram { target, source } => {
+                write!(formatter, "DRAM target {} rejected request: {source}", target.get())
+            }
+            Self::TargetLineSizeMismatch {
+                target,
+                layout,
+                geometry,
+            } => write!(
+                formatter,
+                "DRAM target {} uses {geometry}-byte geometry lines but memory layout uses {layout}",
+                target.get()
+            ),
+        }
+    }
+}
+
+impl Error for DramMemoryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Memory(error) => Some(error),
+            Self::Dram { source, .. } => Some(source),
+            Self::TargetLineSizeMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<MemoryError> for DramMemoryError {
+    fn from(error: MemoryError) -> Self {
+        Self::Memory(error)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramTiming {
@@ -504,5 +559,216 @@ impl DramController {
         } else {
             self.bus_available_cycle
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramControllerConfig {
+    target: MemoryTargetId,
+    layout: CacheLineLayout,
+    geometry: DramGeometry,
+    timing: DramTiming,
+}
+
+impl DramControllerConfig {
+    pub const fn new(
+        target: MemoryTargetId,
+        layout: CacheLineLayout,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Self {
+        Self {
+            target,
+            layout,
+            geometry,
+            timing,
+        }
+    }
+
+    pub const fn target(self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn layout(self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub const fn geometry(self) -> DramGeometry {
+        self.geometry
+    }
+
+    pub const fn timing(self) -> DramTiming {
+        self.timing
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemoryOutcome {
+    target: MemoryTargetId,
+    dram_access: DramAccess,
+    response: Option<MemoryResponse>,
+}
+
+impl DramMemoryOutcome {
+    fn new(
+        target: MemoryTargetId,
+        dram_access: DramAccess,
+        response: Option<MemoryResponse>,
+    ) -> Self {
+        Self {
+            target,
+            dram_access,
+            response,
+        }
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn arrival_cycle(&self) -> u64 {
+        self.dram_access.arrival_cycle()
+    }
+
+    pub const fn ready_cycle(&self) -> u64 {
+        self.dram_access.ready_cycle()
+    }
+
+    pub const fn dram_access(&self) -> &DramAccess {
+        &self.dram_access
+    }
+
+    pub fn response(&self) -> Option<&MemoryResponse> {
+        self.response.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DramMemoryController {
+    store: PartitionedMemoryStore,
+    dram: BTreeMap<MemoryTargetId, DramController>,
+}
+
+impl DramMemoryController {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_target(&mut self, config: DramControllerConfig) -> Result<(), DramMemoryError> {
+        if config.layout().bytes() != config.geometry().line_size() {
+            return Err(DramMemoryError::TargetLineSizeMismatch {
+                target: config.target(),
+                layout: config.layout().bytes(),
+                geometry: config.geometry().line_size(),
+            });
+        }
+
+        self.store
+            .add_partition(config.target(), config.layout())
+            .map_err(DramMemoryError::Memory)?;
+        self.dram.insert(
+            config.target(),
+            DramController::new(config.geometry(), config.timing()),
+        );
+        Ok(())
+    }
+
+    pub fn map_region(
+        &mut self,
+        target: MemoryTargetId,
+        start: Address,
+        size: AccessSize,
+    ) -> Result<(), DramMemoryError> {
+        self.store
+            .map_region(target, start, size)
+            .map_err(DramMemoryError::Memory)
+    }
+
+    pub fn insert_line(
+        &mut self,
+        target: MemoryTargetId,
+        line: Address,
+        data: Vec<u8>,
+    ) -> Result<(), DramMemoryError> {
+        self.store
+            .insert_line(target, line, data)
+            .map_err(DramMemoryError::Memory)
+    }
+
+    pub fn accept(
+        &mut self,
+        arrival_cycle: u64,
+        request: &MemoryRequest,
+    ) -> Result<DramMemoryOutcome, DramMemoryError> {
+        let target = self
+            .store
+            .decode_request(request)
+            .map_err(DramMemoryError::Memory)?;
+        self.preflight_storage(target, request)
+            .map_err(DramMemoryError::Memory)?;
+        let dram_access = self
+            .dram
+            .get_mut(&target)
+            .expect("DRAM target is inserted with memory target")
+            .schedule(arrival_cycle, request)
+            .map_err(|source| DramMemoryError::Dram { target, source })?;
+        let response = self
+            .store
+            .respond(request)
+            .map_err(DramMemoryError::Memory)?
+            .response()
+            .cloned();
+
+        Ok(DramMemoryOutcome::new(target, dram_access, response))
+    }
+
+    pub fn line_data(
+        &self,
+        target: MemoryTargetId,
+        line: Address,
+    ) -> Result<Vec<u8>, DramMemoryError> {
+        self.store
+            .line_data(target, line)
+            .map_err(DramMemoryError::Memory)
+    }
+
+    pub fn line_count(&self, target: MemoryTargetId) -> Result<usize, DramMemoryError> {
+        self.store
+            .line_count(target)
+            .map_err(DramMemoryError::Memory)
+    }
+
+    pub fn target_count(&self) -> usize {
+        self.dram.len()
+    }
+
+    pub fn dram_controller(&self, target: MemoryTargetId) -> Option<&DramController> {
+        self.dram.get(&target)
+    }
+
+    fn preflight_storage(
+        &self,
+        target: MemoryTargetId,
+        request: &MemoryRequest,
+    ) -> Result<(), MemoryError> {
+        if request.line_span() != 1 {
+            return Err(MemoryError::CrossLineAccess {
+                request: request.id(),
+                start: request.range().start(),
+                size: request.size(),
+                line_size: request.line_layout().bytes(),
+            });
+        }
+
+        if matches!(
+            request.operation(),
+            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty
+        ) {
+            return Ok(());
+        }
+
+        self.store
+            .line_data(target, request.line_address())
+            .map(|_| ())
     }
 }
