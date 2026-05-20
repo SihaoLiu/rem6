@@ -157,3 +157,135 @@ fn interrupt_mmio_claims_and_completes_pending_lines() {
         ]
     );
 }
+
+#[test]
+fn interrupt_parallel_mmio_claims_and_completes_pending_lines() {
+    let cpu = PartitionId::new(0);
+    let controller_partition = PartitionId::new(1);
+    let target = InterruptTargetId::new(0);
+    let line_a = InterruptLineId::new(7);
+    let line_b = InterruptLineId::new(9);
+    let source_a = InterruptSourceId::new(70);
+    let source_b = InterruptSourceId::new(90);
+    let base = Address::new(0x2000);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .register_route(InterruptRoute::new(line_a, target, cpu))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(line_b, target, cpu))
+            .unwrap();
+        controller.assert(line_b, source_b, 0).unwrap();
+        controller.assert(line_a, source_a, 0).unwrap();
+    }
+
+    let device = InterruptControllerMmioDevice::new(Arc::clone(&controller), base, target, cpu);
+    let route = MmioRoute::new(cpu, controller_partition, 2, 2).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(base, AccessSize::new(0x100).unwrap()).unwrap(),
+        route,
+        device,
+    )
+    .unwrap();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 1, move |context| {
+            for (id, offset, operation) in [
+                (11, INTERRUPT_MMIO_PENDING_OFFSET, None),
+                (12, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, None),
+                (13, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, Some(line_a.get())),
+                (14, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, None),
+            ] {
+                let sink = Arc::clone(&completed);
+                let request = match operation {
+                    Some(line) => MmioRequest::write(
+                        MmioRequestId::new(id),
+                        Address::new(base.get() + offset),
+                        le64(line),
+                        full_mask(8),
+                    )
+                    .unwrap(),
+                    None => MmioRequest::read(
+                        MmioRequestId::new(id),
+                        Address::new(base.get() + offset),
+                        AccessSize::new(8).unwrap(),
+                    )
+                    .unwrap(),
+                };
+                bus.submit_parallel(context, request, move |completion| {
+                    sink.lock().unwrap().push(completion);
+                })
+                .unwrap();
+            }
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 9);
+    assert!(summary.final_tick() >= 5);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(11),
+                    Some(le64(line_a.get())),
+                )),
+            ),
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(12),
+                    Some(le64(line_a.get())),
+                )),
+            ),
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(13), None)),
+            ),
+            MmioCompletion::new(
+                5,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(14),
+                    Some(le64(line_b.get())),
+                )),
+            ),
+        ]
+    );
+
+    let controller = controller.lock().unwrap();
+    assert!(controller.pending().is_empty());
+    assert_eq!(
+        controller.claimed(),
+        vec![InterruptClaim::new(line_b, target, cpu, source_b, 0, 3)]
+    );
+    assert_eq!(
+        controller.history(),
+        &[
+            InterruptEvent::routed(0, line_b, target, cpu, source_b, InterruptEventKind::Assert),
+            InterruptEvent::routed(0, line_a, target, cpu, source_a, InterruptEventKind::Assert),
+            InterruptEvent::routed(3, line_a, target, cpu, source_a, InterruptEventKind::Claim),
+            InterruptEvent::routed(
+                3,
+                line_a,
+                target,
+                cpu,
+                source_a,
+                InterruptEventKind::Complete,
+            ),
+            InterruptEvent::routed(3, line_b, target, cpu, source_b, InterruptEventKind::Claim),
+        ]
+    );
+}

@@ -938,6 +938,57 @@ impl InterruptControllerMmioDevice {
         }
     }
 
+    pub fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.validate_size(request)?;
+        let offset = self.offset(request)?;
+        match (offset, request.operation()) {
+            (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Read) => {
+                let line = self
+                    .controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .peek_claimable(self.target, self.target_partition)
+                    .map(|pending| pending.line().get())
+                    .unwrap_or_default();
+                Ok(MmioResponse::completed(request.id(), Some(le64(line))))
+            }
+            (INTERRUPT_MMIO_PENDING_OFFSET, MmioOperation::Write) => Err(MmioError::AccessDenied {
+                request: request.id(),
+                operation: MmioOperation::Write,
+                access: MmioAccess::ReadOnly,
+            }),
+            (INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, MmioOperation::Read) => {
+                let line = self
+                    .controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .claim(self.target, self.target_partition, context.now())
+                    .map(|claim| claim.line().get())
+                    .unwrap_or_default();
+                Ok(MmioResponse::completed(request.id(), Some(le64(line))))
+            }
+            (INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, MmioOperation::Write) => {
+                let line = self.line_from_write(request)?;
+                self.controller
+                    .lock()
+                    .expect("interrupt controller lock")
+                    .complete(self.target, self.target_partition, line, context.now())
+                    .map_err(|error| MmioError::DeviceError {
+                        request: request.id(),
+                        message: error.to_string(),
+                    })?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+            _ => Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            }),
+        }
+    }
+
     fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
         if request.size().bytes() != INTERRUPT_MMIO_REGISTER_BYTES {
             return Err(MmioError::AccessSizeMismatch {
@@ -993,6 +1044,14 @@ impl MmioDevice for InterruptControllerMmioDevice {
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         InterruptControllerMmioDevice::respond(self, context, request)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        InterruptControllerMmioDevice::respond_parallel(self, context, request)
     }
 }
 
