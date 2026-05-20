@@ -228,6 +228,10 @@ impl Platform {
     pub fn uart(&self, id: UartId) -> Option<&UartMmioDevice> {
         self.uarts.get(&id)
     }
+
+    pub fn uarts(&self) -> impl Iterator<Item = (UartId, &UartMmioDevice)> {
+        self.uarts.iter().map(|(id, device)| (*id, device))
+    }
 }
 
 fn register_interrupt(

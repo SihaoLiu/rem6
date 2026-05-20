@@ -4,12 +4,13 @@ use rem6_boot::BootImage;
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
-use rem6_kernel::{ClockDomain, PartitionId};
+use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
 };
-use rem6_platform::{PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
+use rem6_mmio::{MmioRequest, MmioRequestId};
+use rem6_platform::{Platform, PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
@@ -25,7 +26,7 @@ use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, RequestDelivery, TargetOutcome,
     TransportEndpointId,
 };
-use rem6_uart::{UartId, UART_MMIO_DATA_OFFSET};
+use rem6_uart::{UartId, UartMmioDevice, UartTxByte, UART_MMIO_DATA_OFFSET};
 
 fn component(name: &str) -> ComponentId {
     ComponentId::new(name).unwrap()
@@ -79,6 +80,52 @@ fn memory_write(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
         layout(),
     )
     .unwrap()
+}
+
+fn platform_with_uart(topology: &Topology, uart_id: UartId) -> Platform {
+    let uart_route =
+        PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("uart0", "mmio"))
+            .resolve(topology)
+            .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_uart(PlatformUartConfig {
+            id: uart_id,
+            base: Address::new(0xa000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: uart_route,
+            interrupt_line: rem6_interrupt::InterruptLineId::new(40),
+            interrupt_target: rem6_interrupt::InterruptTargetId::new(0),
+            interrupt_source: rem6_interrupt::InterruptSourceId::new(50),
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap()
+}
+
+fn uart_byte_mask() -> ByteMask {
+    ByteMask::full(AccessSize::new(rem6_uart::UART_MMIO_REGISTER_BYTES).unwrap()).unwrap()
+}
+
+fn write_uart_byte(uart: &UartMmioDevice, tick: u64, byte: u8) {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let base = uart.base();
+    let uart = uart.clone();
+    scheduler
+        .schedule_at(PartitionId::new(0), tick, move |context| {
+            uart.respond(
+                context,
+                &MmioRequest::write(
+                    MmioRequestId::new(300 + tick),
+                    Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                    vec![byte],
+                    uart_byte_mask(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle();
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -411,23 +458,7 @@ fn topology_system_builds_cluster_and_drives_parallel_host_stop() {
 fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
     let topology = topology_with_uart();
     let uart_id = UartId::new(1);
-    let uart_route =
-        PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("uart0", "mmio"))
-            .resolve(&topology)
-            .unwrap();
-    let platform = PlatformBuilder::from_topology(&topology)
-        .add_uart(PlatformUartConfig {
-            id: uart_id,
-            base: Address::new(0xa000),
-            size: AccessSize::new(0x100).unwrap(),
-            route: uart_route,
-            interrupt_line: rem6_interrupt::InterruptLineId::new(40),
-            interrupt_target: rem6_interrupt::InterruptTargetId::new(0),
-            interrupt_source: rem6_interrupt::InterruptSourceId::new(50),
-            interrupt_latency: 2,
-        })
-        .build()
-        .unwrap();
+    let platform = platform_with_uart(&topology, uart_id);
 
     let image = BootImage::new(Address::new(0x8000))
         .add_segment(
@@ -529,6 +560,105 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
             .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
         0xabcd_ef01_2345_6789
     );
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_uart() {
+    let topology = topology_with_uart();
+    let uart_id = UartId::new(0);
+    let platform = platform_with_uart(&topology, uart_id);
+    let source = GuestSourceId::new(46);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let uart_component = CheckpointComponentId::new("uart0").unwrap();
+    let uart = system.platform().unwrap().uart(uart_id).unwrap().clone();
+    uart.inject_rx([b'A', b'B']).unwrap();
+    write_uart_byte(&uart, 10, b'O');
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .uart_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        24,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(190),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-uart".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &uart_component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&uart_component, "uart")
+            .unwrap()
+            .len()
+            > 48
+    );
+
+    write_uart_byte(&uart, 11, b'X');
+    uart.inject_rx([b'C']).unwrap();
+    assert_ne!(uart.snapshot().tx_bytes(), &[UartTxByte::new(10, b'O')]);
+
+    let restore = HostActionRecord::new(
+        36,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(191),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 36,
+            event: GuestEventId::new(191),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(10, b'O')]);
+    assert_eq!(uart.snapshot().rx_pending(), b"AB");
 }
 
 #[test]
