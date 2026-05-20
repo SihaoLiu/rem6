@@ -636,7 +636,12 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
         StatsRegistry::new(),
     )
     .unwrap();
-    let component = CheckpointComponentId::new("dram0").unwrap();
+    let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
+    let dram_component = CheckpointComponentId::new("dram0").unwrap();
+    let core = system.cluster().core(CpuId::new(0)).unwrap();
+    let x1 = rem6_isa_riscv::Register::new(1).unwrap();
+    core.redirect_pc(Address::new(0x8004));
+    core.write_register(x1, 0x1122);
     let controller = Arc::clone(system.dram_memory_controller().unwrap());
     let first = controller
         .lock()
@@ -650,6 +655,12 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
         .unwrap()
         .executor()
         .dram_memory_checkpoint_bank()
+        .is_some());
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .riscv_checkpoint_bank()
         .is_some());
 
     let checkpoint = HostActionRecord::new(
@@ -672,17 +683,35 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
         SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
         other => panic!("unexpected outcome: {other:?}"),
     };
+    assert_eq!(
+        manifest
+            .states()
+            .iter()
+            .map(|state| state.component().clone())
+            .collect::<Vec<_>>(),
+        vec![cpu_component.clone(), dram_component.clone()]
+    );
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&cpu_component, "pc"),
+        Some(&0x8004_u64.to_le_bytes()[..])
+    );
     assert!(
         host.lock()
             .unwrap()
             .executor()
             .checkpoints()
-            .chunk(&component, "dram")
+            .chunk(&dram_component, "dram")
             .unwrap()
             .len()
             > 192
     );
 
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(x1, 0);
     controller
         .lock()
         .unwrap()
@@ -718,6 +747,8 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
             manifest,
         }
     );
+    assert_eq!(core.pc(), Address::new(0x8004));
+    assert_eq!(core.read_register(x1), 0x1122);
     let mut controller = controller.lock().unwrap();
     assert_eq!(
         &controller.line_data(target, Address::new(0x8000)).unwrap()[..4],

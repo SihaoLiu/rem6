@@ -516,6 +516,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_riscv_checkpoint_bank(
+        &mut self,
+        riscv_checkpoints: RiscvCoreCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        riscv_checkpoints.register_all(&mut self.checkpoints)?;
+        self.riscv_checkpoints = Some(riscv_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_dram_memory_checkpoint_bank(
         &mut self,
         dram_memory_checkpoints: DramMemoryCheckpointBank,

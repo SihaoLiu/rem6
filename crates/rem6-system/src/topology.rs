@@ -23,9 +23,9 @@ use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcom
 
 use crate::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEventId, GuestSourceId,
-    HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvTrapEventPort, SystemError, SystemHostController,
-    SystemHostEventPort,
+    HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
+    RiscvCoreCheckpointPort, RiscvSystemRun, RiscvSystemRunDriver, RiscvTrapEventPort, SystemError,
+    SystemHostController, SystemHostEventPort,
 };
 
 pub struct RiscvTopologySystem {
@@ -85,6 +85,11 @@ fn default_memory_checkpoint_component(target: MemoryTargetId) -> CheckpointComp
 fn default_dram_checkpoint_component(target: MemoryTargetId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("dram{}", target.get()))
         .expect("formatted DRAM checkpoint component is nonempty")
+}
+
+fn default_riscv_checkpoint_component(cpu: CpuId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("cpu{}", cpu.get()))
+        .expect("formatted CPU checkpoint component is nonempty")
 }
 
 #[derive(Clone, Debug)]
@@ -408,6 +413,7 @@ impl RiscvTopologySystem {
             controller,
             driver: RiscvSystemRunDriver::new(trap_port),
         });
+        self.attach_riscv_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
         Ok(self)
     }
@@ -684,6 +690,31 @@ impl RiscvTopologySystem {
                     .map_err(RiscvTopologySystemError::System)?;
             }
         }
+        Ok(())
+    }
+
+    fn attach_riscv_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
+        let Some(host) = self.host.as_ref() else {
+            return Ok(());
+        };
+        let ports = self.cluster.core_ids().into_iter().map(|cpu| {
+            RiscvCoreCheckpointPort::new(
+                default_riscv_checkpoint_component(cpu),
+                self.cluster
+                    .core(cpu)
+                    .expect("cluster core ids resolve to cores"),
+            )
+        });
+        let bank = RiscvCoreCheckpointBank::new(ports)
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
+        host.controller
+            .lock()
+            .expect("topology host controller lock")
+            .executor_mut()
+            .attach_riscv_checkpoint_bank(bank)
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
         Ok(())
     }
 }
