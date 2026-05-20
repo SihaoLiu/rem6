@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use rem6_kernel::{PartitionedScheduler, SchedulerContext};
+use rem6_kernel::{PartitionedScheduler, RunSummary, SchedulerContext, Tick};
 use rem6_memory::AgentId;
 use rem6_transport::{
     MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportEndpointId,
@@ -142,6 +142,41 @@ impl RiscvCluster {
 
         Ok(actions)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+    ) -> Result<RiscvClusterTurn, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        let core_events = self.drive_ready_cores(
+            scheduler,
+            transport,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(RiscvClusterTurn::core(core_events));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(RiscvClusterTurn::idle(scheduler.now()));
+        }
+
+        Ok(RiscvClusterTurn::scheduler(scheduler.run_next_epoch()))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,6 +196,55 @@ impl RiscvClusterDriveEvent {
 
     pub const fn action(&self) -> &RiscvCoreDriveAction {
         &self.action
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvClusterTurn {
+    core_events: Vec<RiscvClusterDriveEvent>,
+    scheduler: Option<RunSummary>,
+    idle_tick: Option<Tick>,
+}
+
+impl RiscvClusterTurn {
+    pub fn core(core_events: Vec<RiscvClusterDriveEvent>) -> Self {
+        Self {
+            core_events,
+            scheduler: None,
+            idle_tick: None,
+        }
+    }
+
+    pub const fn scheduler(summary: RunSummary) -> Self {
+        Self {
+            core_events: Vec::new(),
+            scheduler: Some(summary),
+            idle_tick: None,
+        }
+    }
+
+    pub const fn idle(tick: Tick) -> Self {
+        Self {
+            core_events: Vec::new(),
+            scheduler: None,
+            idle_tick: Some(tick),
+        }
+    }
+
+    pub fn core_events(&self) -> &[RiscvClusterDriveEvent] {
+        &self.core_events
+    }
+
+    pub const fn scheduler_summary(&self) -> Option<RunSummary> {
+        self.scheduler
+    }
+
+    pub const fn idle_tick(&self) -> Option<Tick> {
+        self.idle_tick
+    }
+
+    pub const fn is_idle(&self) -> bool {
+        self.idle_tick.is_some()
     }
 }
 
