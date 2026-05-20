@@ -409,6 +409,29 @@ impl LineMemoryStore {
         self.lines.get(&self.layout.line_address(line)).cloned()
     }
 
+    pub fn snapshot(&self) -> LineMemorySnapshot {
+        LineMemorySnapshot::new(
+            self.layout,
+            self.lines
+                .iter()
+                .map(|(line, data)| MemoryLineSnapshot::new(*line, data.clone()))
+                .collect(),
+        )
+    }
+
+    pub fn restore(&mut self, snapshot: &LineMemorySnapshot) -> Result<(), MemoryError> {
+        *self = Self::from_snapshot(snapshot)?;
+        Ok(())
+    }
+
+    pub fn from_snapshot(snapshot: &LineMemorySnapshot) -> Result<Self, MemoryError> {
+        let mut store = Self::new(snapshot.layout());
+        for line in snapshot.lines() {
+            store.insert_line(line.line(), line.data().to_vec())?;
+        }
+        Ok(store)
+    }
+
     pub fn insert_line(&mut self, line: Address, data: Vec<u8>) -> Result<(), MemoryError> {
         if self.layout.line_offset(line) != 0 {
             return Err(MemoryError::UnalignedLineAddress {
@@ -554,6 +577,46 @@ impl LineMemoryStore {
         self.validate_line_data(data.len() as u64)?;
         self.lines.insert(request.line_address(), data.to_vec());
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryLineSnapshot {
+    line: Address,
+    data: Vec<u8>,
+}
+
+impl MemoryLineSnapshot {
+    pub fn new(line: Address, data: Vec<u8>) -> Self {
+        Self { line, data }
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineMemorySnapshot {
+    layout: CacheLineLayout,
+    lines: Vec<MemoryLineSnapshot>,
+}
+
+impl LineMemorySnapshot {
+    pub fn new(layout: CacheLineLayout, lines: Vec<MemoryLineSnapshot>) -> Self {
+        Self { layout, lines }
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub fn lines(&self) -> &[MemoryLineSnapshot] {
+        &self.lines
     }
 }
 
@@ -782,6 +845,37 @@ impl PartitionedMemoryStore {
         Ok(PartitionedMemoryOutcome::new(target, response))
     }
 
+    pub fn snapshot(&self) -> PartitionedMemorySnapshot {
+        PartitionedMemorySnapshot::new(
+            self.partitions
+                .iter()
+                .map(|(target, store)| MemoryPartitionSnapshot::new(*target, store.snapshot()))
+                .collect(),
+            self.decoder.regions().to_vec(),
+        )
+    }
+
+    pub fn restore(&mut self, snapshot: &PartitionedMemorySnapshot) -> Result<(), MemoryError> {
+        *self = Self::from_snapshot(snapshot)?;
+        Ok(())
+    }
+
+    pub fn from_snapshot(snapshot: &PartitionedMemorySnapshot) -> Result<Self, MemoryError> {
+        let mut store = Self::new();
+        for partition in snapshot.partitions() {
+            store.add_partition(partition.target(), partition.store().layout())?;
+        }
+        for (target, range) in snapshot.regions() {
+            store.map_region(*target, range.start(), range.size())?;
+        }
+        for partition in snapshot.partitions() {
+            for line in partition.store().lines() {
+                store.insert_line(partition.target(), line.line(), line.data().to_vec())?;
+            }
+        }
+        Ok(store)
+    }
+
     pub fn line_data(&self, target: MemoryTargetId, line: Address) -> Result<Vec<u8>, MemoryError> {
         let partition = self.partition(target)?;
         partition.line_data(line).ok_or(MemoryError::UnmappedLine {
@@ -871,6 +965,60 @@ impl ByteMask {
 
     pub fn is_empty(&self) -> bool {
         self.bits.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryPartitionSnapshot {
+    target: MemoryTargetId,
+    store: LineMemorySnapshot,
+}
+
+impl MemoryPartitionSnapshot {
+    pub fn new(target: MemoryTargetId, store: LineMemorySnapshot) -> Self {
+        Self { target, store }
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.store.layout()
+    }
+
+    pub fn lines(&self) -> &[MemoryLineSnapshot] {
+        self.store.lines()
+    }
+
+    fn store(&self) -> &LineMemorySnapshot {
+        &self.store
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedMemorySnapshot {
+    partitions: Vec<MemoryPartitionSnapshot>,
+    regions: Vec<(MemoryTargetId, AddressRange)>,
+}
+
+impl PartitionedMemorySnapshot {
+    pub fn new(
+        partitions: Vec<MemoryPartitionSnapshot>,
+        regions: Vec<(MemoryTargetId, AddressRange)>,
+    ) -> Self {
+        Self {
+            partitions,
+            regions,
+        }
+    }
+
+    pub fn partitions(&self) -> &[MemoryPartitionSnapshot] {
+        &self.partitions
+    }
+
+    pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
+        &self.regions
     }
 }
 

@@ -131,6 +131,73 @@ fn partitioned_store_handles_writebacks_without_responses() {
 }
 
 #[test]
+fn partitioned_store_snapshots_and_restores_regions_partitions_and_lines() {
+    let (mut store, low, high) = mapped_store();
+
+    let snapshot = store.snapshot();
+
+    assert_eq!(
+        snapshot.regions(),
+        &[(low, range(0x0000, 0x4000)), (high, range(0x8000, 0x4000))]
+    );
+    assert_eq!(
+        snapshot
+            .partitions()
+            .iter()
+            .map(|partition| partition.target())
+            .collect::<Vec<_>>(),
+        vec![low, high]
+    );
+    assert_eq!(
+        snapshot.partitions()[0].lines()[0].line(),
+        Address::new(0x1000)
+    );
+    assert_eq!(snapshot.partitions()[0].lines()[0].data(), &line_data(0x10));
+    assert_eq!(
+        snapshot.partitions()[1].lines()[0].line(),
+        Address::new(0x8000)
+    );
+    assert_eq!(snapshot.partitions()[1].lines()[0].data(), &line_data(0x80));
+
+    store
+        .respond(&write(
+            0x1000,
+            &[0xaa, 0xbb, 0xcc, 0xdd],
+            &[true, true, true, true],
+            5,
+        ))
+        .unwrap();
+    store
+        .respond(&writeback(0x8000, line_data(0x40), 6))
+        .unwrap();
+
+    store.restore(&snapshot).unwrap();
+
+    assert_eq!(store.regions(), snapshot.regions());
+    assert_eq!(store.partition_count(), 2);
+    assert_eq!(store.line_count(low).unwrap(), 1);
+    assert_eq!(store.line_count(high).unwrap(), 1);
+    assert_eq!(
+        store.line_data(low, Address::new(0x1000)).unwrap(),
+        line_data(0x10)
+    );
+    assert_eq!(
+        store.line_data(high, Address::new(0x8000)).unwrap(),
+        line_data(0x80)
+    );
+    assert_eq!(
+        store
+            .respond(&read(0x1004, 4, 7))
+            .unwrap()
+            .response()
+            .unwrap()
+            .data()
+            .unwrap(),
+        &[0x14, 0x15, 0x16, 0x17]
+    );
+}
+
+#[test]
 fn partitioned_store_allows_disjoint_regions_for_one_target() {
     let target = MemoryTargetId::new(30);
     let mut store = PartitionedMemoryStore::new();
