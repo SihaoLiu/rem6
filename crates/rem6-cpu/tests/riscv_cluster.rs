@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster,
-    RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
+    RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun, RiscvClusterStopReason,
+    RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
@@ -673,4 +674,143 @@ fn riscv_cluster_turns_drive_cores_before_scheduler_epochs() {
         cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
         41
     );
+}
+
+#[test]
+fn riscv_cluster_run_records_bounded_turn_trace_until_stop_condition() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x9000,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    let store = store_with_programs(&[
+        (0x8000, i_type(51, 0, 0x0, 1, 0x13)),
+        (0x9000, i_type(61, 0, 0x0, 1, 0x13)),
+    ]);
+
+    let run = cluster
+        .drive_until(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(store.clone()),
+            |_cpu| responder(store.clone()),
+            10,
+            |turn| {
+                turn.core_events().iter().any(|event| {
+                    matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))
+                })
+            },
+        )
+        .unwrap();
+
+    assert_eq!(run.stop_reason(), RiscvClusterStopReason::StopCondition);
+    assert_eq!(run.idle_tick(), None);
+    assert!(matches!(
+        run.turns().first().unwrap().core_events()[0].action(),
+        RiscvCoreDriveAction::FetchIssued { .. }
+    ));
+    assert!(run
+        .scheduler_summaries()
+        .iter()
+        .any(|summary| summary.executed_events() > 0));
+    assert_eq!(
+        run.turns()
+            .last()
+            .unwrap()
+            .core_events()
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)]
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(1)),
+        51
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
+        61
+    );
+
+    let summary = RiscvClusterRun::new(
+        run.turns().to_vec(),
+        RiscvClusterStopReason::Idle {
+            tick: scheduler.now(),
+        },
+    );
+    assert_eq!(summary.idle_tick(), Some(scheduler.now()));
 }

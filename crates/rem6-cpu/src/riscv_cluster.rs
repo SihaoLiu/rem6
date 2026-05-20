@@ -177,6 +177,58 @@ impl RiscvCluster {
 
         Ok(RiscvClusterTurn::scheduler(scheduler.run_next_epoch()))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_until<F, D, FR, DR, S>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        max_turns: usize,
+        mut stop: S,
+    ) -> Result<RiscvClusterRun, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        S: FnMut(&RiscvClusterTurn) -> bool,
+    {
+        let mut turns = Vec::new();
+        for _ in 0..max_turns {
+            let turn = self.drive_turn(
+                scheduler,
+                transport,
+                fetch_trace.clone(),
+                data_trace.clone(),
+                &mut fetch_responder,
+                &mut data_responder,
+            )?;
+            if let Some(tick) = turn.idle_tick() {
+                turns.push(turn);
+                return Ok(RiscvClusterRun::new(
+                    turns,
+                    RiscvClusterStopReason::Idle { tick },
+                ));
+            }
+            if stop(&turn) {
+                turns.push(turn);
+                return Ok(RiscvClusterRun::new(
+                    turns,
+                    RiscvClusterStopReason::StopCondition,
+                ));
+            }
+            turns.push(turn);
+        }
+
+        Err(RiscvClusterError::TurnLimitExceeded {
+            limit: max_turns,
+            completed: turns.len(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,6 +301,46 @@ impl RiscvClusterTurn {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvClusterRun {
+    turns: Vec<RiscvClusterTurn>,
+    stop_reason: RiscvClusterStopReason,
+}
+
+impl RiscvClusterRun {
+    pub const fn new(turns: Vec<RiscvClusterTurn>, stop_reason: RiscvClusterStopReason) -> Self {
+        Self { turns, stop_reason }
+    }
+
+    pub fn turns(&self) -> &[RiscvClusterTurn] {
+        &self.turns
+    }
+
+    pub const fn stop_reason(&self) -> RiscvClusterStopReason {
+        self.stop_reason
+    }
+
+    pub fn scheduler_summaries(&self) -> Vec<RunSummary> {
+        self.turns
+            .iter()
+            .filter_map(RiscvClusterTurn::scheduler_summary)
+            .collect()
+    }
+
+    pub const fn idle_tick(&self) -> Option<Tick> {
+        match self.stop_reason {
+            RiscvClusterStopReason::Idle { tick } => Some(tick),
+            RiscvClusterStopReason::StopCondition => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvClusterStopReason {
+    StopCondition,
+    Idle { tick: Tick },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvClusterError {
     DuplicateCpu {
         cpu: CpuId,
@@ -274,6 +366,10 @@ pub enum RiscvClusterError {
     Core {
         cpu: CpuId,
         error: RiscvCpuError,
+    },
+    TurnLimitExceeded {
+        limit: usize,
+        completed: usize,
     },
 }
 
@@ -320,6 +416,10 @@ impl fmt::Display for RiscvClusterError {
             Self::Core { cpu, error } => {
                 write!(formatter, "CPU {} action failed: {error}", cpu.get())
             }
+            Self::TurnLimitExceeded { limit, completed } => write!(
+                formatter,
+                "RISC-V cluster run reached turn limit {limit} after {completed} completed turns"
+            ),
         }
     }
 }

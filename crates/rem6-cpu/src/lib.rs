@@ -21,7 +21,8 @@ use rem6_transport::{
 mod riscv_cluster;
 
 pub use riscv_cluster::{
-    RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterTurn,
+    RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
+    RiscvClusterStopReason, RiscvClusterTurn,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
