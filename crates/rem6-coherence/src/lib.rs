@@ -31,7 +31,8 @@ use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 use snoop::{DirectorySnoopWork, SnoopRoute};
 
 pub use mesi::{
-    MesiCpuResponseRecord, MesiDirectoryLineHarness, MesiHarnessError, MesiSubmitResult,
+    MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness, MesiHarnessError,
+    MesiSubmitResult, PartitionedMesiDirectoryLineHarness,
 };
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
