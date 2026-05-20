@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -67,6 +68,19 @@ impl MemoryRequestId {
 
     pub const fn sequence(self) -> u64 {
         self.sequence
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MemoryTargetId(u32);
+
+impl MemoryTargetId {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
     }
 }
 
@@ -150,20 +164,70 @@ pub enum CoherenceIntent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemoryError {
     ZeroAccessSize,
-    AccessSizeTooLarge { size: AccessSize },
-    AddressOverflow { start: Address, size: AccessSize },
+    AccessSizeTooLarge {
+        size: AccessSize,
+    },
+    AddressOverflow {
+        start: Address,
+        size: AccessSize,
+    },
     ZeroCacheLineSize,
-    NonPowerOfTwoCacheLineSize { bytes: u64 },
-    PayloadSizeMismatch { expected: AccessSize, actual: u64 },
-    ByteMaskSizeMismatch { expected: AccessSize, actual: u64 },
-    MissingRequestData { request: MemoryRequestId },
-    UnexpectedRequestData { request: MemoryRequestId },
-    MissingByteMask { request: MemoryRequestId },
-    UnexpectedByteMask { request: MemoryRequestId },
-    UnalignedLineAddress { address: Address, line_size: u64 },
-    MissingResponseData { request: MemoryRequestId },
-    UnexpectedResponseData { request: MemoryRequestId },
-    ResponseNotExpected { request: MemoryRequestId },
+    NonPowerOfTwoCacheLineSize {
+        bytes: u64,
+    },
+    PayloadSizeMismatch {
+        expected: AccessSize,
+        actual: u64,
+    },
+    ByteMaskSizeMismatch {
+        expected: AccessSize,
+        actual: u64,
+    },
+    MissingRequestData {
+        request: MemoryRequestId,
+    },
+    UnexpectedRequestData {
+        request: MemoryRequestId,
+    },
+    MissingByteMask {
+        request: MemoryRequestId,
+    },
+    UnexpectedByteMask {
+        request: MemoryRequestId,
+    },
+    UnalignedLineAddress {
+        address: Address,
+        line_size: u64,
+    },
+    CrossLineAccess {
+        request: MemoryRequestId,
+        start: Address,
+        size: AccessSize,
+        line_size: u64,
+    },
+    UnmappedLine {
+        line: Address,
+    },
+    UnmappedAddress {
+        address: Address,
+    },
+    OverlappingAddressRegion {
+        existing: AddressRange,
+        requested: AddressRange,
+    },
+    RequestCrossesAddressRegion {
+        request: MemoryRequestId,
+        range: AddressRange,
+    },
+    MissingResponseData {
+        request: MemoryRequestId,
+    },
+    UnexpectedResponseData {
+        request: MemoryRequestId,
+    },
+    ResponseNotExpected {
+        request: MemoryRequestId,
+    },
 }
 
 impl fmt::Display for MemoryError {
@@ -226,6 +290,44 @@ impl fmt::Display for MemoryError {
                 "address {:#x} is not aligned to cache line size {line_size}",
                 address.get()
             ),
+            Self::CrossLineAccess {
+                request,
+                start,
+                size,
+                line_size,
+            } => write!(
+                formatter,
+                "request {} from agent {} crosses a {line_size}-byte line at {:#x}+{}",
+                request.sequence(),
+                request.agent().get(),
+                start.get(),
+                size.bytes()
+            ),
+            Self::UnmappedLine { line } => {
+                write!(formatter, "line {:#x} is not mapped", line.get())
+            }
+            Self::UnmappedAddress { address } => {
+                write!(formatter, "address {:#x} is not mapped", address.get())
+            }
+            Self::OverlappingAddressRegion {
+                existing,
+                requested,
+            } => write!(
+                formatter,
+                "address region {:#x}..{:#x} overlaps existing region {:#x}..{:#x}",
+                requested.start().get(),
+                requested.end().get(),
+                existing.start().get(),
+                existing.end().get()
+            ),
+            Self::RequestCrossesAddressRegion { request, range } => write!(
+                formatter,
+                "request {} from agent {} crosses address region boundary at {:#x}..{:#x}",
+                request.sequence(),
+                request.agent().get(),
+                range.start().get(),
+                range.end().get()
+            ),
             Self::MissingResponseData { request } => write!(
                 formatter,
                 "response to request {} from agent {} requires payload data",
@@ -245,6 +347,166 @@ impl fmt::Display for MemoryError {
                 request.agent().get()
             ),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineMemoryStore {
+    layout: CacheLineLayout,
+    lines: BTreeMap<Address, Vec<u8>>,
+}
+
+impl LineMemoryStore {
+    pub fn new(layout: CacheLineLayout) -> Self {
+        Self {
+            layout,
+            lines: BTreeMap::new(),
+        }
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn line_data(&self, line: Address) -> Option<Vec<u8>> {
+        self.lines.get(&self.layout.line_address(line)).cloned()
+    }
+
+    pub fn insert_line(&mut self, line: Address, data: Vec<u8>) -> Result<(), MemoryError> {
+        if self.layout.line_offset(line) != 0 {
+            return Err(MemoryError::UnalignedLineAddress {
+                address: line,
+                line_size: self.layout.bytes(),
+            });
+        }
+        self.validate_line_data(data.len() as u64)?;
+        self.lines.insert(line, data);
+        Ok(())
+    }
+
+    pub fn respond(
+        &mut self,
+        request: &MemoryRequest,
+    ) -> Result<Option<MemoryResponse>, MemoryError> {
+        self.check_single_line(request)?;
+        match request.operation() {
+            MemoryOperation::InstructionFetch
+            | MemoryOperation::ReadShared
+            | MemoryOperation::ReadUnique => {
+                let data = self.read_slice(request)?;
+                MemoryResponse::completed(request, Some(data)).map(Some)
+            }
+            MemoryOperation::Write | MemoryOperation::Atomic => {
+                self.apply_write(request)?;
+                if request.returns_data() {
+                    let data = self.read_slice(request)?;
+                    MemoryResponse::completed(request, Some(data)).map(Some)
+                } else {
+                    MemoryResponse::completed(request, None).map(Some)
+                }
+            }
+            MemoryOperation::Upgrade | MemoryOperation::Invalidate => {
+                self.require_line(request.line_address())?;
+                MemoryResponse::completed(request, None).map(Some)
+            }
+            MemoryOperation::PrefetchRead | MemoryOperation::PrefetchWrite => {
+                self.require_line(request.line_address())?;
+                Ok(None)
+            }
+            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty => {
+                self.replace_line(request)?;
+                Ok(None)
+            }
+            MemoryOperation::CleanEvict => {
+                self.require_line(request.line_address())?;
+                Ok(None)
+            }
+        }
+    }
+
+    fn validate_line_data(&self, actual: u64) -> Result<(), MemoryError> {
+        if actual != self.layout.bytes() {
+            return Err(MemoryError::PayloadSizeMismatch {
+                expected: AccessSize::new(self.layout.bytes())?,
+                actual,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn check_single_line(&self, request: &MemoryRequest) -> Result<(), MemoryError> {
+        if request.line_span() != 1 {
+            return Err(MemoryError::CrossLineAccess {
+                request: request.id(),
+                start: request.range().start(),
+                size: request.size(),
+                line_size: self.layout.bytes(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn require_line(&self, line: Address) -> Result<(), MemoryError> {
+        if self.lines.contains_key(&self.layout.line_address(line)) {
+            return Ok(());
+        }
+
+        Err(MemoryError::UnmappedLine {
+            line: self.layout.line_address(line),
+        })
+    }
+
+    fn line_mut(&mut self, line: Address) -> Result<&mut Vec<u8>, MemoryError> {
+        let line = self.layout.line_address(line);
+        self.lines
+            .get_mut(&line)
+            .ok_or(MemoryError::UnmappedLine { line })
+    }
+
+    fn line_ref(&self, line: Address) -> Result<&[u8], MemoryError> {
+        let line = self.layout.line_address(line);
+        self.lines
+            .get(&line)
+            .map(Vec::as_slice)
+            .ok_or(MemoryError::UnmappedLine { line })
+    }
+
+    fn read_slice(&self, request: &MemoryRequest) -> Result<Vec<u8>, MemoryError> {
+        let offset = request.line_offset() as usize;
+        let size = request.size().bytes() as usize;
+        let line = self.line_ref(request.line_address())?;
+        Ok(line[offset..offset + size].to_vec())
+    }
+
+    fn apply_write(&mut self, request: &MemoryRequest) -> Result<(), MemoryError> {
+        let offset = request.line_offset() as usize;
+        let payload = request.data().ok_or(MemoryError::MissingRequestData {
+            request: request.id(),
+        })?;
+        let mask = request.byte_mask();
+        let line = self.line_mut(request.line_address())?;
+        for (index, byte) in payload.iter().enumerate() {
+            if mask.is_none_or(|mask| mask.bits()[index]) {
+                line[offset + index] = *byte;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn replace_line(&mut self, request: &MemoryRequest) -> Result<(), MemoryError> {
+        let data = request.data().ok_or(MemoryError::MissingRequestData {
+            request: request.id(),
+        })?;
+        self.validate_line_data(data.len() as u64)?;
+        self.lines.insert(request.line_address(), data.to_vec());
+        Ok(())
     }
 }
 
@@ -314,6 +576,90 @@ impl AddressRange {
 
     pub const fn end(self) -> Address {
         self.end
+    }
+
+    pub fn contains(self, address: Address) -> bool {
+        self.start.get() <= address.get() && address.get() < self.end.get()
+    }
+
+    pub fn contains_range(self, range: AddressRange) -> bool {
+        self.start.get() <= range.start().get() && range.end().get() <= self.end.get()
+    }
+
+    pub fn overlaps(self, other: AddressRange) -> bool {
+        self.start.get() < other.end().get() && other.start().get() < self.end.get()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AddressDecoder {
+    regions: Vec<(MemoryTargetId, AddressRange)>,
+}
+
+impl AddressDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(
+        &mut self,
+        target: MemoryTargetId,
+        start: Address,
+        size: AccessSize,
+    ) -> Result<(), MemoryError> {
+        let requested = AddressRange::new(start, size)?;
+        if let Some((_, existing)) = self
+            .regions
+            .iter()
+            .find(|(_, existing)| existing.overlaps(requested))
+        {
+            return Err(MemoryError::OverlappingAddressRegion {
+                existing: *existing,
+                requested,
+            });
+        }
+
+        self.regions.push((target, requested));
+        self.regions
+            .sort_by_key(|(_, range)| (range.start(), range.end()));
+        Ok(())
+    }
+
+    pub fn decode(&self, address: Address) -> Result<MemoryTargetId, MemoryError> {
+        self.regions
+            .iter()
+            .find_map(|(target, range)| range.contains(address).then_some(*target))
+            .ok_or(MemoryError::UnmappedAddress { address })
+    }
+
+    pub fn decode_request(&self, request: &MemoryRequest) -> Result<MemoryTargetId, MemoryError> {
+        let range = request.range();
+        let Some((target, region)) = self
+            .regions
+            .iter()
+            .find(|(_, region)| region.contains(range.start()))
+        else {
+            return Err(MemoryError::UnmappedAddress {
+                address: range.start(),
+            });
+        };
+
+        if !region.contains_range(range) {
+            return Err(MemoryError::RequestCrossesAddressRegion {
+                request: request.id(),
+                range,
+            });
+        }
+
+        Ok(*target)
+    }
+
+    pub fn region_count(&self) -> usize {
+        self.regions.len()
+    }
+
+    pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
+        &self.regions
     }
 }
 
