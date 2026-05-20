@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
-    MemoryRequestId, MemoryResponse, MemoryTargetId, PartitionedMemoryStore,
+    MemoryRequestId, MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot,
+    PartitionedMemoryStore,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,6 +109,9 @@ pub enum DramMemoryError {
         layout: u64,
         geometry: u64,
     },
+    MissingDramTarget {
+        target: MemoryTargetId,
+    },
 }
 
 impl fmt::Display for DramMemoryError {
@@ -126,6 +130,9 @@ impl fmt::Display for DramMemoryError {
                 "DRAM target {} uses {geometry}-byte geometry lines but memory layout uses {layout}",
                 target.get()
             ),
+            Self::MissingDramTarget { target } => {
+                write!(formatter, "DRAM target {} is missing timing state", target.get())
+            }
         }
     }
 }
@@ -135,7 +142,7 @@ impl Error for DramMemoryError {
         match self {
             Self::Memory(error) => Some(error),
             Self::Dram { source, .. } => Some(source),
-            Self::TargetLineSizeMismatch { .. } => None,
+            Self::TargetLineSizeMismatch { .. } | Self::MissingDramTarget { .. } => None,
         }
     }
 }
@@ -491,6 +498,30 @@ impl DramController {
         self.banks.get(bank as usize).copied()
     }
 
+    pub fn snapshot(&self) -> DramControllerSnapshot {
+        DramControllerSnapshot::new(
+            self.geometry,
+            self.timing,
+            self.banks.clone(),
+            self.bus_available_cycle,
+            self.last_access_kind,
+        )
+    }
+
+    pub fn restore(&mut self, snapshot: &DramControllerSnapshot) {
+        *self = Self::from_snapshot(snapshot);
+    }
+
+    pub fn from_snapshot(snapshot: &DramControllerSnapshot) -> Self {
+        Self {
+            geometry: snapshot.geometry(),
+            timing: snapshot.timing(),
+            banks: snapshot.banks().to_vec(),
+            bus_available_cycle: snapshot.bus_available_cycle(),
+            last_access_kind: snapshot.last_access_kind(),
+        }
+    }
+
     pub fn schedule(
         &mut self,
         arrival_cycle: u64,
@@ -559,6 +590,53 @@ impl DramController {
         } else {
             self.bus_available_cycle
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramControllerSnapshot {
+    geometry: DramGeometry,
+    timing: DramTiming,
+    banks: Vec<DramBankState>,
+    bus_available_cycle: u64,
+    last_access_kind: Option<DramAccessKind>,
+}
+
+impl DramControllerSnapshot {
+    pub const fn new(
+        geometry: DramGeometry,
+        timing: DramTiming,
+        banks: Vec<DramBankState>,
+        bus_available_cycle: u64,
+        last_access_kind: Option<DramAccessKind>,
+    ) -> Self {
+        Self {
+            geometry,
+            timing,
+            banks,
+            bus_available_cycle,
+            last_access_kind,
+        }
+    }
+
+    pub const fn geometry(&self) -> DramGeometry {
+        self.geometry
+    }
+
+    pub const fn timing(&self) -> DramTiming {
+        self.timing
+    }
+
+    pub fn banks(&self) -> &[DramBankState] {
+        &self.banks
+    }
+
+    pub const fn bus_available_cycle(&self) -> u64 {
+        self.bus_available_cycle
+    }
+
+    pub const fn last_access_kind(&self) -> Option<DramAccessKind> {
+        self.last_access_kind
     }
 }
 
@@ -647,6 +725,46 @@ impl DramMemoryOutcome {
 pub struct DramMemoryController {
     store: PartitionedMemoryStore,
     dram: BTreeMap<MemoryTargetId, DramController>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemorySnapshot {
+    store: PartitionedMemorySnapshot,
+    targets: Vec<DramMemoryTargetSnapshot>,
+}
+
+impl DramMemorySnapshot {
+    pub fn new(store: PartitionedMemorySnapshot, targets: Vec<DramMemoryTargetSnapshot>) -> Self {
+        Self { store, targets }
+    }
+
+    pub const fn store(&self) -> &PartitionedMemorySnapshot {
+        &self.store
+    }
+
+    pub fn targets(&self) -> &[DramMemoryTargetSnapshot] {
+        &self.targets
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemoryTargetSnapshot {
+    target: MemoryTargetId,
+    controller: DramControllerSnapshot,
+}
+
+impl DramMemoryTargetSnapshot {
+    pub const fn new(target: MemoryTargetId, controller: DramControllerSnapshot) -> Self {
+        Self { target, controller }
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn controller(&self) -> &DramControllerSnapshot {
+        &self.controller
+    }
 }
 
 impl DramMemoryController {
@@ -744,6 +862,58 @@ impl DramMemoryController {
 
     pub fn dram_controller(&self, target: MemoryTargetId) -> Option<&DramController> {
         self.dram.get(&target)
+    }
+
+    pub fn snapshot(&self) -> DramMemorySnapshot {
+        DramMemorySnapshot::new(
+            self.store.snapshot(),
+            self.dram
+                .iter()
+                .map(|(target, controller)| {
+                    DramMemoryTargetSnapshot::new(*target, controller.snapshot())
+                })
+                .collect(),
+        )
+    }
+
+    pub fn restore(&mut self, snapshot: &DramMemorySnapshot) -> Result<(), DramMemoryError> {
+        *self = Self::from_snapshot(snapshot)?;
+        Ok(())
+    }
+
+    pub fn from_snapshot(snapshot: &DramMemorySnapshot) -> Result<Self, DramMemoryError> {
+        let store = PartitionedMemoryStore::from_snapshot(snapshot.store())
+            .map_err(DramMemoryError::Memory)?;
+        let mut dram = BTreeMap::new();
+        for target in snapshot.targets() {
+            if !store.contains_partition(target.target()) {
+                return Err(DramMemoryError::Memory(MemoryError::UnknownMemoryTarget {
+                    target: target.target(),
+                }));
+            }
+            if dram
+                .insert(
+                    target.target(),
+                    DramController::from_snapshot(target.controller()),
+                )
+                .is_some()
+            {
+                return Err(DramMemoryError::Memory(
+                    MemoryError::DuplicateMemoryTarget {
+                        target: target.target(),
+                    },
+                ));
+            }
+        }
+        for partition in store.snapshot().partitions() {
+            if !dram.contains_key(&partition.target()) {
+                return Err(DramMemoryError::MissingDramTarget {
+                    target: partition.target(),
+                });
+            }
+        }
+
+        Ok(Self { store, dram })
     }
 
     fn preflight_storage(

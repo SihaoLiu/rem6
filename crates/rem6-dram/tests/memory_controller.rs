@@ -162,6 +162,49 @@ fn dram_memory_controller_keeps_independent_timing_per_target() {
 }
 
 #[test]
+fn dram_memory_controller_snapshots_and_restores_storage_and_timing_state() {
+    let (mut controller, low, high) = controller_with_targets();
+
+    let first = controller.accept(0, &read(0x1000, 8, 70)).unwrap();
+    assert_eq!(first.target(), low);
+    assert!(!first.dram_access().row_hit());
+    assert_eq!(first.ready_cycle(), 8);
+    let snapshot = controller.snapshot();
+
+    controller
+        .accept(8, &write(0x1000, &[0xaa, 0xbb, 0xcc, 0xdd], 71))
+        .unwrap();
+    controller.accept(0, &read(0x8000, 8, 72)).unwrap();
+    assert_eq!(
+        &controller.line_data(low, Address::new(0x1000)).unwrap()[..4],
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+
+    controller.restore(&snapshot).unwrap();
+
+    assert_eq!(controller.snapshot(), snapshot);
+    assert_eq!(
+        &controller.line_data(low, Address::new(0x1000)).unwrap()[..4],
+        &[0x10, 0x11, 0x12, 0x13]
+    );
+    assert_eq!(
+        &controller.line_data(high, Address::new(0x8000)).unwrap()[..4],
+        &[0x80, 0x81, 0x82, 0x83]
+    );
+    let bank = controller
+        .dram_controller(low)
+        .unwrap()
+        .bank_state(0)
+        .unwrap();
+    assert_eq!(bank.open_row(), Some(4));
+    assert_eq!(bank.available_cycle(), 8);
+
+    let row_hit = controller.accept(8, &read(0x1008, 4, 73)).unwrap();
+    assert!(row_hit.dram_access().row_hit());
+    assert_eq!(row_hit.ready_cycle(), 13);
+}
+
+#[test]
 fn dram_memory_controller_reports_memory_errors_before_timing_mutation() {
     let target = MemoryTargetId::new(3);
     let mut controller = DramMemoryController::new();
