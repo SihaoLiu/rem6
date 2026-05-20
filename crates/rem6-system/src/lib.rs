@@ -412,6 +412,20 @@ impl SystemActionExecutor {
         }
     }
 
+    pub fn with_checkpoint_banks(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        riscv_checkpoints: RiscvCoreCheckpointBank,
+        memory_checkpoints: MemoryStoreCheckpointBank,
+    ) -> Self {
+        Self {
+            stats,
+            checkpoints,
+            riscv_checkpoints: Some(riscv_checkpoints),
+            memory_checkpoints: Some(memory_checkpoints),
+        }
+    }
+
     pub const fn stats(&self) -> &StatsRegistry {
         &self.stats
     }

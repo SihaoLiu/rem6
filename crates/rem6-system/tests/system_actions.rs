@@ -421,6 +421,116 @@ fn system_action_executor_refreshes_and_restores_live_memory_checkpoint() {
 }
 
 #[test]
+fn system_action_executor_checkpoints_and_restores_live_cpu_and_memory_together() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(14);
+    let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
+    let memory_component = CheckpointComponentId::new("memory0").unwrap();
+    let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    core.redirect_pc(Address::new(0x8040));
+    core.write_register(reg(1), 0x1234);
+    let (store, target) = partitioned_memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let riscv_bank = RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+        cpu_component.clone(),
+        core.clone(),
+    )])
+    .unwrap();
+    let memory_bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+        memory_component.clone(),
+        Arc::clone(&store),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    riscv_bank.register_all(&mut checkpoints).unwrap();
+    memory_bank.register_all(&mut checkpoints).unwrap();
+    let mut executor = SystemActionExecutor::with_checkpoint_banks(
+        StatsRegistry::new(),
+        checkpoints,
+        riscv_bank,
+        memory_bank,
+    );
+
+    let checkpoint = HostActionRecord::new(
+        108,
+        host,
+        host,
+        GuestEventId::new(11),
+        source,
+        HostAction::Checkpoint {
+            label: "full-system".to_string(),
+        },
+    );
+
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert_eq!(
+        manifest
+            .states()
+            .iter()
+            .map(|state| state.component().clone())
+            .collect::<Vec<_>>(),
+        vec![cpu_component.clone(), memory_component.clone()]
+    );
+    assert_eq!(
+        executor.checkpoints().chunk(&cpu_component, "pc"),
+        Some(&0x8040_u64.to_le_bytes()[..])
+    );
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&memory_component, "store")
+            .unwrap()
+            .len()
+            > 128
+    );
+
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(reg(1), 0);
+    store
+        .lock()
+        .unwrap()
+        .insert_line(target, Address::new(0x1000), line_data(0xaa))
+        .unwrap();
+
+    let restore = HostActionRecord::new(
+        120,
+        host,
+        host,
+        GuestEventId::new(12),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 120,
+            event: GuestEventId::new(12),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(core.pc(), Address::new(0x8040));
+    assert_eq!(core.read_register(reg(1)), 0x1234);
+    assert_eq!(
+        store
+            .lock()
+            .unwrap()
+            .line_data(target, Address::new(0x1000))
+            .unwrap(),
+        line_data(0x10)
+    );
+}
+
+#[test]
 fn system_run_controller_records_and_executes_checkpoint_restore_action() {
     let host = PartitionId::new(1);
     let source = GuestSourceId::new(11);
