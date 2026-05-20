@@ -63,6 +63,32 @@ pub enum MemoryAccessKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvTrapKind {
+    EnvironmentCall,
+    Breakpoint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvTrap {
+    kind: RiscvTrapKind,
+    pc: u64,
+}
+
+impl RiscvTrap {
+    pub const fn new(kind: RiscvTrapKind, pc: u64) -> Self {
+        Self { kind, pc }
+    }
+
+    pub const fn kind(self) -> RiscvTrapKind {
+        self.kind
+    }
+
+    pub const fn pc(self) -> u64 {
+        self.pc
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvInstruction {
     Lui {
         rd: Register,
@@ -119,6 +145,8 @@ pub enum RiscvInstruction {
         offset: Immediate,
         width: MemoryWidth,
     },
+    Ecall,
+    Ebreak,
 }
 
 impl RiscvInstruction {
@@ -147,8 +175,17 @@ impl RiscvInstruction {
                 rd: rd(raw),
                 offset: Immediate::new(j_imm(raw)),
             }),
+            0x73 => decode_system(raw),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         }
+    }
+}
+
+fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match raw {
+        0x0000_0073 => Ok(RiscvInstruction::Ecall),
+        0x0010_0073 => Ok(RiscvInstruction::Ebreak),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
 
@@ -271,6 +308,7 @@ pub struct RiscvExecutionRecord {
     next_pc: u64,
     register_writes: Vec<RegisterWrite>,
     memory_access: Option<MemoryAccessKind>,
+    trap: Option<RiscvTrap>,
 }
 
 impl RiscvExecutionRecord {
@@ -287,6 +325,23 @@ impl RiscvExecutionRecord {
             next_pc,
             register_writes,
             memory_access,
+            trap: None,
+        }
+    }
+
+    pub fn with_trap(
+        instruction: RiscvInstruction,
+        pc: u64,
+        next_pc: u64,
+        trap: RiscvTrap,
+    ) -> Self {
+        Self {
+            instruction,
+            pc,
+            next_pc,
+            register_writes: Vec::new(),
+            memory_access: None,
+            trap: Some(trap),
         }
     }
 
@@ -308,6 +363,10 @@ impl RiscvExecutionRecord {
 
     pub fn memory_access(&self) -> Option<&MemoryAccessKind> {
         self.memory_access.as_ref()
+    }
+
+    pub fn trap(&self) -> Option<&RiscvTrap> {
+        self.trap.as_ref()
     }
 }
 
@@ -423,6 +482,26 @@ impl RiscvHartState {
                     width,
                     value: self.read(rs2),
                 });
+            }
+            RiscvInstruction::Ecall => {
+                next_pc = pc;
+                self.pc = next_pc;
+                return Ok(RiscvExecutionRecord::with_trap(
+                    instruction,
+                    pc,
+                    next_pc,
+                    RiscvTrap::new(RiscvTrapKind::EnvironmentCall, pc),
+                ));
+            }
+            RiscvInstruction::Ebreak => {
+                next_pc = pc;
+                self.pc = next_pc;
+                return Ok(RiscvExecutionRecord::with_trap(
+                    instruction,
+                    pc,
+                    next_pc,
+                    RiscvTrap::new(RiscvTrapKind::Breakpoint, pc),
+                ));
             }
         }
 

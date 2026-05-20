@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvError, RiscvExecutionRecord, RiscvHartState,
-    RiscvInstruction,
+    RiscvInstruction, RiscvTrap,
 };
 use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, Tick};
 use rem6_memory::{
@@ -854,6 +854,14 @@ impl RiscvCore {
             .read(register)
     }
 
+    pub fn pending_trap(&self) -> Option<RiscvTrap> {
+        self.state.lock().expect("riscv core lock").pending_trap
+    }
+
+    pub fn has_pending_trap(&self) -> bool {
+        self.pending_trap().is_some()
+    }
+
     pub fn write_register(&self, register: Register, value: u64) {
         self.state
             .lock()
@@ -914,9 +922,14 @@ impl RiscvCore {
         if self.core.has_pending_fetch() || self.has_pending_data_access() {
             return Ok(None);
         }
+        if self.has_pending_trap() {
+            return Ok(None);
+        }
 
         if let Some(event) = self.execute_next_completed_fetch()? {
-            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(event)));
+            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                event,
+            ))));
         }
 
         if let Some(event) =
@@ -936,6 +949,9 @@ impl RiscvCore {
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
         let fetch_events = self.core.fetch_events();
         let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap.is_some() {
+            return Ok(None);
+        }
         let Some(fetch) = fetch_events.into_iter().find(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && !state.executed_fetches.contains(&event.request_id())
@@ -968,6 +984,9 @@ impl RiscvCore {
             .map_err(RiscvCpuError::Isa)?;
         let next_pc = Address::new(execution.next_pc());
         self.core.set_pc(next_pc);
+        if let Some(trap) = execution.trap().copied() {
+            state.pending_trap = Some(trap);
+        }
 
         let event = RiscvCpuExecutionEvent::new(fetch.clone(), instruction, execution);
         state.executed_fetches.insert(fetch.request_id());
@@ -1139,6 +1158,7 @@ struct RiscvCoreState {
     executed_fetches: BTreeSet<MemoryRequestId>,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
     outstanding_data: BTreeMap<MemoryRequestId, IssuedDataAccess>,
+    pending_trap: Option<RiscvTrap>,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
 }
@@ -1151,6 +1171,7 @@ impl RiscvCoreState {
             executed_fetches: BTreeSet::new(),
             issued_data_for_fetches: BTreeSet::new(),
             outstanding_data: BTreeMap::new(),
+            pending_trap: None,
             events: Vec::new(),
             data_events: Vec::new(),
         }
@@ -1243,7 +1264,7 @@ pub struct RiscvCpuExecutionEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvCoreDriveAction {
     FetchIssued { event: PartitionEventId },
-    InstructionExecuted(RiscvCpuExecutionEvent),
+    InstructionExecuted(Box<RiscvCpuExecutionEvent>),
     DataAccessIssued { event: PartitionEventId },
 }
 

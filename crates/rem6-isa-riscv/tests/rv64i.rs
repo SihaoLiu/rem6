@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
     Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvError, RiscvExecutionRecord,
-    RiscvHartState, RiscvInstruction,
+    RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -212,6 +212,31 @@ fn hart_reports_memory_accesses_without_mutating_memory() {
             width: MemoryWidth::Word,
             value: 0x1122_3344_5566_7788,
         })
+    );
+}
+
+#[test]
+fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
+    let mut hart = RiscvHartState::new(0x7000);
+
+    let ecall = hart
+        .execute(RiscvInstruction::decode(0x0000_0073).unwrap())
+        .unwrap();
+    assert_eq!(hart.pc(), 0x7000);
+    assert_eq!(
+        ecall.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::EnvironmentCall, 0x7000))
+    );
+    assert_eq!(ecall.register_writes(), &[]);
+    assert_eq!(ecall.memory_access(), None);
+
+    let ebreak = hart
+        .execute(RiscvInstruction::decode(0x0010_0073).unwrap())
+        .unwrap();
+    assert_eq!(hart.pc(), 0x7000);
+    assert_eq!(
+        ebreak.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x7000))
     );
 }
 

@@ -5,7 +5,9 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
     RiscvCpuError, RiscvDataAccessEventKind,
 };
-use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, Register, RiscvInstruction};
+use rem6_isa_riscv::{
+    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvTrap, RiscvTrapKind,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId,
@@ -397,6 +399,40 @@ fn riscv_core_driver_waits_for_store_response_before_next_fetch() {
         drive_one_action(&core, store, &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+}
+
+#[test]
+fn riscv_core_records_system_trap_and_stops_issuing_fetches() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_store(0x8000, 0x0000_0073);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(event) = action else {
+        panic!("expected trap execution event");
+    };
+
+    assert_eq!(
+        event.execution().trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::EnvironmentCall, 0x8000))
+    );
+    assert!(core.has_pending_trap());
+    assert_eq!(core.pc(), Address::new(0x8000));
+    assert_eq!(
+        drive_one_action(
+            &core,
+            Arc::new(Mutex::new(PartitionedMemoryStore::new())),
+            &mut scheduler,
+            &transport,
+        ),
+        None
+    );
+    assert!(scheduler.is_idle());
 }
 
 #[test]
