@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GuestEventId(u64);
@@ -278,6 +279,75 @@ impl StopRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SystemActionOutcome {
+    InjectedCommand {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        command: String,
+    },
+    StatsReset(StatsResetRecord),
+    StatsSnapshot(StatSnapshot),
+    Checkpoint {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        label: String,
+    },
+    Stop(StopRequest),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemActionExecutor {
+    stats: StatsRegistry,
+}
+
+impl SystemActionExecutor {
+    pub const fn new(stats: StatsRegistry) -> Self {
+        Self { stats }
+    }
+
+    pub const fn stats(&self) -> &StatsRegistry {
+        &self.stats
+    }
+
+    pub const fn stats_mut(&mut self) -> &mut StatsRegistry {
+        &mut self.stats
+    }
+
+    pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
+        match record.action() {
+            HostAction::InjectCommand { command } => Ok(SystemActionOutcome::InjectedCommand {
+                tick: record.tick(),
+                event: record.event(),
+                source: record.source(),
+                command: command.clone(),
+            }),
+            HostAction::ResetStats => Ok(SystemActionOutcome::StatsReset(
+                self.stats.reset(record.tick()),
+            )),
+            HostAction::DumpStats => self
+                .stats
+                .try_snapshot(record.tick())
+                .map(SystemActionOutcome::StatsSnapshot)
+                .map_err(SystemError::Stats),
+            HostAction::Checkpoint { label } => Ok(SystemActionOutcome::Checkpoint {
+                tick: record.tick(),
+                event: record.event(),
+                source: record.source(),
+                label: label.clone(),
+            }),
+            HostAction::Stop { code } => Ok(SystemActionOutcome::Stop(StopRequest::new(
+                record.tick(),
+                record.event(),
+                record.source(),
+                *code,
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemRunController {
     policy: HostEventPolicy,
     deliveries: Vec<GuestEventDelivery>,
@@ -403,6 +473,7 @@ impl SystemEventPort {
 pub enum SystemError {
     ZeroHostLatency,
     Scheduler(SchedulerError),
+    Stats(StatsError),
 }
 
 impl fmt::Display for SystemError {
@@ -412,6 +483,7 @@ impl fmt::Display for SystemError {
                 write!(formatter, "guest event channel latency must be positive")
             }
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Stats(error) => write!(formatter, "{error}"),
         }
     }
 }
