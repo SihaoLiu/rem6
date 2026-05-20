@@ -1,0 +1,296 @@
+use rem6_kernel::{ClockDomain, PartitionId};
+use rem6_topology::{
+    ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, TopologyBuilder,
+    TopologyError,
+};
+
+fn clock(period: u64) -> ClockDomain {
+    ClockDomain::new(period).unwrap()
+}
+
+#[test]
+fn topology_builds_valid_component_graph_with_stable_endpoints() {
+    let core = ComponentId::new("core0").unwrap();
+    let l1 = ComponentId::new("l1i0").unwrap();
+    let memory = ComponentId::new("dram0").unwrap();
+    let requests = PortName::new("requests").unwrap();
+    let cpu_side = PortName::new("cpu_side").unwrap();
+    let mem_side = PortName::new("mem_side").unwrap();
+
+    let topology = TopologyBuilder::new(3)
+        .add_component(
+            ComponentSpec::new(
+                core.clone(),
+                ComponentKind::new("timing_cpu").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(requests.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                l1.clone(),
+                ComponentKind::new("l1_cache").unwrap(),
+                PartitionId::new(1),
+                clock(2),
+            )
+            .add_port(cpu_side.clone(), PortDirection::Target)
+            .unwrap()
+            .add_port(mem_side.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                memory.clone(),
+                ComponentKind::new("dram").unwrap(),
+                PartitionId::new(2),
+                clock(4),
+            )
+            .add_port(requests.clone(), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect(
+            Endpoint::new(core.clone(), requests.clone()),
+            Endpoint::new(l1.clone(), cpu_side.clone()),
+            3,
+        )
+        .unwrap()
+        .connect(
+            Endpoint::new(l1.clone(), mem_side.clone()),
+            Endpoint::new(memory.clone(), requests.clone()),
+            7,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(topology.partition_count(), 3);
+    assert_eq!(topology.component_count(), 3);
+    assert_eq!(topology.connection_count(), 2);
+
+    let core_spec = topology.component(&core).unwrap();
+    assert_eq!(core_spec.kind().as_str(), "timing_cpu");
+    assert_eq!(core_spec.partition(), PartitionId::new(0));
+    assert_eq!(core_spec.clock_domain().period(), 1);
+    assert_eq!(
+        core_spec.port_direction(&requests),
+        Some(PortDirection::Initiator)
+    );
+
+    assert_eq!(
+        topology.components_in_partition(PartitionId::new(1)),
+        std::slice::from_ref(&l1)
+    );
+    assert_eq!(
+        topology
+            .connection_between(&Endpoint::new(core, requests), &Endpoint::new(l1, cpu_side))
+            .unwrap()
+            .latency(),
+        3
+    );
+}
+
+#[test]
+fn topology_rejects_duplicate_components_and_ports() {
+    let core = ComponentId::new("core0").unwrap();
+    let requests = PortName::new("requests").unwrap();
+
+    let duplicate_port = ComponentSpec::new(
+        core.clone(),
+        ComponentKind::new("timing_cpu").unwrap(),
+        PartitionId::new(0),
+        clock(1),
+    )
+    .add_port(requests.clone(), PortDirection::Initiator)
+    .unwrap()
+    .add_port(requests.clone(), PortDirection::Target)
+    .unwrap_err();
+
+    assert_eq!(
+        duplicate_port,
+        TopologyError::DuplicatePort {
+            component: core.clone(),
+            port: requests
+        }
+    );
+
+    let component = ComponentSpec::new(
+        core.clone(),
+        ComponentKind::new("timing_cpu").unwrap(),
+        PartitionId::new(0),
+        clock(1),
+    );
+    let duplicate_component = TopologyBuilder::new(1)
+        .add_component(component.clone())
+        .unwrap()
+        .add_component(component)
+        .unwrap_err();
+
+    assert_eq!(
+        duplicate_component,
+        TopologyError::DuplicateComponent { component: core }
+    );
+}
+
+#[test]
+fn topology_rejects_unknown_connection_endpoints() {
+    let core = ComponentId::new("core0").unwrap();
+    let cache = ComponentId::new("l1d0").unwrap();
+    let requests = PortName::new("requests").unwrap();
+    let missing = PortName::new("missing").unwrap();
+
+    let unknown_component = TopologyBuilder::new(1)
+        .add_component(
+            ComponentSpec::new(
+                core.clone(),
+                ComponentKind::new("timing_cpu").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(requests.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect(
+            Endpoint::new(core.clone(), requests.clone()),
+            Endpoint::new(cache.clone(), requests.clone()),
+            1,
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        unknown_component,
+        TopologyError::UnknownComponent { component: cache }
+    );
+
+    let unknown_port = TopologyBuilder::new(1)
+        .add_component(
+            ComponentSpec::new(
+                core.clone(),
+                ComponentKind::new("timing_cpu").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(requests.clone(), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect(
+            Endpoint::new(core.clone(), requests),
+            Endpoint::new(core.clone(), missing.clone()),
+            1,
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        unknown_port,
+        TopologyError::UnknownPort {
+            component: core,
+            port: missing
+        }
+    );
+}
+
+#[test]
+fn topology_rejects_direction_mismatches_and_zero_latency() {
+    let core = ComponentId::new("core0").unwrap();
+    let cache = ComponentId::new("l1d0").unwrap();
+    let requests = PortName::new("requests").unwrap();
+    let cpu_side = PortName::new("cpu_side").unwrap();
+
+    let builder = TopologyBuilder::new(2)
+        .add_component(
+            ComponentSpec::new(
+                core.clone(),
+                ComponentKind::new("timing_cpu").unwrap(),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(requests.clone(), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                cache.clone(),
+                ComponentKind::new("l1_cache").unwrap(),
+                PartitionId::new(1),
+                clock(2),
+            )
+            .add_port(cpu_side.clone(), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap();
+
+    let direction = builder
+        .clone()
+        .connect(
+            Endpoint::new(core.clone(), requests.clone()),
+            Endpoint::new(cache.clone(), cpu_side.clone()),
+            1,
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        direction,
+        TopologyError::InvalidConnectionDirection {
+            from: Endpoint::new(core.clone(), requests.clone()),
+            from_direction: PortDirection::Target,
+            to: Endpoint::new(cache.clone(), cpu_side.clone()),
+            to_direction: PortDirection::Target,
+        }
+    );
+
+    let zero_latency = builder
+        .connect(
+            Endpoint::new(core.clone(), requests),
+            Endpoint::new(cache.clone(), cpu_side),
+            0,
+        )
+        .unwrap_err();
+
+    assert_eq!(zero_latency, TopologyError::ZeroConnectionLatency);
+}
+
+#[test]
+fn topology_rejects_partitions_outside_declared_range() {
+    let core = ComponentId::new("core0").unwrap();
+
+    let error = TopologyBuilder::new(2)
+        .add_component(ComponentSpec::new(
+            core.clone(),
+            ComponentKind::new("timing_cpu").unwrap(),
+            PartitionId::new(2),
+            clock(1),
+        ))
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        TopologyError::PartitionOutOfRange {
+            component: core,
+            partition: PartitionId::new(2),
+            partitions: 2
+        }
+    );
+}
+
+#[test]
+fn topology_rejects_empty_identifiers() {
+    assert_eq!(
+        ComponentId::new("").unwrap_err(),
+        TopologyError::EmptyIdentifier
+    );
+    assert_eq!(
+        ComponentKind::new("").unwrap_err(),
+        TopologyError::EmptyIdentifier
+    );
+    assert_eq!(
+        PortName::new("").unwrap_err(),
+        TopologyError::EmptyIdentifier
+    );
+}

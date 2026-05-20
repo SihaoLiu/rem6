@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rem6-kernel"]
+members = ["crates/rem6-kernel", "crates/rem6-topology"]
 resolver = "2"
 
 [workspace.package]
