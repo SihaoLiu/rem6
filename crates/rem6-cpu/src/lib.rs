@@ -1103,6 +1103,39 @@ impl RiscvCore {
         Ok(Some(event))
     }
 
+    pub fn issue_next_data_access_parallel<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
+            return Ok(None);
+        };
+        let request = issue.memory_request()?;
+
+        let core = self.clone();
+        let event = transport
+            .submit_parallel(
+                scheduler,
+                issue.route,
+                request,
+                trace,
+                responder,
+                move |delivery| core.record_data_response(delivery),
+            )
+            .map_err(RiscvCpuError::Transport)?;
+
+        self.record_data_issue(issue);
+        Ok(Some(event))
+    }
+
     fn prepare_data_access(
         &self,
         tick: Tick,

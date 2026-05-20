@@ -200,6 +200,79 @@ impl RiscvCluster {
         Ok(actions)
     }
 
+    pub fn drive_ready_cores_parallel<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let mut actions = Vec::new();
+        for (cpu, core) in &self.cores {
+            if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
+            {
+                continue;
+            }
+
+            if let Some(event) = core
+                .execute_next_completed_fetch()
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                actions.push(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                ));
+                continue;
+            }
+
+            if let Some(event) = core
+                .issue_next_data_access_parallel(
+                    scheduler,
+                    transport,
+                    data_trace.clone(),
+                    data_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                actions.push(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::DataAccessIssued { event },
+                ));
+                continue;
+            }
+
+            let event = core
+                .issue_next_fetch_parallel(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core {
+                    cpu: *cpu,
+                    error: RiscvCpuError::Cpu(error),
+                })?;
+            actions.push(RiscvClusterDriveEvent::new(
+                *cpu,
+                RiscvCoreDriveAction::FetchIssued { event },
+            ));
+        }
+
+        Ok(actions)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_turn<F, D, FR, DR>(
         &self,
@@ -253,6 +326,48 @@ impl RiscvCluster {
             transport,
             fetch_trace,
             fetch_responder,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(RiscvClusterTurn::core(core_events));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(RiscvClusterTurn::idle(scheduler.now()));
+        }
+
+        scheduler
+            .run_next_epoch_parallel()
+            .map(RiscvClusterTurn::scheduler)
+            .map_err(RiscvClusterError::Scheduler)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn_parallel<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+    ) -> Result<RiscvClusterTurn, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let core_events = self.drive_ready_cores_parallel(
+            scheduler,
+            transport,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
         )?;
         if !core_events.is_empty() {
             return Ok(RiscvClusterTurn::core(core_events));

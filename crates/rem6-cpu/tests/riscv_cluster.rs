@@ -4,7 +4,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster,
     RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun, RiscvClusterStopReason,
-    RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
+    RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
@@ -93,7 +93,10 @@ fn core_spec<'a>(
     }
 }
 
-fn store_with_programs(programs: &[(u64, u32)]) -> Arc<Mutex<PartitionedMemoryStore>> {
+fn store_with_programs_and_data(
+    programs: &[(u64, u32)],
+    data_segments: &[(u64, Vec<u8>)],
+) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
     store.add_partition(target, layout()).unwrap();
@@ -111,10 +114,19 @@ fn store_with_programs(programs: &[(u64, u32)]) -> Arc<Mutex<PartitionedMemorySt
             .add_segment(Address::new(*entry), word(*instruction))
             .unwrap();
     }
+    for (address, data) in data_segments {
+        image = image
+            .add_segment(Address::new(*address), data.clone())
+            .unwrap();
+    }
     image
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
     Arc::new(Mutex::new(store))
+}
+
+fn store_with_programs(programs: &[(u64, u32)]) -> Arc<Mutex<PartitionedMemoryStore>> {
+    store_with_programs_and_data(programs, &[])
 }
 
 fn memory_response(
@@ -832,6 +844,192 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
         cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
         81
     );
+}
+
+#[test]
+fn riscv_cluster_parallel_turns_issue_completed_data_accesses() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(reg(2), 0x9000);
+    cluster
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(reg(2), 0x9010);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
+        ],
+        &[
+            (0x9008, vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]),
+            (0x9018, vec![0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f]),
+        ],
+    );
+
+    let mut turns = Vec::new();
+    for _ in 0..10 {
+        let turn = cluster
+            .drive_turn_parallel(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        let loaded = cluster.core(CpuId::new(0)).unwrap().read_register(reg(5))
+            == 0x1122_3344_5566_7788
+            && cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)) == 0x0f1e_2d3c_4b5a_6978;
+        turns.push(turn);
+        if loaded {
+            break;
+        }
+    }
+
+    assert_eq!(
+        turns[0]
+            .core_events()
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)]
+    );
+    assert!(turns[0]
+        .core_events()
+        .iter()
+        .all(|event| matches!(event.action(), RiscvCoreDriveAction::FetchIssued { .. })));
+    let data_turn = turns
+        .iter()
+        .find(|turn| {
+            turn.core_events().iter().all(|event| {
+                matches!(
+                    event.action(),
+                    RiscvCoreDriveAction::DataAccessIssued { .. }
+                )
+            }) && !turn.core_events().is_empty()
+        })
+        .expect("parallel data access issue turn");
+    assert_eq!(
+        data_turn
+            .core_events()
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)]
+    );
+    assert!(turns
+        .iter()
+        .filter_map(RiscvClusterTurn::scheduler_summary)
+        .any(|summary| summary.executed_events() > 0));
+
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
+        0x0f1e_2d3c_4b5a_6978
+    );
+    for cpu in [CpuId::new(0), CpuId::new(1)] {
+        let core = cluster.core(cpu).unwrap();
+        let kinds = core
+            .data_access_events()
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                RiscvDataAccessEventKind::Issued,
+                RiscvDataAccessEventKind::Completed,
+            ]
+        );
+    }
 }
 
 #[test]
