@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -133,6 +134,66 @@ impl RiscvCoreCheckpointPort {
             self.core.pc(),
             all_register_values(&self.core),
         )
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RiscvCoreCheckpointBank {
+    ports: BTreeMap<CheckpointComponentId, RiscvCoreCheckpointPort>,
+}
+
+impl RiscvCoreCheckpointBank {
+    pub fn new<I>(ports: I) -> Result<Self, CheckpointError>
+    where
+        I: IntoIterator<Item = RiscvCoreCheckpointPort>,
+    {
+        let mut by_component = BTreeMap::new();
+        for port in ports {
+            let component = port.component().clone();
+            if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            by_component.insert(component, port);
+        }
+
+        Ok(Self {
+            ports: by_component,
+        })
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.ports.len()
+    }
+
+    pub fn components(&self) -> Vec<CheckpointComponentId> {
+        self.ports.keys().cloned().collect()
+    }
+
+    pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        for port in self.ports.values() {
+            port.register(registry)?;
+        }
+        Ok(())
+    }
+
+    pub fn capture_all_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<Vec<RiscvCoreCheckpointRecord>, CheckpointError> {
+        self.ports
+            .values()
+            .map(|port| port.capture_into(registry))
+            .collect()
+    }
+
+    pub fn restore_all_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Vec<RiscvCoreCheckpointRecord>, RiscvCoreCheckpointError> {
+        self.ports
+            .values()
+            .map(|port| port.restore_from(registry))
+            .collect()
     }
 }
 

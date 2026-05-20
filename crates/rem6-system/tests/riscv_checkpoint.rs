@@ -3,7 +3,7 @@ use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_isa_riscv::Register;
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
-use rem6_system::{RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord};
+use rem6_system::{RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord};
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -19,12 +19,16 @@ fn reg(index: u8) -> Register {
 }
 
 fn riscv_core() -> RiscvCore {
+    riscv_core_with(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000)
+}
+
+fn riscv_core_with(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: u64) -> RiscvCore {
     let mut transport = MemoryTransport::new();
     let route = transport
         .add_route(
             MemoryRoute::new(
-                endpoint("cpu0.ifetch"),
-                PartitionId::new(0),
+                endpoint(&format!("cpu{}.ifetch", cpu.get())),
+                partition,
                 endpoint("l1i"),
                 PartitionId::new(1),
                 2,
@@ -36,14 +40,9 @@ fn riscv_core() -> RiscvCore {
 
     RiscvCore::new(
         CpuCore::new(
-            CpuResetState::new(
-                CpuId::new(0),
-                PartitionId::new(0),
-                AgentId::new(7),
-                Address::new(0x8000),
-            ),
+            CpuResetState::new(cpu, partition, agent, Address::new(entry)),
             CpuFetchConfig::new(
-                endpoint("cpu0.ifetch"),
+                endpoint(&format!("cpu{}.ifetch", cpu.get())),
                 route,
                 layout(),
                 AccessSize::new(4).unwrap(),
@@ -99,4 +98,67 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
     assert_eq!(core.read_register(reg(0)), 0);
     assert_eq!(core.read_register(reg(1)), 0x1122_3344_5566_7788);
     assert_eq!(core.read_register(reg(5)), 0x55aa);
+}
+
+#[test]
+fn riscv_core_checkpoint_bank_captures_and_restores_cores_in_component_order() {
+    let core0 = riscv_core_with(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    let core1 = riscv_core_with(CpuId::new(1), PartitionId::new(1), AgentId::new(8), 0x9000);
+    core0.redirect_pc(Address::new(0x8040));
+    core0.write_register(reg(1), 0x1111);
+    core1.redirect_pc(Address::new(0x9040));
+    core1.write_register(reg(2), 0x2222);
+    let component0 = CheckpointComponentId::new("cpu0").unwrap();
+    let component1 = CheckpointComponentId::new("cpu1").unwrap();
+    let bank = RiscvCoreCheckpointBank::new([
+        RiscvCoreCheckpointPort::new(component1.clone(), core1.clone()),
+        RiscvCoreCheckpointPort::new(component0.clone(), core0.clone()),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    let captured = bank.capture_all_into(&mut registry).unwrap();
+
+    assert_eq!(
+        bank.components(),
+        vec![component0.clone(), component1.clone()]
+    );
+    assert_eq!(
+        captured
+            .iter()
+            .map(|record| record.component().clone())
+            .collect::<Vec<_>>(),
+        vec![component0.clone(), component1.clone()]
+    );
+    let manifest = registry.capture("multi-core", 48).unwrap();
+    assert_eq!(
+        manifest
+            .states()
+            .iter()
+            .map(|state| state.component().clone())
+            .collect::<Vec<_>>(),
+        vec![component0.clone(), component1.clone()]
+    );
+    assert_eq!(
+        registry.chunk(&component0, "pc"),
+        Some(&0x8040_u64.to_le_bytes()[..])
+    );
+    assert_eq!(
+        registry.chunk(&component1, "pc"),
+        Some(&0x9040_u64.to_le_bytes()[..])
+    );
+
+    core0.redirect_pc(Address::new(0xa000));
+    core0.write_register(reg(1), 0);
+    core1.redirect_pc(Address::new(0xb000));
+    core1.write_register(reg(2), 0);
+
+    let restored = bank.restore_all_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(core0.pc(), Address::new(0x8040));
+    assert_eq!(core0.read_register(reg(1)), 0x1111);
+    assert_eq!(core1.pc(), Address::new(0x9040));
+    assert_eq!(core1.read_register(reg(2)), 0x2222);
 }

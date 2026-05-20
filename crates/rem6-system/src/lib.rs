@@ -17,7 +17,8 @@ use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcom
 mod riscv_checkpoint;
 
 pub use riscv_checkpoint::{
-    RiscvCoreCheckpointError, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord,
+    RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
+    RiscvCoreCheckpointRecord,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
