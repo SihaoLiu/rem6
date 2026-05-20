@@ -23,6 +23,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-directory"
+version = "0.1.0"
+dependencies = [
+ "rem6-memory",
+ "rem6-protocol-msi",
+]
+
+[[package]]
 name = "rem6-kernel"
 version = "0.1.0"
 
