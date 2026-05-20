@@ -289,6 +289,165 @@ fn topology_directory_harness_reserves_declared_fabric_links() {
 }
 
 #[test]
+fn topology_directory_harness_reserves_fabric_for_dram_fill_response() {
+    let topology = TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                component("l1d0"),
+                kind("l1_cache"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1d1"),
+                kind("l1_cache"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_fabric_latencies(
+            Endpoint::new(component("l1d0"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            2,
+            5,
+            fabric_link("mesh_fill"),
+            8,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("l1d1"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            4,
+            6,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("dir0"), port("mem_side")),
+            Endpoint::new(component("mem0"), port("requests")),
+            7,
+            11,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut harness =
+        PartitionedDirectoryLineHarness::new_with_topology(&topology, harness_config()).unwrap();
+
+    let submit = harness
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    assert_eq!(submit.kind(), SubmitKind::ScheduledMiss);
+
+    let run = harness.run_until_idle();
+    assert_eq!(run.executed_events(), 6);
+    assert_eq!(run.final_tick(), 49);
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![CpuResponseRecord::new(
+            49,
+            CacheControllerResultKind::Fill,
+            request_id(1, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 6, 7]),
+        )]
+    );
+    assert_eq!(
+        harness.dram_memory_accesses(),
+        vec![DramMemoryAccessRecord::new(
+            17,
+            dram_target(),
+            request_id(1, 0),
+            0,
+            4,
+            false,
+            25,
+        )]
+    );
+
+    let cache_route = harness.route(agent(1)).unwrap();
+    let memory_route = harness.memory_route().unwrap();
+    assert_eq!(
+        harness.trace(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                cache_route,
+                endpoint("l1d0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                10,
+                cache_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                10,
+                memory_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                17,
+                memory_route,
+                endpoint("mem0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::response(
+                36,
+                memory_route,
+                endpoint("dir0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                49,
+                cache_route,
+                endpoint("l1d0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+        ]
+    );
+}
+
+#[test]
 fn topology_directory_harness_builds_cache_directory_dram_path() {
     let topology = topology();
     let mut harness =

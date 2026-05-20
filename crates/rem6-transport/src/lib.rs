@@ -339,6 +339,14 @@ impl MemoryTransport {
         }
     }
 
+    pub fn with_shared_fabric(fabric: Arc<Mutex<FabricModel>>) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: Some(fabric),
+        }
+    }
+
     pub fn add_route(&mut self, route: MemoryRoute) -> Result<MemoryRouteId, TransportError> {
         if self.routes.iter().any(|stored| {
             stored.route.source() == route.source() && stored.route.target() == route.target()

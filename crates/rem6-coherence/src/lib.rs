@@ -18,11 +18,14 @@ use rem6_memory::{
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::{
-    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
-    MemoryTransport, TargetOutcome, TransportEndpointId, TransportError,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport,
+    TargetOutcome, TransportEndpointId, TransportError,
 };
 
+mod deferred;
 mod topology;
+
+use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
@@ -823,6 +826,7 @@ pub struct PartitionedDirectoryLineHarness {
     routes: BTreeMap<AgentId, MemoryRouteId>,
     backing: Option<Arc<Mutex<LineBackingStore>>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
     memory_route: Option<MemoryRouteId>,
     memory_route_info: Option<MemoryRoute>,
     trace: MemoryTrace,
@@ -940,8 +944,9 @@ impl PartitionedDirectoryLineHarness {
             || agent_configs
                 .iter()
                 .any(|config| route_hops_use_fabric(config.route_hops()));
-        let mut transport = if uses_fabric {
-            MemoryTransport::with_fabric(FabricModel::new())
+        let fabric = uses_fabric.then(|| Arc::new(Mutex::new(FabricModel::new())));
+        let mut transport = if let Some(fabric) = &fabric {
+            MemoryTransport::with_shared_fabric(Arc::clone(fabric))
         } else {
             MemoryTransport::new()
         };
@@ -1057,6 +1062,7 @@ impl PartitionedDirectoryLineHarness {
             routes,
             backing: backing.map(|backing| Arc::new(Mutex::new(backing))),
             dram_memory: dram_controller,
+            fabric,
             memory_route,
             memory_route_info,
             trace: MemoryTrace::new(),
@@ -1112,6 +1118,7 @@ impl PartitionedDirectoryLineHarness {
         let dram_memory = self.dram_memory.clone();
         let decisions = Arc::clone(&self.directory_decisions);
         let dram_accesses = Arc::clone(&self.dram_accesses);
+        let fabric = self.fabric.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
         let memory_path = self.memory_route.zip(self.memory_route_info.clone()).map(
@@ -1127,6 +1134,7 @@ impl PartitionedDirectoryLineHarness {
             caches: caches.clone(),
             backing: backing.clone(),
             dram_memory: dram_memory.clone(),
+            fabric,
             trace: self.trace.clone(),
             response_cache: Arc::clone(&response_cache),
             responses: Arc::clone(&responses),
@@ -1307,262 +1315,6 @@ fn memory_route_from_config(
         })
         .collect::<Result<Vec<_>, _>>()?;
     MemoryRoute::new_path(source_endpoint, source_partition, hops)
-}
-
-#[derive(Clone)]
-struct DeferredMemoryPath {
-    cache_route_id: MemoryRouteId,
-    cache_route: MemoryRoute,
-    memory_route_id: MemoryRouteId,
-    memory_route: MemoryRoute,
-}
-
-struct DeferredMemoryWork {
-    path: DeferredMemoryPath,
-    caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
-    backing: Option<Arc<Mutex<LineBackingStore>>>,
-    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
-    trace: MemoryTrace,
-    response_cache: Arc<Mutex<MsiCacheController>>,
-    responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
-    decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
-    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
-}
-
-impl DeferredMemoryWork {
-    fn schedule(
-        self,
-        context: &mut rem6_kernel::SchedulerContext<'_>,
-        request: MemoryRequest,
-        decision: DirectoryDecision,
-    ) -> Result<(), HarnessError> {
-        apply_directory_snoops(&decision, &self.caches)?;
-        self.decisions
-            .lock()
-            .expect("decision lock")
-            .push(DirectoryDecisionRecord::new(
-                context.now(),
-                request.id().agent(),
-                decision,
-            ));
-        self.trace.record(MemoryTraceEvent::request(
-            context.now(),
-            self.path.memory_route_id,
-            self.path.memory_route.source().clone(),
-            MemoryTraceKind::RequestSent,
-            request.id(),
-        ));
-
-        let request_work = DeferredMemoryRequestWork {
-            path: self.path,
-            backing: self.backing,
-            dram_memory: self.dram_memory,
-            trace: self.trace,
-            response_cache: self.response_cache,
-            responses: self.responses,
-            dram_accesses: self.dram_accesses,
-        };
-        request_work.schedule_hop(context, 0, request);
-
-        Ok(())
-    }
-}
-
-struct DeferredMemoryRequestWork {
-    path: DeferredMemoryPath,
-    backing: Option<Arc<Mutex<LineBackingStore>>>,
-    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
-    trace: MemoryTrace,
-    response_cache: Arc<Mutex<MsiCacheController>>,
-    responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
-    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
-}
-
-impl DeferredMemoryRequestWork {
-    fn schedule_hop(
-        self,
-        context: &mut rem6_kernel::SchedulerContext<'_>,
-        hop_index: usize,
-        request: MemoryRequest,
-    ) {
-        let hop = self.path.memory_route.hops()[hop_index].clone();
-        let route_id = self.path.memory_route_id;
-        context
-            .schedule_remote_after(hop.partition(), hop.request_latency(), move |context| {
-                self.trace.record(MemoryTraceEvent::request(
-                    context.now(),
-                    route_id,
-                    hop.endpoint().clone(),
-                    MemoryTraceKind::RequestArrived,
-                    request.id(),
-                ));
-
-                if hop_index + 1 == self.path.memory_route.hops().len() {
-                    self.complete_target(context, request);
-                } else {
-                    self.schedule_hop(context, hop_index + 1, request);
-                }
-            })
-            .expect("validated memory request latency");
-    }
-
-    fn complete_target(
-        self,
-        context: &mut rem6_kernel::SchedulerContext<'_>,
-        request: MemoryRequest,
-    ) {
-        let Self {
-            path,
-            backing,
-            dram_memory,
-            trace,
-            response_cache,
-            responses,
-            dram_accesses,
-        } = self;
-        let response_work = DeferredMemoryResponseWork {
-            path,
-            trace,
-            response_cache,
-            responses,
-        };
-
-        if let Some(dram_memory) = dram_memory {
-            let outcome = dram_memory
-                .lock()
-                .expect("DRAM memory lock")
-                .accept(context.now(), &request)
-                .expect("DRAM memory response");
-            dram_accesses
-                .lock()
-                .expect("DRAM access lock")
-                .push(DramMemoryAccessRecord::new(
-                    context.now(),
-                    outcome.target(),
-                    outcome.dram_access().request(),
-                    outcome.dram_access().bank(),
-                    outcome.dram_access().row(),
-                    outcome.dram_access().row_hit(),
-                    outcome.ready_cycle(),
-                ));
-            let ready_delay = outcome
-                .ready_cycle()
-                .checked_sub(context.now())
-                .expect("DRAM ready cycle is not in the past");
-            let response = outcome
-                .response()
-                .cloned()
-                .expect("directory backing read expects memory response");
-            context
-                .schedule_local_after(ready_delay, move |context| {
-                    response_work.schedule(context, response);
-                })
-                .expect("validated DRAM ready latency");
-        } else {
-            let response = backing
-                .as_ref()
-                .expect("line backing memory")
-                .lock()
-                .expect("backing lock")
-                .respond(&request)
-                .expect("backing store response");
-            response_work.schedule(context, response);
-        }
-    }
-}
-
-struct DeferredMemoryResponseWork {
-    path: DeferredMemoryPath,
-    trace: MemoryTrace,
-    response_cache: Arc<Mutex<MsiCacheController>>,
-    responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
-}
-
-impl DeferredMemoryResponseWork {
-    fn schedule(self, context: &mut rem6_kernel::SchedulerContext<'_>, response: MemoryResponse) {
-        let last_hop = self.path.memory_route.hops().len() - 1;
-        self.schedule_memory_response_hop(context, last_hop, response);
-    }
-
-    fn schedule_memory_response_hop(
-        self,
-        context: &mut rem6_kernel::SchedulerContext<'_>,
-        hop_index: usize,
-        response: MemoryResponse,
-    ) {
-        let hop = self.path.memory_route.hops()[hop_index].clone();
-        let (endpoint, partition) = route_response_destination(&self.path.memory_route, hop_index);
-        let route_id = self.path.memory_route_id;
-        context
-            .schedule_remote_after(partition, hop.response_latency(), move |context| {
-                self.trace.record(MemoryTraceEvent::response(
-                    context.now(),
-                    route_id,
-                    endpoint,
-                    response.request_id(),
-                    response.status(),
-                ));
-
-                if hop_index == 0 {
-                    let last_hop = self.path.cache_route.hops().len() - 1;
-                    self.schedule_cache_response_hop(context, last_hop, response);
-                } else {
-                    self.schedule_memory_response_hop(context, hop_index - 1, response);
-                }
-            })
-            .expect("validated memory response latency");
-    }
-
-    fn schedule_cache_response_hop(
-        self,
-        context: &mut rem6_kernel::SchedulerContext<'_>,
-        hop_index: usize,
-        response: MemoryResponse,
-    ) {
-        let hop = self.path.cache_route.hops()[hop_index].clone();
-        let (endpoint, partition) = route_response_destination(&self.path.cache_route, hop_index);
-        let route_id = self.path.cache_route_id;
-        context
-            .schedule_remote_after(partition, hop.response_latency(), move |context| {
-                self.trace.record(MemoryTraceEvent::response(
-                    context.now(),
-                    route_id,
-                    endpoint,
-                    response.request_id(),
-                    response.status(),
-                ));
-
-                if hop_index == 0 {
-                    let result = self
-                        .response_cache
-                        .lock()
-                        .expect("cache lock")
-                        .accept_fill(response)
-                        .expect("cache fill");
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        self.responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(context.now(), result.kind(), response));
-                    }
-                } else {
-                    self.schedule_cache_response_hop(context, hop_index - 1, response);
-                }
-            })
-            .expect("validated cache response latency");
-    }
-}
-
-fn route_response_destination(
-    route: &MemoryRoute,
-    hop_index: usize,
-) -> (TransportEndpointId, PartitionId) {
-    if hop_index == 0 {
-        (route.source().clone(), route.source_partition())
-    } else {
-        let previous_hop = &route.hops()[hop_index - 1];
-        (previous_hop.endpoint().clone(), previous_hop.partition())
-    }
 }
 
 fn decision_uses_backing_memory(decision: &DirectoryDecision) -> bool {
