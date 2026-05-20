@@ -1,0 +1,17 @@
+[package]
+name = "rem6-platform"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rem6-interrupt = { path = "../rem6-interrupt" }
+rem6-kernel = { path = "../rem6-kernel" }
+rem6-memory = { path = "../rem6-memory" }
+rem6-mmio = { path = "../rem6-mmio" }
+rem6-timer = { path = "../rem6-timer" }
+rem6-uart = { path = "../rem6-uart" }
+
+[lints]
+workspace = true

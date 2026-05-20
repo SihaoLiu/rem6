@@ -79,6 +79,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-platform"
+version = "0.1.0"
+dependencies = [
+ "rem6-interrupt",
+ "rem6-kernel",
+ "rem6-memory",
+ "rem6-mmio",
+ "rem6-timer",
+ "rem6-uart",
+]
+
+[[package]]
 name = "rem6-protocol-msi"
 version = "0.1.0"
 dependencies = [
