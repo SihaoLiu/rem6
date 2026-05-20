@@ -468,7 +468,9 @@ impl MmioChannel {
         completion_sink: G,
     ) -> Result<PartitionEventId, MmioError>
     where
-        F: FnOnce(MmioDelivery) -> Result<MmioResponse, MmioError> + Send + 'static,
+        F: FnOnce(MmioDelivery, &mut SchedulerContext<'_>) -> Result<MmioResponse, MmioError>
+            + Send
+            + 'static,
         G: FnOnce(MmioCompletion) + Send + 'static,
     {
         let route = self.route;
@@ -478,7 +480,8 @@ impl MmioChannel {
                 route.target_partition(),
                 route.request_latency(),
                 move |context| {
-                    let response = responder(MmioDelivery::new(context.now(), route, request));
+                    let response =
+                        responder(MmioDelivery::new(context.now(), route, request), context);
                     if let Err(error) = context.schedule_remote_after(
                         route.source_partition(),
                         route.response_latency(),
@@ -551,8 +554,17 @@ pub enum MmioError {
         expected: u64,
         actual: u64,
     },
+    AccessSizeMismatch {
+        request: MmioRequestId,
+        expected: u64,
+        actual: u64,
+    },
     HostOffsetTooLarge {
         address: Address,
+    },
+    DeviceError {
+        request: MmioRequestId,
+        message: String,
     },
     ZeroRouteLatency {
         latency: MmioRouteLatency,
@@ -660,11 +672,27 @@ impl fmt::Display for MmioError {
                 "MMIO request {} byte mask has {actual} bits but expects {expected}",
                 request.get()
             ),
+            Self::AccessSizeMismatch {
+                request,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "MMIO request {} has {actual} bytes but expects {expected}",
+                request.get()
+            ),
             Self::HostOffsetTooLarge { address } => write!(
                 formatter,
                 "MMIO address {:#x} register offset does not fit host usize",
                 address.get()
             ),
+            Self::DeviceError { request, message } => {
+                write!(
+                    formatter,
+                    "MMIO request {} device error: {message}",
+                    request.get()
+                )
+            }
             Self::ZeroRouteLatency { latency } => {
                 write!(formatter, "{latency:?} MMIO route latency must be positive")
             }

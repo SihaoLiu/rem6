@@ -4,6 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{InterruptError, InterruptLinePort, InterruptSourceId};
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_memory::{Address, ByteMask};
+use rem6_mmio::{MmioAccess, MmioError, MmioOperation, MmioRequest, MmioResponse};
+
+pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;
+pub const TIMER_MMIO_TIME_OFFSET: u64 = 0x00;
+pub const TIMER_MMIO_DEADLINE_OFFSET: u64 = 0x08;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TimerId(u64);
@@ -251,6 +257,128 @@ impl ProgrammableTimer {
             state.signal_errors.clone(),
         )
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct TimerMmioDevice {
+    timer: ProgrammableTimer,
+    base: Address,
+}
+
+impl TimerMmioDevice {
+    pub const fn new(timer: ProgrammableTimer, base: Address) -> Self {
+        Self { timer, base }
+    }
+
+    pub const fn timer(&self) -> &ProgrammableTimer {
+        &self.timer
+    }
+
+    pub const fn base(&self) -> Address {
+        self.base
+    }
+
+    pub fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.validate_size(request)?;
+        let offset = self.offset(request)?;
+        match (offset, request.operation()) {
+            (TIMER_MMIO_TIME_OFFSET, MmioOperation::Read) => Ok(MmioResponse::completed(
+                request.id(),
+                Some(le64(context.now())),
+            )),
+            (TIMER_MMIO_TIME_OFFSET, MmioOperation::Write) => Err(MmioError::AccessDenied {
+                request: request.id(),
+                operation: MmioOperation::Write,
+                access: MmioAccess::ReadOnly,
+            }),
+            (TIMER_MMIO_DEADLINE_OFFSET, MmioOperation::Read) => {
+                let deadline = self.timer.snapshot().next_deadline().unwrap_or_default();
+                Ok(MmioResponse::completed(request.id(), Some(le64(deadline))))
+            }
+            (TIMER_MMIO_DEADLINE_OFFSET, MmioOperation::Write) => {
+                let deadline = self.deadline_from_write(request)?;
+                self.timer
+                    .arm_at(context, deadline)
+                    .map_err(|error| MmioError::DeviceError {
+                        request: request.id(),
+                        message: error.to_string(),
+                    })?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+            _ => Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            }),
+        }
+    }
+
+    fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
+        if request.size().bytes() != TIMER_MMIO_REGISTER_BYTES {
+            return Err(MmioError::AccessSizeMismatch {
+                request: request.id(),
+                expected: TIMER_MMIO_REGISTER_BYTES,
+                actual: request.size().bytes(),
+            });
+        }
+        Ok(())
+    }
+
+    fn offset(&self, request: &MmioRequest) -> Result<u64, MmioError> {
+        request
+            .range()
+            .start()
+            .get()
+            .checked_sub(self.base.get())
+            .ok_or(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            })
+    }
+
+    fn deadline_from_write(&self, request: &MmioRequest) -> Result<Tick, MmioError> {
+        let data = request.data().ok_or(MmioError::MissingWriteData {
+            request: request.id(),
+        })?;
+        if data.len() as u64 != TIMER_MMIO_REGISTER_BYTES {
+            return Err(MmioError::PayloadSizeMismatch {
+                request: request.id(),
+                expected: TIMER_MMIO_REGISTER_BYTES,
+                actual: data.len() as u64,
+            });
+        }
+
+        let mut bytes = le64(self.timer.snapshot().next_deadline().unwrap_or_default());
+        let mask = request.byte_mask().ok_or(MmioError::MissingByteMask {
+            request: request.id(),
+        })?;
+        validate_timer_mmio_mask(request, mask)?;
+        for (index, byte) in data.iter().enumerate() {
+            if mask.bits()[index] {
+                bytes[index] = *byte;
+            }
+        }
+
+        let mut deadline = [0; 8];
+        deadline.copy_from_slice(&bytes);
+        Ok(Tick::from_le_bytes(deadline))
+    }
+}
+
+fn le64(value: u64) -> Vec<u8> {
+    value.to_le_bytes().to_vec()
+}
+
+fn validate_timer_mmio_mask(request: &MmioRequest, mask: &ByteMask) -> Result<(), MmioError> {
+    if mask.len() != TIMER_MMIO_REGISTER_BYTES {
+        return Err(MmioError::ByteMaskSizeMismatch {
+            request: request.id(),
+            expected: TIMER_MMIO_REGISTER_BYTES,
+            actual: mask.len(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -107,6 +107,8 @@ version = "0.1.0"
 dependencies = [
  "rem6-interrupt",
  "rem6-kernel",
+ "rem6-memory",
+ "rem6-mmio",
 ]
 
 [[package]]

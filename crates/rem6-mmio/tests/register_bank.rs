@@ -163,7 +163,7 @@ fn mmio_channel_routes_request_and_response_between_partitions() {
                 .submit(
                     context,
                     request,
-                    move |delivery| {
+                    move |delivery, _context| {
                         delivered.lock().unwrap().push(delivery.clone());
                         bank.lock().unwrap().respond(delivery.request())
                     },
@@ -233,7 +233,9 @@ fn mmio_channel_rejects_invalid_latency_and_records_response_errors() {
                 .submit(
                     context,
                     request,
-                    move |delivery| Ok(MmioResponse::completed(delivery.request().id(), None)),
+                    move |delivery, _context| {
+                        Ok(MmioResponse::completed(delivery.request().id(), None))
+                    },
                     move |completion| completed.lock().unwrap().push(completion),
                 )
                 .unwrap();
