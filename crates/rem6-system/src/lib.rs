@@ -29,8 +29,8 @@ pub use riscv_checkpoint::{
     RiscvCoreCheckpointRecord,
 };
 pub use topology::{
-    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologyMemoryRegion,
-    RiscvTopologySystem, RiscvTopologySystemError,
+    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
+    RiscvTopologyMemoryRegion, RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

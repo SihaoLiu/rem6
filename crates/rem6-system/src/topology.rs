@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::{BootError, BootImage};
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
+use rem6_dram::{
+    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
+};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionId, PartitionedScheduler, SchedulerError, Tick,
 };
@@ -28,7 +31,7 @@ pub struct RiscvTopologySystem {
     transport: MemoryTransport,
     cluster: RiscvCluster,
     platform: Option<Platform>,
-    memory: Option<Arc<Mutex<PartitionedMemoryStore>>>,
+    memory: Option<RiscvTopologyMemoryBackend>,
     host: Option<RiscvTopologyHost>,
 }
 
@@ -69,6 +72,12 @@ impl RiscvTopologyHostConfig {
 struct RiscvTopologyHost {
     controller: Arc<Mutex<SystemHostController>>,
     driver: RiscvSystemRunDriver,
+}
+
+#[derive(Clone, Debug)]
+enum RiscvTopologyMemoryBackend {
+    Store(Arc<Mutex<PartitionedMemoryStore>>),
+    Dram(Arc<Mutex<DramMemoryController>>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,6 +121,71 @@ impl RiscvTopologyMemoryConfig {
             store.map_region(self.target, region.start(), region.size())?;
         }
         Ok(store)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvTopologyDramConfig {
+    memory: RiscvTopologyMemoryConfig,
+    geometry: DramGeometry,
+    timing: DramTiming,
+}
+
+impl RiscvTopologyDramConfig {
+    pub fn new(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Self {
+        Self {
+            memory: RiscvTopologyMemoryConfig::new(target, line_layout),
+            geometry,
+            timing,
+        }
+    }
+
+    pub fn add_region(mut self, start: Address, size: AccessSize) -> Self {
+        self.memory = self.memory.add_region(start, size);
+        self
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.memory.target()
+    }
+
+    pub const fn line_layout(&self) -> CacheLineLayout {
+        self.memory.line_layout()
+    }
+
+    pub const fn geometry(&self) -> DramGeometry {
+        self.geometry
+    }
+
+    pub const fn timing(&self) -> DramTiming {
+        self.timing
+    }
+
+    pub fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
+        self.memory.regions()
+    }
+
+    fn build_staging_store(&self) -> Result<PartitionedMemoryStore, MemoryError> {
+        self.memory.build_store()
+    }
+
+    fn build_controller(&self) -> Result<DramMemoryController, DramMemoryError> {
+        let mut controller = DramMemoryController::new();
+        controller.add_target(DramControllerConfig::new(
+            self.target(),
+            self.line_layout(),
+            self.geometry(),
+            self.timing(),
+        ))?;
+        for region in self.regions() {
+            controller.map_region(self.target(), region.start(), region.size())?;
+        }
+        Ok(controller)
     }
 }
 
@@ -207,7 +281,9 @@ impl RiscvTopologySystem {
         mut self,
         memory: PartitionedMemoryStore,
     ) -> Result<Self, RiscvTopologySystemError> {
-        self.memory = Some(Arc::new(Mutex::new(memory)));
+        self.memory = Some(RiscvTopologyMemoryBackend::Store(Arc::new(Mutex::new(
+            memory,
+        ))));
         Ok(self)
     }
 
@@ -222,7 +298,41 @@ impl RiscvTopologySystem {
         image
             .load_into_partitioned_store(&mut memory, config.target())
             .map_err(RiscvTopologySystemError::Boot)?;
-        self.memory = Some(Arc::new(Mutex::new(memory)));
+        self.memory = Some(RiscvTopologyMemoryBackend::Store(Arc::new(Mutex::new(
+            memory,
+        ))));
+        Ok(self)
+    }
+
+    pub fn with_boot_image_dram_memory(
+        mut self,
+        config: RiscvTopologyDramConfig,
+        image: &BootImage,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        let mut staging = config
+            .build_staging_store()
+            .map_err(RiscvTopologySystemError::Memory)?;
+        image
+            .load_into_partitioned_store(&mut staging, config.target())
+            .map_err(RiscvTopologySystemError::Boot)?;
+
+        let mut controller = config
+            .build_controller()
+            .map_err(RiscvTopologySystemError::Dram)?;
+        for partition in staging.snapshot().partitions() {
+            if partition.target() != config.target() {
+                continue;
+            }
+            for line in partition.lines() {
+                controller
+                    .insert_line(config.target(), line.line(), line.data().to_vec())
+                    .map_err(RiscvTopologySystemError::Dram)?;
+            }
+        }
+
+        self.memory = Some(RiscvTopologyMemoryBackend::Dram(Arc::new(Mutex::new(
+            controller,
+        ))));
         Ok(self)
     }
 
@@ -255,7 +365,17 @@ impl RiscvTopologySystem {
     }
 
     pub fn memory_store(&self) -> Option<&Arc<Mutex<PartitionedMemoryStore>>> {
-        self.memory.as_ref()
+        match self.memory.as_ref()? {
+            RiscvTopologyMemoryBackend::Store(memory) => Some(memory),
+            RiscvTopologyMemoryBackend::Dram(_) => None,
+        }
+    }
+
+    pub fn dram_memory_controller(&self) -> Option<&Arc<Mutex<DramMemoryController>>> {
+        match self.memory.as_ref()? {
+            RiscvTopologyMemoryBackend::Store(_) => None,
+            RiscvTopologyMemoryBackend::Dram(memory) => Some(memory),
+        }
     }
 
     pub fn host_controller(&self) -> Option<Arc<Mutex<SystemHostController>>> {
@@ -307,20 +427,20 @@ impl RiscvTopologySystem {
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
 
-        let fetch_memory = Arc::clone(&memory);
+        let fetch_memory = memory.clone();
         let fetch_error = Arc::clone(&memory_error);
         let fetch_responder = move |_cpu| {
-            let memory = Arc::clone(&fetch_memory);
+            let memory = fetch_memory.clone();
             let memory_error = Arc::clone(&fetch_error);
             move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
                 topology_memory_response(&memory, &memory_error, &delivery)
             }
         };
 
-        let data_memory = Arc::clone(&memory);
+        let data_memory = memory.clone();
         let data_error = Arc::clone(&memory_error);
         let data_responder = move |_cpu| {
-            let memory = Arc::clone(&data_memory);
+            let memory = data_memory.clone();
             let memory_error = Arc::clone(&data_error);
             move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
                 topology_memory_response(&memory, &memory_error, &delivery)
@@ -358,13 +478,13 @@ impl RiscvTopologySystem {
             Ok(run) => run,
             Err(error) => {
                 if let Some(memory_error) = take_memory_error(&memory_error) {
-                    return Err(RiscvTopologySystemError::Memory(memory_error));
+                    return Err(memory_error);
                 }
                 return Err(RiscvTopologySystemError::System(error));
             }
         };
         if let Some(memory_error) = take_memory_error(&memory_error) {
-            return Err(RiscvTopologySystemError::Memory(memory_error));
+            return Err(memory_error);
         }
 
         Ok(run)
@@ -399,6 +519,7 @@ pub enum RiscvTopologySystemError {
     MissingMemoryStore,
     MissingHostController,
     Memory(MemoryError),
+    Dram(DramMemoryError),
     Boot(BootError),
     System(SystemError),
 }
@@ -422,6 +543,7 @@ impl fmt::Display for RiscvTopologySystemError {
                 write!(formatter, "topology system has no host controller")
             }
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Dram(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
             Self::System(error) => write!(formatter, "{error}"),
         }
@@ -438,6 +560,7 @@ impl Error for RiscvTopologySystemError {
             Self::MissingMemoryStore => None,
             Self::MissingHostController => None,
             Self::Memory(error) => Some(error),
+            Self::Dram(error) => Some(error),
             Self::Boot(error) => Some(error),
             Self::System(error) => Some(error),
         }
@@ -445,28 +568,66 @@ impl Error for RiscvTopologySystemError {
 }
 
 fn topology_memory_response(
-    memory: &Arc<Mutex<PartitionedMemoryStore>>,
-    memory_error: &Arc<Mutex<Option<MemoryError>>>,
+    memory: &RiscvTopologyMemoryBackend,
+    memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
-    match memory
-        .lock()
-        .expect("topology memory store lock")
-        .respond(delivery.request())
-    {
-        Ok(outcome) => outcome
-            .response()
-            .cloned()
-            .map(TargetOutcome::Respond)
-            .unwrap_or(TargetOutcome::NoResponse),
-        Err(error) => {
-            *memory_error.lock().expect("topology memory error lock") = Some(error);
-            TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
-        }
+    match memory {
+        RiscvTopologyMemoryBackend::Store(memory) => match memory
+            .lock()
+            .expect("topology memory store lock")
+            .respond(delivery.request())
+        {
+            Ok(outcome) => outcome
+                .response()
+                .cloned()
+                .map(TargetOutcome::Respond)
+                .unwrap_or(TargetOutcome::NoResponse),
+            Err(error) => {
+                record_memory_error(memory_error, RiscvTopologySystemError::Memory(error));
+                TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+            }
+        },
+        RiscvTopologyMemoryBackend::Dram(memory) => match memory
+            .lock()
+            .expect("topology DRAM memory lock")
+            .accept(delivery.tick(), delivery.request())
+        {
+            Ok(outcome) => {
+                let Some(response) = outcome.response().cloned() else {
+                    return TargetOutcome::NoResponse;
+                };
+                let delay = outcome
+                    .ready_cycle()
+                    .checked_sub(delivery.tick())
+                    .expect("DRAM response is not ready before request arrival");
+                if delay == 0 {
+                    TargetOutcome::Respond(response)
+                } else {
+                    TargetOutcome::RespondAfter { delay, response }
+                }
+            }
+            Err(error) => {
+                record_memory_error(memory_error, RiscvTopologySystemError::Dram(error));
+                TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+            }
+        },
     }
 }
 
-fn take_memory_error(memory_error: &Arc<Mutex<Option<MemoryError>>>) -> Option<MemoryError> {
+fn record_memory_error(
+    memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
+    error: RiscvTopologySystemError,
+) {
+    let mut guard = memory_error.lock().expect("topology memory error lock");
+    if guard.is_none() {
+        *guard = Some(error);
+    }
+}
+
+fn take_memory_error(
+    memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
+) -> Option<RiscvTopologySystemError> {
     memory_error
         .lock()
         .expect("topology memory error lock")

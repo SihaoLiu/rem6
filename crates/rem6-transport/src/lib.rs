@@ -610,17 +610,36 @@ impl MemoryTransport {
                         request,
                     };
 
-                    if let TargetOutcome::Respond(response) = responder(delivery, context) {
-                        Self::schedule_response_hop(
-                            context,
-                            route_id,
-                            route,
-                            hop_index,
-                            response,
-                            trace,
-                            fabric,
-                            response_sink,
-                        );
+                    match responder(delivery, context) {
+                        TargetOutcome::Respond(response) => {
+                            Self::schedule_response_hop(
+                                context,
+                                route_id,
+                                route,
+                                hop_index,
+                                response,
+                                trace,
+                                fabric,
+                                response_sink,
+                            );
+                        }
+                        TargetOutcome::RespondAfter { delay, response } => {
+                            context
+                                .schedule_local_after(delay, move |context| {
+                                    Self::schedule_response_hop(
+                                        context,
+                                        route_id,
+                                        route,
+                                        hop_index,
+                                        response,
+                                        trace,
+                                        fabric,
+                                        response_sink,
+                                    );
+                                })
+                                .expect("validated target response delay");
+                        }
+                        TargetOutcome::NoResponse => {}
                     }
                 } else {
                     Self::schedule_request_hop(
@@ -677,17 +696,36 @@ impl MemoryTransport {
                         request,
                     };
 
-                    if let TargetOutcome::Respond(response) = responder(delivery, context) {
-                        Self::schedule_parallel_response_hop(
-                            context,
-                            route_id,
-                            route,
-                            hop_index,
-                            response,
-                            trace,
-                            fabric,
-                            response_sink,
-                        );
+                    match responder(delivery, context) {
+                        TargetOutcome::Respond(response) => {
+                            Self::schedule_parallel_response_hop(
+                                context,
+                                route_id,
+                                route,
+                                hop_index,
+                                response,
+                                trace,
+                                fabric,
+                                response_sink,
+                            );
+                        }
+                        TargetOutcome::RespondAfter { delay, response } => {
+                            context
+                                .schedule_local_after(delay, move |context| {
+                                    Self::schedule_parallel_response_hop(
+                                        context,
+                                        route_id,
+                                        route,
+                                        hop_index,
+                                        response,
+                                        trace,
+                                        fabric,
+                                        response_sink,
+                                    );
+                                })
+                                .expect("validated target response delay");
+                        }
+                        TargetOutcome::NoResponse => {}
                     }
                 } else {
                     Self::schedule_parallel_request_hop(
@@ -1052,6 +1090,10 @@ impl ResponseDelivery {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TargetOutcome {
     Respond(MemoryResponse),
+    RespondAfter {
+        delay: Tick,
+        response: MemoryResponse,
+    },
     NoResponse,
 }
 

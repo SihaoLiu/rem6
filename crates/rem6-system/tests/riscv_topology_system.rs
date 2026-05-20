@@ -2,22 +2,28 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
+use rem6_dram::{DramGeometry, DramTiming};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    ResponseStatus,
 };
 use rem6_platform::{PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvSystemRunStopReason,
-    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem, RiscvTrapEventPort,
-    StopRequest, SystemHostController, SystemHostEventPort,
+    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
+    RiscvTopologySystem, RiscvTrapEventPort, StopRequest, SystemHostController,
+    SystemHostEventPort,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
 };
-use rem6_transport::{RequestDelivery, TargetOutcome};
+use rem6_transport::{
+    MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, RequestDelivery, TargetOutcome,
+    TransportEndpointId,
+};
 use rem6_uart::{UartId, UART_MMIO_DATA_OFFSET};
 
 fn component(name: &str) -> ComponentId {
@@ -496,4 +502,82 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
             .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
         0xabcd_ef01_2345_6789
     );
+}
+
+#[test]
+fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
+    let image = BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap();
+    let dram = RiscvTopologyDramConfig::new(
+        MemoryTargetId::new(0),
+        layout(),
+        DramGeometry::new(2, 64, 16).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+    )
+    .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap());
+    let source = GuestSourceId::new(43);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(dram, &image)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(3), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    assert!(system.memory_store().is_none());
+    assert!(system.dram_memory_controller().is_some());
+
+    let fetch_trace = MemoryTrace::new();
+    let data_trace = MemoryTrace::new();
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            fetch_trace.clone(),
+            data_trace.clone(),
+            30,
+            |cpu| GuestEventId::new(150 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(20, GuestEventId::new(150), source, 0);
+    let fetch_request = system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .execution_events()[0]
+        .fetch()
+        .request_id();
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert_eq!(
+        fetch_trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                MemoryRouteId::new(0),
+                TransportEndpointId::from_topology_endpoint(&endpoint("cpu0", "ifetch")).unwrap(),
+                MemoryTraceKind::RequestSent,
+                fetch_request,
+            ),
+            MemoryTraceEvent::request(
+                2,
+                MemoryRouteId::new(0),
+                TransportEndpointId::from_topology_endpoint(&endpoint("mem0", "requests")).unwrap(),
+                MemoryTraceKind::RequestArrived,
+                fetch_request,
+            ),
+            MemoryTraceEvent::response(
+                17,
+                MemoryRouteId::new(0),
+                TransportEndpointId::from_topology_endpoint(&endpoint("cpu0", "ifetch")).unwrap(),
+                fetch_request,
+                ResponseStatus::Completed,
+            ),
+        ]
+    );
+    assert!(data_trace.snapshot().is_empty());
 }

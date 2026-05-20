@@ -245,6 +245,82 @@ fn transport_routes_request_and_response_across_scheduler_partitions() {
 }
 
 #[test]
+fn transport_target_delay_holds_response_before_return_path() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    let core = endpoint("core0");
+    let memory = endpoint("memory0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                memory.clone(),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = request(14, 0x1a00, 4);
+
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            move |delivery, _context| {
+                assert_eq!(delivery.tick(), 2);
+                TargetOutcome::RespondAfter {
+                    delay: 4,
+                    response: MemoryResponse::completed(
+                        delivery.request(),
+                        Some(vec![0x11, 0x22, 0x33, 0x44]),
+                    )
+                    .unwrap(),
+                }
+            },
+            move |delivery| {
+                response_log.lock().unwrap().push((
+                    delivery.tick(),
+                    delivery.endpoint().clone(),
+                    delivery.response().data().unwrap().to_vec(),
+                ));
+            },
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.executed_events(), 4);
+    assert_eq!(summary.final_tick(), 9);
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(9, core.clone(), vec![0x11, 0x22, 0x33, 0x44])]
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id(),
+            ),
+            MemoryTraceEvent::request(2, route, memory, MemoryTraceKind::RequestArrived, req.id()),
+            MemoryTraceEvent::response(9, route, core, req.id(), ResponseStatus::Completed),
+        ]
+    );
+}
+
+#[test]
 fn transport_routes_request_and_response_across_path_hops() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let mut transport = MemoryTransport::new();
