@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 
@@ -450,4 +450,93 @@ fn scheduler_idle_epoch_does_not_advance_time() {
     assert_eq!(all_epochs.epochs(), 0);
     assert_eq!(all_epochs.executed_events(), 0);
     assert_eq!(all_epochs.final_tick(), 0);
+}
+
+#[test]
+fn scheduler_parallel_epoch_runs_ready_partitions_before_barrier_merge() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let barrier = Arc::new(Barrier::new(2));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();
+
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+
+    let core0_log = Arc::clone(&observed);
+    let core0_barrier = Arc::clone(&barrier);
+    scheduler
+        .schedule_parallel_at(core0, 2, move |context| {
+            core0_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "core0-enter"));
+            core0_barrier.wait();
+            context
+                .schedule_remote_after(memory, 5, move |context| {
+                    let core0_local_log = Arc::clone(&core0_log);
+                    context
+                        .schedule_local_after(0, move |context| {
+                            core0_local_log.lock().unwrap().push((
+                                context.now(),
+                                context.partition(),
+                                "core0-memory-local",
+                            ));
+                        })
+                        .unwrap();
+                    core0_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "core0-memory",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let core1_log = Arc::clone(&observed);
+    let core1_barrier = Arc::clone(&barrier);
+    scheduler
+        .schedule_parallel_at(core1, 2, move |context| {
+            core1_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "core1-enter"));
+            core1_barrier.wait();
+            context
+                .schedule_remote_after(memory, 5, move |context| {
+                    core1_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "core1-memory",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let first_epoch = scheduler.run_next_epoch_parallel().unwrap();
+
+    assert_eq!(first_epoch.executed_events(), 2);
+    assert_eq!(first_epoch.final_tick(), 5);
+    assert_eq!(scheduler.next_pending_tick(memory).unwrap(), Some(7));
+
+    let second_epoch = scheduler.run_next_epoch_parallel().unwrap();
+
+    assert_eq!(second_epoch.executed_events(), 3);
+    assert_eq!(second_epoch.final_tick(), 10);
+    let observed = observed.lock().unwrap();
+    let mut worker_entries = observed[..2].to_vec();
+    worker_entries.sort_by_key(|entry| entry.1);
+    assert_eq!(
+        worker_entries.as_slice(),
+        &[(2, core0, "core0-enter"), (2, core1, "core1-enter")]
+    );
+    assert_eq!(
+        &observed[2..],
+        &[
+            (7, memory, "core0-memory"),
+            (7, memory, "core1-memory"),
+            (7, memory, "core0-memory-local"),
+        ]
+    );
 }
