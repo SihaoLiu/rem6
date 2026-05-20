@@ -401,8 +401,8 @@ fn partitioned_directory_harness_downgrades_owner_on_peer_read() {
     );
 
     let run = harness.run_until_idle();
-    assert_eq!(run.executed_events(), 3);
-    assert_eq!(run.final_tick(), 16);
+    assert_eq!(run.executed_events(), 5);
+    assert_eq!(run.final_tick(), 21);
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Shared);
     assert_eq!(harness.cache_state(agent(2)).unwrap(), MsiState::Shared);
     assert_eq!(
@@ -431,9 +431,37 @@ fn partitioned_directory_harness_downgrades_owner_on_peer_read() {
     assert_eq!(
         harness.cpu_responses().last(),
         Some(&CpuResponseRecord::new(
-            16,
+            21,
             CacheControllerResultKind::Fill,
             request_id(2, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 0xaa, 0xbb, 8, 9]),
+        ))
+    );
+}
+
+#[test]
+fn partitioned_directory_harness_waits_for_owner_snoop_before_peer_fill() {
+    let mut harness = harness();
+    harness
+        .submit_cpu_request(agent(1), write(1, 7, 0x1006, vec![0xaa, 0xbb]))
+        .unwrap();
+    harness.run_until_idle();
+
+    harness
+        .submit_cpu_request(agent(2), read(2, 8, 0x1004, 6))
+        .unwrap();
+
+    let run = harness.run_until_idle();
+    assert_eq!(run.final_tick(), 21);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Shared);
+    assert_eq!(harness.cache_state(agent(2)).unwrap(), MsiState::Shared);
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            21,
+            CacheControllerResultKind::Fill,
+            request_id(2, 8),
             ResponseStatus::Completed,
             Some(vec![4, 5, 0xaa, 0xbb, 8, 9]),
         ))

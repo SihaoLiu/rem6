@@ -23,9 +23,11 @@ use rem6_transport::{
 };
 
 mod deferred;
+mod snoop;
 mod topology;
 
 use deferred::{DeferredMemoryPath, DeferredMemoryWork};
+use snoop::{DirectorySnoopWork, SnoopRoute};
 
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
@@ -1184,6 +1186,17 @@ impl PartitionedDirectoryLineHarness {
             .ok_or(HarnessError::Transport(TransportError::UnknownRoute {
                 route,
             }))?;
+        let mut cache_routes = BTreeMap::new();
+        for (agent, route_id) in &self.routes {
+            let route_info =
+                self.transport
+                    .route(*route_id)
+                    .cloned()
+                    .ok_or(HarnessError::Transport(TransportError::UnknownRoute {
+                        route: *route_id,
+                    }))?;
+            cache_routes.insert(*agent, SnoopRoute::new(*route_id, route_info));
+        }
         let directory = Arc::clone(&self.directory);
         let caches = self.caches.clone();
         let backing = self.backing.clone();
@@ -1191,12 +1204,13 @@ impl PartitionedDirectoryLineHarness {
         let decisions = Arc::clone(&self.directory_decisions);
         let dram_accesses = Arc::clone(&self.dram_accesses);
         let fabric = self.fabric.clone();
+        let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
         let memory_path = self.memory_route.zip(self.memory_route_info.clone()).map(
             |(memory_route, memory_route_info)| DeferredMemoryPath {
                 cache_route_id: route,
-                cache_route,
+                cache_route: cache_route.clone(),
                 memory_route_id: memory_route,
                 memory_route: memory_route_info,
             },
@@ -1206,19 +1220,21 @@ impl PartitionedDirectoryLineHarness {
             caches: caches.clone(),
             backing: backing.clone(),
             dram_memory: dram_memory.clone(),
-            fabric,
-            trace: self.trace.clone(),
+            fabric: fabric.clone(),
+            trace: trace.clone(),
             response_cache: Arc::clone(&response_cache),
             responses: Arc::clone(&responses),
             decisions: Arc::clone(&decisions),
             dram_accesses: Arc::clone(&dram_accesses),
         });
+        let response_cache_for_snoop = Arc::clone(&response_cache);
+        let responses_for_snoop = Arc::clone(&responses);
         self.transport
             .submit(
                 &mut self.scheduler,
                 route,
                 downstream,
-                self.trace.clone(),
+                trace.clone(),
                 move |delivery, context| {
                     let decision = directory
                         .lock()
@@ -1232,6 +1248,23 @@ impl PartitionedDirectoryLineHarness {
                                 .expect("deferred memory response");
                             return TargetOutcome::NoResponse;
                         }
+                    }
+                    if !decision.snoops().is_empty() && !decision_uses_backing_memory(&decision) {
+                        DirectorySnoopWork::new(
+                            delivery.request().clone(),
+                            decision,
+                            SnoopRoute::new(route, cache_route.clone()),
+                            cache_routes,
+                            caches,
+                            fabric,
+                            trace.clone(),
+                            Arc::clone(&response_cache_for_snoop),
+                            Arc::clone(&responses_for_snoop),
+                            Arc::clone(&decisions),
+                        )
+                        .schedule(context, delivery.tick())
+                        .expect("scheduled directory snoops");
+                        return TargetOutcome::NoResponse;
                     }
                     let response = partitioned_directory_response(
                         delivery.request(),
@@ -1421,19 +1454,17 @@ fn apply_directory_snoops(
     Ok(())
 }
 
-fn partitioned_directory_response(
-    request: &MemoryRequest,
+fn partitioned_directory_source_data(
     decision: &DirectoryDecision,
     caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
-    backing: &Option<Arc<Mutex<LineBackingStore>>>,
-) -> Result<MemoryResponse, HarnessError> {
+) -> Result<Option<Vec<u8>>, HarnessError> {
     let grant = decision
         .grant()
         .copied()
         .ok_or(HarnessError::MissingDirectoryGrant {
-            request: request.id(),
+            request: decision.request(),
         })?;
-    let source_data = match grant.data_source() {
+    Ok(match grant.data_source() {
         DirectoryDataSource::BackingMemory | DirectoryDataSource::NoData => None,
         DirectoryDataSource::ModifiedOwner(agent) => {
             let cache = caches
@@ -1450,7 +1481,22 @@ fn partitioned_directory_response(
                     .to_vec(),
             )
         }
-    };
+    })
+}
+
+fn partitioned_directory_response(
+    request: &MemoryRequest,
+    decision: &DirectoryDecision,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+    backing: &Option<Arc<Mutex<LineBackingStore>>>,
+) -> Result<MemoryResponse, HarnessError> {
+    let grant = decision
+        .grant()
+        .copied()
+        .ok_or(HarnessError::MissingDirectoryGrant {
+            request: request.id(),
+        })?;
+    let source_data = partitioned_directory_source_data(decision, caches)?;
 
     apply_directory_snoops(decision, caches)?;
 
