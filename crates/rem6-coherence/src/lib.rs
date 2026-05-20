@@ -23,12 +23,16 @@ use rem6_transport::{
 };
 
 mod deferred;
+mod mesi;
 mod snoop;
 mod topology;
 
 use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 use snoop::{DirectorySnoopWork, SnoopRoute};
 
+pub use mesi::{
+    MesiCpuResponseRecord, MesiDirectoryLineHarness, MesiHarnessError, MesiSubmitResult,
+};
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
     TopologyDramMemoryConfig,
@@ -245,6 +249,18 @@ impl LineBackingStore {
 
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    pub fn replace_data(&mut self, data: Vec<u8>) -> Result<(), HarnessError> {
+        if data.len() as u64 != self.layout.bytes() {
+            return Err(HarnessError::LineDataSizeMismatch {
+                expected: self.layout.bytes(),
+                actual: data.len() as u64,
+            });
+        }
+
+        self.data = data;
+        Ok(())
     }
 
     pub fn respond(&mut self, request: &MemoryRequest) -> Result<MemoryResponse, HarnessError> {
