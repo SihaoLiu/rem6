@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
@@ -19,6 +20,17 @@ fn line_layout() -> CacheLineLayout {
     CacheLineLayout::new(64).unwrap()
 }
 
+fn fabric_link(name: &str) -> FabricLinkId {
+    FabricLinkId::new(name).unwrap()
+}
+
+fn fabric_path(name: &str, latency: u64, bandwidth_bytes_per_tick: u64) -> FabricPath {
+    FabricPath::new([
+        FabricPathHop::new(fabric_link(name), latency, bandwidth_bytes_per_tick).unwrap(),
+    ])
+    .unwrap()
+}
+
 fn request(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
     MemoryRequest::read_shared(
         MemoryRequestId::new(AgentId::new(1), sequence),
@@ -27,6 +39,125 @@ fn request(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
         line_layout(),
     )
     .unwrap()
+}
+
+#[test]
+fn transport_reserves_shared_fabric_links_for_request_hops() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let trace = MemoryTrace::new();
+
+    let memory = endpoint("memory0");
+    let link = fabric_path("mesh_x0", 2, 8);
+    let route_a = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core0"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(link.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_b = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core1"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(link),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req_a = request(50, 0x6000, 16);
+    let req_b = request(51, 0x7000, 16);
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+
+    let delivered_a = Arc::clone(&deliveries);
+    transport
+        .submit(
+            &mut scheduler,
+            route_a,
+            req_a.clone(),
+            trace.clone(),
+            move |delivery, _context| {
+                delivered_a.lock().unwrap().push((
+                    delivery.route(),
+                    delivery.tick(),
+                    delivery.request().id(),
+                ));
+                TargetOutcome::NoResponse
+            },
+            |_| panic!("request-only transfer must not deliver a response"),
+        )
+        .unwrap();
+    let delivered_b = Arc::clone(&deliveries);
+    transport
+        .submit(
+            &mut scheduler,
+            route_b,
+            req_b.clone(),
+            trace.clone(),
+            move |delivery, _context| {
+                delivered_b.lock().unwrap().push((
+                    delivery.route(),
+                    delivery.tick(),
+                    delivery.request().id(),
+                ));
+                TargetOutcome::NoResponse
+            },
+            |_| panic!("request-only transfer must not deliver a response"),
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.executed_events(), 4);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![(route_a, 4, req_a.id()), (route_b, 6, req_b.id()),]
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route_a,
+                endpoint("core0"),
+                MemoryTraceKind::RequestSent,
+                req_a.id(),
+            ),
+            MemoryTraceEvent::request(
+                0,
+                route_b,
+                endpoint("core1"),
+                MemoryTraceKind::RequestSent,
+                req_b.id(),
+            ),
+            MemoryTraceEvent::request(
+                4,
+                route_a,
+                memory.clone(),
+                MemoryTraceKind::RequestArrived,
+                req_a.id(),
+            ),
+            MemoryTraceEvent::request(
+                6,
+                route_b,
+                memory,
+                MemoryTraceKind::RequestArrived,
+                req_b.id(),
+            ),
+        ]
+    );
 }
 
 #[test]

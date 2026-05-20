@@ -2,6 +2,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use rem6_fabric::{
+    FabricError, FabricModel, FabricPacket, FabricPacketId, FabricPath, VirtualNetworkId,
+};
 use rem6_kernel::{
     PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
 };
@@ -64,6 +67,10 @@ pub enum TransportError {
         delay: Tick,
         minimum: Tick,
     },
+    MissingFabricModel {
+        route: MemoryRouteId,
+    },
+    Fabric(FabricError),
     Scheduler(SchedulerError),
 }
 
@@ -94,6 +101,10 @@ impl fmt::Display for TransportError {
                 "route {} {latency:?} latency {delay} is below scheduler lookahead {minimum}",
                 route.get()
             ),
+            Self::MissingFabricModel { route } => {
+                write!(formatter, "route {} needs a fabric model", route.get())
+            }
+            Self::Fabric(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
         }
     }
@@ -102,6 +113,7 @@ impl fmt::Display for TransportError {
 impl Error for TransportError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Fabric(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             _ => None,
         }
@@ -114,6 +126,8 @@ pub struct MemoryRouteHop {
     partition: PartitionId,
     request_latency: Tick,
     response_latency: Tick,
+    request_fabric_path: Option<FabricPath>,
+    response_fabric_path: Option<FabricPath>,
 }
 
 impl MemoryRouteHop {
@@ -139,7 +153,19 @@ impl MemoryRouteHop {
             partition,
             request_latency,
             response_latency,
+            request_fabric_path: None,
+            response_fabric_path: None,
         })
+    }
+
+    pub fn with_request_fabric_path(mut self, path: FabricPath) -> Self {
+        self.request_fabric_path = Some(path);
+        self
+    }
+
+    pub fn with_response_fabric_path(mut self, path: FabricPath) -> Self {
+        self.response_fabric_path = Some(path);
+        self
     }
 
     pub fn endpoint(&self) -> &TransportEndpointId {
@@ -157,6 +183,14 @@ impl MemoryRouteHop {
     pub fn response_latency(&self) -> Tick {
         self.response_latency
     }
+
+    pub fn request_fabric_path(&self) -> Option<&FabricPath> {
+        self.request_fabric_path.as_ref()
+    }
+
+    pub fn response_fabric_path(&self) -> Option<&FabricPath> {
+        self.response_fabric_path.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -168,6 +202,8 @@ pub struct MemoryRoute {
     request_latency: Tick,
     response_latency: Tick,
     hops: Vec<MemoryRouteHop>,
+    request_virtual_network: VirtualNetworkId,
+    response_virtual_network: VirtualNetworkId,
 }
 
 impl MemoryRoute {
@@ -194,6 +230,8 @@ impl MemoryRoute {
             request_latency,
             response_latency,
             hops: vec![hop],
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
         })
     }
 
@@ -220,7 +258,19 @@ impl MemoryRoute {
             request_latency,
             response_latency,
             hops,
+            request_virtual_network: VirtualNetworkId::new(0),
+            response_virtual_network: VirtualNetworkId::new(0),
         })
+    }
+
+    pub fn with_virtual_networks(
+        mut self,
+        request_virtual_network: VirtualNetworkId,
+        response_virtual_network: VirtualNetworkId,
+    ) -> Self {
+        self.request_virtual_network = request_virtual_network;
+        self.response_virtual_network = response_virtual_network;
+        self
     }
 
     pub fn source(&self) -> &TransportEndpointId {
@@ -250,6 +300,14 @@ impl MemoryRoute {
     pub fn hops(&self) -> &[MemoryRouteHop] {
         &self.hops
     }
+
+    pub fn request_virtual_network(&self) -> VirtualNetworkId {
+        self.request_virtual_network
+    }
+
+    pub fn response_virtual_network(&self) -> VirtualNetworkId {
+        self.response_virtual_network
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -261,6 +319,7 @@ struct StoredRoute {
 pub struct MemoryTransport {
     next_route_id: u64,
     routes: Vec<StoredRoute>,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
 }
 
 impl MemoryTransport {
@@ -268,6 +327,15 @@ impl MemoryTransport {
         Self {
             next_route_id: 0,
             routes: Vec::new(),
+            fabric: None,
+        }
+    }
+
+    pub fn with_fabric(fabric: FabricModel) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: Some(Arc::new(Mutex::new(fabric))),
         }
     }
 
@@ -319,6 +387,7 @@ impl MemoryTransport {
 
         let source_partition = route.source_partition();
         let start_tick = scheduler.now();
+        let fabric = self.fabric.clone();
         scheduler
             .schedule_at(source_partition, start_tick, move |context| {
                 let request_id = request.id();
@@ -337,6 +406,7 @@ impl MemoryTransport {
                     0,
                     request,
                     trace,
+                    fabric,
                     responder,
                     response_sink,
                 );
@@ -352,6 +422,7 @@ impl MemoryTransport {
         hop_index: usize,
         request: MemoryRequest,
         trace: MemoryTrace,
+        fabric: Option<Arc<Mutex<FabricModel>>>,
         responder: F,
         response_sink: G,
     ) where
@@ -359,8 +430,10 @@ impl MemoryTransport {
         G: FnOnce(ResponseDelivery) + Send + 'static,
     {
         let hop = route.hops()[hop_index].clone();
+        let delay = request_hop_delay(&fabric, context.now(), route_id, &route, &hop, &request)
+            .expect("validated request fabric timing");
         context
-            .schedule_remote_after(hop.partition(), hop.request_latency(), move |context| {
+            .schedule_remote_after(hop.partition(), delay, move |context| {
                 trace.record(MemoryTraceEvent::request(
                     context.now(),
                     route_id,
@@ -385,6 +458,7 @@ impl MemoryTransport {
                             hop_index,
                             response,
                             trace,
+                            fabric,
                             response_sink,
                         );
                     }
@@ -396,6 +470,7 @@ impl MemoryTransport {
                         hop_index + 1,
                         request,
                         trace,
+                        fabric,
                         responder,
                         response_sink,
                     );
@@ -404,6 +479,7 @@ impl MemoryTransport {
             .expect("validated request transport latency");
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn schedule_response_hop<G>(
         context: &mut SchedulerContext<'_>,
         route_id: MemoryRouteId,
@@ -411,6 +487,7 @@ impl MemoryTransport {
         hop_index: usize,
         response: MemoryResponse,
         trace: MemoryTrace,
+        fabric: Option<Arc<Mutex<FabricModel>>>,
         response_sink: G,
     ) where
         G: FnOnce(ResponseDelivery) + Send + 'static,
@@ -426,8 +503,10 @@ impl MemoryTransport {
         } else {
             route.hops()[hop_index - 1].partition()
         };
+        let delay = response_hop_delay(&fabric, context.now(), route_id, &route, &hop, &response)
+            .expect("validated response fabric timing");
         context
-            .schedule_remote_after(partition, hop.response_latency(), move |context| {
+            .schedule_remote_after(partition, delay, move |context| {
                 trace.record(MemoryTraceEvent::response(
                     context.now(),
                     route_id,
@@ -451,6 +530,7 @@ impl MemoryTransport {
                         hop_index - 1,
                         response,
                         trace,
+                        fabric,
                         response_sink,
                     );
                 }
@@ -470,6 +550,11 @@ impl MemoryTransport {
             .map_err(TransportError::Scheduler)?;
 
         for hop in route.hops() {
+            if self.fabric.is_none()
+                && (hop.request_fabric_path().is_some() || hop.response_fabric_path().is_some())
+            {
+                return Err(TransportError::MissingFabricModel { route: route_id });
+            }
             scheduler
                 .partition_now(hop.partition())
                 .map_err(TransportError::Scheduler)?;
@@ -504,6 +589,90 @@ impl Default for MemoryTransport {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn request_hop_delay(
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+    now: Tick,
+    route_id: MemoryRouteId,
+    route: &MemoryRoute,
+    hop: &MemoryRouteHop,
+    request: &MemoryRequest,
+) -> Result<Tick, TransportError> {
+    let Some(path) = hop.request_fabric_path() else {
+        return Ok(hop.request_latency());
+    };
+    let Some(fabric) = fabric else {
+        return Err(TransportError::MissingFabricModel { route: route_id });
+    };
+    let packet = FabricPacket::new(
+        fabric_packet_id(route_id, request.id(), TransportLatency::Request),
+        request.size().bytes(),
+        route.request_virtual_network(),
+    )
+    .map_err(TransportError::Fabric)?;
+    let arrival = fabric
+        .lock()
+        .expect("fabric lock")
+        .transmit(now, packet, path.clone())
+        .map_err(TransportError::Fabric)?
+        .arrival_tick();
+    arrival
+        .checked_sub(now)
+        .ok_or(TransportError::Fabric(FabricError::TickOverflow))
+}
+
+fn response_hop_delay(
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+    now: Tick,
+    route_id: MemoryRouteId,
+    route: &MemoryRoute,
+    hop: &MemoryRouteHop,
+    response: &MemoryResponse,
+) -> Result<Tick, TransportError> {
+    let Some(path) = hop.response_fabric_path() else {
+        return Ok(hop.response_latency());
+    };
+    let Some(fabric) = fabric else {
+        return Err(TransportError::MissingFabricModel { route: route_id });
+    };
+    let packet = FabricPacket::new(
+        fabric_packet_id(route_id, response.request_id(), TransportLatency::Response),
+        response_packet_bytes(response),
+        route.response_virtual_network(),
+    )
+    .map_err(TransportError::Fabric)?;
+    let arrival = fabric
+        .lock()
+        .expect("fabric lock")
+        .transmit(now, packet, path.clone())
+        .map_err(TransportError::Fabric)?
+        .arrival_tick();
+    arrival
+        .checked_sub(now)
+        .ok_or(TransportError::Fabric(FabricError::TickOverflow))
+}
+
+fn response_packet_bytes(response: &MemoryResponse) -> u64 {
+    response
+        .data()
+        .map_or(1, |bytes| (bytes.len() as u64).max(1))
+}
+
+fn fabric_packet_id(
+    route: MemoryRouteId,
+    request: MemoryRequestId,
+    latency: TransportLatency,
+) -> FabricPacketId {
+    let direction = match latency {
+        TransportLatency::Request => 0,
+        TransportLatency::Response => 1,
+    };
+    let value = (direction << 63)
+        | ((route.get() & 0x7fff) << 48)
+        | ((u64::from(request.agent().get()) & 0xffff) << 32)
+        | (request.sequence() & 0xffff_ffff);
+    FabricPacketId::new(value)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

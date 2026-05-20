@@ -73,6 +73,7 @@ dependencies = [
 name = "rem6-transport"
 version = "0.1.0"
 dependencies = [
+ "rem6-fabric",
  "rem6-kernel",
  "rem6-memory",
 ]
