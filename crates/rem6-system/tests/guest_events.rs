@@ -11,8 +11,8 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
     GuestTrap, GuestTrapKind, HostAction, HostActionRecord, HostEventPolicy, RiscvTrapEventPort,
-    StopRequest, SystemActionOutcome, SystemError, SystemEventPort, SystemHostController,
-    SystemHostEventPort, SystemRunController,
+    ScheduledRiscvTrap, StopRequest, SystemActionOutcome, SystemError, SystemEventPort,
+    SystemHostController, SystemHostEventPort, SystemRunController,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -44,6 +44,30 @@ fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStor
     BootImage::new(Address::new(entry))
         .add_segment(Address::new(entry), word(instruction))
         .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn loaded_program_store(instructions: &[(u64, u32)]) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+
+    let mut image = BootImage::new(Address::new(instructions[0].0));
+    for (address, instruction) in instructions {
+        image = image
+            .add_segment(Address::new(*address), word(*instruction))
+            .unwrap();
+    }
+    image
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
     Arc::new(Mutex::new(store))
@@ -83,6 +107,33 @@ fn riscv_core(fetch_route: MemoryRouteId, entry: u64) -> RiscvCore {
             ),
             CpuFetchConfig::new(
                 endpoint("cpu0.ifetch"),
+                fetch_route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    )
+}
+
+fn riscv_core_on(
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    fetch_endpoint: &str,
+    fetch_route: MemoryRouteId,
+    entry: u64,
+) -> RiscvCore {
+    RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(cpu),
+                PartitionId::new(partition),
+                AgentId::new(agent),
+                Address::new(entry),
+            ),
+            CpuFetchConfig::new(
+                endpoint(fetch_endpoint),
                 fetch_route,
                 layout(),
                 AccessSize::new(4).unwrap(),
@@ -699,4 +750,148 @@ fn riscv_trap_event_port_rejects_scheduled_core_trap_for_unknown_host_partition(
     );
     assert_eq!(scheduler.next_pending_tick(guest).unwrap(), None);
     assert!(controller.lock().unwrap().run().deliveries().is_empty());
+}
+
+#[test]
+fn riscv_trap_event_port_schedules_pending_traps_for_multiple_cores() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(24);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_core_on(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = riscv_core_on(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000);
+    let store = loaded_program_store(&[(0x8000, 0x0000_0073), (0x9000, 0x0010_0073)]);
+
+    assert!(matches!(
+        drive_one_action(&core0, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(matches!(
+        drive_one_action(&core1, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core0, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_action(&core1, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let emit_tick = scheduler.now();
+    let scheduled = trap_port
+        .schedule_pending_core_traps(&mut scheduler, [core0.clone(), core1.clone()], |cpu| {
+            GuestEventId::new(70 + u64::from(cpu.get()))
+        })
+        .unwrap();
+
+    assert_eq!(scheduled.len(), 2);
+    assert_eq!(scheduled[0].cpu(), CpuId::new(0));
+    assert_eq!(scheduled[0].event(), GuestEventId::new(70));
+    assert_eq!(scheduled[0].source_partition(), PartitionId::new(0));
+    assert_eq!(
+        scheduled[0].scheduler_event().partition(),
+        PartitionId::new(0)
+    );
+    assert_eq!(
+        scheduled[0].trap(),
+        GuestTrap::new(GuestTrapKind::EnvironmentCall, 0x8000)
+    );
+    assert_eq!(
+        scheduled[1],
+        ScheduledRiscvTrap::new(
+            CpuId::new(1),
+            GuestEventId::new(71),
+            PartitionId::new(1),
+            scheduled[1].scheduler_event(),
+            GuestTrap::new(GuestTrapKind::Breakpoint, 0x9000),
+        )
+    );
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 4);
+    assert_eq!(summary.final_tick(), emit_tick + 2);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[
+            GuestEventDelivery::new(
+                emit_tick + 2,
+                PartitionId::new(0),
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(70),
+                    source,
+                    GuestEventKind::Trap {
+                        trap: GuestTrap::new(GuestTrapKind::EnvironmentCall, 0x8000),
+                    },
+                ),
+            ),
+            GuestEventDelivery::new(
+                emit_tick + 2,
+                PartitionId::new(1),
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(71),
+                    source,
+                    GuestEventKind::Trap {
+                        trap: GuestTrap::new(GuestTrapKind::Breakpoint, 0x9000),
+                    },
+                ),
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[
+            SystemActionOutcome::Stop(StopRequest::new(
+                emit_tick + 2,
+                GuestEventId::new(70),
+                source,
+                0,
+            )),
+            SystemActionOutcome::Stop(StopRequest::new(
+                emit_tick + 2,
+                GuestEventId::new(71),
+                source,
+                1,
+            )),
+        ]
+    );
 }

@@ -12,8 +12,9 @@ transport-backed RV64I data accesses, ready-driven RV64I core actions, RV64I
 multicore cluster driving, deterministic ready-core sweeps, host-side RISC-V
 cluster turns, bounded RISC-V cluster run traces, RV64I decode, architectural
 execution, typed RISC-V traps, scheduler-delivered trap events, CPU pending-trap
-host delivery, scheduler-owned CPU trap scheduling, interrupts, MMIO, timers,
-UART devices, platform assembly, memory transactions and storage, transport, fabric timing, DRAM
+host delivery, scheduler-owned and batched CPU trap scheduling, interrupts,
+MMIO, timers, UART devices, platform assembly, memory transactions and storage,
+transport, fabric timing, DRAM
 timing, MSI protocol state, cache controllers, directory arbitration, and
 coherence harnesses.
 

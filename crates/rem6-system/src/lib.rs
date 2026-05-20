@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
-use rem6_cpu::RiscvCore;
+use rem6_cpu::{CpuId, RiscvCore};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
     PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
@@ -675,6 +675,53 @@ impl SystemHostEventPort {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScheduledRiscvTrap {
+    cpu: CpuId,
+    event: GuestEventId,
+    source_partition: PartitionId,
+    scheduler_event: PartitionEventId,
+    trap: GuestTrap,
+}
+
+impl ScheduledRiscvTrap {
+    pub const fn new(
+        cpu: CpuId,
+        event: GuestEventId,
+        source_partition: PartitionId,
+        scheduler_event: PartitionEventId,
+        trap: GuestTrap,
+    ) -> Self {
+        Self {
+            cpu,
+            event,
+            source_partition,
+            scheduler_event,
+            trap,
+        }
+    }
+
+    pub const fn cpu(self) -> CpuId {
+        self.cpu
+    }
+
+    pub const fn event(self) -> GuestEventId {
+        self.event
+    }
+
+    pub const fn source_partition(self) -> PartitionId {
+        self.source_partition
+    }
+
+    pub const fn scheduler_event(self) -> PartitionEventId {
+        self.scheduler_event
+    }
+
+    pub const fn trap(self) -> GuestTrap {
+        self.trap
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvTrapEventPort {
     host: SystemHostEventPort,
@@ -740,14 +787,76 @@ impl RiscvTrapEventPort {
             .partition_now(source)
             .map_err(SystemError::Scheduler)?;
         self.validate_scheduled_emit(scheduler, source, source_tick)?;
+        self.schedule_prevalidated_trap(scheduler, event, source, source_tick, trap)
+            .map(Some)
+    }
 
+    pub fn schedule_pending_core_traps<I, F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        cores: I,
+        mut event_for: F,
+    ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
+    where
+        I: IntoIterator<Item = RiscvCore>,
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        let mut pending = Vec::new();
+        for core in cores {
+            let Some(trap) = core.pending_trap() else {
+                continue;
+            };
+            let cpu = core.id();
+            let event = event_for(cpu);
+            let source = core.partition();
+            let source_tick = scheduler
+                .partition_now(source)
+                .map_err(SystemError::Scheduler)?;
+            self.validate_scheduled_emit(scheduler, source, source_tick)?;
+            pending.push(PendingRiscvTrapSchedule {
+                cpu,
+                event,
+                source,
+                source_tick,
+                trap,
+            });
+        }
+
+        let mut scheduled = Vec::new();
+        for pending in pending {
+            let scheduler_event = self.schedule_prevalidated_trap(
+                scheduler,
+                pending.event,
+                pending.source,
+                pending.source_tick,
+                pending.trap,
+            )?;
+            scheduled.push(ScheduledRiscvTrap::new(
+                pending.cpu,
+                pending.event,
+                pending.source,
+                scheduler_event,
+                guest_trap_from_riscv(pending.trap),
+            ));
+        }
+
+        Ok(scheduled)
+    }
+
+    fn schedule_prevalidated_trap(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        trap: RiscvTrap,
+    ) -> Result<PartitionEventId, SystemError> {
         let port = self.clone();
         scheduler
             .schedule_at(source, source_tick, move |context| {
                 port.emit(context, event, trap)
                     .expect("validated RISC-V trap event scheduling");
             })
-            .map(Some)
             .map_err(SystemError::Scheduler)
     }
 
@@ -783,6 +892,15 @@ impl RiscvTrapEventPort {
             }))?;
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingRiscvTrapSchedule {
+    cpu: CpuId,
+    event: GuestEventId,
+    source: PartitionId,
+    source_tick: Tick,
+    trap: RiscvTrap,
 }
 
 pub const fn guest_trap_from_riscv(trap: RiscvTrap) -> GuestTrap {
