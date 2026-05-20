@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{PartitionId, Tick};
+use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct InterruptLineId(u64);
@@ -80,6 +81,212 @@ impl InterruptRoute {
 pub enum InterruptEventKind {
     Assert,
     Deassert,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InterruptDelivery {
+    tick: Tick,
+    source_partition: PartitionId,
+    route: InterruptRoute,
+    source: InterruptSourceId,
+    kind: InterruptEventKind,
+}
+
+impl InterruptDelivery {
+    pub const fn new(
+        tick: Tick,
+        source_partition: PartitionId,
+        route: InterruptRoute,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+    ) -> Self {
+        Self {
+            tick,
+            source_partition,
+            route,
+            source,
+            kind,
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn source_partition(&self) -> PartitionId {
+        self.source_partition
+    }
+
+    pub const fn route(&self) -> InterruptRoute {
+        self.route
+    }
+
+    pub const fn line(&self) -> InterruptLineId {
+        self.route.line()
+    }
+
+    pub const fn target(&self) -> InterruptTargetId {
+        self.route.target()
+    }
+
+    pub const fn target_partition(&self) -> PartitionId {
+        self.route.target_partition()
+    }
+
+    pub const fn source(&self) -> InterruptSourceId {
+        self.source
+    }
+
+    pub const fn kind(&self) -> InterruptEventKind {
+        self.kind
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterruptLineChannel {
+    route: InterruptRoute,
+    signal_latency: Tick,
+}
+
+impl InterruptLineChannel {
+    pub const fn new(route: InterruptRoute, signal_latency: Tick) -> Result<Self, InterruptError> {
+        if signal_latency == 0 {
+            return Err(InterruptError::ZeroSignalLatency);
+        }
+
+        Ok(Self {
+            route,
+            signal_latency,
+        })
+    }
+
+    pub const fn route(self) -> InterruptRoute {
+        self.route
+    }
+
+    pub const fn signal_latency(self) -> Tick {
+        self.signal_latency
+    }
+
+    pub fn assert<F>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        source: InterruptSourceId,
+        handler: F,
+    ) -> Result<PartitionEventId, InterruptError>
+    where
+        F: FnOnce(InterruptDelivery) + Send + 'static,
+    {
+        self.emit(context, source, InterruptEventKind::Assert, handler)
+    }
+
+    pub fn deassert<F>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        source: InterruptSourceId,
+        handler: F,
+    ) -> Result<PartitionEventId, InterruptError>
+    where
+        F: FnOnce(InterruptDelivery) + Send + 'static,
+    {
+        self.emit(context, source, InterruptEventKind::Deassert, handler)
+    }
+
+    pub fn emit<F>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+        handler: F,
+    ) -> Result<PartitionEventId, InterruptError>
+    where
+        F: FnOnce(InterruptDelivery) + Send + 'static,
+    {
+        let source_partition = context.partition();
+        let route = self.route;
+        context
+            .schedule_remote_after(
+                route.target_partition(),
+                self.signal_latency,
+                move |context| {
+                    handler(InterruptDelivery::new(
+                        context.now(),
+                        source_partition,
+                        route,
+                        source,
+                        kind,
+                    ));
+                },
+            )
+            .map_err(InterruptError::Scheduler)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct InterruptLinePort {
+    channel: InterruptLineChannel,
+    controller: Arc<Mutex<InterruptController>>,
+    delivery_errors: Arc<Mutex<Vec<InterruptError>>>,
+}
+
+impl InterruptLinePort {
+    pub fn new(channel: InterruptLineChannel, controller: Arc<Mutex<InterruptController>>) -> Self {
+        Self {
+            channel,
+            controller,
+            delivery_errors: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub const fn channel(&self) -> InterruptLineChannel {
+        self.channel
+    }
+
+    pub fn controller(&self) -> Arc<Mutex<InterruptController>> {
+        Arc::clone(&self.controller)
+    }
+
+    pub fn delivery_errors(&self) -> Arc<Mutex<Vec<InterruptError>>> {
+        Arc::clone(&self.delivery_errors)
+    }
+
+    pub fn assert(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        source: InterruptSourceId,
+    ) -> Result<PartitionEventId, InterruptError> {
+        self.emit(context, source, InterruptEventKind::Assert)
+    }
+
+    pub fn deassert(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        source: InterruptSourceId,
+    ) -> Result<PartitionEventId, InterruptError> {
+        self.emit(context, source, InterruptEventKind::Deassert)
+    }
+
+    pub fn emit(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+    ) -> Result<PartitionEventId, InterruptError> {
+        let controller = Arc::clone(&self.controller);
+        let delivery_errors = Arc::clone(&self.delivery_errors);
+        self.channel.emit(context, source, kind, move |delivery| {
+            let result = controller
+                .lock()
+                .expect("interrupt controller lock")
+                .apply_delivery(delivery);
+            if let Err(error) = result {
+                delivery_errors
+                    .lock()
+                    .expect("interrupt delivery error lock")
+                    .push(error);
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -345,6 +552,18 @@ impl InterruptController {
         Ok(())
     }
 
+    pub fn apply_delivery(&mut self, delivery: InterruptDelivery) -> Result<(), InterruptError> {
+        self.check_delivery_route(delivery.route())?;
+        match delivery.kind() {
+            InterruptEventKind::Assert => {
+                self.assert(delivery.line(), delivery.source(), delivery.tick())
+            }
+            InterruptEventKind::Deassert => {
+                self.deassert(delivery.line(), delivery.source(), delivery.tick())
+            }
+        }
+    }
+
     pub fn pending(&self) -> Vec<PendingInterrupt> {
         let mut pending = self.pending.values().cloned().collect::<Vec<_>>();
         pending.sort_by_key(|entry| (entry.target_partition(), entry.target(), entry.line()));
@@ -365,10 +584,23 @@ impl InterruptController {
             .copied()
             .ok_or(InterruptError::UnknownLine { line })
     }
+
+    fn check_delivery_route(&self, route: InterruptRoute) -> Result<(), InterruptError> {
+        let expected = self.route_for(route.line())?;
+        if expected != route {
+            return Err(InterruptError::RouteMismatch {
+                line: route.line(),
+                expected,
+                actual: route,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InterruptError {
+    ZeroSignalLatency,
     DuplicateLine {
         line: InterruptLineId,
     },
@@ -387,11 +619,18 @@ pub enum InterruptError {
         expected: InterruptSourceId,
         actual: InterruptSourceId,
     },
+    RouteMismatch {
+        line: InterruptLineId,
+        expected: InterruptRoute,
+        actual: InterruptRoute,
+    },
+    Scheduler(SchedulerError),
 }
 
 impl fmt::Display for InterruptError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ZeroSignalLatency => write!(formatter, "interrupt signal latency must be positive"),
             Self::DuplicateLine { line } => {
                 write!(
                     formatter,
@@ -422,6 +661,20 @@ impl fmt::Display for InterruptError {
                 expected.get(),
                 actual.get()
             ),
+            Self::RouteMismatch {
+                line,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "interrupt line {} delivery route targets partition {} target {}, expected partition {} target {}",
+                line.get(),
+                actual.target_partition().index(),
+                actual.target().get(),
+                expected.target_partition().index(),
+                expected.target().get()
+            ),
+            Self::Scheduler(error) => write!(formatter, "{error}"),
         }
     }
 }
