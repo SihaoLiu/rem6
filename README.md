@@ -6,9 +6,9 @@ A Rust-reimplementation of gem5
 
 rem6 is organized as one Rust workspace with one crate per simulator subsystem.
 Current subsystem crates cover deterministic scheduling, typed topology,
-typed guest-host system events, memory transactions and storage, transport,
-fabric timing, DRAM timing, MSI protocol state, cache controllers, directory
-arbitration, and coherence harnesses.
+typed guest-host system events, typed statistics, memory transactions and
+storage, transport, fabric timing, DRAM timing, MSI protocol state, cache
+controllers, directory arbitration, and coherence harnesses.
 
 Run the current verification suite with:
 
