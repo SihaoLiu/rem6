@@ -1,13 +1,15 @@
 use rem6_cache::MesiCacheControllerResultKind;
 use rem6_coherence::{
-    LineBackingStore, MesiCpuResponseRecord, MesiDirectoryLineHarness, PartitionedCacheAgentConfig,
-    PartitionedMemoryConfig, PartitionedMesiDirectoryLineHarness, SubmitKind,
+    DramMemoryAccessRecord, LineBackingStore, MesiCpuResponseRecord, MesiDirectoryLineHarness,
+    PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
+    PartitionedMesiDirectoryLineHarness, SubmitKind,
 };
 use rem6_directory::{MesiDirectoryDataSource, MesiDirectoryLineState, MesiDirectorySnoop};
+use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    MemoryTargetId, ResponseStatus,
 };
 use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
 use rem6_transport::{MemoryTraceEvent, MemoryTraceKind, TransportEndpointId};
@@ -18,6 +20,10 @@ fn layout() -> CacheLineLayout {
 
 fn line() -> MesiLineId {
     MesiLineId::new(Address::new(0x3000))
+}
+
+fn dram_target() -> MemoryTargetId {
+    MemoryTargetId::new(0)
 }
 
 fn agent(value: u32) -> AgentId {
@@ -109,6 +115,43 @@ fn partitioned_harness_with_memory() -> PartitionedMesiDirectoryLineHarness {
         PartitionId::new(2),
         endpoint("dir0"),
         PartitionedMemoryConfig::new(PartitionId::new(4), endpoint("mem0"), 7, 11),
+        [
+            cache_config(1, 0, "l1d0", 3, 9),
+            cache_config(2, 1, "l1d1", 5, 7),
+            cache_config(3, 3, "l1d2", 2, 4),
+        ],
+    )
+    .unwrap()
+}
+
+fn partitioned_harness_with_dram_memory() -> PartitionedMesiDirectoryLineHarness {
+    let target = dram_target();
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(4, 256, 64).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x8000).unwrap(),
+        )
+        .unwrap();
+    memory
+        .insert_line(target, Address::new(0x3000), line_data())
+        .unwrap();
+
+    PartitionedMesiDirectoryLineHarness::new_with_dram_memory(
+        layout(),
+        Address::new(0x3000),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedDramMemoryConfig::new(PartitionId::new(4), endpoint("mem0"), 7, 11, memory),
         [
             cache_config(1, 0, "l1d0", 3, 9),
             cache_config(2, 1, "l1d1", 5, 7),
@@ -502,6 +545,94 @@ fn partitioned_mesi_harness_routes_backing_reads_through_memory_partition() {
             ),
             MemoryTraceEvent::response(
                 30,
+                cache_route,
+                endpoint("l1d0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_routes_dram_backing_reads_in_parallel_epochs() {
+    let mut harness = partitioned_harness_with_dram_memory();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+    assert_eq!(run.final_tick(), 38);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
+    assert_eq!(
+        harness.directory_state(),
+        MesiDirectoryLineState::new(line()).with_owner(agent(1), MesiState::Exclusive)
+    );
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![MesiCpuResponseRecord::new(
+            38,
+            MesiCacheControllerResultKind::Fill,
+            request_id(1, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 6, 7]),
+        )]
+    );
+    assert_eq!(
+        harness.dram_memory_accesses(),
+        vec![DramMemoryAccessRecord::new(
+            10,
+            dram_target(),
+            request_id(1, 0),
+            0,
+            12,
+            false,
+            18,
+        )]
+    );
+
+    let cache_route = harness.route(agent(1)).unwrap();
+    let memory_route = harness.memory_route().unwrap();
+    assert_eq!(
+        harness.trace(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                cache_route,
+                endpoint("l1d0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                3,
+                cache_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                3,
+                memory_route,
+                endpoint("dir0"),
+                MemoryTraceKind::RequestSent,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
+                10,
+                memory_route,
+                endpoint("mem0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::response(
+                29,
+                memory_route,
+                endpoint("dir0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                38,
                 cache_route,
                 endpoint("l1d0"),
                 request_id(1, 0),

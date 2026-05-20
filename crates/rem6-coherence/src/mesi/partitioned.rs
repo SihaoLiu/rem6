@@ -5,11 +5,15 @@ use rem6_cache::{MesiCacheController, MesiCacheControllerError};
 use rem6_directory::{
     MesiDirectory, MesiDirectoryDataSource, MesiDirectoryDecision, MesiDirectoryLineState,
 };
+use rem6_dram::DramMemoryController;
 use rem6_kernel::{
     ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
     SchedulerContext, SchedulerError,
 };
-use rem6_memory::{Address, AgentId, CacheLineLayout, MemoryRequest, MemoryResponse};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
+    MemoryResponse,
+};
 use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
@@ -17,8 +21,8 @@ use rem6_transport::{
 };
 
 use crate::{
-    HarnessError, LineBackingStore, PartitionedCacheAgentConfig, PartitionedMemoryConfig,
-    SubmitKind,
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, PartitionedCacheAgentConfig,
+    PartitionedDramMemoryConfig, PartitionedMemoryConfig, SubmitKind,
 };
 
 use super::{
@@ -47,9 +51,11 @@ pub struct PartitionedMesiDirectoryLineHarness {
     routes: BTreeMap<AgentId, PartitionedMesiRoute>,
     memory_route: Option<PartitionedMesiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<MesiDirectoryDecisionRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
 }
 
 impl PartitionedMesiDirectoryLineHarness {
@@ -139,9 +145,11 @@ impl PartitionedMesiDirectoryLineHarness {
             routes,
             memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
+            dram_memory: None,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            dram_accesses: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -258,9 +266,128 @@ impl PartitionedMesiDirectoryLineHarness {
             routes,
             memory_route: Some(PartitionedMesiRoute::new(memory_route_id, memory_route)),
             backing: Arc::new(Mutex::new(backing)),
+            dram_memory: None,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            dram_accesses: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn new_with_dram_memory<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        memory: PartitionedDramMemoryConfig,
+        agents: I,
+    ) -> Result<Self, MesiHarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        let line_address = layout.line_address(line_address);
+        if !memory.route_hops().is_empty() {
+            return Err(MesiHarnessError::UnsupportedMemoryRouteHops);
+        }
+
+        let mut partition_count = directory_partition
+            .index()
+            .checked_add(1)
+            .ok_or(MesiHarnessError::Scheduler(SchedulerError::NoPartitions))?;
+        partition_count = partition_count.max(
+            memory
+                .partition()
+                .index()
+                .checked_add(1)
+                .ok_or(MesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+        );
+        let mut transport = MemoryTransport::new();
+        let memory_route = MemoryRoute::new(
+            directory_endpoint.clone(),
+            directory_partition,
+            memory.endpoint().clone(),
+            memory.partition(),
+            memory.request_latency(),
+            memory.response_latency(),
+        )
+        .map_err(MesiHarnessError::Transport)?
+        .with_virtual_networks(
+            memory.request_virtual_network(),
+            memory.response_virtual_network(),
+        );
+        let memory_route_id = transport
+            .add_route(memory_route.clone())
+            .map_err(MesiHarnessError::Transport)?;
+        let mut caches = BTreeMap::new();
+        let mut routes = BTreeMap::new();
+
+        for config in agents {
+            if !config.route_hops().is_empty() {
+                return Err(MesiHarnessError::UnsupportedRouteHops {
+                    agent: config.agent(),
+                });
+            }
+
+            partition_count = partition_count.max(
+                config
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(MesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            if caches
+                .insert(
+                    config.agent(),
+                    Arc::new(Mutex::new(MesiCacheController::new(
+                        config.agent(),
+                        layout,
+                        line_address,
+                    ))),
+                )
+                .is_some()
+            {
+                return Err(MesiHarnessError::DuplicateCache {
+                    agent: config.agent(),
+                });
+            }
+
+            let route = MemoryRoute::new(
+                config.endpoint().clone(),
+                config.partition(),
+                directory_endpoint.clone(),
+                directory_partition,
+                config.request_latency(),
+                config.response_latency(),
+            )
+            .map_err(MesiHarnessError::Transport)?
+            .with_virtual_networks(
+                config.request_virtual_network(),
+                config.response_virtual_network(),
+            );
+            let route_id = transport
+                .add_route(route.clone())
+                .map_err(MesiHarnessError::Transport)?;
+            routes.insert(config.agent(), PartitionedMesiRoute::new(route_id, route));
+        }
+
+        let dram_controller = memory.into_controller();
+        let backing = line_backing_from_dram_memory(layout, line_address, &dram_controller)?;
+
+        Ok(Self {
+            scheduler: PartitionedScheduler::with_min_remote_delay(partition_count, 1)
+                .map_err(MesiHarnessError::Scheduler)?,
+            transport,
+            line: MesiLineId::new(line_address),
+            directory: Arc::new(Mutex::new(MesiDirectory::new())),
+            caches,
+            routes,
+            memory_route: Some(PartitionedMesiRoute::new(memory_route_id, memory_route)),
+            backing: Arc::new(Mutex::new(backing)),
+            dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
+            trace: MemoryTrace::new(),
+            cpu_responses: Arc::new(Mutex::new(Vec::new())),
+            directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            dram_accesses: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -308,10 +435,12 @@ impl PartitionedMesiDirectoryLineHarness {
         let cache_routes = self.routes.clone();
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
+        let dram_memory = self.dram_memory.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
         let decisions = Arc::clone(&self.directory_decisions);
+        let dram_accesses = Arc::clone(&self.dram_accesses);
 
         self.transport
             .submit(
@@ -350,9 +479,11 @@ impl PartitionedMesiDirectoryLineHarness {
                             requester_route,
                             memory_route,
                             backing,
+                            dram_memory,
                             trace.clone(),
                             response_cache,
                             responses,
+                            dram_accesses,
                             snoop_delay,
                         )
                         .expect("scheduled memory response");
@@ -466,10 +597,12 @@ impl PartitionedMesiDirectoryLineHarness {
         let cache_routes = self.routes.clone();
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
+        let dram_memory = self.dram_memory.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
         let decisions = Arc::clone(&self.directory_decisions);
+        let dram_accesses = Arc::clone(&self.dram_accesses);
 
         self.transport
             .submit_parallel(
@@ -508,9 +641,11 @@ impl PartitionedMesiDirectoryLineHarness {
                             requester_route,
                             memory_route,
                             backing,
+                            dram_memory,
                             trace.clone(),
                             response_cache,
                             responses,
+                            dram_accesses,
                             snoop_delay,
                         )
                         .expect("scheduled memory response");
@@ -627,6 +762,10 @@ impl PartitionedMesiDirectoryLineHarness {
             .clone()
     }
 
+    pub fn dram_memory_accesses(&self) -> Vec<DramMemoryAccessRecord> {
+        self.dram_accesses.lock().expect("DRAM access lock").clone()
+    }
+
     pub const fn line(&self) -> MesiLineId {
         self.line
     }
@@ -693,11 +832,14 @@ fn schedule_partitioned_mesi_memory_response(
     requester_route: PartitionedMesiRoute,
     memory_route: PartitionedMesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
     snoop_delay: u64,
 ) -> Result<(), MesiHarnessError> {
+    let directory_tick = context.now();
     trace.record(MemoryTraceEvent::request(
         context.now(),
         memory_route.id,
@@ -705,8 +847,6 @@ fn schedule_partitioned_mesi_memory_response(
         MemoryTraceKind::RequestSent,
         request.id(),
     ));
-    let memory_total_delay =
-        memory_route.route.request_latency() + memory_route.route.response_latency();
     let memory_response_delay = memory_route.route.response_latency();
     let memory_route_id = memory_route.id;
     let memory_endpoint = memory_route.route.target().clone();
@@ -726,39 +866,55 @@ fn schedule_partitioned_mesi_memory_response(
                     MemoryTraceKind::RequestArrived,
                     request.id(),
                 ));
-                let response = backing
-                    .lock()
-                    .expect("backing lock")
-                    .respond(&request)
-                    .expect("backing store response");
+                let (ready_tick, response) = complete_partitioned_mesi_memory_request(
+                    context.now(),
+                    &request,
+                    &backing,
+                    dram_memory.as_ref(),
+                    &dram_accesses,
+                )
+                .expect("memory response");
                 let response_trace = memory_trace.clone();
                 context
-                    .schedule_remote_after(
-                        directory_partition,
-                        memory_response_delay,
+                    .schedule_local_after(
+                        ready_tick
+                            .checked_sub(context.now())
+                            .expect("DRAM ready tick is not in the past"),
                         move |context| {
-                            response_trace.record(MemoryTraceEvent::response(
-                                context.now(),
-                                memory_route_id,
-                                memory_source,
-                                response.request_id(),
-                                response.status(),
-                            ));
-                            let wait_for_snoops = snoop_delay.saturating_sub(memory_total_delay);
-                            schedule_partitioned_mesi_cache_response(
-                                context,
-                                wait_for_snoops,
-                                requester_route,
-                                response,
-                                fill_event,
-                                trace,
-                                response_cache,
-                                responses,
-                            )
-                            .expect("scheduled cache response");
+                            context
+                                .schedule_remote_after(
+                                    directory_partition,
+                                    memory_response_delay,
+                                    move |context| {
+                                        response_trace.record(MemoryTraceEvent::response(
+                                            context.now(),
+                                            memory_route_id,
+                                            memory_source,
+                                            response.request_id(),
+                                            response.status(),
+                                        ));
+                                        let elapsed = context
+                                            .now()
+                                            .checked_sub(directory_tick)
+                                            .expect("memory response is after directory request");
+                                        let wait_for_snoops = snoop_delay.saturating_sub(elapsed);
+                                        schedule_partitioned_mesi_cache_response(
+                                            context,
+                                            wait_for_snoops,
+                                            requester_route,
+                                            response,
+                                            fill_event,
+                                            trace,
+                                            response_cache,
+                                            responses,
+                                        )
+                                        .expect("scheduled cache response");
+                                    },
+                                )
+                                .expect("validated memory response latency");
                         },
                     )
-                    .expect("validated memory response latency");
+                    .expect("validated DRAM ready latency");
             },
         )
         .map_err(MesiHarnessError::Scheduler)?;
@@ -815,11 +971,14 @@ fn schedule_partitioned_mesi_memory_response_parallel(
     requester_route: PartitionedMesiRoute,
     memory_route: PartitionedMesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
     snoop_delay: u64,
 ) -> Result<(), MesiHarnessError> {
+    let directory_tick = context.now();
     trace.record(MemoryTraceEvent::request(
         context.now(),
         memory_route.id,
@@ -827,8 +986,6 @@ fn schedule_partitioned_mesi_memory_response_parallel(
         MemoryTraceKind::RequestSent,
         request.id(),
     ));
-    let memory_total_delay =
-        memory_route.route.request_latency() + memory_route.route.response_latency();
     let memory_response_delay = memory_route.route.response_latency();
     let memory_route_id = memory_route.id;
     let memory_endpoint = memory_route.route.target().clone();
@@ -848,39 +1005,55 @@ fn schedule_partitioned_mesi_memory_response_parallel(
                     MemoryTraceKind::RequestArrived,
                     request.id(),
                 ));
-                let response = backing
-                    .lock()
-                    .expect("backing lock")
-                    .respond(&request)
-                    .expect("backing store response");
+                let (ready_tick, response) = complete_partitioned_mesi_memory_request(
+                    context.now(),
+                    &request,
+                    &backing,
+                    dram_memory.as_ref(),
+                    &dram_accesses,
+                )
+                .expect("memory response");
                 let response_trace = memory_trace.clone();
                 context
-                    .schedule_remote_after(
-                        directory_partition,
-                        memory_response_delay,
+                    .schedule_local_after(
+                        ready_tick
+                            .checked_sub(context.now())
+                            .expect("DRAM ready tick is not in the past"),
                         move |context| {
-                            response_trace.record(MemoryTraceEvent::response(
-                                context.now(),
-                                memory_route_id,
-                                memory_source,
-                                response.request_id(),
-                                response.status(),
-                            ));
-                            let wait_for_snoops = snoop_delay.saturating_sub(memory_total_delay);
-                            schedule_partitioned_mesi_cache_response_parallel(
-                                context,
-                                wait_for_snoops,
-                                requester_route,
-                                response,
-                                fill_event,
-                                trace,
-                                response_cache,
-                                responses,
-                            )
-                            .expect("scheduled cache response");
+                            context
+                                .schedule_remote_after(
+                                    directory_partition,
+                                    memory_response_delay,
+                                    move |context| {
+                                        response_trace.record(MemoryTraceEvent::response(
+                                            context.now(),
+                                            memory_route_id,
+                                            memory_source,
+                                            response.request_id(),
+                                            response.status(),
+                                        ));
+                                        let elapsed = context
+                                            .now()
+                                            .checked_sub(directory_tick)
+                                            .expect("memory response is after directory request");
+                                        let wait_for_snoops = snoop_delay.saturating_sub(elapsed);
+                                        schedule_partitioned_mesi_cache_response_parallel(
+                                            context,
+                                            wait_for_snoops,
+                                            requester_route,
+                                            response,
+                                            fill_event,
+                                            trace,
+                                            response_cache,
+                                            responses,
+                                        )
+                                        .expect("scheduled cache response");
+                                    },
+                                )
+                                .expect("validated memory response latency");
                         },
                     )
-                    .expect("validated memory response latency");
+                    .expect("validated DRAM ready latency");
             },
         )
         .map_err(MesiHarnessError::Scheduler)?;
@@ -927,6 +1100,73 @@ fn schedule_partitioned_mesi_cache_response_parallel(
         .map_err(MesiHarnessError::Scheduler)?;
 
     Ok(())
+}
+
+fn line_backing_from_dram_memory(
+    layout: CacheLineLayout,
+    line_address: Address,
+    controller: &DramMemoryController,
+) -> Result<LineBackingStore, MesiHarnessError> {
+    let request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 0),
+        line_address,
+        AccessSize::new(layout.bytes()).map_err(MesiHarnessError::Memory)?,
+        layout,
+    )
+    .map_err(MesiHarnessError::Memory)?;
+    let mut probe = controller.clone();
+    let outcome = probe.accept(0, &request).map_err(MesiHarnessError::Dram)?;
+    let data = outcome
+        .response()
+        .and_then(MemoryResponse::data)
+        .map(<[u8]>::to_vec)
+        .ok_or(MesiHarnessError::Memory(MemoryError::MissingResponseData {
+            request: request.id(),
+        }))?;
+
+    LineBackingStore::new(layout, line_address, data).map_err(MesiHarnessError::Backing)
+}
+
+fn complete_partitioned_mesi_memory_request(
+    now: u64,
+    request: &MemoryRequest,
+    backing: &Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<&Arc<Mutex<DramMemoryController>>>,
+    dram_accesses: &Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+) -> Result<(u64, MemoryResponse), MesiHarnessError> {
+    let Some(dram_memory) = dram_memory else {
+        let response = backing
+            .lock()
+            .expect("backing lock")
+            .respond(request)
+            .map_err(MesiHarnessError::Backing)?;
+        return Ok((now, response));
+    };
+
+    let outcome = dram_memory
+        .lock()
+        .expect("DRAM memory lock")
+        .accept(now, request)
+        .map_err(MesiHarnessError::Dram)?;
+    dram_accesses
+        .lock()
+        .expect("DRAM access lock")
+        .push(DramMemoryAccessRecord::new(
+            now,
+            outcome.target(),
+            outcome.dram_access().request(),
+            outcome.dram_access().bank(),
+            outcome.dram_access().row(),
+            outcome.dram_access().row_hit(),
+            outcome.ready_cycle(),
+        ));
+    let response = outcome.response().cloned().ok_or(MesiHarnessError::Memory(
+        MemoryError::MissingResponseData {
+            request: request.id(),
+        },
+    ))?;
+
+    Ok((outcome.ready_cycle(), response))
 }
 
 fn partitioned_mesi_source_data(

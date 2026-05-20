@@ -3,6 +3,7 @@ use std::fmt;
 
 use rem6_cache::{MesiCacheControllerError, MesiCacheControllerResultKind};
 use rem6_directory::{MesiDirectoryDataSource, MesiDirectoryDecision, MesiDirectoryError};
+use rem6_dram::DramMemoryError;
 use rem6_kernel::SchedulerError;
 use rem6_memory::{AgentId, MemoryError, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
@@ -29,6 +30,7 @@ pub enum MesiHarnessError {
     Cache(MesiCacheControllerError),
     Directory(MesiDirectoryError),
     Memory(MemoryError),
+    Dram(DramMemoryError),
     Scheduler(SchedulerError),
     Transport(TransportError),
     Backing(HarnessError),
@@ -77,6 +79,7 @@ impl fmt::Display for MesiHarnessError {
             Self::Cache(error) => write!(formatter, "{error}"),
             Self::Directory(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Dram(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),
@@ -90,6 +93,7 @@ impl Error for MesiHarnessError {
             Self::Cache(error) => Some(error),
             Self::Directory(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::Dram(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Backing(error) => Some(error),
