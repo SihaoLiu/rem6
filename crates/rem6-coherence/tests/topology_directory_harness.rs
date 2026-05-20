@@ -387,7 +387,7 @@ fn topology_directory_harness_builds_routes_through_intermediate_components() {
     assert_eq!(submit.kind(), SubmitKind::ScheduledMiss);
 
     let run = harness.run_until_idle();
-    assert_eq!(run.executed_events(), 6);
+    assert_eq!(run.executed_events(), 10);
     assert_eq!(run.final_tick(), 52);
     assert_eq!(
         harness.cpu_responses(),
@@ -425,6 +425,13 @@ fn topology_directory_harness_builds_routes_through_intermediate_components() {
                 request_id(1, 0),
             ),
             MemoryTraceEvent::request(
+                2,
+                cache_route,
+                endpoint("mesh_r0"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
                 7,
                 cache_route,
                 endpoint("dir0"),
@@ -439,6 +446,13 @@ fn topology_directory_harness_builds_routes_through_intermediate_components() {
                 request_id(1, 0),
             ),
             MemoryTraceEvent::request(
+                11,
+                memory_route,
+                endpoint("mesh_r1"),
+                MemoryTraceKind::RequestArrived,
+                request_id(1, 0),
+            ),
+            MemoryTraceEvent::request(
                 19,
                 memory_route,
                 endpoint("mem0"),
@@ -446,9 +460,23 @@ fn topology_directory_harness_builds_routes_through_intermediate_components() {
                 request_id(1, 0),
             ),
             MemoryTraceEvent::response(
+                36,
+                memory_route,
+                endpoint("mesh_r1"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
                 42,
                 memory_route,
                 endpoint("dir0"),
+                request_id(1, 0),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                49,
+                cache_route,
+                endpoint("mesh_r0"),
                 request_id(1, 0),
                 ResponseStatus::Completed,
             ),

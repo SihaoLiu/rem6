@@ -5,7 +5,7 @@ use rem6_transport::TransportEndpointId;
 
 use crate::{
     HarnessError, PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
-    PartitionedDramMemoryConfig,
+    PartitionedDramMemoryConfig, PartitionedRouteHopConfig,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -164,7 +164,7 @@ impl PartitionedDirectoryLineHarness {
         let directory_component = topology_component(topology, directory.component())?;
         let directory_endpoint = transport_endpoint(directory.component())?;
         let memory_component = topology_component(topology, memory.component())?;
-        let memory_latency = topology_route_latency(
+        let memory_path = topology_route_path(
             topology,
             Endpoint::new(
                 directory.component().clone(),
@@ -175,15 +175,16 @@ impl PartitionedDirectoryLineHarness {
         let memory = PartitionedDramMemoryConfig::new(
             memory_component.partition(),
             transport_endpoint(memory.component())?,
-            memory_latency.request,
-            memory_latency.response,
+            memory_path.request,
+            memory_path.response,
             memory.into_controller(),
-        );
+        )
+        .with_route_hops(memory_path.route_hops);
 
         let mut agents = Vec::with_capacity(caches.len());
         for cache in caches {
             let cache_component = topology_component(topology, cache.component())?;
-            let cache_latency = topology_route_latency(
+            let cache_path = topology_route_path(
                 topology,
                 Endpoint::new(cache.component().clone(), cache.port().clone()),
                 Endpoint::new(
@@ -191,13 +192,16 @@ impl PartitionedDirectoryLineHarness {
                     directory.cache_port().clone(),
                 ),
             )?;
-            agents.push(PartitionedCacheAgentConfig::new(
-                cache.agent(),
-                cache_component.partition(),
-                transport_endpoint(cache.component())?,
-                cache_latency.request,
-                cache_latency.response,
-            ));
+            agents.push(
+                PartitionedCacheAgentConfig::new(
+                    cache.agent(),
+                    cache_component.partition(),
+                    transport_endpoint(cache.component())?,
+                    cache_path.request,
+                    cache_path.response,
+                )
+                .with_route_hops(cache_path.route_hops),
+            );
         }
 
         Self::new_with_dram_memory(
@@ -222,24 +226,40 @@ fn topology_component<'a>(
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TopologyRouteLatency {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TopologyRoutePath {
     request: u64,
     response: u64,
+    route_hops: Vec<PartitionedRouteHopConfig>,
 }
 
-fn topology_route_latency(
+fn topology_route_path(
     topology: &Topology,
     from: Endpoint,
     to: Endpoint,
-) -> Result<TopologyRouteLatency, HarnessError> {
-    topology
+) -> Result<TopologyRoutePath, HarnessError> {
+    let path = topology
         .find_endpoint_path(&from, &to)
-        .map(|path| TopologyRouteLatency {
-            request: path.request_latency(),
-            response: path.response_latency(),
+        .ok_or(HarnessError::MissingTopologyConnection { from, to })?;
+    let route_hops = path
+        .hops()
+        .iter()
+        .map(|hop| {
+            let component = topology_component(topology, hop.to().component())?;
+            Ok(PartitionedRouteHopConfig::new(
+                component.partition(),
+                transport_endpoint(hop.to().component())?,
+                hop.request_latency(),
+                hop.response_latency(),
+            ))
         })
-        .ok_or(HarnessError::MissingTopologyConnection { from, to })
+        .collect::<Result<Vec<_>, HarnessError>>()?;
+
+    Ok(TopologyRoutePath {
+        request: path.request_latency(),
+        response: path.response_latency(),
+        route_hops,
+    })
 }
 
 fn transport_endpoint(component: &ComponentId) -> Result<TransportEndpointId, HarnessError> {
