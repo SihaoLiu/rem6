@@ -11,9 +11,9 @@ use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
-    HostActionRecord, HostEventPolicy, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-    StopRequest, SystemActionExecutor, SystemActionOutcome, SystemHostController,
-    SystemHostEventPort, SystemRunController,
+    HostActionRecord, HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
+    RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor,
+    SystemActionOutcome, SystemHostController, SystemHostEventPort, SystemRunController,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -57,6 +57,31 @@ fn riscv_core(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: u64) ->
         )
         .unwrap(),
     )
+}
+
+fn line_data(base: u8) -> Vec<u8> {
+    (0..64).map(|offset| base.wrapping_add(offset)).collect()
+}
+
+fn partitioned_memory_store() -> (
+    rem6_memory::PartitionedMemoryStore,
+    rem6_memory::MemoryTargetId,
+) {
+    let target = rem6_memory::MemoryTargetId::new(10);
+    let mut store = rem6_memory::PartitionedMemoryStore::new();
+    let layout = CacheLineLayout::new(64).unwrap();
+    store.add_partition(target, layout).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    (store, target)
 }
 
 #[test]
@@ -313,6 +338,86 @@ fn system_action_executor_applies_restored_riscv_core_checkpoint() {
     );
     assert_eq!(core.pc(), Address::new(0x8040));
     assert_eq!(core.read_register(reg(1)), 0x3344);
+}
+
+#[test]
+fn system_action_executor_refreshes_and_restores_live_memory_checkpoint() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(13);
+    let component = CheckpointComponentId::new("memory0").unwrap();
+    let (store, target) = partitioned_memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&store),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor =
+        SystemActionExecutor::with_memory_checkpoint_bank(StatsRegistry::new(), checkpoints, bank);
+
+    let checkpoint = HostActionRecord::new(
+        84,
+        host,
+        host,
+        GuestEventId::new(9),
+        source,
+        HostAction::Checkpoint {
+            label: "with-memory".to_string(),
+        },
+    );
+
+    let checkpoint_outcome = executor.apply(&checkpoint).unwrap();
+    let manifest = match checkpoint_outcome {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&component, "store")
+            .unwrap()
+            .len()
+            > 128
+    );
+    store
+        .lock()
+        .unwrap()
+        .insert_line(target, Address::new(0x1000), line_data(0xaa))
+        .unwrap();
+
+    let restore = HostActionRecord::new(
+        96,
+        host,
+        host,
+        GuestEventId::new(10),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 96,
+            event: GuestEventId::new(10),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(
+        store
+            .lock()
+            .unwrap()
+            .line_data(target, Address::new(0x1000))
+            .unwrap(),
+        line_data(0x10)
+    );
 }
 
 #[test]
