@@ -4,7 +4,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{InterruptError, InterruptEventKind, InterruptLinePort, InterruptSourceId};
-use rem6_kernel::{PartitionEventId, SchedulerContext, SchedulerError, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
@@ -134,6 +136,24 @@ impl UartMmioDevice {
             .map_err(UartError::Scheduler)
     }
 
+    pub fn inject_rx_after_parallel<I>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        delay: Tick,
+        bytes: I,
+    ) -> Result<PartitionEventId, UartError>
+    where
+        I: IntoIterator<Item = u8>,
+    {
+        let bytes = bytes.into_iter().collect::<Vec<_>>();
+        let uart = self.clone();
+        context
+            .schedule_local_after(delay, move |context| {
+                uart.inject_rx_now_parallel(context, bytes);
+            })
+            .map_err(UartError::Scheduler)
+    }
+
     pub fn snapshot(&self) -> UartSnapshot {
         self.state.lock().expect("uart state lock").snapshot()
     }
@@ -251,6 +271,20 @@ impl UartMmioDevice {
         }
     }
 
+    fn inject_rx_now_parallel(&self, context: &mut ParallelSchedulerContext<'_>, bytes: Vec<u8>) {
+        let mut state = self.state.lock().expect("uart state lock");
+        let was_empty = state.rx_pending.is_empty();
+        for byte in bytes {
+            state.rx_pending.push_back(byte);
+            state.rx_injected.push(UartRxByte::new(context.now(), byte));
+        }
+        let should_assert = was_empty && !state.rx_pending.is_empty();
+        drop(state);
+        if should_assert {
+            self.emit_interrupt_parallel(context, InterruptEventKind::Assert);
+        }
+    }
+
     fn emit_interrupt(&self, context: &mut SchedulerContext<'_>, kind: InterruptEventKind) {
         let Some(interrupt) = &self.interrupt else {
             return;
@@ -258,6 +292,35 @@ impl UartMmioDevice {
         let result = match kind {
             InterruptEventKind::Assert => interrupt.port.assert(context, interrupt.source),
             InterruptEventKind::Deassert => interrupt.port.deassert(context, interrupt.source),
+            InterruptEventKind::Claim | InterruptEventKind::Complete => return,
+        };
+        if let Err(error) = result {
+            self.state
+                .lock()
+                .expect("uart state lock")
+                .interrupt_errors
+                .push(UartInterruptError::new(
+                    context.now(),
+                    interrupt.source,
+                    kind,
+                    error,
+                ));
+        }
+    }
+
+    fn emit_interrupt_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        kind: InterruptEventKind,
+    ) {
+        let Some(interrupt) = &self.interrupt else {
+            return;
+        };
+        let result = match kind {
+            InterruptEventKind::Assert => interrupt.port.assert_parallel(context, interrupt.source),
+            InterruptEventKind::Deassert => {
+                interrupt.port.deassert_parallel(context, interrupt.source)
+            }
             InterruptEventKind::Claim | InterruptEventKind::Complete => return,
         };
         if let Err(error) = result {

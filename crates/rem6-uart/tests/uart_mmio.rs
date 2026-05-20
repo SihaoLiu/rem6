@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
     InterruptController, InterruptEvent, InterruptEventKind, InterruptLineChannel, InterruptLineId,
-    InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
+    InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId, PendingInterrupt,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
@@ -303,6 +303,64 @@ fn uart_rx_injection_asserts_and_deasserts_interrupt_line() {
                 InterruptEventKind::Deassert,
             ),
         ]
+    );
+}
+
+#[test]
+fn uart_parallel_rx_injection_asserts_interrupt_line() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let base = Address::new(0x7900);
+    let line = InterruptLineId::new(45);
+    let source = InterruptSourceId::new(16);
+    let route = InterruptRoute::new(line, InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let uart = UartMmioDevice::with_interrupt(UartId::new(12), base, source, port.clone());
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    let uart_input = uart.clone();
+    scheduler
+        .schedule_parallel_at(uart_partition, 2, move |context| {
+            uart_input
+                .inject_rx_after_parallel(context, 3, [b'P'])
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert!(summary.final_tick() >= 7);
+    assert_eq!(uart.snapshot().rx_injected(), &[UartRxByte::new(5, b'P')]);
+    assert_eq!(uart.snapshot().rx_pending(), b"P");
+    assert_eq!(uart.snapshot().interrupt_errors(), &[]);
+    assert!(port.delivery_errors().lock().unwrap().is_empty());
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.pending(),
+        vec![PendingInterrupt::routed(
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            7
+        )]
+    );
+    assert_eq!(
+        controller.history(),
+        &[InterruptEvent::routed(
+            7,
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
     );
 }
 
