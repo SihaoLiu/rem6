@@ -85,44 +85,20 @@ impl DirectorySnoopWork {
                 self.decision.clone(),
             ));
 
-        let mut max_snoop_delay = 0;
-        for snoop in self.decision.snoops() {
-            let snoop_route =
-                self.cache_routes
-                    .get(&snoop.target())
-                    .ok_or(HarnessError::UnknownCache {
-                        agent: snoop.target(),
-                    })?;
-            let delay = route_response_delay(
-                &self.fabric,
-                context.now(),
-                snoop_route.id,
-                &snoop_route.route,
-                self.request.id(),
-                1,
-            )
-            .map_err(HarnessError::Transport)?;
-            max_snoop_delay = max_snoop_delay.max(delay);
-
-            let cache =
-                self.caches
-                    .get(&snoop.target())
-                    .cloned()
-                    .ok_or(HarnessError::UnknownCache {
-                        agent: snoop.target(),
-                    })?;
-            let event = snoop.event();
-            context
-                .schedule_remote_after(snoop_route.route.source_partition(), delay, move |_| {
-                    cache
-                        .lock()
-                        .expect("cache lock")
-                        .accept_snoop(event)
-                        .map_err(map_cache_error)
-                        .expect("scheduled snoop");
-                })
-                .map_err(HarnessError::Scheduler)?;
-        }
+        let snoop_ready_tick = schedule_directory_snoops(
+            context,
+            &self.decision,
+            self.request.id(),
+            &self.cache_routes,
+            &self.caches,
+            &self.fabric,
+        )?;
+        let snoop_delay =
+            snoop_ready_tick
+                .checked_sub(context.now())
+                .ok_or(HarnessError::Transport(TransportError::Fabric(
+                    FabricError::TickOverflow,
+                )))?;
 
         let response =
             MemoryResponse::completed(&self.request, source_data).map_err(HarnessError::Memory)?;
@@ -134,13 +110,66 @@ impl DirectorySnoopWork {
             responses: self.responses,
         };
         context
-            .schedule_local_after(max_snoop_delay, move |context| {
+            .schedule_local_after(snoop_delay, move |context| {
                 response_work.schedule(context, response);
             })
             .map_err(HarnessError::Scheduler)?;
 
         Ok(())
     }
+}
+
+pub(super) fn schedule_directory_snoops(
+    context: &mut SchedulerContext<'_>,
+    decision: &DirectoryDecision,
+    request: MemoryRequestId,
+    cache_routes: &BTreeMap<AgentId, SnoopRoute>,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+) -> Result<Tick, HarnessError> {
+    let mut max_snoop_delay = 0;
+    for snoop in decision.snoops() {
+        let snoop_route = cache_routes
+            .get(&snoop.target())
+            .ok_or(HarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let delay = route_response_delay(
+            fabric,
+            context.now(),
+            snoop_route.id,
+            &snoop_route.route,
+            request,
+            1,
+        )
+        .map_err(HarnessError::Transport)?;
+        max_snoop_delay = max_snoop_delay.max(delay);
+
+        let cache = caches
+            .get(&snoop.target())
+            .cloned()
+            .ok_or(HarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let event = snoop.event();
+        context
+            .schedule_remote_after(snoop_route.route.source_partition(), delay, move |_| {
+                cache
+                    .lock()
+                    .expect("cache lock")
+                    .accept_snoop(event)
+                    .map_err(map_cache_error)
+                    .expect("scheduled snoop");
+            })
+            .map_err(HarnessError::Scheduler)?;
+    }
+
+    context
+        .now()
+        .checked_add(max_snoop_delay)
+        .ok_or(HarnessError::Transport(TransportError::Fabric(
+            FabricError::TickOverflow,
+        )))
 }
 
 struct SnoopResponseWork {

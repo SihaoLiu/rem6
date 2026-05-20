@@ -1217,6 +1217,7 @@ impl PartitionedDirectoryLineHarness {
         );
         let deferred = memory_path.map(|path| DeferredMemoryWork {
             path,
+            cache_routes: cache_routes.clone(),
             caches: caches.clone(),
             backing: backing.clone(),
             dram_memory: dram_memory.clone(),

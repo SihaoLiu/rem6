@@ -112,6 +112,22 @@ fn harness_with_memory() -> PartitionedDirectoryLineHarness {
     .unwrap()
 }
 
+fn harness_with_slow_snoop_memory() -> PartitionedDirectoryLineHarness {
+    PartitionedDirectoryLineHarness::new_with_memory(
+        layout(),
+        Address::new(0x1000),
+        LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap(),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedMemoryConfig::new(PartitionId::new(3), endpoint("mem0"), 7, 11),
+        [
+            cache_config(1, 0, "l1d0", 3, 30),
+            cache_config(2, 1, "l1d1", 3, 5),
+        ],
+    )
+    .unwrap()
+}
+
 fn harness_with_dram_memory() -> PartitionedDirectoryLineHarness {
     let target = dram_target();
     let mut memory = DramMemoryController::new();
@@ -291,6 +307,34 @@ fn partitioned_directory_harness_routes_backing_read_through_memory_partition() 
         ]
     );
     assert_eq!(harness.directory_decisions()[0].tick(), 3);
+}
+
+#[test]
+fn partitioned_directory_harness_waits_for_backing_snoop_before_write_fill() {
+    let mut harness = harness_with_slow_snoop_memory();
+    harness
+        .submit_cpu_request(agent(1), read(1, 40, 0x1004, 4))
+        .unwrap();
+    harness.run_until_idle();
+
+    harness
+        .submit_cpu_request(agent(2), write(2, 41, 0x1006, vec![0xaa, 0xbb]))
+        .unwrap();
+
+    let run = harness.run_until_idle();
+    assert_eq!(run.final_tick(), 89);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Invalid);
+    assert_eq!(harness.cache_state(agent(2)).unwrap(), MsiState::Modified);
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            89,
+            CacheControllerResultKind::Fill,
+            request_id(2, 41),
+            ResponseStatus::Completed,
+            None,
+        ))
+    );
 }
 
 #[test]

@@ -13,9 +13,10 @@ use rem6_transport::{
 };
 
 use super::{
-    apply_directory_snoops, response_record, CpuResponseRecord, DirectoryDecisionRecord,
-    DramMemoryAccessRecord, HarnessError, LineBackingStore,
+    response_record, CpuResponseRecord, DirectoryDecisionRecord, DramMemoryAccessRecord,
+    HarnessError, LineBackingStore,
 };
+use crate::snoop::{schedule_directory_snoops, SnoopRoute};
 
 #[derive(Clone)]
 pub(super) struct DeferredMemoryPath {
@@ -27,6 +28,7 @@ pub(super) struct DeferredMemoryPath {
 
 pub(super) struct DeferredMemoryWork {
     pub(super) path: DeferredMemoryPath,
+    pub(super) cache_routes: BTreeMap<AgentId, SnoopRoute>,
     pub(super) caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
     pub(super) backing: Option<Arc<Mutex<LineBackingStore>>>,
     pub(super) dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
@@ -45,15 +47,22 @@ impl DeferredMemoryWork {
         request: MemoryRequest,
         decision: DirectoryDecision,
     ) -> Result<(), HarnessError> {
-        apply_directory_snoops(&decision, &self.caches)?;
         self.decisions
             .lock()
             .expect("decision lock")
             .push(DirectoryDecisionRecord::new(
                 context.now(),
                 request.id().agent(),
-                decision,
+                decision.clone(),
             ));
+        let snoop_ready_tick = schedule_directory_snoops(
+            context,
+            &decision,
+            request.id(),
+            &self.cache_routes,
+            &self.caches,
+            &self.fabric,
+        )?;
         self.trace.record(MemoryTraceEvent::request(
             context.now(),
             self.path.memory_route_id,
@@ -67,6 +76,7 @@ impl DeferredMemoryWork {
             backing: self.backing,
             dram_memory: self.dram_memory,
             fabric: self.fabric,
+            snoop_ready_tick,
             trace: self.trace,
             response_cache: self.response_cache,
             responses: self.responses,
@@ -83,6 +93,7 @@ struct DeferredMemoryRequestWork {
     backing: Option<Arc<Mutex<LineBackingStore>>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
+    snoop_ready_tick: Tick,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MsiCacheController>>,
     responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
@@ -132,6 +143,7 @@ impl DeferredMemoryRequestWork {
             backing,
             dram_memory,
             fabric,
+            snoop_ready_tick,
             trace,
             response_cache,
             responses,
@@ -140,6 +152,7 @@ impl DeferredMemoryRequestWork {
         let response_work = DeferredMemoryResponseWork {
             path,
             fabric,
+            snoop_ready_tick,
             trace,
             response_cache,
             responses,
@@ -192,6 +205,7 @@ impl DeferredMemoryRequestWork {
 struct DeferredMemoryResponseWork {
     path: DeferredMemoryPath,
     fabric: Option<Arc<Mutex<FabricModel>>>,
+    snoop_ready_tick: Tick,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MsiCacheController>>,
     responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
@@ -233,7 +247,19 @@ impl DeferredMemoryResponseWork {
 
                 if hop_index == 0 {
                     let last_hop = self.path.cache_route.hops().len() - 1;
-                    self.schedule_cache_response_hop(context, last_hop, response);
+                    if context.now() < self.snoop_ready_tick {
+                        let delay = self
+                            .snoop_ready_tick
+                            .checked_sub(context.now())
+                            .expect("snoop barrier is not in the past");
+                        context
+                            .schedule_local_after(delay, move |context| {
+                                self.schedule_cache_response_hop(context, last_hop, response);
+                            })
+                            .expect("validated snoop barrier delay");
+                    } else {
+                        self.schedule_cache_response_hop(context, last_hop, response);
+                    }
                 } else {
                     self.schedule_memory_response_hop(context, hop_index - 1, response);
                 }
