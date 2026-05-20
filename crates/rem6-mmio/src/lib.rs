@@ -3,7 +3,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask, MemoryError};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -502,6 +504,48 @@ impl MmioChannel {
     ) -> Result<PartitionEventId, MmioError>
     where
         F: FnOnce(MmioDelivery, &mut SchedulerContext<'_>) -> Result<MmioResponse, MmioError>
+            + Send
+            + 'static,
+        G: FnOnce(MmioCompletion) + Send + 'static,
+    {
+        let route = self.route;
+        let response_errors = Arc::clone(&self.response_errors);
+        context
+            .schedule_remote_after(
+                route.target_partition(),
+                route.request_latency(),
+                move |context| {
+                    let response =
+                        responder(MmioDelivery::new(context.now(), route, request), context);
+                    if let Err(error) = context.schedule_remote_after(
+                        route.source_partition(),
+                        route.response_latency(),
+                        move |context| {
+                            completion_sink(MmioCompletion::new(context.now(), route, response));
+                        },
+                    ) {
+                        response_errors
+                            .lock()
+                            .expect("mmio response error lock")
+                            .push(MmioError::Scheduler(error));
+                    }
+                },
+            )
+            .map_err(MmioError::Scheduler)
+    }
+
+    pub fn submit_parallel<F, G>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: MmioRequest,
+        responder: F,
+        completion_sink: G,
+    ) -> Result<PartitionEventId, MmioError>
+    where
+        F: FnOnce(
+                MmioDelivery,
+                &mut ParallelSchedulerContext<'_>,
+            ) -> Result<MmioResponse, MmioError>
             + Send
             + 'static,
         G: FnOnce(MmioCompletion) + Send + 'static,

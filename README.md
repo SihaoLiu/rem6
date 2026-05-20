@@ -17,10 +17,10 @@ events, CPU pending-trap host delivery,
 scheduler-owned serial and parallel CPU trap scheduling, parallel interrupt and
 timer signal delivery, host-stopped parallel RISC-V system cluster runs, RISC-V
 committed-instruction stats, host-integrated full-system checkpoint capture and
-restore, MMIO, timers, UART devices, platform assembly, memory transactions and
-storage, serial and parallel memory transport, memory store snapshots and
-checkpoints, fabric timing, DRAM timing, MSI protocol state, cache controllers,
-directory arbitration, and coherence harnesses.
+restore, serial and parallel MMIO channels, timers, UART devices, platform
+assembly, memory transactions and storage, serial and parallel memory transport,
+memory store snapshots and checkpoints, fabric timing, DRAM timing, MSI protocol
+state, cache controllers, directory arbitration, and coherence harnesses.
 
 Run the current verification suite with:
 

@@ -204,6 +204,82 @@ fn mmio_channel_routes_request_and_response_between_partitions() {
 }
 
 #[test]
+fn mmio_channel_routes_request_and_response_on_parallel_scheduler() {
+    let cpu = PartitionId::new(0);
+    let device = PartitionId::new(1);
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x3800), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        0x08,
+        AccessSize::new(4).unwrap(),
+        MmioAccess::ReadWrite,
+        vec![0x10, 0x20, 0x30, 0x40],
+    )
+    .unwrap();
+    let bank = Arc::new(Mutex::new(bank));
+    let route = MmioRoute::new(cpu, device, 3, 2).unwrap();
+    let channel = MmioChannel::new(route);
+    let request = MmioRequest::read(
+        MmioRequestId::new(17),
+        Address::new(0x3808),
+        AccessSize::new(4).unwrap(),
+    )
+    .unwrap();
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    let delivered = Arc::clone(&deliveries);
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 5, move |context| {
+            let bank = Arc::clone(&bank);
+            channel
+                .submit_parallel(
+                    context,
+                    request,
+                    move |delivery, context| {
+                        assert_eq!(context.partition(), device);
+                        delivered.lock().unwrap().push(delivery.clone());
+                        bank.lock().unwrap().respond(delivery.request())
+                    },
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(summary.final_tick(), 10);
+    assert_eq!(
+        deliveries.lock().unwrap().as_slice(),
+        &[MmioDelivery::new(
+            8,
+            route,
+            MmioRequest::read(
+                MmioRequestId::new(17),
+                Address::new(0x3808),
+                AccessSize::new(4).unwrap(),
+            )
+            .unwrap(),
+        )]
+    );
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[MmioCompletion::new(
+            10,
+            route,
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(17),
+                Some(vec![0x10, 0x20, 0x30, 0x40]),
+            ))
+        )]
+    );
+}
+
+#[test]
 fn mmio_channel_rejects_invalid_latency_and_records_response_errors() {
     let cpu = PartitionId::new(0);
     let device = PartitionId::new(1);
