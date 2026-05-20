@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_system::{
     GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
-    HostAction, HostEventPolicy, SystemError,
+    HostAction, HostActionRecord, HostEventPolicy, StopRequest, SystemError, SystemRunController,
 };
 
 #[test]
@@ -121,5 +121,80 @@ fn host_event_policy_maps_structured_events_to_actions() {
             GuestEventKind::Terminate { code: 12 },
         )),
         vec![HostAction::Stop { code: 12 }]
+    );
+}
+
+#[test]
+fn system_run_controller_records_actions_and_stop_request() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(7);
+    let mut controller = SystemRunController::new(HostEventPolicy);
+
+    let roi_records = controller.handle_delivery(GuestEventDelivery::new(
+        9,
+        guest,
+        host,
+        GuestEvent::new(GuestEventId::new(30), source, GuestEventKind::RoiBegin),
+    ));
+    assert_eq!(
+        roi_records,
+        vec![HostActionRecord::new(
+            9,
+            guest,
+            host,
+            GuestEventId::new(30),
+            source,
+            HostAction::ResetStats,
+        )]
+    );
+    assert_eq!(controller.stop_request(), None);
+
+    let stop_records = controller.handle_delivery(GuestEventDelivery::new(
+        12,
+        guest,
+        host,
+        GuestEvent::new(
+            GuestEventId::new(31),
+            source,
+            GuestEventKind::Terminate { code: 5 },
+        ),
+    ));
+    assert_eq!(
+        stop_records,
+        vec![HostActionRecord::new(
+            12,
+            guest,
+            host,
+            GuestEventId::new(31),
+            source,
+            HostAction::Stop { code: 5 },
+        )]
+    );
+    assert_eq!(
+        controller.stop_request(),
+        Some(&StopRequest::new(12, GuestEventId::new(31), source, 5))
+    );
+    assert_eq!(controller.deliveries().len(), 2);
+    assert_eq!(
+        controller.action_records(),
+        &[
+            HostActionRecord::new(
+                9,
+                guest,
+                host,
+                GuestEventId::new(30),
+                source,
+                HostAction::ResetStats,
+            ),
+            HostActionRecord::new(
+                12,
+                guest,
+                host,
+                GuestEventId::new(31),
+                source,
+                HostAction::Stop { code: 5 },
+            ),
+        ]
     );
 }
