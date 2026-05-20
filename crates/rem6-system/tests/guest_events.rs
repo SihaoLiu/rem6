@@ -1,7 +1,12 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_boot::BootImage;
+use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
@@ -9,6 +14,121 @@ use rem6_system::{
     StopRequest, SystemActionOutcome, SystemError, SystemEventPort, SystemHostController,
     SystemHostEventPort, SystemRunController,
 };
+use rem6_transport::{
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+};
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
+}
+
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
+}
+
+fn word(raw: u32) -> Vec<u8> {
+    raw.to_le_bytes().to_vec()
+}
+
+fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), word(instruction))
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn cpu_route() -> (PartitionedScheduler, MemoryTransport, MemoryRouteId) {
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    (
+        PartitionedScheduler::with_min_remote_delay(3, 2).unwrap(),
+        transport,
+        route,
+    )
+}
+
+fn riscv_core(fetch_route: MemoryRouteId, entry: u64) -> RiscvCore {
+    RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(entry),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                fetch_route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    )
+}
+
+fn drive_one_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> Option<RiscvCoreDriveAction> {
+    let fetch_store = Arc::clone(&store);
+    core.drive_next_action(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            let response = fetch_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+        move |delivery, _context| {
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+}
 
 #[test]
 fn guest_events_route_from_guest_to_host_partition() {
@@ -383,6 +503,90 @@ fn riscv_trap_event_port_routes_traps_into_host_controller() {
         &[SystemActionOutcome::Stop(StopRequest::new(
             7,
             GuestEventId::new(50),
+            source,
+            0,
+        ))]
+    );
+}
+
+#[test]
+fn riscv_trap_event_port_emits_pending_core_trap_into_host_controller() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(2);
+    let source = GuestSourceId::new(21);
+    let (mut scheduler, transport, fetch_route) = cpu_route();
+    let core = riscv_core(fetch_route, 0x8000);
+    let store = loaded_store(0x8000, 0x0000_0073);
+
+    assert!(matches!(
+        drive_one_action(&core, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(event) = action else {
+        panic!("expected trap execution event");
+    };
+    assert_eq!(
+        event.execution().trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::EnvironmentCall, 0x8000))
+    );
+    assert!(core.has_pending_trap());
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let emit_tick = scheduler.now();
+    let pending_core = core.clone();
+    scheduler
+        .schedule_at(guest, emit_tick, move |context| {
+            let event = trap_port
+                .emit_pending_core_trap(context, GuestEventId::new(60), &pending_core)
+                .unwrap();
+            assert!(event.is_some());
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert_eq!(summary.final_tick(), emit_tick + 2);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[GuestEventDelivery::new(
+            emit_tick + 2,
+            guest,
+            host,
+            GuestEvent::new(
+                GuestEventId::new(60),
+                source,
+                GuestEventKind::Trap {
+                    trap: GuestTrap::new(GuestTrapKind::EnvironmentCall, 0x8000),
+                },
+            ),
+        )]
+    );
+    assert_eq!(
+        controller.run().action_records(),
+        &[HostActionRecord::new(
+            emit_tick + 2,
+            guest,
+            host,
+            GuestEventId::new(60),
+            source,
+            HostAction::Stop { code: 0 },
+        )]
+    );
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[SystemActionOutcome::Stop(StopRequest::new(
+            emit_tick + 2,
+            GuestEventId::new(60),
             source,
             0,
         ))]

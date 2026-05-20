@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
+use rem6_cpu::RiscvCore;
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
 use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
@@ -707,6 +708,19 @@ impl RiscvTrapEventPort {
                 },
             ),
         )
+    }
+
+    pub fn emit_pending_core_trap(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEventId,
+        core: &RiscvCore,
+    ) -> Result<Option<PartitionEventId>, SystemError> {
+        let Some(trap) = core.pending_trap() else {
+            return Ok(None);
+        };
+
+        self.emit(context, event, trap).map(Some)
     }
 }
 

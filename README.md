@@ -11,8 +11,8 @@ CPU fetch initiation, multicore CPU cluster validation, fetched RV64I execution,
 transport-backed RV64I data accesses, ready-driven RV64I core actions, RV64I
 multicore cluster driving, deterministic ready-core sweeps, host-side RISC-V
 cluster turns, bounded RISC-V cluster run traces, RV64I decode, architectural
-execution, typed RISC-V traps, scheduler-delivered trap events, interrupts, MMIO,
-timers, UART devices, platform
+execution, typed RISC-V traps, scheduler-delivered trap events, CPU pending-trap
+host delivery, interrupts, MMIO, timers, UART devices, platform
 assembly, memory transactions and storage, transport, fabric timing, DRAM
 timing, MSI protocol state, cache controllers, directory arbitration, and
 coherence harnesses.

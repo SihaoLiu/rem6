@@ -133,10 +133,14 @@ dependencies = [
 name = "rem6-system"
 version = "0.1.0"
 dependencies = [
+ "rem6-boot",
  "rem6-checkpoint",
+ "rem6-cpu",
  "rem6-isa-riscv",
  "rem6-kernel",
+ "rem6-memory",
  "rem6-stats",
+ "rem6-transport",
 ]
 
 [[package]]
