@@ -18,6 +18,10 @@ use rem6_transport::{
     TransportEndpointId, TransportError,
 };
 
+mod riscv_cluster;
+
+pub use riscv_cluster::{RiscvCluster, RiscvClusterError};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CpuId(u32);
 
@@ -808,6 +812,31 @@ impl RiscvCore {
 
     pub fn inner(&self) -> CpuCore {
         self.core.clone()
+    }
+
+    pub fn id(&self) -> CpuId {
+        self.core.id()
+    }
+
+    pub fn partition(&self) -> PartitionId {
+        self.core.partition()
+    }
+
+    pub fn agent(&self) -> AgentId {
+        self.core.agent()
+    }
+
+    pub fn fetch_endpoint(&self) -> TransportEndpointId {
+        self.core.fetch_endpoint()
+    }
+
+    pub fn data_endpoint(&self) -> Option<TransportEndpointId> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data
+            .as_ref()
+            .map(|data| data.endpoint().clone())
     }
 
     pub fn pc(&self) -> Address {
