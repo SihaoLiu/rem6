@@ -8,7 +8,10 @@ use rem6_directory::{
     MesiDirectory, MesiDirectoryDataSource, MesiDirectoryDecision, MesiDirectoryError,
     MesiDirectoryGrant, MesiDirectoryLineState,
 };
-use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{
+    ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
+    SchedulerError,
+};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse,
     ResponseStatus,
@@ -648,8 +651,139 @@ impl PartitionedMesiDirectoryLineHarness {
         ))
     }
 
+    pub fn submit_cpu_request_parallel(
+        &mut self,
+        agent: AgentId,
+        request: MemoryRequest,
+    ) -> Result<MesiSubmitResult, MesiHarnessError> {
+        let cache = self.cache_arc(agent)?;
+        let result = cache
+            .lock()
+            .expect("cache lock")
+            .accept_cpu_request(request)
+            .map_err(map_mesi_cache_error)?;
+        let cache_result = result.kind();
+
+        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+            self.cpu_responses
+                .lock()
+                .expect("response lock")
+                .push(mesi_response_record(
+                    self.scheduler.now(),
+                    cache_result,
+                    response,
+                ));
+            return Ok(MesiSubmitResult::new(
+                SubmitKind::ImmediateHit,
+                cache_result,
+            ));
+        }
+
+        let downstream = result
+            .downstream_request()
+            .cloned()
+            .ok_or(MesiHarnessError::Cache(
+                MesiCacheControllerError::NoPendingMiss,
+            ))?;
+        let requester_route = self
+            .routes
+            .get(&agent)
+            .cloned()
+            .ok_or(MesiHarnessError::UnknownCache { agent })?;
+        let directory = Arc::clone(&self.directory);
+        let caches = self.caches.clone();
+        let cache_routes = self.routes.clone();
+        let backing = Arc::clone(&self.backing);
+        let trace = self.trace.clone();
+        let response_cache = Arc::clone(&cache);
+        let responses = Arc::clone(&self.cpu_responses);
+        let decisions = Arc::clone(&self.directory_decisions);
+
+        self.transport
+            .submit_parallel(
+                &mut self.scheduler,
+                requester_route.id,
+                downstream,
+                trace.clone(),
+                move |delivery, context| {
+                    let decision = directory
+                        .lock()
+                        .expect("directory lock")
+                        .accept(delivery.request().clone())
+                        .expect("directory decision");
+                    let fill_event = fill_event(&decision).expect("directory grant fill event");
+                    let response = partitioned_mesi_directory_response(
+                        delivery.request(),
+                        &decision,
+                        &caches,
+                        &backing,
+                    )
+                    .expect("directory response");
+                    decisions.lock().expect("decision lock").push(
+                        MesiDirectoryDecisionRecord::new(
+                            delivery.tick(),
+                            delivery.request().id().agent(),
+                            decision.clone(),
+                        ),
+                    );
+
+                    let snoop_delay = schedule_partitioned_mesi_snoops_parallel(
+                        context,
+                        &decision,
+                        &cache_routes,
+                        &caches,
+                    )
+                    .expect("scheduled directory snoops");
+                    let response_delay = requester_route.route.response_latency().max(snoop_delay);
+                    let route_id = requester_route.id;
+                    let response_endpoint = requester_route.route.source().clone();
+                    let response_partition = requester_route.route.source_partition();
+                    let response_trace = trace.clone();
+                    let response_cache = Arc::clone(&response_cache);
+                    let responses = Arc::clone(&responses);
+                    context
+                        .schedule_remote_after(response_partition, response_delay, move |context| {
+                            response_trace.record(MemoryTraceEvent::response(
+                                context.now(),
+                                route_id,
+                                response_endpoint,
+                                response.request_id(),
+                                response.status(),
+                            ));
+                            let result = response_cache
+                                .lock()
+                                .expect("cache lock")
+                                .accept_fill(response, fill_event)
+                                .expect("cache fill");
+                            if let Some(TargetOutcome::Respond(response)) = result.target_outcome()
+                            {
+                                responses.lock().expect("response lock").push(
+                                    mesi_response_record(context.now(), result.kind(), response),
+                                );
+                            }
+                        })
+                        .expect("validated response latency");
+
+                    TargetOutcome::NoResponse
+                },
+                |_| {},
+            )
+            .map_err(MesiHarnessError::Transport)?;
+
+        Ok(MesiSubmitResult::new(
+            SubmitKind::ScheduledMiss,
+            cache_result,
+        ))
+    }
+
     pub fn run_until_idle(&mut self) -> ConservativeRunSummary {
         self.scheduler.run_until_idle_conservative()
+    }
+
+    pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, MesiHarnessError> {
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(MesiHarnessError::Scheduler)
     }
 
     pub fn cache_state(&self, agent: AgentId) -> Result<MesiState, MesiHarnessError> {
@@ -790,6 +924,43 @@ fn partitioned_mesi_source_data(
 
 fn schedule_partitioned_mesi_snoops(
     context: &mut rem6_kernel::SchedulerContext<'_>,
+    decision: &MesiDirectoryDecision,
+    cache_routes: &BTreeMap<AgentId, PartitionedMesiRoute>,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MesiCacheController>>>,
+) -> Result<u64, MesiHarnessError> {
+    let mut max_delay = 0;
+    for snoop in decision.snoops() {
+        let route = cache_routes
+            .get(&snoop.target())
+            .ok_or(MesiHarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let delay = route.route.response_latency();
+        max_delay = max_delay.max(delay);
+        let cache = caches
+            .get(&snoop.target())
+            .cloned()
+            .ok_or(MesiHarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let event = snoop.event();
+        context
+            .schedule_remote_after(route.route.source_partition(), delay, move |_| {
+                cache
+                    .lock()
+                    .expect("cache lock")
+                    .accept_snoop(event)
+                    .map_err(map_mesi_cache_error)
+                    .expect("scheduled snoop");
+            })
+            .map_err(MesiHarnessError::Scheduler)?;
+    }
+
+    Ok(max_delay)
+}
+
+fn schedule_partitioned_mesi_snoops_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
     decision: &MesiDirectoryDecision,
     cache_routes: &BTreeMap<AgentId, PartitionedMesiRoute>,
     caches: &BTreeMap<AgentId, Arc<Mutex<MesiCacheController>>>,

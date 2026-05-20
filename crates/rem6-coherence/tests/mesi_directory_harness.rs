@@ -354,3 +354,39 @@ fn partitioned_mesi_harness_waits_for_owner_snoop_before_peer_fill() {
         ]
     );
 }
+
+#[test]
+fn partitioned_mesi_harness_runs_parallel_epochs_for_peer_downgrade() {
+    let mut harness = partitioned_harness();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+    assert_eq!(run.final_tick(), 12);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
+
+    harness
+        .submit_cpu_request(agent(1), write(1, 1, 0x3002, vec![0xaa, 0xbb]))
+        .unwrap();
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Modified);
+
+    harness
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x3000, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+
+    assert_eq!(run.final_tick(), 26);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Shared);
+    assert_eq!(harness.cache_state(agent(2)).unwrap(), MesiState::Shared);
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&MesiCpuResponseRecord::new(
+            26,
+            MesiCacheControllerResultKind::Fill,
+            request_id(2, 0),
+            ResponseStatus::Completed,
+            Some(vec![0, 1, 0xaa, 0xbb]),
+        ))
+    );
+}
