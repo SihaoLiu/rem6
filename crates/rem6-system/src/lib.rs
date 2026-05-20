@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
 
@@ -347,6 +348,54 @@ impl SystemRunController {
 
     pub const fn is_stopped(&self) -> bool {
         self.stop_request.is_some()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SystemEventPort {
+    channel: GuestEventChannel,
+    controller: Arc<Mutex<SystemRunController>>,
+}
+
+impl SystemEventPort {
+    pub fn new(channel: GuestEventChannel, controller: Arc<Mutex<SystemRunController>>) -> Self {
+        Self {
+            channel,
+            controller,
+        }
+    }
+
+    pub fn with_controller(
+        host_partition: PartitionId,
+        host_latency: Tick,
+        policy: HostEventPolicy,
+    ) -> Result<Self, SystemError> {
+        Ok(Self::new(
+            GuestEventChannel::new(host_partition, host_latency)?,
+            Arc::new(Mutex::new(SystemRunController::new(policy))),
+        ))
+    }
+
+    pub const fn channel(&self) -> GuestEventChannel {
+        self.channel
+    }
+
+    pub fn controller(&self) -> Arc<Mutex<SystemRunController>> {
+        Arc::clone(&self.controller)
+    }
+
+    pub fn emit(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+    ) -> Result<PartitionEventId, SystemError> {
+        let controller = Arc::clone(&self.controller);
+        self.channel.emit(context, event, move |delivery| {
+            controller
+                .lock()
+                .expect("system run controller lock")
+                .handle_delivery(delivery);
+        })
     }
 }
 

@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_system::{
     GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
-    HostAction, HostActionRecord, HostEventPolicy, StopRequest, SystemError, SystemRunController,
+    HostAction, HostActionRecord, HostEventPolicy, StopRequest, SystemError, SystemEventPort,
+    SystemRunController,
 };
 
 #[test]
@@ -196,5 +197,123 @@ fn system_run_controller_records_actions_and_stop_request() {
                 HostAction::Stop { code: 5 },
             ),
         ]
+    );
+}
+
+#[test]
+fn system_event_port_delivers_guest_events_into_controller() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(9);
+    let controller = Arc::new(Mutex::new(SystemRunController::new(HostEventPolicy)));
+    let port = SystemEventPort::new(
+        GuestEventChannel::new(host, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(guest, 5, move |context| {
+            port.emit(
+                context,
+                GuestEvent::new(GuestEventId::new(40), source, GuestEventKind::RoiBegin),
+            )
+            .unwrap();
+            port.emit(
+                context,
+                GuestEvent::new(
+                    GuestEventId::new(41),
+                    source,
+                    GuestEventKind::Checkpoint {
+                        label: "booted".to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+            port.emit(
+                context,
+                GuestEvent::new(
+                    GuestEventId::new(42),
+                    source,
+                    GuestEventKind::Terminate { code: 0 },
+                ),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 4);
+    assert_eq!(summary.final_tick(), 7);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.deliveries(),
+        &[
+            GuestEventDelivery::new(
+                7,
+                guest,
+                host,
+                GuestEvent::new(GuestEventId::new(40), source, GuestEventKind::RoiBegin),
+            ),
+            GuestEventDelivery::new(
+                7,
+                guest,
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(41),
+                    source,
+                    GuestEventKind::Checkpoint {
+                        label: "booted".to_string(),
+                    },
+                ),
+            ),
+            GuestEventDelivery::new(
+                7,
+                guest,
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(42),
+                    source,
+                    GuestEventKind::Terminate { code: 0 },
+                ),
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.action_records(),
+        &[
+            HostActionRecord::new(
+                7,
+                guest,
+                host,
+                GuestEventId::new(40),
+                source,
+                HostAction::ResetStats,
+            ),
+            HostActionRecord::new(
+                7,
+                guest,
+                host,
+                GuestEventId::new(41),
+                source,
+                HostAction::Checkpoint {
+                    label: "booted".to_string(),
+                },
+            ),
+            HostActionRecord::new(
+                7,
+                guest,
+                host,
+                GuestEventId::new(42),
+                source,
+                HostAction::Stop { code: 0 },
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.stop_request(),
+        Some(&StopRequest::new(7, GuestEventId::new(42), source, 0))
     );
 }
