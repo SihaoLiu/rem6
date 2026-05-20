@@ -234,10 +234,10 @@ fn topology_route_latency(
     to: Endpoint,
 ) -> Result<TopologyRouteLatency, HarnessError> {
     topology
-        .connection_between(&from, &to)
-        .map(|connection| TopologyRouteLatency {
-            request: connection.request_latency(),
-            response: connection.response_latency(),
+        .find_endpoint_path(&from, &to)
+        .map(|path| TopologyRouteLatency {
+            request: path.request_latency(),
+            response: path.response_latency(),
         })
         .ok_or(HarnessError::MissingTopologyConnection { from, to })
 }

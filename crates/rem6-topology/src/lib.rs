@@ -654,6 +654,84 @@ impl Topology {
 
         None
     }
+
+    pub fn find_endpoint_path(&self, from: &Endpoint, to: &Endpoint) -> Option<TopologyPath> {
+        self.component(from.component())?
+            .port_direction(from.port())?;
+        self.component(to.component())?.port_direction(to.port())?;
+
+        if from == to {
+            return Some(TopologyPath::new(
+                from.component().clone(),
+                to.component().clone(),
+                Vec::new(),
+                0,
+                0,
+            ));
+        }
+
+        let mut best = BTreeMap::new();
+        for connection in self
+            .connections
+            .iter()
+            .filter(|connection| connection.from() == from)
+        {
+            if connection.to().component() == to.component() && connection.to() != to {
+                continue;
+            }
+
+            let state = PathSearchState::root().extend(connection)?;
+            let next = connection.to().component().clone();
+            if best
+                .get(&next)
+                .is_none_or(|existing| state.is_better_than(existing))
+            {
+                best.insert(next, state);
+            }
+        }
+
+        let mut visited = BTreeSet::new();
+        while let Some(component) = next_search_component(&best, &visited) {
+            if component == *to.component() {
+                let state = best.remove(&component)?;
+                return Some(TopologyPath::new(
+                    from.component().clone(),
+                    to.component().clone(),
+                    state.hops,
+                    state.request_latency,
+                    state.response_latency,
+                ));
+            }
+
+            visited.insert(component.clone());
+            let state = best.get(&component).cloned()?;
+            for connection in self
+                .connections
+                .iter()
+                .filter(|connection| connection.from().component() == &component)
+            {
+                let next = connection.to().component().clone();
+                if visited.contains(&next) {
+                    continue;
+                }
+                if connection.to().component() == to.component() && connection.to() != to {
+                    continue;
+                }
+
+                let Some(candidate) = state.extend(connection) else {
+                    continue;
+                };
+                if best
+                    .get(&next)
+                    .is_none_or(|existing| candidate.is_better_than(existing))
+                {
+                    best.insert(next, candidate);
+                }
+            }
+        }
+
+        None
+    }
 }
 
 fn next_search_component(
