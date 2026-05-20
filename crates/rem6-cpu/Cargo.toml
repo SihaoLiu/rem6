@@ -10,6 +10,7 @@ rem6-boot = { path = "../rem6-boot" }
 rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
+rem6-mmio = { path = "../rem6-mmio" }
 rem6-transport = { path = "../rem6-transport" }
 
 [dev-dependencies]

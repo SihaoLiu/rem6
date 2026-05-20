@@ -10,12 +10,13 @@ use rem6_isa_riscv::{
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
-    SchedulerContext, Tick,
+    SchedulerContext, SchedulerError, Tick,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
     MemoryRequest, MemoryRequestId, ResponseStatus,
 };
+use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
     TransportEndpointId, TransportError,
@@ -1091,7 +1092,7 @@ impl RiscvCore {
         let event = transport
             .submit(
                 scheduler,
-                issue.route,
+                issue.memory_route(),
                 request,
                 trace,
                 responder,
@@ -1124,7 +1125,7 @@ impl RiscvCore {
         let event = transport
             .submit_parallel(
                 scheduler,
-                issue.route,
+                issue.memory_route(),
                 request,
                 trace,
                 responder,
@@ -1136,28 +1137,45 @@ impl RiscvCore {
         Ok(Some(event))
     }
 
+    pub fn issue_next_mmio_data_access_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        bus: &MmioBus,
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
+        let Some(issue) = self.prepare_mmio_data_access(scheduler.now(), bus)? else {
+            return Ok(None);
+        };
+        let request = issue.mmio_request()?;
+        let bus = bus.clone();
+        let core = self.clone();
+        let request_id = issue.request_id;
+        let event = scheduler
+            .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
+                bus.submit_parallel(context, request, move |completion| {
+                    core.record_mmio_completion(request_id, completion);
+                })
+                .expect("validated parallel MMIO data access submission");
+            })
+            .map_err(RiscvCpuError::Scheduler)?;
+
+        self.record_data_issue(issue);
+        Ok(Some(event))
+    }
+
     fn prepare_data_access(
         &self,
         tick: Tick,
         transport: &MemoryTransport,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
-        let state = self.state.lock().expect("riscv core lock");
-        let Some((fetch_request, access)) = state.events.iter().find_map(|event| {
-            let fetch_request = event.fetch().request_id();
-            if state.issued_data_for_fetches.contains(&fetch_request) {
-                return None;
-            }
-            event
-                .execution()
-                .memory_access()
-                .map(|access| (fetch_request, access.clone()))
-        }) else {
+        let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
 
+        let state = self.state.lock().expect("riscv core lock");
         let data = state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
             fetch: fetch_request,
         })?;
+        drop(state);
         let route = transport
             .route(data.route())
             .ok_or(RiscvCpuError::Transport(TransportError::UnknownRoute {
@@ -1194,14 +1212,65 @@ impl RiscvCore {
         Ok(Some(OutstandingDataAccess {
             tick,
             partition: self.core.partition(),
-            route: data.route(),
-            endpoint: data.endpoint().clone(),
+            target: RiscvDataAccessTarget::Memory {
+                route: data.route(),
+                endpoint: data.endpoint().clone(),
+            },
             request_id,
             fetch_request,
             access,
             size,
-            line_layout: data.line_layout(),
+            line_layout: Some(data.line_layout()),
         }))
+    }
+
+    fn prepare_mmio_data_access(
+        &self,
+        tick: Tick,
+        bus: &MmioBus,
+    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        let Some((fetch_request, access)) = self.next_unissued_data_access() else {
+            return Ok(None);
+        };
+        let size = memory_width_size(access_width(&access))?;
+        let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
+        let request = mmio_request(request_id, &access, size)?;
+        let route = match bus.route_for(&request) {
+            Ok(route) => route,
+            Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
+            Err(error) => return Err(RiscvCpuError::Mmio(error)),
+        };
+        if route.source_partition() != self.core.partition() {
+            return Err(RiscvCpuError::MmioRoutePartitionMismatch {
+                expected: self.core.partition(),
+                actual: route.source_partition(),
+            });
+        }
+
+        Ok(Some(OutstandingDataAccess {
+            tick,
+            partition: self.core.partition(),
+            target: RiscvDataAccessTarget::Mmio { route },
+            request_id,
+            fetch_request,
+            access,
+            size,
+            line_layout: None,
+        }))
+    }
+
+    fn next_unissued_data_access(&self) -> Option<(MemoryRequestId, MemoryAccessKind)> {
+        let state = self.state.lock().expect("riscv core lock");
+        state.events.iter().find_map(|event| {
+            let fetch_request = event.fetch().request_id();
+            if state.issued_data_for_fetches.contains(&fetch_request) {
+                return None;
+            }
+            event
+                .execution()
+                .memory_access()
+                .map(|access| (fetch_request, access.clone()))
+        })
     }
 
     fn record_data_issue(&self, issue: OutstandingDataAccess) {
@@ -1211,9 +1280,9 @@ impl RiscvCore {
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
-        state.data_events.push(RiscvDataAccessEvent::issued(
-            issue.record(issue.tick, issue.endpoint.clone()),
-        ));
+        state
+            .data_events
+            .push(RiscvDataAccessEvent::issued(issue.record(issue.tick)));
     }
 
     fn record_data_response(&self, delivery: ResponseDelivery) {
@@ -1240,13 +1309,46 @@ impl RiscvCore {
                     state.hart.write(rd, value);
                 }
                 state.data_events.push(RiscvDataAccessEvent::completed(
-                    access.record(delivery.tick(), delivery.endpoint().clone()),
+                    access.record(delivery.tick()),
                     data,
                 ));
             }
             ResponseStatus::Retry => {
+                state
+                    .data_events
+                    .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
+            }
+        }
+    }
+
+    fn record_mmio_completion(&self, request_id: MemoryRequestId, completion: MmioCompletion) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let Some(access) = state.outstanding_data.remove(&request_id) else {
+            return;
+        };
+
+        match completion.response() {
+            Ok(response) => {
+                let data = response.data().map(ToOwned::to_owned);
+                if let MemoryAccessKind::Load {
+                    rd, width, signed, ..
+                } = access.access
+                {
+                    let value = load_response_value(
+                        data.as_deref().expect("MMIO load response data"),
+                        width,
+                        signed,
+                    );
+                    state.hart.write(rd, value);
+                }
+                state.data_events.push(RiscvDataAccessEvent::completed(
+                    access.record(completion.tick()),
+                    data,
+                ));
+            }
+            Err(_) => {
                 state.data_events.push(RiscvDataAccessEvent::retry(
-                    access.record(delivery.tick(), delivery.endpoint().clone()),
+                    access.record(completion.tick()),
                 ));
             }
         }
@@ -1284,23 +1386,32 @@ impl RiscvCoreState {
 struct OutstandingDataAccess {
     tick: Tick,
     partition: PartitionId,
-    route: MemoryRouteId,
-    endpoint: TransportEndpointId,
+    target: RiscvDataAccessTarget,
     request_id: MemoryRequestId,
     fetch_request: MemoryRequestId,
     access: MemoryAccessKind,
     size: AccessSize,
-    line_layout: CacheLineLayout,
+    line_layout: Option<CacheLineLayout>,
 }
 
 impl OutstandingDataAccess {
+    fn memory_route(&self) -> MemoryRouteId {
+        match &self.target {
+            RiscvDataAccessTarget::Memory { route, .. } => *route,
+            RiscvDataAccessTarget::Mmio { .. } => {
+                panic!("MMIO data access does not have a memory route")
+            }
+        }
+    }
+
     fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
+        let line_layout = self.line_layout.expect("memory data access line layout");
         match &self.access {
             MemoryAccessKind::Load { address, .. } => MemoryRequest::read_shared(
                 self.request_id,
                 Address::new(*address),
                 self.size,
-                self.line_layout,
+                line_layout,
             )
             .map_err(RiscvCpuError::Memory),
             MemoryAccessKind::Store { address, value, .. } => MemoryRequest::write(
@@ -1309,16 +1420,20 @@ impl OutstandingDataAccess {
                 self.size,
                 store_bytes(*value, self.size),
                 ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
-                self.line_layout,
+                line_layout,
             )
             .map_err(RiscvCpuError::Memory),
         }
     }
 
+    fn mmio_request(&self) -> Result<MmioRequest, RiscvCpuError> {
+        mmio_request(self.request_id, &self.access, self.size)
+    }
+
     fn clone_without_layout(&self) -> IssuedDataAccess {
         IssuedDataAccess {
             partition: self.partition,
-            route: self.route,
+            target: self.target.clone(),
             request: self.request_id,
             fetch_request: self.fetch_request,
             access: self.access.clone(),
@@ -1326,15 +1441,15 @@ impl OutstandingDataAccess {
         }
     }
 
-    fn record(&self, tick: Tick, endpoint: TransportEndpointId) -> RiscvDataAccessRecord {
-        self.clone_without_layout().record(tick, endpoint)
+    fn record(&self, tick: Tick) -> RiscvDataAccessRecord {
+        self.clone_without_layout().record(tick)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct IssuedDataAccess {
     partition: PartitionId,
-    route: MemoryRouteId,
+    target: RiscvDataAccessTarget,
     request: MemoryRequestId,
     fetch_request: MemoryRequestId,
     access: MemoryAccessKind,
@@ -1342,12 +1457,11 @@ struct IssuedDataAccess {
 }
 
 impl IssuedDataAccess {
-    fn record(&self, tick: Tick, endpoint: TransportEndpointId) -> RiscvDataAccessRecord {
+    fn record(&self, tick: Tick) -> RiscvDataAccessRecord {
         RiscvDataAccessRecord::new(
             tick,
             self.partition,
-            self.route,
-            endpoint,
+            self.target.clone(),
             self.request,
             self.fetch_request,
             self.access.clone(),
@@ -1378,11 +1492,21 @@ pub enum RiscvDataAccessEventKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvDataAccessTarget {
+    Memory {
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+    },
+    Mmio {
+        route: MmioRoute,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvDataAccessRecord {
     tick: Tick,
     partition: PartitionId,
-    route: MemoryRouteId,
-    endpoint: TransportEndpointId,
+    target: RiscvDataAccessTarget,
     request: MemoryRequestId,
     fetch_request: MemoryRequestId,
     access: MemoryAccessKind,
@@ -1394,8 +1518,7 @@ impl RiscvDataAccessRecord {
     pub fn new(
         tick: Tick,
         partition: PartitionId,
-        route: MemoryRouteId,
-        endpoint: TransportEndpointId,
+        target: RiscvDataAccessTarget,
         request: MemoryRequestId,
         fetch_request: MemoryRequestId,
         access: MemoryAccessKind,
@@ -1404,8 +1527,7 @@ impl RiscvDataAccessRecord {
         Self {
             tick,
             partition,
-            route,
-            endpoint,
+            target,
             request,
             fetch_request,
             access,
@@ -1422,11 +1544,25 @@ impl RiscvDataAccessRecord {
     }
 
     pub fn route(&self) -> MemoryRouteId {
-        self.route
+        match &self.target {
+            RiscvDataAccessTarget::Memory { route, .. } => *route,
+            RiscvDataAccessTarget::Mmio { .. } => {
+                panic!("MMIO data access does not have a memory route")
+            }
+        }
     }
 
     pub fn endpoint(&self) -> &TransportEndpointId {
-        &self.endpoint
+        match &self.target {
+            RiscvDataAccessTarget::Memory { endpoint, .. } => endpoint,
+            RiscvDataAccessTarget::Mmio { .. } => {
+                panic!("MMIO data access does not have a transport endpoint")
+            }
+        }
+    }
+
+    pub fn target(&self) -> RiscvDataAccessTarget {
+        self.target.clone()
     }
 
     pub fn request_id(&self) -> MemoryRequestId {
@@ -1499,6 +1635,10 @@ impl RiscvDataAccessEvent {
 
     pub fn endpoint(&self) -> &TransportEndpointId {
         self.record.endpoint()
+    }
+
+    pub fn target(&self) -> RiscvDataAccessTarget {
+        self.record.target()
     }
 
     pub fn request_id(&self) -> MemoryRequestId {
@@ -1591,9 +1731,15 @@ pub enum RiscvCpuError {
         expected: PartitionId,
         actual: PartitionId,
     },
+    MmioRoutePartitionMismatch {
+        expected: PartitionId,
+        actual: PartitionId,
+    },
     Cpu(CpuError),
     Isa(RiscvError),
     Memory(MemoryError),
+    Mmio(MmioError),
+    Scheduler(SchedulerError),
     Transport(TransportError),
 }
 
@@ -1659,9 +1805,17 @@ impl fmt::Display for RiscvCpuError {
                 actual.index(),
                 expected.index()
             ),
+            Self::MmioRoutePartitionMismatch { expected, actual } => write!(
+                formatter,
+                "MMIO data route starts on partition {} but CPU partition is {}",
+                actual.index(),
+                expected.index()
+            ),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Mmio(error) => write!(formatter, "{error}"),
+            Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
@@ -1673,6 +1827,8 @@ impl Error for RiscvCpuError {
             Self::Cpu(error) => Some(error),
             Self::Isa(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::Mmio(error) => Some(error),
+            Self::Scheduler(error) => Some(error),
             Self::Transport(error) => Some(error),
             _ => None,
         }
@@ -1705,6 +1861,30 @@ fn memory_width_size(width: MemoryWidth) -> Result<AccessSize, RiscvCpuError> {
 
 fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
     value.to_le_bytes()[..size.bytes() as usize].to_vec()
+}
+
+fn mmio_request(
+    request: MemoryRequestId,
+    access: &MemoryAccessKind,
+    size: AccessSize,
+) -> Result<MmioRequest, RiscvCpuError> {
+    match access {
+        MemoryAccessKind::Load { address, .. } => {
+            MmioRequest::read(mmio_request_id(request), Address::new(*address), size)
+                .map_err(RiscvCpuError::Mmio)
+        }
+        MemoryAccessKind::Store { address, value, .. } => MmioRequest::write(
+            mmio_request_id(request),
+            Address::new(*address),
+            store_bytes(*value, size),
+            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+        )
+        .map_err(RiscvCpuError::Mmio),
+    }
+}
+
+fn mmio_request_id(request: MemoryRequestId) -> MmioRequestId {
+    MmioRequestId::new(request.sequence())
 }
 
 fn load_response_value(data: &[u8], width: MemoryWidth, signed: bool) -> u64 {

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
-    RiscvCpuError, RiscvDataAccessEventKind,
+    RiscvCpuError, RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvTrap, RiscvTrapKind,
@@ -13,6 +13,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId,
     PartitionedMemoryStore,
 };
+use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
@@ -659,6 +660,71 @@ fn riscv_core_issues_load_access_and_updates_register_after_response() {
     assert_eq!(
         events[1].data(),
         Some(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..])
+    );
+}
+
+#[test]
+fn riscv_core_issues_parallel_mmio_load_and_updates_register_after_response() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    core.write_register(reg(2), 0x1000);
+    let store = loaded_store(0x8000, i_type(8, 2, 0x3, 5, 0x03));
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        vec![0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f],
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    let route = MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap();
+    bus.insert_device(
+        rem6_memory::AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap())
+            .unwrap(),
+        route,
+        Mutex::new(bank),
+    )
+    .unwrap();
+
+    fetch_one_parallel(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
+        .unwrap()
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(core.read_register(reg(5)), 0x0fed_cba9_8765_4321);
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert_eq!(events[0].target(), RiscvDataAccessTarget::Mmio { route });
+    assert_eq!(events[1].target(), RiscvDataAccessTarget::Mmio { route });
+    assert_eq!(
+        events[1].data(),
+        Some(&[0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f][..])
     );
 }
 
