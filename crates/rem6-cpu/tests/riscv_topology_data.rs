@@ -1,6 +1,7 @@
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore,
-    RiscvCoreTopologyConfig, RiscvDataAccessEventKind, RiscvDataAccessTarget,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTopologyError, RiscvCluster,
+    RiscvClusterError, RiscvClusterTopologyConfig, RiscvCore, RiscvCoreTopologyConfig,
+    RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
 use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, Register};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
@@ -130,6 +131,138 @@ fn data_topology() -> Topology {
         .unwrap()
 }
 
+fn multicore_topology() -> Topology {
+    TopologyBuilder::new(6)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("cpu1"),
+                kind("cpu"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mesh0"),
+                kind("mesh_router"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cpu0_in"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("cpu1_in"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_out"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("icache0"),
+                kind("l1_instruction_cache"),
+                PartitionId::new(4),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("icache1"),
+                kind("l1_instruction_cache"),
+                PartitionId::new(5),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "ifetch"),
+            endpoint("icache0", "requests"),
+            2,
+            2,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu1", "ifetch"),
+            endpoint("icache1", "requests"),
+            3,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mesh0", "cpu0_in"), 4, 5)
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu1", "dmem"), endpoint("mesh0", "cpu1_in"), 6, 7)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("mesh0", "mem_out"),
+            endpoint("mem0", "requests"),
+            8,
+            9,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn topology_core_config(
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    entry: u64,
+) -> RiscvCoreTopologyConfig {
+    let cpu_name = format!("cpu{cpu}");
+    let icache_name = format!("icache{cpu}");
+    RiscvCoreTopologyConfig::new(
+        CpuResetState::new(
+            CpuId::new(cpu),
+            PartitionId::new(partition),
+            AgentId::new(agent),
+            Address::new(entry),
+        ),
+        endpoint(&cpu_name, "ifetch"),
+        endpoint(&icache_name, "requests"),
+        layout(),
+        AccessSize::new(4).unwrap(),
+    )
+    .with_data(
+        endpoint(&cpu_name, "dmem"),
+        endpoint("mem0", "requests"),
+        layout(),
+    )
+}
+
 #[test]
 fn riscv_core_from_topology_registers_fetch_and_data_routes() {
     let topology = data_topology();
@@ -166,6 +299,60 @@ fn riscv_core_from_topology_registers_fetch_and_data_routes() {
     assert_eq!(core.partition(), PartitionId::new(0));
     assert_eq!(core.agent(), AgentId::new(7));
     assert_eq!(core.pc(), Address::new(0x8000));
+}
+
+#[test]
+fn riscv_cluster_from_topology_registers_multicore_fetch_and_data_routes() {
+    let topology = multicore_topology();
+    let mut transport = MemoryTransport::new();
+
+    let cluster = RiscvCluster::from_topology(
+        &topology,
+        &mut transport,
+        RiscvClusterTopologyConfig::new([
+            topology_core_config(0, 0, 7, 0x8000),
+            topology_core_config(1, 1, 8, 0x9000),
+        ]),
+    )
+    .unwrap();
+
+    assert_eq!(cluster.core_count(), 2);
+    assert_eq!(cluster.core_ids(), vec![CpuId::new(0), CpuId::new(1)]);
+    assert_eq!(transport.route_count(), 4);
+
+    let core0 = cluster.core(CpuId::new(0)).unwrap();
+    assert_eq!(core0.fetch_endpoint().as_str(), "cpu0.ifetch");
+    assert_eq!(core0.data_endpoint().unwrap().as_str(), "cpu0.dmem");
+    assert_eq!(core0.fetch_route().get(), 0);
+    assert_eq!(core0.data_route().unwrap().get(), 1);
+
+    let core1 = cluster.core(CpuId::new(1)).unwrap();
+    assert_eq!(core1.fetch_endpoint().as_str(), "cpu1.ifetch");
+    assert_eq!(core1.data_endpoint().unwrap().as_str(), "cpu1.dmem");
+    assert_eq!(core1.fetch_route().get(), 2);
+    assert_eq!(core1.data_route().unwrap().get(), 3);
+}
+
+#[test]
+fn riscv_cluster_from_topology_rejects_duplicates_before_routes_are_registered() {
+    let topology = multicore_topology();
+    let mut transport = MemoryTransport::new();
+
+    let error = RiscvCluster::from_topology(
+        &topology,
+        &mut transport,
+        RiscvClusterTopologyConfig::new([
+            topology_core_config(0, 0, 7, 0x8000),
+            topology_core_config(0, 0, 8, 0x9000),
+        ]),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CpuTopologyError::Cluster(RiscvClusterError::DuplicateCpu { cpu: CpuId::new(0) })
+    );
+    assert_eq!(transport.route_count(), 0);
 }
 
 #[test]

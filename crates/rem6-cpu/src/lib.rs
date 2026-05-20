@@ -30,7 +30,7 @@ pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
     RiscvClusterStopReason, RiscvClusterTurn,
 };
-pub use topology::{CpuTopologyError, RiscvCoreTopologyConfig};
+pub use topology::{CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CpuId(u32);

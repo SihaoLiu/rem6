@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -6,7 +7,10 @@ use rem6_memory::{AccessSize, CacheLineLayout};
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_transport::{MemoryTransport, TopologyRouteError, TransportEndpointId};
 
-use crate::{CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuResetState, RiscvCore};
+use crate::{
+    CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuResetState, RiscvCluster,
+    RiscvClusterError, RiscvCore,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCoreTopologyConfig {
@@ -97,12 +101,37 @@ impl RiscvCoreTopologyDataConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvClusterTopologyConfig {
+    cores: Vec<RiscvCoreTopologyConfig>,
+}
+
+impl RiscvClusterTopologyConfig {
+    pub fn new<I>(cores: I) -> Self
+    where
+        I: IntoIterator<Item = RiscvCoreTopologyConfig>,
+    {
+        Self {
+            cores: cores.into_iter().collect(),
+        }
+    }
+
+    pub fn cores(&self) -> &[RiscvCoreTopologyConfig] {
+        &self.cores
+    }
+
+    fn into_cores(self) -> Vec<RiscvCoreTopologyConfig> {
+        self.cores
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CpuTopologyError {
     SourcePartitionMismatch {
         endpoint: Endpoint,
         expected: PartitionId,
         actual: PartitionId,
     },
+    Cluster(RiscvClusterError),
     Cpu(CpuError),
     Topology(TopologyError),
     TopologyRoute(TopologyRouteError),
@@ -123,6 +152,7 @@ impl fmt::Display for CpuTopologyError {
                 actual.index(),
                 expected.index()
             ),
+            Self::Cluster(error) => write!(formatter, "{error}"),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::Topology(error) => write!(formatter, "{error}"),
             Self::TopologyRoute(error) => write!(formatter, "{error}"),
@@ -133,6 +163,7 @@ impl fmt::Display for CpuTopologyError {
 impl Error for CpuTopologyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Cluster(error) => Some(error),
             Self::Cpu(error) => Some(error),
             Self::Topology(error) => Some(error),
             Self::TopologyRoute(error) => Some(error),
@@ -189,6 +220,73 @@ impl RiscvCore {
     }
 }
 
+impl RiscvCluster {
+    pub fn from_topology(
+        topology: &Topology,
+        transport: &mut MemoryTransport,
+        config: RiscvClusterTopologyConfig,
+    ) -> Result<Self, CpuTopologyError> {
+        validate_cluster_config(config.cores())?;
+        let mut cores = Vec::with_capacity(config.cores().len());
+        for core_config in config.into_cores() {
+            cores.push(RiscvCore::from_topology(topology, transport, core_config)?);
+        }
+        Self::new(cores).map_err(CpuTopologyError::Cluster)
+    }
+}
+
+fn validate_cluster_config(configs: &[RiscvCoreTopologyConfig]) -> Result<(), CpuTopologyError> {
+    let mut by_cpu = BTreeMap::new();
+    let mut by_agent = BTreeMap::new();
+    let mut by_fetch_endpoint = BTreeMap::new();
+    let mut by_data_endpoint = BTreeMap::new();
+
+    for config in configs {
+        let cpu = config.reset().cpu();
+        if by_cpu.insert(cpu, cpu).is_some() {
+            return Err(CpuTopologyError::Cluster(RiscvClusterError::DuplicateCpu {
+                cpu,
+            }));
+        }
+
+        let agent = config.reset().agent();
+        if let Some(existing) = by_agent.insert(agent, cpu) {
+            return Err(CpuTopologyError::Cluster(
+                RiscvClusterError::DuplicateAgent {
+                    agent,
+                    existing,
+                    duplicate: cpu,
+                },
+            ));
+        }
+
+        let fetch_endpoint = topology_transport_endpoint(config.fetch_source())?;
+        if let Some(existing) = by_fetch_endpoint.insert(fetch_endpoint.clone(), cpu) {
+            return Err(CpuTopologyError::Cluster(
+                RiscvClusterError::DuplicateFetchEndpoint {
+                    endpoint: fetch_endpoint,
+                    existing,
+                    duplicate: cpu,
+                },
+            ));
+        }
+
+        if let Some(data) = config.data() {
+            let data_endpoint = topology_transport_endpoint(data.source())?;
+            if let Some(existing) = by_data_endpoint.insert(data_endpoint.clone(), cpu) {
+                return Err(CpuTopologyError::Cluster(
+                    RiscvClusterError::DuplicateDataEndpoint {
+                        endpoint: data_endpoint,
+                        existing,
+                        duplicate: cpu,
+                    },
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_source_partition(
     topology: &Topology,
     endpoint: &Endpoint,
@@ -215,4 +313,10 @@ fn validate_source_partition(
         });
     }
     Ok(())
+}
+
+fn topology_transport_endpoint(
+    endpoint: &Endpoint,
+) -> Result<TransportEndpointId, CpuTopologyError> {
+    TransportEndpointId::from_topology_endpoint(endpoint).map_err(CpuTopologyError::TopologyRoute)
 }
