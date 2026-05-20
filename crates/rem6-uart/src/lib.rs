@@ -451,6 +451,22 @@ pub struct UartSnapshot {
 }
 
 impl UartSnapshot {
+    pub fn new(
+        tx_bytes: Vec<UartTxByte>,
+        rx_injected: Vec<UartRxByte>,
+        rx_pending: Vec<u8>,
+        rx_consumed: Vec<UartRxByte>,
+        interrupt_errors: Vec<UartInterruptError>,
+    ) -> Self {
+        Self {
+            tx_bytes,
+            rx_injected,
+            rx_pending,
+            rx_consumed,
+            interrupt_errors,
+        }
+    }
+
     pub fn tx_bytes(&self) -> &[UartTxByte] {
         &self.tx_bytes
     }
@@ -571,13 +587,13 @@ impl UartState {
     }
 
     fn snapshot(&self) -> UartSnapshot {
-        UartSnapshot {
-            tx_bytes: self.tx_bytes.clone(),
-            rx_injected: self.rx_injected.clone(),
-            rx_pending: self.rx_pending.iter().copied().collect(),
-            rx_consumed: self.rx_consumed.clone(),
-            interrupt_errors: self.interrupt_errors.clone(),
-        }
+        UartSnapshot::new(
+            self.tx_bytes.clone(),
+            self.rx_injected.clone(),
+            self.rx_pending.iter().copied().collect(),
+            self.rx_consumed.clone(),
+            self.interrupt_errors.clone(),
+        )
     }
 
     fn from_snapshot(snapshot: &UartSnapshot) -> Self {

@@ -11,15 +11,20 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
+use rem6_mmio::{MmioRequest, MmioRequestId};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEvent, GuestEventDelivery,
     GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort, SystemRunController,
+    SystemHostController, SystemHostEventPort, SystemRunController, UartCheckpointBank,
+    UartCheckpointPort,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
+use rem6_uart::{
+    UartId, UartMmioDevice, UartTxByte, UART_MMIO_DATA_OFFSET, UART_MMIO_REGISTER_BYTES,
+};
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
@@ -81,6 +86,59 @@ fn dram_timing() -> DramTiming {
 
 fn request_id(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(11), sequence)
+}
+
+fn uart_byte_mask() -> ByteMask {
+    ByteMask::full(AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap()).unwrap()
+}
+
+fn write_uart_byte(uart: &UartMmioDevice, tick: u64, byte: u8) {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let base = uart.base();
+    let uart = uart.clone();
+    scheduler
+        .schedule_at(PartitionId::new(0), tick, move |context| {
+            uart.respond(
+                context,
+                &MmioRequest::write(
+                    MmioRequestId::new(300 + tick),
+                    Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                    vec![byte],
+                    uart_byte_mask(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+}
+
+fn read_uart_byte(uart: &UartMmioDevice, tick: u64) -> u8 {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let base = uart.base();
+    let uart = uart.clone();
+    let byte = Arc::new(Mutex::new(None));
+    let result = Arc::clone(&byte);
+    scheduler
+        .schedule_at(PartitionId::new(0), tick, move |context| {
+            let response = uart
+                .respond(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(400 + tick),
+                        Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                        AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            *result.lock().unwrap() = Some(response.data().unwrap()[0]);
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+    let value = byte.lock().unwrap().unwrap();
+    value
 }
 
 fn dram_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
@@ -581,6 +639,79 @@ fn system_action_executor_refreshes_and_restores_live_dram_checkpoint() {
     let row_hit = controller.accept(8, &dram_read(0x1008, 4, 33)).unwrap();
     assert!(row_hit.dram_access().row_hit());
     assert_eq!(row_hit.ready_cycle(), 13);
+}
+
+#[test]
+fn system_action_executor_refreshes_and_restores_live_uart_checkpoint() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(16);
+    let component = CheckpointComponentId::new("uart0").unwrap();
+    let uart = UartMmioDevice::new(UartId::new(0), Address::new(0xa000));
+    uart.inject_rx([b'A', b'B']).unwrap();
+    write_uart_byte(&uart, 4, b'O');
+    let bank = UartCheckpointBank::new([UartCheckpointPort::new(component.clone(), uart.clone())])
+        .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor =
+        SystemActionExecutor::with_uart_checkpoint_bank(StatsRegistry::new(), checkpoints, bank);
+
+    let checkpoint = HostActionRecord::new(
+        124,
+        host,
+        host,
+        GuestEventId::new(15),
+        source,
+        HostAction::Checkpoint {
+            label: "with-uart".to_string(),
+        },
+    );
+
+    let checkpoint_outcome = executor.apply(&checkpoint).unwrap();
+    let manifest = match checkpoint_outcome {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&component, "uart")
+            .unwrap()
+            .len()
+            > 48
+    );
+    write_uart_byte(&uart, 5, b'X');
+    assert_eq!(read_uart_byte(&uart, 6), b'A');
+    uart.inject_rx([b'C']).unwrap();
+    assert_ne!(uart.snapshot().rx_pending(), b"AB");
+
+    let restore = HostActionRecord::new(
+        128,
+        host,
+        host,
+        GuestEventId::new(16),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 128,
+            event: GuestEventId::new(16),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(4, b'O')]);
+    assert_eq!(uart.snapshot().rx_pending(), b"AB");
+    assert_eq!(read_uart_byte(&uart, 129), b'A');
+    assert_eq!(read_uart_byte(&uart, 130), b'B');
 }
 
 #[test]

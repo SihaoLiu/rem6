@@ -10,6 +10,7 @@ rem6-boot = { path = "../rem6-boot" }
 rem6-checkpoint = { path = "../rem6-checkpoint" }
 rem6-cpu = { path = "../rem6-cpu" }
 rem6-dram = { path = "../rem6-dram" }
+rem6-interrupt = { path = "../rem6-interrupt" }
 rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
@@ -18,9 +19,6 @@ rem6-platform = { path = "../rem6-platform" }
 rem6-stats = { path = "../rem6-stats" }
 rem6-topology = { path = "../rem6-topology" }
 rem6-transport = { path = "../rem6-transport" }
-
-[dev-dependencies]
-rem6-interrupt = { path = "../rem6-interrupt" }
 rem6-uart = { path = "../rem6-uart" }
 
 [lints]

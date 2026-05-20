@@ -19,6 +19,7 @@ use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcom
 mod memory_checkpoint;
 mod riscv_checkpoint;
 mod topology;
+mod uart_checkpoint;
 
 pub use memory_checkpoint::{
     DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
@@ -32,6 +33,9 @@ pub use riscv_checkpoint::{
 pub use topology::{
     RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
     RiscvTopologyMemoryRegion, RiscvTopologySystem, RiscvTopologySystemError,
+};
+pub use uart_checkpoint::{
+    UartCheckpointBank, UartCheckpointError, UartCheckpointPort, UartCheckpointRecord,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -402,6 +406,7 @@ pub struct SystemActionExecutor {
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
+    uart_checkpoints: Option<UartCheckpointBank>,
 }
 
 impl SystemActionExecutor {
@@ -416,6 +421,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            uart_checkpoints: None,
         }
     }
 
@@ -430,6 +436,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            uart_checkpoints: None,
         }
     }
 
@@ -444,6 +451,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
+            uart_checkpoints: None,
         }
     }
 
@@ -458,6 +466,22 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
+            uart_checkpoints: None,
+        }
+    }
+
+    pub fn with_uart_checkpoint_bank(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        uart_checkpoints: UartCheckpointBank,
+    ) -> Self {
+        Self {
+            stats,
+            checkpoints,
+            riscv_checkpoints: None,
+            memory_checkpoints: None,
+            dram_memory_checkpoints: None,
+            uart_checkpoints: Some(uart_checkpoints),
         }
     }
 
@@ -473,6 +497,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
+            uart_checkpoints: None,
         }
     }
 
@@ -488,6 +513,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
+            uart_checkpoints: None,
         }
     }
 
@@ -534,6 +560,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_uart_checkpoint_bank(
+        &mut self,
+        uart_checkpoints: UartCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        uart_checkpoints.register_all(&mut self.checkpoints)?;
+        self.uart_checkpoints = Some(uart_checkpoints);
+        Ok(())
+    }
+
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
     }
@@ -544,6 +579,10 @@ impl SystemActionExecutor {
 
     pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
         self.dram_memory_checkpoints.as_ref()
+    }
+
+    pub const fn uart_checkpoint_bank(&self) -> Option<&UartCheckpointBank> {
+        self.uart_checkpoints.as_ref()
     }
 
     pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
@@ -578,6 +617,11 @@ impl SystemActionExecutor {
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
+                if let Some(uart_checkpoints) = &self.uart_checkpoints {
+                    uart_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
                 self.checkpoints
                     .capture(label.clone(), record.tick())
                     .map(|manifest| SystemActionOutcome::Checkpoint {
@@ -606,6 +650,11 @@ impl SystemActionExecutor {
                     dram_memory_checkpoints
                         .restore_all_from(&self.checkpoints)
                         .map_err(SystemError::DramMemoryCheckpoint)?;
+                }
+                if let Some(uart_checkpoints) = &self.uart_checkpoints {
+                    uart_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::UartCheckpoint)?;
                 }
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
@@ -1666,6 +1715,7 @@ pub enum SystemError {
     RiscvCheckpoint(RiscvCoreCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
+    UartCheckpoint(UartCheckpointError),
 }
 
 impl fmt::Display for SystemError {
@@ -1681,6 +1731,7 @@ impl fmt::Display for SystemError {
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
+            Self::UartCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1695,6 +1746,7 @@ impl Error for SystemError {
             Self::RiscvCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
+            Self::UartCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }
     }
