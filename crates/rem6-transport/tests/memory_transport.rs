@@ -740,6 +740,85 @@ fn transport_responder_can_schedule_followup_remote_work() {
 }
 
 #[test]
+fn transport_parallel_submit_routes_request_and_response_across_epochs() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    let core = endpoint("core0");
+    let memory = endpoint("memory0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                memory.clone(),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = request(71, 0x8800, 4);
+
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit_parallel(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            move |delivery, context| {
+                assert_eq!(delivery.tick(), 2);
+                assert_eq!(context.now(), 2);
+                assert_eq!(context.partition(), PartitionId::new(1));
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(vec![5, 6, 7, 8])).unwrap(),
+                )
+            },
+            move |delivery| {
+                response_log.lock().unwrap().push((
+                    delivery.tick(),
+                    delivery.endpoint().clone(),
+                    delivery.response().request_id(),
+                    delivery.response().data().unwrap().to_vec(),
+                ));
+            },
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(summary.final_tick(), 5);
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(
+            5,
+            core.clone(),
+            MemoryRequestId::new(AgentId::new(1), 71),
+            vec![5, 6, 7, 8],
+        )]
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id()
+            ),
+            MemoryTraceEvent::request(2, route, memory, MemoryTraceKind::RequestArrived, req.id(),),
+            MemoryTraceEvent::response(5, route, core, req.id(), ResponseStatus::Completed),
+        ]
+    );
+}
+
+#[test]
 fn transport_rejects_invalid_routes_and_submissions() {
     assert_eq!(
         TransportEndpointId::new("").unwrap_err(),

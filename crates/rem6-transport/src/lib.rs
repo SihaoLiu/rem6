@@ -6,7 +6,8 @@ use rem6_fabric::{
     FabricError, FabricModel, FabricPacket, FabricPacketId, FabricPath, VirtualNetworkId,
 };
 use rem6_kernel::{
-    PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
+    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
+    SchedulerContext, SchedulerError, Tick,
 };
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 
@@ -422,6 +423,56 @@ impl MemoryTransport {
             .map_err(TransportError::Scheduler)
     }
 
+    pub fn submit_parallel<F, G>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        route_id: MemoryRouteId,
+        request: MemoryRequest,
+        trace: MemoryTrace,
+        responder: F,
+        response_sink: G,
+    ) -> Result<PartitionEventId, TransportError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        G: FnOnce(ResponseDelivery) + Send + 'static,
+    {
+        let route = self
+            .route(route_id)
+            .cloned()
+            .ok_or(TransportError::UnknownRoute { route: route_id })?;
+        self.validate_scheduler_route(scheduler, route_id, &route)?;
+
+        let source_partition = route.source_partition();
+        let start_tick = scheduler.now();
+        let fabric = self.fabric.clone();
+        scheduler
+            .schedule_parallel_at(source_partition, start_tick, move |context| {
+                let request_id = request.id();
+                trace.record(MemoryTraceEvent::request(
+                    context.now(),
+                    route_id,
+                    route.source().clone(),
+                    MemoryTraceKind::RequestSent,
+                    request_id,
+                ));
+
+                Self::schedule_parallel_request_hop(
+                    context,
+                    route_id,
+                    route,
+                    0,
+                    request,
+                    trace,
+                    fabric,
+                    responder,
+                    response_sink,
+                );
+            })
+            .map_err(TransportError::Scheduler)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn schedule_request_hop<F, G>(
         context: &mut SchedulerContext<'_>,
@@ -488,6 +539,73 @@ impl MemoryTransport {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn schedule_parallel_request_hop<F, G>(
+        context: &mut ParallelSchedulerContext<'_>,
+        route_id: MemoryRouteId,
+        route: MemoryRoute,
+        hop_index: usize,
+        request: MemoryRequest,
+        trace: MemoryTrace,
+        fabric: Option<Arc<Mutex<FabricModel>>>,
+        responder: F,
+        response_sink: G,
+    ) where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        G: FnOnce(ResponseDelivery) + Send + 'static,
+    {
+        let hop = route.hops()[hop_index].clone();
+        let delay = request_hop_delay(&fabric, context.now(), route_id, &route, &hop, &request)
+            .expect("validated request fabric timing");
+        context
+            .schedule_remote_after(hop.partition(), delay, move |context| {
+                trace.record(MemoryTraceEvent::request(
+                    context.now(),
+                    route_id,
+                    hop.endpoint().clone(),
+                    MemoryTraceKind::RequestArrived,
+                    request.id(),
+                ));
+
+                if hop_index + 1 == route.hops().len() {
+                    let delivery = RequestDelivery {
+                        tick: context.now(),
+                        route: route_id,
+                        endpoint: hop.endpoint().clone(),
+                        request,
+                    };
+
+                    if let TargetOutcome::Respond(response) = responder(delivery, context) {
+                        Self::schedule_parallel_response_hop(
+                            context,
+                            route_id,
+                            route,
+                            hop_index,
+                            response,
+                            trace,
+                            fabric,
+                            response_sink,
+                        );
+                    }
+                } else {
+                    Self::schedule_parallel_request_hop(
+                        context,
+                        route_id,
+                        route,
+                        hop_index + 1,
+                        request,
+                        trace,
+                        fabric,
+                        responder,
+                        response_sink,
+                    );
+                }
+            })
+            .expect("validated request transport latency");
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn schedule_response_hop<G>(
         context: &mut SchedulerContext<'_>,
         route_id: MemoryRouteId,
@@ -532,6 +650,65 @@ impl MemoryTransport {
                     });
                 } else {
                     Self::schedule_response_hop(
+                        context,
+                        route_id,
+                        route,
+                        hop_index - 1,
+                        response,
+                        trace,
+                        fabric,
+                        response_sink,
+                    );
+                }
+            })
+            .expect("validated response transport latency");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn schedule_parallel_response_hop<G>(
+        context: &mut ParallelSchedulerContext<'_>,
+        route_id: MemoryRouteId,
+        route: MemoryRoute,
+        hop_index: usize,
+        response: MemoryResponse,
+        trace: MemoryTrace,
+        fabric: Option<Arc<Mutex<FabricModel>>>,
+        response_sink: G,
+    ) where
+        G: FnOnce(ResponseDelivery) + Send + 'static,
+    {
+        let hop = route.hops()[hop_index].clone();
+        let endpoint = if hop_index == 0 {
+            route.source().clone()
+        } else {
+            route.hops()[hop_index - 1].endpoint().clone()
+        };
+        let partition = if hop_index == 0 {
+            route.source_partition()
+        } else {
+            route.hops()[hop_index - 1].partition()
+        };
+        let delay = response_hop_delay(&fabric, context.now(), route_id, &route, &hop, &response)
+            .expect("validated response fabric timing");
+        context
+            .schedule_remote_after(partition, delay, move |context| {
+                trace.record(MemoryTraceEvent::response(
+                    context.now(),
+                    route_id,
+                    endpoint.clone(),
+                    response.request_id(),
+                    response.status(),
+                ));
+
+                if hop_index == 0 {
+                    response_sink(ResponseDelivery {
+                        tick: context.now(),
+                        route: route_id,
+                        endpoint,
+                        response,
+                    });
+                } else {
+                    Self::schedule_parallel_response_hop(
                         context,
                         route_id,
                         route,

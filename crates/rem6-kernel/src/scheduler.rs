@@ -436,6 +436,28 @@ impl PartitionedScheduler {
         })
     }
 
+    pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, SchedulerError> {
+        let mut epochs = 0;
+        let mut executed_events = 0;
+
+        while self.plan_next_epoch().is_some() {
+            let before = self.now;
+            let summary = self.run_next_epoch_parallel()?;
+            epochs += 1;
+            executed_events += summary.executed_events();
+
+            if summary.final_tick() == before && summary.executed_events() == 0 {
+                break;
+            }
+        }
+
+        Ok(ConservativeRunSummary {
+            epochs,
+            executed_events,
+            final_tick: self.now,
+        })
+    }
+
     pub fn run_until_idle_conservative(&mut self) -> ConservativeRunSummary {
         let mut epochs = 0;
         let mut executed_events = 0;
