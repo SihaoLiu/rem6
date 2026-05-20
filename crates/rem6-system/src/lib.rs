@@ -507,6 +507,24 @@ impl SystemActionExecutor {
         &mut self.checkpoints
     }
 
+    pub fn attach_memory_checkpoint_bank(
+        &mut self,
+        memory_checkpoints: MemoryStoreCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        memory_checkpoints.register_all(&mut self.checkpoints)?;
+        self.memory_checkpoints = Some(memory_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_dram_memory_checkpoint_bank(
+        &mut self,
+        dram_memory_checkpoints: DramMemoryCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        dram_memory_checkpoints.register_all(&mut self.checkpoints)?;
+        self.dram_memory_checkpoints = Some(dram_memory_checkpoints);
+        Ok(())
+    }
+
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
     }

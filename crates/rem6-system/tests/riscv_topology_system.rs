@@ -1,20 +1,21 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
-    ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
 };
 use rem6_platform::{PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvSystemRunStopReason,
-    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
-    RiscvTopologySystem, RiscvTrapEventPort, StopRequest, SystemHostController,
-    SystemHostEventPort,
+    GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTopologyDramConfig,
+    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem, RiscvTrapEventPort,
+    StopRequest, SystemActionOutcome, SystemHostController, SystemHostEventPort,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -52,6 +53,32 @@ fn layout() -> CacheLineLayout {
 
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
+}
+
+fn request_id(sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(19), sequence)
+}
+
+fn memory_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::read_shared(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn memory_write(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
+    MemoryRequest::write(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(bytes.len() as u64).unwrap(),
+        bytes.to_vec(),
+        ByteMask::full(AccessSize::new(bytes.len() as u64).unwrap()).unwrap(),
+        layout(),
+    )
+    .unwrap()
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -580,6 +607,132 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
         ]
     );
     assert!(data_trace.snapshot().is_empty());
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_dram_memory() {
+    let target = MemoryTargetId::new(0);
+    let image = BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap();
+    let dram = RiscvTopologyDramConfig::new(
+        target,
+        layout(),
+        DramGeometry::new(2, 64, 16).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+    )
+    .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap());
+    let source = GuestSourceId::new(45);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(dram, &image)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(3), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let component = CheckpointComponentId::new("dram0").unwrap();
+    let controller = Arc::clone(system.dram_memory_controller().unwrap());
+    let first = controller
+        .lock()
+        .unwrap()
+        .accept(0, &memory_read(0x8000, 4, 201))
+        .unwrap();
+    assert_eq!(first.ready_cycle(), 12);
+    let host = system.host_controller().unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .dram_memory_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        24,
+        PartitionId::new(3),
+        PartitionId::new(3),
+        GuestEventId::new(180),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-dram".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&component, "dram")
+            .unwrap()
+            .len()
+            > 192
+    );
+
+    controller
+        .lock()
+        .unwrap()
+        .accept(12, &memory_write(0x8000, &[0xaa, 0xbb, 0xcc, 0xdd], 202))
+        .unwrap();
+    assert_eq!(
+        &controller
+            .lock()
+            .unwrap()
+            .line_data(target, Address::new(0x8000))
+            .unwrap()[..4],
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+
+    let restore = HostActionRecord::new(
+        36,
+        PartitionId::new(3),
+        PartitionId::new(3),
+        GuestEventId::new(181),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 36,
+            event: GuestEventId::new(181),
+            source,
+            manifest,
+        }
+    );
+    let mut controller = controller.lock().unwrap();
+    assert_eq!(
+        &controller.line_data(target, Address::new(0x8000)).unwrap()[..4],
+        &[0x73, 0x00, 0x00, 0x00]
+    );
+    let bank = controller
+        .dram_controller(target)
+        .unwrap()
+        .bank_state(0)
+        .unwrap();
+    assert_eq!(bank.open_row(), Some(256));
+    assert_eq!(bank.available_cycle(), 12);
+    let row_hit = controller.accept(12, &memory_read(0x8000, 4, 203)).unwrap();
+    assert!(row_hit.dram_access().row_hit());
+    assert_eq!(row_hit.ready_cycle(), 19);
 }
 
 #[test]

@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::{BootError, BootImage};
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
@@ -21,8 +22,10 @@ use rem6_topology::Topology;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 use crate::{
-    GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRun, RiscvSystemRunDriver,
-    RiscvTrapEventPort, SystemError, SystemHostController, SystemHostEventPort,
+    DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEventId, GuestSourceId,
+    HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvTrapEventPort, SystemError, SystemHostController,
+    SystemHostEventPort,
 };
 
 pub struct RiscvTopologySystem {
@@ -74,10 +77,26 @@ struct RiscvTopologyHost {
     driver: RiscvSystemRunDriver,
 }
 
+fn default_memory_checkpoint_component(target: MemoryTargetId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("memory{}", target.get()))
+        .expect("formatted memory checkpoint component is nonempty")
+}
+
+fn default_dram_checkpoint_component(target: MemoryTargetId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("dram{}", target.get()))
+        .expect("formatted DRAM checkpoint component is nonempty")
+}
+
 #[derive(Clone, Debug)]
 enum RiscvTopologyMemoryBackend {
-    Store(Arc<Mutex<PartitionedMemoryStore>>),
-    Dram(Arc<Mutex<DramMemoryController>>),
+    Store {
+        component: CheckpointComponentId,
+        memory: Arc<Mutex<PartitionedMemoryStore>>,
+    },
+    Dram {
+        component: CheckpointComponentId,
+        memory: Arc<Mutex<DramMemoryController>>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,6 +104,7 @@ pub struct RiscvTopologyMemoryConfig {
     target: MemoryTargetId,
     line_layout: CacheLineLayout,
     regions: Vec<RiscvTopologyMemoryRegion>,
+    checkpoint_component: CheckpointComponentId,
 }
 
 impl RiscvTopologyMemoryConfig {
@@ -93,12 +113,18 @@ impl RiscvTopologyMemoryConfig {
             target,
             line_layout,
             regions: Vec::new(),
+            checkpoint_component: default_memory_checkpoint_component(target),
         }
     }
 
     pub fn add_region(mut self, start: Address, size: AccessSize) -> Self {
         self.regions
             .push(RiscvTopologyMemoryRegion::new(start, size));
+        self
+    }
+
+    pub fn with_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
+        self.checkpoint_component = component;
         self
     }
 
@@ -114,6 +140,10 @@ impl RiscvTopologyMemoryConfig {
         &self.regions
     }
 
+    pub fn checkpoint_component(&self) -> &CheckpointComponentId {
+        &self.checkpoint_component
+    }
+
     fn build_store(&self) -> Result<PartitionedMemoryStore, MemoryError> {
         let mut store = PartitionedMemoryStore::new();
         store.add_partition(self.target, self.line_layout)?;
@@ -127,6 +157,7 @@ impl RiscvTopologyMemoryConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvTopologyDramConfig {
     targets: Vec<RiscvTopologyDramTargetConfig>,
+    checkpoint_component: CheckpointComponentId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -185,11 +216,17 @@ impl RiscvTopologyDramConfig {
                 geometry,
                 timing,
             )],
+            checkpoint_component: default_dram_checkpoint_component(target),
         }
     }
 
     pub fn add_region(mut self, start: Address, size: AccessSize) -> Self {
         self.targets[0].memory = self.targets[0].memory.clone().add_region(start, size);
+        self
+    }
+
+    pub fn with_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
+        self.checkpoint_component = component;
         self
     }
 
@@ -248,6 +285,10 @@ impl RiscvTopologyDramConfig {
 
     pub fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
         self.targets[0].regions()
+    }
+
+    pub fn checkpoint_component(&self) -> &CheckpointComponentId {
+        &self.checkpoint_component
     }
 
     fn build_staging_store(&self) -> Result<PartitionedMemoryStore, MemoryError> {
@@ -367,6 +408,7 @@ impl RiscvTopologySystem {
             controller,
             driver: RiscvSystemRunDriver::new(trap_port),
         });
+        self.attach_memory_checkpoint_to_host()?;
         Ok(self)
     }
 
@@ -374,9 +416,11 @@ impl RiscvTopologySystem {
         mut self,
         memory: PartitionedMemoryStore,
     ) -> Result<Self, RiscvTopologySystemError> {
-        self.memory = Some(RiscvTopologyMemoryBackend::Store(Arc::new(Mutex::new(
-            memory,
-        ))));
+        self.memory = Some(RiscvTopologyMemoryBackend::Store {
+            component: default_memory_checkpoint_component(MemoryTargetId::new(0)),
+            memory: Arc::new(Mutex::new(memory)),
+        });
+        self.attach_memory_checkpoint_to_host()?;
         Ok(self)
     }
 
@@ -391,9 +435,11 @@ impl RiscvTopologySystem {
         image
             .load_into_partitioned_store(&mut memory, config.target())
             .map_err(RiscvTopologySystemError::Boot)?;
-        self.memory = Some(RiscvTopologyMemoryBackend::Store(Arc::new(Mutex::new(
-            memory,
-        ))));
+        self.memory = Some(RiscvTopologyMemoryBackend::Store {
+            component: config.checkpoint_component().clone(),
+            memory: Arc::new(Mutex::new(memory)),
+        });
+        self.attach_memory_checkpoint_to_host()?;
         Ok(self)
     }
 
@@ -420,9 +466,11 @@ impl RiscvTopologySystem {
             }
         }
 
-        self.memory = Some(RiscvTopologyMemoryBackend::Dram(Arc::new(Mutex::new(
-            controller,
-        ))));
+        self.memory = Some(RiscvTopologyMemoryBackend::Dram {
+            component: config.checkpoint_component().clone(),
+            memory: Arc::new(Mutex::new(controller)),
+        });
+        self.attach_memory_checkpoint_to_host()?;
         Ok(self)
     }
 
@@ -456,15 +504,15 @@ impl RiscvTopologySystem {
 
     pub fn memory_store(&self) -> Option<&Arc<Mutex<PartitionedMemoryStore>>> {
         match self.memory.as_ref()? {
-            RiscvTopologyMemoryBackend::Store(memory) => Some(memory),
-            RiscvTopologyMemoryBackend::Dram(_) => None,
+            RiscvTopologyMemoryBackend::Store { memory, .. } => Some(memory),
+            RiscvTopologyMemoryBackend::Dram { .. } => None,
         }
     }
 
     pub fn dram_memory_controller(&self) -> Option<&Arc<Mutex<DramMemoryController>>> {
         match self.memory.as_ref()? {
-            RiscvTopologyMemoryBackend::Store(_) => None,
-            RiscvTopologyMemoryBackend::Dram(memory) => Some(memory),
+            RiscvTopologyMemoryBackend::Store { .. } => None,
+            RiscvTopologyMemoryBackend::Dram { memory, .. } => Some(memory),
         }
     }
 
@@ -598,6 +646,46 @@ impl RiscvTopologySystem {
             .clone();
         self.drive_until_host_stop_parallel(&driver, fetch_trace, data_trace, max_turns, event_for)
     }
+
+    fn attach_memory_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
+        let Some(host) = self.host.as_ref() else {
+            return Ok(());
+        };
+        let Some(memory) = self.memory.as_ref() else {
+            return Ok(());
+        };
+        let mut host = host
+            .controller
+            .lock()
+            .expect("topology host controller lock");
+        match memory {
+            RiscvTopologyMemoryBackend::Store { component, memory } => {
+                let bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+                    component.clone(),
+                    Arc::clone(memory),
+                )])
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+                host.executor_mut()
+                    .attach_memory_checkpoint_bank(bank)
+                    .map_err(SystemError::Checkpoint)
+                    .map_err(RiscvTopologySystemError::System)?;
+            }
+            RiscvTopologyMemoryBackend::Dram { component, memory } => {
+                let bank = DramMemoryCheckpointBank::new([DramMemoryCheckpointPort::new(
+                    component.clone(),
+                    Arc::clone(memory),
+                )])
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+                host.executor_mut()
+                    .attach_dram_memory_checkpoint_bank(bank)
+                    .map_err(SystemError::Checkpoint)
+                    .map_err(RiscvTopologySystemError::System)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -663,7 +751,7 @@ fn topology_memory_response(
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
     match memory {
-        RiscvTopologyMemoryBackend::Store(memory) => match memory
+        RiscvTopologyMemoryBackend::Store { memory, .. } => match memory
             .lock()
             .expect("topology memory store lock")
             .respond(delivery.request())
@@ -678,7 +766,7 @@ fn topology_memory_response(
                 TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
             }
         },
-        RiscvTopologyMemoryBackend::Dram(memory) => match memory
+        RiscvTopologyMemoryBackend::Dram { memory, .. } => match memory
             .lock()
             .expect("topology DRAM memory lock")
             .accept(delivery.tick(), delivery.request())
