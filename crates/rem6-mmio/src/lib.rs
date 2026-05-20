@@ -319,6 +319,39 @@ impl MmioRegister {
     }
 }
 
+pub trait MmioDevice: Send + Sync {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError>;
+}
+
+impl<T> MmioDevice for Arc<T>
+where
+    T: MmioDevice + ?Sized,
+{
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        (**self).respond(context, request)
+    }
+}
+
+impl MmioDevice for Mutex<MmioRegisterBank> {
+    fn respond(
+        &self,
+        _context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.lock()
+            .expect("mmio register bank device lock")
+            .respond(request)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MmioRouteLatency {
     Request,
@@ -500,6 +533,129 @@ impl MmioChannel {
     }
 }
 
+#[derive(Clone)]
+pub struct MmioBus {
+    devices: Vec<MmioDeviceEntry>,
+}
+
+impl MmioBus {
+    pub const fn new() -> Self {
+        Self {
+            devices: Vec::new(),
+        }
+    }
+
+    pub fn device_count(&self) -> usize {
+        self.devices.len()
+    }
+
+    pub fn insert_device<F>(
+        &mut self,
+        range: AddressRange,
+        route: MmioRoute,
+        device: F,
+    ) -> Result<(), MmioError>
+    where
+        F: MmioDevice + 'static,
+    {
+        if let Some(existing) = self
+            .devices
+            .iter()
+            .find(|device| device.range.overlaps(range))
+        {
+            return Err(MmioError::OverlappingDeviceRegion {
+                existing_start: existing.range.start(),
+                existing_end: existing.range.end(),
+                requested_start: range.start(),
+                requested_end: range.end(),
+            });
+        }
+
+        self.devices.push(MmioDeviceEntry {
+            range,
+            channel: MmioChannel::new(route),
+            device: Arc::new(device),
+        });
+        self.devices
+            .sort_by_key(|device| device.range.start().get());
+        Ok(())
+    }
+
+    pub fn route_for(&self, request: &MmioRequest) -> Result<MmioRoute, MmioError> {
+        Ok(self.device_for(request)?.channel.route())
+    }
+
+    pub fn response_errors(&self) -> Vec<MmioError> {
+        let mut errors = Vec::new();
+        for device in &self.devices {
+            errors.extend(
+                device
+                    .channel
+                    .response_errors()
+                    .lock()
+                    .expect("mmio bus response error lock")
+                    .iter()
+                    .cloned(),
+            );
+        }
+        errors
+    }
+
+    pub fn submit<G>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: MmioRequest,
+        completion_sink: G,
+    ) -> Result<PartitionEventId, MmioError>
+    where
+        G: FnOnce(MmioCompletion) + Send + 'static,
+    {
+        let device = self.device_for(&request)?.clone();
+        let responder = Arc::clone(&device.device);
+        device.channel.submit(
+            context,
+            request,
+            move |delivery, context| responder.respond(context, delivery.request()),
+            completion_sink,
+        )
+    }
+
+    fn device_for(&self, request: &MmioRequest) -> Result<&MmioDeviceEntry, MmioError> {
+        let requested = request.range();
+        for device in &self.devices {
+            if device.range.contains(requested.start()) {
+                if !device.range.contains_range(requested) {
+                    return Err(MmioError::DeviceBoundaryCrossed {
+                        request: request.id(),
+                        device_start: device.range.start(),
+                        device_end: device.range.end(),
+                        requested_start: requested.start(),
+                        requested_end: requested.end(),
+                    });
+                }
+                return Ok(device);
+            }
+        }
+
+        Err(MmioError::UnmappedAddress {
+            address: requested.start(),
+        })
+    }
+}
+
+impl Default for MmioBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+struct MmioDeviceEntry {
+    range: AddressRange,
+    channel: MmioChannel,
+    device: Arc<dyn MmioDevice>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MmioError {
     Memory(MemoryError),
@@ -523,6 +679,12 @@ pub enum MmioError {
         requested_start: Address,
         requested_end: Address,
     },
+    OverlappingDeviceRegion {
+        existing_start: Address,
+        existing_end: Address,
+        requested_start: Address,
+        requested_end: Address,
+    },
     UnmappedAddress {
         address: Address,
     },
@@ -530,6 +692,13 @@ pub enum MmioError {
         request: MmioRequestId,
         register_start: Address,
         register_end: Address,
+        requested_start: Address,
+        requested_end: Address,
+    },
+    DeviceBoundaryCrossed {
+        request: MmioRequestId,
+        device_start: Address,
+        device_end: Address,
         requested_start: Address,
         requested_end: Address,
     },
@@ -613,6 +782,19 @@ impl fmt::Display for MmioError {
                 existing_start.get(),
                 existing_end.get()
             ),
+            Self::OverlappingDeviceRegion {
+                existing_start,
+                existing_end,
+                requested_start,
+                requested_end,
+            } => write!(
+                formatter,
+                "MMIO device region {:#x}..{:#x} overlaps existing region {:#x}..{:#x}",
+                requested_start.get(),
+                requested_end.get(),
+                existing_start.get(),
+                existing_end.get()
+            ),
             Self::UnmappedAddress { address } => {
                 write!(formatter, "MMIO address {:#x} is not mapped", address.get())
             }
@@ -628,6 +810,21 @@ impl fmt::Display for MmioError {
                 request.get(),
                 register_start.get(),
                 register_end.get(),
+                requested_start.get(),
+                requested_end.get()
+            ),
+            Self::DeviceBoundaryCrossed {
+                request,
+                device_start,
+                device_end,
+                requested_start,
+                requested_end,
+            } => write!(
+                formatter,
+                "MMIO request {} crosses device region {:#x}..{:#x} with access {:#x}..{:#x}",
+                request.get(),
+                device_start.get(),
+                device_end.get(),
                 requested_start.get(),
                 requested_end.get()
             ),

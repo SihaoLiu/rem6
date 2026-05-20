@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use rem6_interrupt::{InterruptError, InterruptLinePort, InterruptSourceId};
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
 use rem6_memory::{Address, ByteMask};
-use rem6_mmio::{MmioAccess, MmioError, MmioOperation, MmioRequest, MmioResponse};
+use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
 pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;
 pub const TIMER_MMIO_TIME_OFFSET: u64 = 0x00;
@@ -363,6 +363,16 @@ impl TimerMmioDevice {
         let mut deadline = [0; 8];
         deadline.copy_from_slice(&bytes);
         Ok(Tick::from_le_bytes(deadline))
+    }
+}
+
+impl MmioDevice for TimerMmioDevice {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        TimerMmioDevice::respond(self, context, request)
     }
 }
 

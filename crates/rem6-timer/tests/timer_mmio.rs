@@ -5,10 +5,10 @@ use rem6_interrupt::{
     InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, ByteMask};
+use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
 use rem6_mmio::{
-    MmioAccess, MmioChannel, MmioCompletion, MmioError, MmioOperation, MmioRequest, MmioRequestId,
-    MmioResponse, MmioRoute,
+    MmioAccess, MmioBus, MmioChannel, MmioCompletion, MmioError, MmioOperation, MmioRequest,
+    MmioRequestId, MmioResponse, MmioRoute,
 };
 use rem6_timer::{
     ProgrammableTimer, TimerArm, TimerExpiry, TimerId, TimerMmioDevice, TIMER_MMIO_DEADLINE_OFFSET,
@@ -94,6 +94,70 @@ fn timer_mmio_write_deadline_arms_timer_and_delivers_interrupt() {
         controller.lock().unwrap().history(),
         &[InterruptEvent::routed(
             12,
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
+fn timer_mmio_bus_decodes_timer_region_and_programs_deadline() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(12);
+    let line = InterruptLineId::new(33);
+    let (timer, controller, device) = build_timer(cpu, timer_partition, line, source);
+    let route = MmioRoute::new(cpu, timer_partition, 3, 1).unwrap();
+    let mut bus = MmioBus::new();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    bus.insert_device(
+        AddressRange::new(Address::new(0x5000), AccessSize::new(0x100).unwrap()).unwrap(),
+        route,
+        device,
+    )
+    .unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(7),
+                    Address::new(0x5000 + TIMER_MMIO_DEADLINE_OFFSET),
+                    le64(9),
+                    full_u64_mask(),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 5);
+    assert_eq!(summary.final_tick(), 11);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[MmioCompletion::new(
+            5,
+            route,
+            Ok(MmioResponse::completed(MmioRequestId::new(7), None)),
+        )]
+    );
+    assert_eq!(timer.snapshot().arms(), &[TimerArm::new(1, 4, 9)]);
+    assert_eq!(timer.snapshot().expiries(), &[TimerExpiry::new(1, 9)]);
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            11,
             line,
             InterruptTargetId::new(0),
             cpu,
