@@ -3,12 +3,14 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
-    RiscvCoreDriveAction, RiscvDataAccessEventKind,
+    RiscvCoreDriveAction, RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
+    PartitionedMemoryStore,
 };
+use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy, RiscvInstructionStats,
@@ -527,4 +529,200 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
             ]
         );
     }
+}
+
+#[test]
+fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(34);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        cpu0_fetch,
+        "cpu0.dmem",
+        cpu0_data,
+        0x8000,
+    );
+    let core1 = riscv_data_core(
+        1,
+        1,
+        8,
+        "cpu1.ifetch",
+        cpu1_fetch,
+        "cpu1.dmem",
+        cpu1_data,
+        0x9000,
+    );
+    core0.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x1000);
+    core1.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
+    let cluster = RiscvCluster::new([core0, core1]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+            (0x9000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x9004, 0x0010_0073),
+        ],
+        &[(0x9818, vec![0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab])],
+    );
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe],
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    let mmio_route = MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 2).unwrap();
+    bus.insert_device(
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+        mmio_route,
+        Mutex::new(bank),
+    )
+    .unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_mmio(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            30,
+            |cpu| GuestEventId::new(110 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(110), source, 0);
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert!(run.turns().iter().any(|turn| {
+        !turn.core_events().is_empty()
+            && turn.core_events().iter().all(|event| {
+                matches!(
+                    event.action(),
+                    RiscvCoreDriveAction::DataAccessIssued { .. }
+                )
+            })
+    }));
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        cluster
+            .core(CpuId::new(1))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        0xabcd_ef01_2345_6789
+    );
+
+    let cpu0_events = cluster.core(CpuId::new(0)).unwrap().data_access_events();
+    let cpu1_events = cluster.core(CpuId::new(1)).unwrap().data_access_events();
+    assert_eq!(
+        cpu0_events
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert_eq!(
+        cpu1_events
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert_eq!(
+        cpu0_events[0].target(),
+        RiscvDataAccessTarget::Mmio { route: mmio_route }
+    );
+    assert!(matches!(
+        cpu1_events[0].target(),
+        RiscvDataAccessTarget::Memory { route, .. } if route == cpu1_data
+    ));
 }

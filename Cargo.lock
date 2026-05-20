@@ -140,6 +140,7 @@ dependencies = [
  "rem6-isa-riscv",
  "rem6-kernel",
  "rem6-memory",
+ "rem6-mmio",
  "rem6-stats",
  "rem6-transport",
 ]
