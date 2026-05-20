@@ -23,6 +23,55 @@ fn uart_range(base: Address) -> AddressRange {
     AddressRange::new(base, AccessSize::new(0x100).unwrap()).unwrap()
 }
 
+fn write_byte(uart: &UartMmioDevice, tick: u64, byte: u8) {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let base = uart.base();
+    let uart = uart.clone();
+    scheduler
+        .schedule_at(PartitionId::new(0), tick, move |context| {
+            uart.respond(
+                context,
+                &MmioRequest::write(
+                    MmioRequestId::new(100 + tick),
+                    Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                    vec![byte],
+                    byte_mask(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+}
+
+fn read_byte(uart: &UartMmioDevice, tick: u64) -> u8 {
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+    let base = uart.base();
+    let uart = uart.clone();
+    let read = Arc::new(Mutex::new(None));
+    let read_result = Arc::clone(&read);
+    scheduler
+        .schedule_at(PartitionId::new(0), tick, move |context| {
+            let response = uart
+                .respond(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(200 + tick),
+                        Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                        AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            *read_result.lock().unwrap() = Some(response.data().unwrap()[0]);
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+    let byte = read.lock().unwrap().unwrap();
+    byte
+}
+
 #[test]
 fn uart_mmio_bus_records_transmitted_bytes_and_status() {
     let cpu = PartitionId::new(0);
@@ -113,6 +162,29 @@ fn uart_mmio_bus_records_transmitted_bytes_and_status() {
             ),
         ]
     );
+}
+
+#[test]
+fn uart_snapshot_restore_reinstates_tx_and_rx_state() {
+    let base = Address::new(0x6400);
+    let uart = UartMmioDevice::new(UartId::new(8), base);
+    uart.inject_rx([b'A', b'B']).unwrap();
+    write_byte(&uart, 3, b'O');
+    let captured = uart.snapshot();
+
+    write_byte(&uart, 4, b'X');
+    assert_eq!(read_byte(&uart, 5), b'A');
+    uart.inject_rx([b'C']).unwrap();
+    assert_ne!(uart.snapshot(), captured);
+
+    uart.restore(&captured);
+
+    assert_eq!(uart.snapshot(), captured);
+    assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(3, b'O')]);
+    assert_eq!(uart.snapshot().rx_pending(), b"AB");
+    assert_eq!(read_byte(&uart, 6), b'A');
+    assert_eq!(read_byte(&uart, 7), b'B');
+    assert!(uart.snapshot().rx_pending().is_empty());
 }
 
 #[test]

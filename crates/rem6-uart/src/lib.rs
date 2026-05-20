@@ -158,6 +158,10 @@ impl UartMmioDevice {
         self.state.lock().expect("uart state lock").snapshot()
     }
 
+    pub fn restore(&self, snapshot: &UartSnapshot) {
+        *self.state.lock().expect("uart state lock") = UartState::from_snapshot(snapshot);
+    }
+
     pub fn respond(
         &self,
         context: &mut SchedulerContext<'_>,
@@ -573,6 +577,16 @@ impl UartState {
             rx_pending: self.rx_pending.iter().copied().collect(),
             rx_consumed: self.rx_consumed.clone(),
             interrupt_errors: self.interrupt_errors.clone(),
+        }
+    }
+
+    fn from_snapshot(snapshot: &UartSnapshot) -> Self {
+        Self {
+            tx_bytes: snapshot.tx_bytes().to_vec(),
+            rx_injected: snapshot.rx_injected().to_vec(),
+            rx_pending: snapshot.rx_pending().iter().copied().collect(),
+            rx_consumed: snapshot.rx_consumed().to_vec(),
+            interrupt_errors: snapshot.interrupt_errors().to_vec(),
         }
     }
 }
