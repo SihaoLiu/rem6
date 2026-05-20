@@ -3,7 +3,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{InterruptError, InterruptLinePort, InterruptSourceId};
-use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
@@ -234,6 +236,44 @@ impl ProgrammableTimer {
                     .expire(generation, context.now());
                 if should_fire {
                     if let Err(error) = interrupt.assert(context, source) {
+                        state.lock().expect("timer state lock").record_signal_error(
+                            generation,
+                            context.now(),
+                            error,
+                        );
+                    }
+                }
+            })
+            .map_err(TimerError::Scheduler)
+    }
+
+    pub fn arm_at_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        deadline: Tick,
+    ) -> Result<PartitionEventId, TimerError> {
+        let now = context.now();
+        if deadline < now {
+            return Err(TimerError::DeadlineInPast { now, deadline });
+        }
+
+        let generation = {
+            let mut state = self.state.lock().expect("timer state lock");
+            state.arm(now, deadline)
+        };
+        let delay = deadline - now;
+        let state = Arc::clone(&self.state);
+        let interrupt = self.interrupt.clone();
+        let source = self.source;
+
+        context
+            .schedule_remote_after(self.partition, delay, move |context| {
+                let should_fire = state
+                    .lock()
+                    .expect("timer state lock")
+                    .expire(generation, context.now());
+                if should_fire {
+                    if let Err(error) = interrupt.assert_parallel(context, source) {
                         state.lock().expect("timer state lock").record_signal_error(
                             generation,
                             context.now(),

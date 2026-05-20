@@ -65,6 +65,63 @@ fn programmed_timer_delivers_interrupt_at_deadline() {
 }
 
 #[test]
+fn programmed_timer_delivers_interrupt_at_deadline_on_parallel_scheduler() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(15);
+    let route = InterruptRoute::new(InterruptLineId::new(25), InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let timer = ProgrammableTimer::new(TimerId::new(4), timer_partition, source, port);
+    let observed_timer = timer.clone();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(cpu, 3, move |context| {
+            timer.arm_at_parallel(context, 10).unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(summary.final_tick(), 12);
+    assert_eq!(observed_timer.snapshot().arms(), &[TimerArm::new(1, 3, 10)]);
+    assert_eq!(
+        observed_timer.snapshot().expiries(),
+        &[TimerExpiry::new(1, 10)]
+    );
+    assert_eq!(observed_timer.snapshot().next_deadline(), None);
+    assert!(observed_timer.snapshot().signal_errors().is_empty());
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.pending(),
+        vec![PendingInterrupt::routed(
+            InterruptLineId::new(25),
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            12,
+        )]
+    );
+    assert_eq!(
+        controller.history(),
+        &[InterruptEvent::routed(
+            12,
+            InterruptLineId::new(25),
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
 fn programmed_timer_rearm_invalidates_stale_deadline() {
     let cpu = PartitionId::new(0);
     let timer_partition = PartitionId::new(1);

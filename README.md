@@ -14,8 +14,8 @@ RV64I core actions, RV64I multicore cluster driving, deterministic ready-core
 sweeps, host-side RISC-V cluster turns, bounded RISC-V cluster run traces, RV64I
 decode, architectural execution, typed RISC-V traps, scheduler-delivered trap
 events, CPU pending-trap host delivery,
-scheduler-owned serial and parallel CPU trap scheduling, parallel interrupt
-signal delivery, host-stopped parallel RISC-V system cluster runs, RISC-V
+scheduler-owned serial and parallel CPU trap scheduling, parallel interrupt and
+timer signal delivery, host-stopped parallel RISC-V system cluster runs, RISC-V
 committed-instruction stats, host-integrated full-system checkpoint capture and
 restore, MMIO, timers, UART devices, platform assembly, memory transactions and
 storage, serial and parallel memory transport, memory store snapshots and
