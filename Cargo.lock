@@ -46,6 +46,7 @@ version = "0.1.0"
 dependencies = [
  "rem6-boot",
  "rem6-cache",
+ "rem6-isa-riscv",
  "rem6-kernel",
  "rem6-memory",
  "rem6-transport",

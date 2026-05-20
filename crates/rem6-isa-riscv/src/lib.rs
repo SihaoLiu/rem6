@@ -329,6 +329,10 @@ impl RiscvHartState {
         self.pc
     }
 
+    pub fn set_pc(&mut self, pc: u64) {
+        self.pc = pc;
+    }
+
     pub fn read(&self, register: Register) -> u64 {
         if register.is_zero() {
             0

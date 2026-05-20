@@ -1,9 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
+use rem6_isa_riscv::{
+    Register, RiscvError, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
+};
 use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, Tick};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -158,6 +161,10 @@ impl CpuCore {
 
     pub fn fetch_events(&self) -> Vec<CpuFetchEvent> {
         self.state.lock().expect("cpu core lock").events.clone()
+    }
+
+    fn set_pc(&self, pc: Address) {
+        self.state.lock().expect("cpu core lock").pc = pc;
     }
 
     pub fn issue_next_fetch<F>(
@@ -723,6 +730,225 @@ impl Error for CpuError {
         match self {
             Self::Memory(error) => Some(error),
             Self::Transport(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RiscvCore {
+    core: CpuCore,
+    state: Arc<Mutex<RiscvCoreState>>,
+}
+
+impl RiscvCore {
+    pub fn new(core: CpuCore) -> Self {
+        let pc = core.pc().get();
+        Self {
+            core,
+            state: Arc::new(Mutex::new(RiscvCoreState::new(pc))),
+        }
+    }
+
+    pub fn inner(&self) -> CpuCore {
+        self.core.clone()
+    }
+
+    pub fn pc(&self) -> Address {
+        Address::new(self.state.lock().expect("riscv core lock").hart.pc())
+    }
+
+    pub fn read_register(&self, register: Register) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .read(register)
+    }
+
+    pub fn write_register(&self, register: Register, value: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .write(register, value);
+    }
+
+    pub fn redirect_pc(&self, pc: Address) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_pc(pc.get());
+        self.core.set_pc(pc);
+    }
+
+    pub fn execution_events(&self) -> Vec<RiscvCpuExecutionEvent> {
+        self.state.lock().expect("riscv core lock").events.clone()
+    }
+
+    pub fn issue_next_fetch<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<PartitionEventId, CpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        self.core
+            .issue_next_fetch(scheduler, transport, trace, responder)
+    }
+
+    pub fn execute_next_completed_fetch(
+        &self,
+    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
+        let fetch_events = self.core.fetch_events();
+        let mut state = self.state.lock().expect("riscv core lock");
+        let Some(fetch) = fetch_events.into_iter().find(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && !state.executed_fetches.contains(&event.request_id())
+        }) else {
+            return Ok(None);
+        };
+
+        let architectural = Address::new(state.hart.pc());
+        if fetch.pc() != architectural {
+            return Err(RiscvCpuError::PcMismatch {
+                fetch: fetch.pc(),
+                architectural,
+            });
+        }
+
+        let data = fetch.data().ok_or(RiscvCpuError::MissingFetchData {
+            request: fetch.request_id(),
+        })?;
+        if data.len() != 4 {
+            return Err(RiscvCpuError::InvalidFetchWidth {
+                request: fetch.request_id(),
+                bytes: data.len() as u64,
+            });
+        }
+        let raw = u32::from_le_bytes(data.try_into().expect("fetch width checked"));
+        let instruction = RiscvInstruction::decode(raw).map_err(RiscvCpuError::Isa)?;
+        let execution = state
+            .hart
+            .execute(instruction)
+            .map_err(RiscvCpuError::Isa)?;
+        let next_pc = Address::new(execution.next_pc());
+        self.core.set_pc(next_pc);
+
+        let event = RiscvCpuExecutionEvent::new(fetch.clone(), instruction, execution);
+        state.executed_fetches.insert(fetch.request_id());
+        state.events.push(event.clone());
+        Ok(Some(event))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RiscvCoreState {
+    hart: RiscvHartState,
+    executed_fetches: BTreeSet<MemoryRequestId>,
+    events: Vec<RiscvCpuExecutionEvent>,
+}
+
+impl RiscvCoreState {
+    fn new(pc: u64) -> Self {
+        Self {
+            hart: RiscvHartState::new(pc),
+            executed_fetches: BTreeSet::new(),
+            events: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvCpuExecutionEvent {
+    fetch: CpuFetchEvent,
+    instruction: RiscvInstruction,
+    execution: RiscvExecutionRecord,
+}
+
+impl RiscvCpuExecutionEvent {
+    pub const fn new(
+        fetch: CpuFetchEvent,
+        instruction: RiscvInstruction,
+        execution: RiscvExecutionRecord,
+    ) -> Self {
+        Self {
+            fetch,
+            instruction,
+            execution,
+        }
+    }
+
+    pub fn fetch(&self) -> &CpuFetchEvent {
+        &self.fetch
+    }
+
+    pub fn fetch_pc(&self) -> Address {
+        self.fetch.pc()
+    }
+
+    pub const fn instruction(&self) -> RiscvInstruction {
+        self.instruction
+    }
+
+    pub fn execution(&self) -> &RiscvExecutionRecord {
+        &self.execution
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvCpuError {
+    MissingFetchData {
+        request: MemoryRequestId,
+    },
+    InvalidFetchWidth {
+        request: MemoryRequestId,
+        bytes: u64,
+    },
+    PcMismatch {
+        fetch: Address,
+        architectural: Address,
+    },
+    Isa(RiscvError),
+}
+
+impl fmt::Display for RiscvCpuError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingFetchData { request } => write!(
+                formatter,
+                "fetch response {} from agent {} has no instruction bytes",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::InvalidFetchWidth { request, bytes } => write!(
+                formatter,
+                "fetch response {} from agent {} has {bytes} bytes instead of 4",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::PcMismatch {
+                fetch,
+                architectural,
+            } => write!(
+                formatter,
+                "fetch pc {:#x} does not match architectural pc {:#x}",
+                fetch.get(),
+                architectural.get()
+            ),
+            Self::Isa(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for RiscvCpuError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Isa(error) => Some(error),
             _ => None,
         }
     }
