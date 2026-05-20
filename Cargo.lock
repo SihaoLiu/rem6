@@ -134,6 +134,7 @@ name = "rem6-system"
 version = "0.1.0"
 dependencies = [
  "rem6-checkpoint",
+ "rem6-isa-riscv",
  "rem6-kernel",
  "rem6-stats",
 ]

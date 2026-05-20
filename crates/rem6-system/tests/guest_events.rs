@@ -1,10 +1,13 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
-    HostAction, HostActionRecord, HostEventPolicy, StopRequest, SystemError, SystemEventPort,
-    SystemRunController,
+    GuestTrap, GuestTrapKind, HostAction, HostActionRecord, HostEventPolicy, RiscvTrapEventPort,
+    StopRequest, SystemActionOutcome, SystemError, SystemEventPort, SystemHostController,
+    SystemHostEventPort, SystemRunController,
 };
 
 #[test]
@@ -315,5 +318,73 @@ fn system_event_port_delivers_guest_events_into_controller() {
     assert_eq!(
         controller.stop_request(),
         Some(&StopRequest::new(7, GuestEventId::new(42), source, 0))
+    );
+}
+
+#[test]
+fn riscv_trap_event_port_routes_traps_into_host_controller() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(13);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(guest, 5, move |context| {
+            trap_port
+                .emit(
+                    context,
+                    GuestEventId::new(50),
+                    RiscvTrap::new(RiscvTrapKind::EnvironmentCall, 0x8000),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert_eq!(summary.final_tick(), 7);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[GuestEventDelivery::new(
+            7,
+            guest,
+            host,
+            GuestEvent::new(
+                GuestEventId::new(50),
+                source,
+                GuestEventKind::Trap {
+                    trap: GuestTrap::new(GuestTrapKind::EnvironmentCall, 0x8000),
+                },
+            ),
+        )]
+    );
+    assert_eq!(
+        controller.run().action_records(),
+        &[HostActionRecord::new(
+            7,
+            guest,
+            host,
+            GuestEventId::new(50),
+            source,
+            HostAction::Stop { code: 0 },
+        )]
+    );
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[SystemActionOutcome::Stop(StopRequest::new(
+            7,
+            GuestEventId::new(50),
+            source,
+            0,
+        ))]
     );
 }

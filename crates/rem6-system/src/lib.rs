@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
+use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick};
 use rem6_stats::{StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 
@@ -66,7 +67,43 @@ pub enum GuestEventKind {
     StatsReset,
     StatsDump,
     Checkpoint { label: String },
+    Trap { trap: GuestTrap },
     Terminate { code: i32 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuestTrapKind {
+    EnvironmentCall,
+    Breakpoint,
+}
+
+impl GuestTrapKind {
+    pub const fn default_stop_code(self) -> i32 {
+        match self {
+            Self::EnvironmentCall => 0,
+            Self::Breakpoint => 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GuestTrap {
+    kind: GuestTrapKind,
+    pc: u64,
+}
+
+impl GuestTrap {
+    pub const fn new(kind: GuestTrapKind, pc: u64) -> Self {
+        Self { kind, pc }
+    }
+
+    pub const fn kind(self) -> GuestTrapKind {
+        self.kind
+    }
+
+    pub const fn pc(self) -> u64 {
+        self.pc
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -239,6 +276,9 @@ impl HostEventPolicy {
             GuestEventKind::RoiEnd | GuestEventKind::StatsDump => vec![HostAction::DumpStats],
             GuestEventKind::Checkpoint { label } => vec![HostAction::Checkpoint {
                 label: label.clone(),
+            }],
+            GuestEventKind::Trap { trap } => vec![HostAction::Stop {
+                code: trap.kind().default_stop_code(),
             }],
             GuestEventKind::Terminate { code } => vec![HostAction::Stop { code: *code }],
         }
@@ -629,6 +669,55 @@ impl SystemHostEventPort {
                 .expect("system host controller lock")
                 .handle_delivery(delivery);
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RiscvTrapEventPort {
+    host: SystemHostEventPort,
+    source: GuestSourceId,
+}
+
+impl RiscvTrapEventPort {
+    pub const fn new(host: SystemHostEventPort, source: GuestSourceId) -> Self {
+        Self { host, source }
+    }
+
+    pub const fn source(&self) -> GuestSourceId {
+        self.source
+    }
+
+    pub fn controller(&self) -> Arc<Mutex<SystemHostController>> {
+        self.host.controller()
+    }
+
+    pub fn emit(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEventId,
+        trap: RiscvTrap,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.host.emit(
+            context,
+            GuestEvent::new(
+                event,
+                self.source,
+                GuestEventKind::Trap {
+                    trap: guest_trap_from_riscv(trap),
+                },
+            ),
+        )
+    }
+}
+
+pub const fn guest_trap_from_riscv(trap: RiscvTrap) -> GuestTrap {
+    GuestTrap::new(guest_trap_kind_from_riscv(trap.kind()), trap.pc())
+}
+
+pub const fn guest_trap_kind_from_riscv(kind: RiscvTrapKind) -> GuestTrapKind {
+    match kind {
+        RiscvTrapKind::EnvironmentCall => GuestTrapKind::EnvironmentCall,
+        RiscvTrapKind::Breakpoint => GuestTrapKind::Breakpoint,
     }
 }
 
