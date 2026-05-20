@@ -1,14 +1,18 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCpuError};
+use rem6_cpu::{
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCpuError,
+    RiscvDataAccessEventKind,
+};
 use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId,
+    PartitionedMemoryStore,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -37,6 +41,16 @@ fn j_type(imm: i32, rd: u8) -> u32 {
         | 0x6f
 }
 
+fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
+    let imm = (imm as u32) & 0x0fff;
+    (((imm >> 5) & 0x7f) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | opcode
+}
+
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
@@ -63,6 +77,13 @@ fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
     .unwrap()
 }
 
+fn data_core(fetch_route: MemoryRouteId, data_route: MemoryRouteId, entry: u64) -> RiscvCore {
+    RiscvCore::with_data(
+        core(fetch_route, entry),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, layout()),
+    )
+}
+
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
@@ -80,6 +101,70 @@ fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStor
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
     Arc::new(Mutex::new(store))
+}
+
+fn loaded_store_with_data(
+    entry: u64,
+    instruction: u32,
+    data_address: u64,
+    data: Vec<u8>,
+) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), word(instruction))
+        .unwrap()
+        .add_segment(Address::new(data_address), data)
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn data_routes() -> (
+    PartitionedScheduler,
+    MemoryTransport,
+    MemoryRouteId,
+    MemoryRouteId,
+) {
+    let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    (scheduler, transport, fetch_route, data_route)
 }
 
 fn fetch_one(
@@ -100,6 +185,29 @@ fn fetch_one(
             .unwrap();
         TargetOutcome::Respond(response)
     })
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+}
+
+fn issue_one_data_access(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    trace: MemoryTrace,
+) {
+    core.issue_next_data_access(scheduler, transport, trace, move |delivery, _context| {
+        let response = store
+            .lock()
+            .unwrap()
+            .respond(delivery.request())
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+        TargetOutcome::Respond(response)
+    })
+    .unwrap()
     .unwrap();
     scheduler.run_until_idle_conservative();
 }
@@ -216,6 +324,120 @@ fn riscv_core_reports_load_store_accesses_without_memory_side_effects() {
         })
     );
     assert_eq!(core.read_register(reg(5)), 0);
+}
+
+#[test]
+fn riscv_core_issues_load_access_and_updates_register_after_response() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(core.read_register(reg(5)), 0);
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed
+        ]
+    );
+    assert_eq!(events[0].request_id().sequence(), 1);
+    assert_eq!(
+        events[0].access(),
+        &MemoryAccessKind::Load {
+            rd: reg(5),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            signed: true,
+        }
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::ReadShared);
+    assert_eq!(
+        events[1].data(),
+        Some(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..])
+    );
+}
+
+#[test]
+fn riscv_core_sign_extends_signed_load_response() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(0, 2, 0x2, 5, 0x03),
+        0x9000,
+        vec![0x00, 0x00, 0x00, 0x80],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    assert_eq!(core.read_register(reg(5)), 0xffff_ffff_8000_0000);
+}
+
+#[test]
+fn riscv_core_issues_store_access_through_memory_transport() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    core.write_register(reg(3), 0x1122_3344_5566_7788);
+    let store = loaded_store_with_data(0x8000, s_type(8, 3, 2, 0x3, 0x23), 0x9000, vec![0; 16]);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    let line = store
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x9000))
+        .unwrap();
+    assert_eq!(
+        &line[8..16],
+        &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+    );
+    let events = core.data_access_events();
+    assert_eq!(events[0].operation(), MemoryOperation::Write);
+    assert_eq!(events[1].kind(), RiscvDataAccessEventKind::Completed);
+    assert_eq!(events[1].data(), None);
 }
 
 #[test]

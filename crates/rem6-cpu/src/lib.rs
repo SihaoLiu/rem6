@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
-    Register, RiscvError, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
+    MemoryAccessKind, MemoryWidth, Register, RiscvError, RiscvExecutionRecord, RiscvHartState,
+    RiscvInstruction,
 };
 use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, Tick};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
-    MemoryRequestId, ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
+    MemoryRequest, MemoryRequestId, ResponseStatus,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
@@ -114,6 +115,39 @@ impl CpuFetchConfig {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CpuDataConfig {
+    endpoint: TransportEndpointId,
+    route: MemoryRouteId,
+    line_layout: CacheLineLayout,
+}
+
+impl CpuDataConfig {
+    pub const fn new(
+        endpoint: TransportEndpointId,
+        route: MemoryRouteId,
+        line_layout: CacheLineLayout,
+    ) -> Self {
+        Self {
+            endpoint,
+            route,
+            line_layout,
+        }
+    }
+
+    pub fn endpoint(&self) -> &TransportEndpointId {
+        &self.endpoint
+    }
+
+    pub const fn route(&self) -> MemoryRouteId {
+        self.route
+    }
+
+    pub const fn line_layout(&self) -> CacheLineLayout {
+        self.line_layout
+    }
+}
+
 #[derive(Clone)]
 pub struct CpuCore {
     state: Arc<Mutex<CpuCoreState>>,
@@ -165,6 +199,13 @@ impl CpuCore {
 
     fn set_pc(&self, pc: Address) {
         self.state.lock().expect("cpu core lock").pc = pc;
+    }
+
+    fn advance_sequence_past(&self, request: MemoryRequestId) {
+        let mut state = self.state.lock().expect("cpu core lock");
+        if state.next_sequence <= request.sequence() {
+            state.next_sequence = request.sequence() + 1;
+        }
     }
 
     pub fn issue_next_fetch<F>(
@@ -750,6 +791,12 @@ impl RiscvCore {
         }
     }
 
+    pub fn with_data(core: CpuCore, data: CpuDataConfig) -> Self {
+        let core = Self::new(core);
+        core.state.lock().expect("riscv core lock").data = Some(data);
+        core
+    }
+
     pub fn inner(&self) -> CpuCore {
         self.core.clone()
     }
@@ -785,6 +832,14 @@ impl RiscvCore {
 
     pub fn execution_events(&self) -> Vec<RiscvCpuExecutionEvent> {
         self.state.lock().expect("riscv core lock").events.clone()
+    }
+
+    pub fn data_access_events(&self) -> Vec<RiscvDataAccessEvent> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_events
+            .clone()
     }
 
     pub fn issue_next_fetch<F>(
@@ -844,22 +899,253 @@ impl RiscvCore {
         state.events.push(event.clone());
         Ok(Some(event))
     }
+
+    pub fn issue_next_data_access<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
+            return Ok(None);
+        };
+        let request = issue.memory_request()?;
+
+        let core = self.clone();
+        let event = transport
+            .submit(
+                scheduler,
+                issue.route,
+                request,
+                trace,
+                responder,
+                move |delivery| core.record_data_response(delivery),
+            )
+            .map_err(RiscvCpuError::Transport)?;
+
+        self.record_data_issue(issue);
+        Ok(Some(event))
+    }
+
+    fn prepare_data_access(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        let state = self.state.lock().expect("riscv core lock");
+        let Some((fetch_request, access)) = state.events.iter().find_map(|event| {
+            let fetch_request = event.fetch().request_id();
+            if state.issued_data_for_fetches.contains(&fetch_request) {
+                return None;
+            }
+            event
+                .execution()
+                .memory_access()
+                .map(|access| (fetch_request, access.clone()))
+        }) else {
+            return Ok(None);
+        };
+
+        let data = state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
+            fetch: fetch_request,
+        })?;
+        let route = transport
+            .route(data.route())
+            .ok_or(RiscvCpuError::Transport(TransportError::UnknownRoute {
+                route: data.route(),
+            }))?;
+        if route.source_partition() != self.core.partition() {
+            return Err(RiscvCpuError::DataRoutePartitionMismatch {
+                route: data.route(),
+                expected: self.core.partition(),
+                actual: route.source_partition(),
+            });
+        }
+        if route.source() != data.endpoint() {
+            return Err(RiscvCpuError::DataRouteEndpointMismatch {
+                route: data.route(),
+                expected: data.endpoint().clone(),
+                actual: route.source().clone(),
+            });
+        }
+
+        let size = memory_width_size(access_width(&access))?;
+        let address = Address::new(access_address(&access));
+        let line_offset = data.line_layout().line_offset(address);
+        if line_offset + size.bytes() > data.line_layout().bytes() {
+            return Err(RiscvCpuError::DataAccessCrossesLine {
+                address,
+                size,
+                line_size: data.line_layout().bytes(),
+            });
+        }
+
+        let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
+
+        Ok(Some(OutstandingDataAccess {
+            tick,
+            partition: self.core.partition(),
+            route: data.route(),
+            endpoint: data.endpoint().clone(),
+            request_id,
+            fetch_request,
+            access,
+            size,
+            line_layout: data.line_layout(),
+        }))
+    }
+
+    fn record_data_issue(&self, issue: OutstandingDataAccess) {
+        self.core.advance_sequence_past(issue.request_id);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.issued_data_for_fetches.insert(issue.fetch_request);
+        state
+            .outstanding_data
+            .insert(issue.request_id, issue.clone_without_layout());
+        state.data_events.push(RiscvDataAccessEvent::issued(
+            issue.record(issue.tick, issue.endpoint.clone()),
+        ));
+    }
+
+    fn record_data_response(&self, delivery: ResponseDelivery) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let Some(access) = state
+            .outstanding_data
+            .remove(&delivery.response().request_id())
+        else {
+            return;
+        };
+
+        match delivery.response().status() {
+            ResponseStatus::Completed => {
+                let data = delivery.response().data().map(ToOwned::to_owned);
+                if let MemoryAccessKind::Load {
+                    rd, width, signed, ..
+                } = access.access
+                {
+                    let value = load_response_value(
+                        data.as_deref().expect("load response data"),
+                        width,
+                        signed,
+                    );
+                    state.hart.write(rd, value);
+                }
+                state.data_events.push(RiscvDataAccessEvent::completed(
+                    access.record(delivery.tick(), delivery.endpoint().clone()),
+                    data,
+                ));
+            }
+            ResponseStatus::Retry => {
+                state.data_events.push(RiscvDataAccessEvent::retry(
+                    access.record(delivery.tick(), delivery.endpoint().clone()),
+                ));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RiscvCoreState {
     hart: RiscvHartState,
+    data: Option<CpuDataConfig>,
     executed_fetches: BTreeSet<MemoryRequestId>,
+    issued_data_for_fetches: BTreeSet<MemoryRequestId>,
+    outstanding_data: BTreeMap<MemoryRequestId, IssuedDataAccess>,
     events: Vec<RiscvCpuExecutionEvent>,
+    data_events: Vec<RiscvDataAccessEvent>,
 }
 
 impl RiscvCoreState {
     fn new(pc: u64) -> Self {
         Self {
             hart: RiscvHartState::new(pc),
+            data: None,
             executed_fetches: BTreeSet::new(),
+            issued_data_for_fetches: BTreeSet::new(),
+            outstanding_data: BTreeMap::new(),
             events: Vec::new(),
+            data_events: Vec::new(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OutstandingDataAccess {
+    tick: Tick,
+    partition: PartitionId,
+    route: MemoryRouteId,
+    endpoint: TransportEndpointId,
+    request_id: MemoryRequestId,
+    fetch_request: MemoryRequestId,
+    access: MemoryAccessKind,
+    size: AccessSize,
+    line_layout: CacheLineLayout,
+}
+
+impl OutstandingDataAccess {
+    fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
+        match &self.access {
+            MemoryAccessKind::Load { address, .. } => MemoryRequest::read_shared(
+                self.request_id,
+                Address::new(*address),
+                self.size,
+                self.line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::Store { address, value, .. } => MemoryRequest::write(
+                self.request_id,
+                Address::new(*address),
+                self.size,
+                store_bytes(*value, self.size),
+                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                self.line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
+        }
+    }
+
+    fn clone_without_layout(&self) -> IssuedDataAccess {
+        IssuedDataAccess {
+            partition: self.partition,
+            route: self.route,
+            request: self.request_id,
+            fetch_request: self.fetch_request,
+            access: self.access.clone(),
+            size: self.size,
+        }
+    }
+
+    fn record(&self, tick: Tick, endpoint: TransportEndpointId) -> RiscvDataAccessRecord {
+        self.clone_without_layout().record(tick, endpoint)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IssuedDataAccess {
+    partition: PartitionId,
+    route: MemoryRouteId,
+    request: MemoryRequestId,
+    fetch_request: MemoryRequestId,
+    access: MemoryAccessKind,
+    size: AccessSize,
+}
+
+impl IssuedDataAccess {
+    fn record(&self, tick: Tick, endpoint: TransportEndpointId) -> RiscvDataAccessRecord {
+        RiscvDataAccessRecord::new(
+            tick,
+            self.partition,
+            self.route,
+            endpoint,
+            self.request,
+            self.fetch_request,
+            self.access.clone(),
+            self.size,
+        )
     }
 }
 
@@ -868,6 +1154,166 @@ pub struct RiscvCpuExecutionEvent {
     fetch: CpuFetchEvent,
     instruction: RiscvInstruction,
     execution: RiscvExecutionRecord,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvDataAccessEventKind {
+    Issued,
+    Completed,
+    Retry,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvDataAccessRecord {
+    tick: Tick,
+    partition: PartitionId,
+    route: MemoryRouteId,
+    endpoint: TransportEndpointId,
+    request: MemoryRequestId,
+    fetch_request: MemoryRequestId,
+    access: MemoryAccessKind,
+    size: AccessSize,
+}
+
+impl RiscvDataAccessRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        tick: Tick,
+        partition: PartitionId,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+        request: MemoryRequestId,
+        fetch_request: MemoryRequestId,
+        access: MemoryAccessKind,
+        size: AccessSize,
+    ) -> Self {
+        Self {
+            tick,
+            partition,
+            route,
+            endpoint,
+            request,
+            fetch_request,
+            access,
+            size,
+        }
+    }
+
+    pub fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    pub fn route(&self) -> MemoryRouteId {
+        self.route
+    }
+
+    pub fn endpoint(&self) -> &TransportEndpointId {
+        &self.endpoint
+    }
+
+    pub fn request_id(&self) -> MemoryRequestId {
+        self.request
+    }
+
+    pub fn fetch_request_id(&self) -> MemoryRequestId {
+        self.fetch_request
+    }
+
+    pub fn access(&self) -> &MemoryAccessKind {
+        &self.access
+    }
+
+    pub fn size(&self) -> AccessSize {
+        self.size
+    }
+
+    pub fn operation(&self) -> MemoryOperation {
+        match self.access {
+            MemoryAccessKind::Load { .. } => MemoryOperation::ReadShared,
+            MemoryAccessKind::Store { .. } => MemoryOperation::Write,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvDataAccessEvent {
+    record: RiscvDataAccessRecord,
+    kind: RiscvDataAccessEventKind,
+    data: Option<Vec<u8>>,
+}
+
+impl RiscvDataAccessEvent {
+    pub fn issued(record: RiscvDataAccessRecord) -> Self {
+        Self {
+            record,
+            kind: RiscvDataAccessEventKind::Issued,
+            data: None,
+        }
+    }
+
+    pub fn completed(record: RiscvDataAccessRecord, data: Option<Vec<u8>>) -> Self {
+        Self {
+            record,
+            kind: RiscvDataAccessEventKind::Completed,
+            data,
+        }
+    }
+
+    pub fn retry(record: RiscvDataAccessRecord) -> Self {
+        Self {
+            record,
+            kind: RiscvDataAccessEventKind::Retry,
+            data: None,
+        }
+    }
+
+    pub fn tick(&self) -> Tick {
+        self.record.tick()
+    }
+
+    pub fn partition(&self) -> PartitionId {
+        self.record.partition()
+    }
+
+    pub fn route(&self) -> MemoryRouteId {
+        self.record.route()
+    }
+
+    pub fn endpoint(&self) -> &TransportEndpointId {
+        self.record.endpoint()
+    }
+
+    pub fn request_id(&self) -> MemoryRequestId {
+        self.record.request_id()
+    }
+
+    pub fn fetch_request_id(&self) -> MemoryRequestId {
+        self.record.fetch_request_id()
+    }
+
+    pub fn access(&self) -> &MemoryAccessKind {
+        self.record.access()
+    }
+
+    pub fn size(&self) -> AccessSize {
+        self.record.size()
+    }
+
+    pub fn operation(&self) -> MemoryOperation {
+        self.record.operation()
+    }
+
+    pub fn kind(&self) -> RiscvDataAccessEventKind {
+        self.kind
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
 }
 
 impl RiscvCpuExecutionEvent {
@@ -902,6 +1348,9 @@ impl RiscvCpuExecutionEvent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvCpuError {
+    MissingDataConfig {
+        fetch: MemoryRequestId,
+    },
     MissingFetchData {
         request: MemoryRequestId,
     },
@@ -913,12 +1362,35 @@ pub enum RiscvCpuError {
         fetch: Address,
         architectural: Address,
     },
+    DataAccessCrossesLine {
+        address: Address,
+        size: AccessSize,
+        line_size: u64,
+    },
+    DataRouteEndpointMismatch {
+        route: MemoryRouteId,
+        expected: TransportEndpointId,
+        actual: TransportEndpointId,
+    },
+    DataRoutePartitionMismatch {
+        route: MemoryRouteId,
+        expected: PartitionId,
+        actual: PartitionId,
+    },
     Isa(RiscvError),
+    Memory(MemoryError),
+    Transport(TransportError),
 }
 
 impl fmt::Display for RiscvCpuError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingDataConfig { fetch } => write!(
+                formatter,
+                "fetch response {} from agent {} needs a data route for memory access",
+                fetch.sequence(),
+                fetch.agent().get()
+            ),
             Self::MissingFetchData { request } => write!(
                 formatter,
                 "fetch response {} from agent {} has no instruction bytes",
@@ -940,7 +1412,41 @@ impl fmt::Display for RiscvCpuError {
                 fetch.get(),
                 architectural.get()
             ),
+            Self::DataAccessCrossesLine {
+                address,
+                size,
+                line_size,
+            } => write!(
+                formatter,
+                "data access at {:#x} for {} bytes crosses a {line_size}-byte line",
+                address.get(),
+                size.bytes()
+            ),
+            Self::DataRouteEndpointMismatch {
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "CPU data route {} starts at endpoint {} but CPU data endpoint is {}",
+                route.get(),
+                actual.as_str(),
+                expected.as_str()
+            ),
+            Self::DataRoutePartitionMismatch {
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "CPU data route {} starts on partition {} but CPU partition is {}",
+                route.get(),
+                actual.index(),
+                expected.index()
+            ),
             Self::Isa(error) => write!(formatter, "{error}"),
+            Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -949,8 +1455,55 @@ impl Error for RiscvCpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Isa(error) => Some(error),
+            Self::Memory(error) => Some(error),
+            Self::Transport(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
+    match access {
+        MemoryAccessKind::Load { width, .. } | MemoryAccessKind::Store { width, .. } => *width,
+    }
+}
+
+fn access_address(access: &MemoryAccessKind) -> u64 {
+    match access {
+        MemoryAccessKind::Load { address, .. } | MemoryAccessKind::Store { address, .. } => {
+            *address
+        }
+    }
+}
+
+fn memory_width_size(width: MemoryWidth) -> Result<AccessSize, RiscvCpuError> {
+    let bytes = match width {
+        MemoryWidth::Byte => 1,
+        MemoryWidth::Halfword => 2,
+        MemoryWidth::Word => 4,
+        MemoryWidth::Doubleword => 8,
+    };
+    AccessSize::new(bytes).map_err(RiscvCpuError::Memory)
+}
+
+fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
+    value.to_le_bytes()[..size.bytes() as usize].to_vec()
+}
+
+fn load_response_value(data: &[u8], width: MemoryWidth, signed: bool) -> u64 {
+    let raw = data.iter().enumerate().fold(0u64, |value, (shift, byte)| {
+        value | (u64::from(*byte) << (shift * 8))
+    });
+    if !signed || width == MemoryWidth::Doubleword {
+        return raw;
+    }
+
+    let bits = data.len() as u32 * 8;
+    let sign_bit = 1u64 << (bits - 1);
+    if raw & sign_bit == 0 {
+        raw
+    } else {
+        raw | (!0u64 << bits)
     }
 }
 
