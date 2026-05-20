@@ -14,8 +14,9 @@ cluster turns, bounded RISC-V cluster run traces, RV64I decode, architectural
 execution, typed RISC-V traps, scheduler-delivered trap events, CPU pending-trap
 host delivery, scheduler-owned and batched CPU trap scheduling, interrupts,
 host-stopped RISC-V system cluster runs, RISC-V committed-instruction stats,
-multi-core RISC-V checkpoint capture and restore, MMIO, timers, UART devices,
-platform assembly, memory transactions and storage, transport, fabric timing, DRAM
+host-integrated multi-core RISC-V checkpoint capture and restore, MMIO, timers,
+UART devices, platform assembly, memory transactions and storage, transport,
+fabric timing, DRAM
 timing, MSI protocol state, cache controllers, directory arbitration, and
 coherence harnesses.
 

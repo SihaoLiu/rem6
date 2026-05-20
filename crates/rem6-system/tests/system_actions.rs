@@ -3,14 +3,61 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{
     CheckpointChunk, CheckpointComponentId, CheckpointManifest, CheckpointRegistry, CheckpointState,
 };
+use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
+use rem6_isa_riscv::Register;
 use rem6_kernel::PartitionId;
 use rem6_kernel::PartitionedScheduler;
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
-    HostActionRecord, HostEventPolicy, StopRequest, SystemActionExecutor, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort, SystemRunController,
+    HostActionRecord, HostEventPolicy, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
+    StopRequest, SystemActionExecutor, SystemActionOutcome, SystemHostController,
+    SystemHostEventPort, SystemRunController,
 };
+use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
+}
+
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
+}
+
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
+}
+
+fn riscv_core(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: u64) -> RiscvCore {
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint(&format!("cpu{}.ifetch", cpu.get())),
+                partition,
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(cpu, partition, agent, Address::new(entry)),
+            CpuFetchConfig::new(
+                endpoint(&format!("cpu{}.ifetch", cpu.get())),
+                route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    )
+}
 
 #[test]
 fn system_action_executor_applies_stats_reset_and_dump_actions() {
@@ -162,6 +209,110 @@ fn system_action_executor_captures_checkpoint_manifest() {
             ),
         }
     );
+}
+
+#[test]
+fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(11);
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    core.redirect_pc(Address::new(0x8040));
+    core.write_register(reg(1), 0x1122);
+    let bank =
+        RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(component.clone(), core)])
+            .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor =
+        SystemActionExecutor::with_riscv_checkpoint_bank(StatsRegistry::new(), checkpoints, bank);
+
+    let checkpoint = HostActionRecord::new(
+        36,
+        guest,
+        host,
+        GuestEventId::new(7),
+        source,
+        HostAction::Checkpoint {
+            label: "live-core".to_string(),
+        },
+    );
+
+    let outcome = executor.apply(&checkpoint).unwrap();
+
+    assert_eq!(
+        executor.checkpoints().chunk(&component, "pc"),
+        Some(&0x8040_u64.to_le_bytes()[..])
+    );
+    let xregs = executor.checkpoints().chunk(&component, "xregs").unwrap();
+    assert_eq!(&xregs[8..16], &0x1122_u64.to_le_bytes());
+    assert_eq!(
+        outcome,
+        SystemActionOutcome::Checkpoint {
+            tick: 36,
+            event: GuestEventId::new(7),
+            source,
+            manifest: CheckpointManifest::new(
+                "live-core",
+                36,
+                vec![CheckpointState::new(
+                    component,
+                    vec![
+                        CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
+                        CheckpointChunk::new("xregs", xregs.to_vec()),
+                    ],
+                )],
+            ),
+        }
+    );
+}
+
+#[test]
+fn system_action_executor_applies_restored_riscv_core_checkpoint() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(12);
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    core.redirect_pc(Address::new(0x8040));
+    core.write_register(reg(1), 0x3344);
+    let bank = RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+        component.clone(),
+        core.clone(),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    bank.capture_all_into(&mut checkpoints).unwrap();
+    let manifest = checkpoints.capture("resume-core", 48).unwrap();
+    let mut executor =
+        SystemActionExecutor::with_riscv_checkpoint_bank(StatsRegistry::new(), checkpoints, bank);
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(reg(1), 0);
+    let record = HostActionRecord::new(
+        72,
+        host,
+        host,
+        GuestEventId::new(8),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let outcome = executor.apply(&record).unwrap();
+
+    assert_eq!(
+        outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 72,
+            event: GuestEventId::new(8),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(core.pc(), Address::new(0x8040));
+    assert_eq!(core.read_register(reg(1)), 0x3344);
 }
 
 #[test]

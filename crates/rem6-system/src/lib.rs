@@ -359,10 +359,11 @@ pub enum SystemActionOutcome {
     Stop(StopRequest),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
+    riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
 }
 
 impl SystemActionExecutor {
@@ -371,7 +372,23 @@ impl SystemActionExecutor {
     }
 
     pub fn with_checkpoint(stats: StatsRegistry, checkpoints: CheckpointRegistry) -> Self {
-        Self { stats, checkpoints }
+        Self {
+            stats,
+            checkpoints,
+            riscv_checkpoints: None,
+        }
+    }
+
+    pub fn with_riscv_checkpoint_bank(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        riscv_checkpoints: RiscvCoreCheckpointBank,
+    ) -> Self {
+        Self {
+            stats,
+            checkpoints,
+            riscv_checkpoints: Some(riscv_checkpoints),
+        }
     }
 
     pub const fn stats(&self) -> &StatsRegistry {
@@ -390,6 +407,10 @@ impl SystemActionExecutor {
         &mut self.checkpoints
     }
 
+    pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
+        self.riscv_checkpoints.as_ref()
+    }
+
     pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
         match record.action() {
             HostAction::InjectCommand { command } => Ok(SystemActionOutcome::InjectedCommand {
@@ -406,26 +427,38 @@ impl SystemActionExecutor {
                 .try_snapshot(record.tick())
                 .map(SystemActionOutcome::StatsSnapshot)
                 .map_err(SystemError::Stats),
-            HostAction::Checkpoint { label } => self
-                .checkpoints
-                .capture(label.clone(), record.tick())
-                .map(|manifest| SystemActionOutcome::Checkpoint {
-                    tick: record.tick(),
-                    event: record.event(),
-                    source: record.source(),
-                    manifest,
-                })
-                .map_err(SystemError::Checkpoint),
-            HostAction::RestoreCheckpoint { manifest } => self
-                .checkpoints
-                .restore(manifest)
-                .map(|()| SystemActionOutcome::CheckpointRestored {
+            HostAction::Checkpoint { label } => {
+                if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+                    riscv_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                self.checkpoints
+                    .capture(label.clone(), record.tick())
+                    .map(|manifest| SystemActionOutcome::Checkpoint {
+                        tick: record.tick(),
+                        event: record.event(),
+                        source: record.source(),
+                        manifest,
+                    })
+                    .map_err(SystemError::Checkpoint)
+            }
+            HostAction::RestoreCheckpoint { manifest } => {
+                self.checkpoints
+                    .restore(manifest)
+                    .map_err(SystemError::Checkpoint)?;
+                if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+                    riscv_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::RiscvCheckpoint)?;
+                }
+                Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
                     event: record.event(),
                     source: record.source(),
                     manifest: manifest.clone(),
                 })
-                .map_err(SystemError::Checkpoint),
+            }
             HostAction::Stop { code } => Ok(SystemActionOutcome::Stop(StopRequest::new(
                 record.tick(),
                 record.event(),
@@ -543,7 +576,7 @@ impl SystemRunController {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct SystemHostController {
     run: SystemRunController,
     executor: SystemActionExecutor,
@@ -1171,6 +1204,7 @@ pub enum SystemError {
     RiscvCluster(RiscvClusterError),
     Stats(StatsError),
     Checkpoint(CheckpointError),
+    RiscvCheckpoint(RiscvCoreCheckpointError),
 }
 
 impl fmt::Display for SystemError {
@@ -1183,6 +1217,7 @@ impl fmt::Display for SystemError {
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
+            Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1194,6 +1229,7 @@ impl Error for SystemError {
             Self::RiscvCluster(error) => Some(error),
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
+            Self::RiscvCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }
     }
