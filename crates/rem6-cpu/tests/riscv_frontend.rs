@@ -225,6 +225,29 @@ fn fetch_one(
     scheduler.run_until_idle_conservative();
 }
 
+fn fetch_one_parallel(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    trace: MemoryTrace,
+) {
+    core.issue_next_fetch_parallel(scheduler, transport, trace, move |delivery, context| {
+        assert_eq!(context.partition(), PartitionId::new(1));
+        let response = store
+            .lock()
+            .unwrap()
+            .respond(delivery.request())
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+        TargetOutcome::Respond(response)
+    })
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+}
+
 fn drive_one_action(
     core: &RiscvCore,
     store: Arc<Mutex<PartitionedMemoryStore>>,
@@ -456,6 +479,46 @@ fn riscv_core_executes_completed_fetch_and_updates_registers() {
     let trace = MemoryTrace::new();
 
     fetch_one(
+        &core,
+        loaded_store(0x8000, i_type(5, 0, 0x0, 1, 0x13)),
+        &mut scheduler,
+        &transport,
+        trace,
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x8000));
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::decode(i_type(5, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 5);
+    assert_eq!(core.pc(), Address::new(0x8004));
+    assert_eq!(core.inner().pc(), Address::new(0x8004));
+    assert_eq!(core.execution_events(), vec![event]);
+}
+
+#[test]
+fn riscv_core_executes_completed_parallel_fetch_and_updates_registers() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::new(core(route, 0x8000));
+    let trace = MemoryTrace::new();
+
+    fetch_one_parallel(
         &core,
         loaded_store(0x8000, i_type(5, 0, 0x0, 1, 0x13)),
         &mut scheduler,

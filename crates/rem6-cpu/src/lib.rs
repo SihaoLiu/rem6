@@ -8,7 +8,10 @@ use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvError, RiscvExecutionRecord, RiscvHartState,
     RiscvInstruction, RiscvTrap,
 };
-use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerContext, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
+    SchedulerContext, Tick,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
     MemoryRequest, MemoryRequestId, ResponseStatus,
@@ -246,6 +249,43 @@ impl CpuCore {
         let core = self.clone();
         let event = transport
             .submit(
+                scheduler,
+                issue.route,
+                request,
+                trace,
+                responder,
+                move |delivery| core.record_response(delivery),
+            )
+            .map_err(CpuError::Transport)?;
+
+        self.record_issue(issue);
+        Ok(event)
+    }
+
+    pub fn issue_next_fetch_parallel<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<PartitionEventId, CpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let issue = self.prepare_fetch(scheduler.now(), transport)?;
+        let request = MemoryRequest::instruction_fetch(
+            issue.request_id,
+            issue.pc,
+            issue.size,
+            issue.line_layout,
+        )
+        .map_err(CpuError::Memory)?;
+
+        let core = self.clone();
+        let event = transport
+            .submit_parallel(
                 scheduler,
                 issue.route,
                 request,
@@ -903,6 +943,22 @@ impl RiscvCore {
     {
         self.core
             .issue_next_fetch(scheduler, transport, trace, responder)
+    }
+
+    pub fn issue_next_fetch_parallel<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<PartitionEventId, CpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        self.core
+            .issue_next_fetch_parallel(scheduler, transport, trace, responder)
     }
 
     #[allow(clippy::too_many_arguments)]
