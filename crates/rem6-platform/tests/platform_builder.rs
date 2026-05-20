@@ -7,9 +7,13 @@ use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_platform::{
     PlatformBuilder, PlatformError, PlatformInterruptControllerConfig, PlatformTimerConfig,
-    PlatformUartConfig,
+    PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{TimerArm, TimerExpiry, TimerId, TIMER_MMIO_DEADLINE_OFFSET};
+use rem6_topology::{
+    ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
+    TopologyBuilder, TopologyError,
+};
 use rem6_uart::{UartId, UartRxByte, UartTxByte, UART_MMIO_DATA_OFFSET};
 
 fn full_mask(bytes: u64) -> ByteMask {
@@ -18,6 +22,91 @@ fn full_mask(bytes: u64) -> ByteMask {
 
 fn le64(value: u64) -> Vec<u8> {
     value.to_le_bytes().to_vec()
+}
+
+fn component(name: &str) -> ComponentId {
+    ComponentId::new(name).unwrap()
+}
+
+fn kind(name: &str) -> ComponentKind {
+    ComponentKind::new(name).unwrap()
+}
+
+fn port(name: &str) -> PortName {
+    PortName::new(name).unwrap()
+}
+
+fn endpoint(component_name: &str, port_name: &str) -> Endpoint {
+    Endpoint::new(component(component_name), port(port_name))
+}
+
+fn topology_clock(period: u64) -> rem6_kernel::ClockDomain {
+    rem6_kernel::ClockDomain::new(period).unwrap()
+}
+
+fn platform_topology() -> Topology {
+    TopologyBuilder::new(3)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu"),
+                kind("cpu"),
+                PartitionId::new(0),
+                topology_clock(1),
+            )
+            .add_port(port("mmio"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("bus"),
+                kind("bus"),
+                PartitionId::new(0),
+                topology_clock(1),
+            )
+            .add_port(port("cpu_in"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("timer_out"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("uart_out"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("timer"),
+                kind("timer"),
+                PartitionId::new(1),
+                topology_clock(1),
+            )
+            .add_port(port("mmio"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("uart"),
+                kind("uart"),
+                PartitionId::new(2),
+                topology_clock(1),
+            )
+            .add_port(port("mmio"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu", "mmio"), endpoint("bus", "cpu_in"), 2, 1)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("bus", "timer_out"),
+            endpoint("timer", "mmio"),
+            3,
+            2,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("bus", "uart_out"), endpoint("uart", "mmio"), 5, 4)
+        .unwrap()
+        .build()
+        .unwrap()
 }
 
 #[test]
@@ -146,6 +235,89 @@ fn platform_builder_wires_timer_uart_interrupts_and_mmio_bus() {
             ),
         ]
     );
+}
+
+#[test]
+fn platform_builder_resolves_mmio_routes_from_topology_paths() {
+    let topology = platform_topology();
+    let timer_route =
+        PlatformTopologyRoute::new(endpoint("cpu", "mmio"), endpoint("timer", "mmio"))
+            .resolve(&topology)
+            .unwrap();
+    let uart_route = PlatformTopologyRoute::new(endpoint("cpu", "mmio"), endpoint("uart", "mmio"))
+        .resolve(&topology)
+        .unwrap();
+
+    assert_eq!(
+        timer_route,
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 5, 3).unwrap()
+    );
+    assert_eq!(
+        uart_route,
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 7, 5).unwrap()
+    );
+
+    let platform = PlatformBuilder::from_topology(&topology)
+        .add_timer(PlatformTimerConfig {
+            id: TimerId::new(20),
+            base: Address::new(0x5000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: timer_route,
+            interrupt_line: InterruptLineId::new(80),
+            interrupt_target: InterruptTargetId::new(0),
+            interrupt_source: InterruptSourceId::new(90),
+            interrupt_latency: 2,
+        })
+        .add_uart(PlatformUartConfig {
+            id: UartId::new(21),
+            base: Address::new(0x6000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: uart_route,
+            interrupt_line: InterruptLineId::new(81),
+            interrupt_target: InterruptTargetId::new(0),
+            interrupt_source: InterruptSourceId::new(91),
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(platform.partition_count(), 3);
+    assert!(platform.timer(TimerId::new(20)).is_some());
+    assert!(platform.uart(UartId::new(21)).is_some());
+}
+
+#[test]
+fn platform_topology_route_reports_missing_endpoint_and_path() {
+    let topology = platform_topology();
+    let unknown_port =
+        PlatformTopologyRoute::new(endpoint("cpu", "missing"), endpoint("timer", "mmio"))
+            .resolve(&topology);
+
+    match unknown_port {
+        Err(error) => assert_eq!(
+            error,
+            PlatformTopologyError::Topology(TopologyError::UnknownPort {
+                component: component("cpu"),
+                port: port("missing"),
+            }),
+        ),
+        Ok(_) => panic!("unknown topology endpoint was accepted"),
+    }
+
+    let missing_path =
+        PlatformTopologyRoute::new(endpoint("timer", "mmio"), endpoint("cpu", "mmio"))
+            .resolve(&topology);
+
+    match missing_path {
+        Err(error) => assert_eq!(
+            error,
+            PlatformTopologyError::MissingPath {
+                source: endpoint("timer", "mmio"),
+                target: endpoint("cpu", "mmio"),
+            },
+        ),
+        Ok(_) => panic!("missing topology path was accepted"),
+    }
 }
 
 #[test]

@@ -11,6 +11,7 @@ use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 use rem6_mmio::{MmioBus, MmioError, MmioRoute};
 use rem6_timer::{ProgrammableTimer, TimerId, TimerMmioDevice};
+use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{UartId, UartMmioDevice};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +46,45 @@ pub struct PlatformInterruptControllerConfig {
     pub target: InterruptTargetId,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformTopologyRoute {
+    source: Endpoint,
+    target: Endpoint,
+}
+
+impl PlatformTopologyRoute {
+    pub fn new(source: Endpoint, target: Endpoint) -> Self {
+        Self { source, target }
+    }
+
+    pub const fn source(&self) -> &Endpoint {
+        &self.source
+    }
+
+    pub const fn target(&self) -> &Endpoint {
+        &self.target
+    }
+
+    pub fn resolve(&self, topology: &Topology) -> Result<MmioRoute, PlatformTopologyError> {
+        let source_partition = endpoint_partition(topology, &self.source)?;
+        let target_partition = endpoint_partition(topology, &self.target)?;
+        let path = topology
+            .find_endpoint_path(&self.source, &self.target)
+            .ok_or_else(|| PlatformTopologyError::MissingPath {
+                source: self.source.clone(),
+                target: self.target.clone(),
+            })?;
+
+        MmioRoute::new(
+            source_partition,
+            target_partition,
+            path.request_latency(),
+            path.response_latency(),
+        )
+        .map_err(PlatformTopologyError::Mmio)
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PlatformBuilder {
     partition_count: u32,
@@ -61,6 +101,10 @@ impl PlatformBuilder {
             timers: Vec::new(),
             uarts: Vec::new(),
         }
+    }
+
+    pub fn from_topology(topology: &Topology) -> Self {
+        Self::new(topology.partition_count())
     }
 
     pub fn add_interrupt_controller(mut self, config: PlatformInterruptControllerConfig) -> Self {
@@ -221,6 +265,59 @@ fn validate_partition(partitions: u32, partition: PartitionId) -> Result<(), Pla
     }
 
     Ok(())
+}
+
+fn endpoint_partition(
+    topology: &Topology,
+    endpoint: &Endpoint,
+) -> Result<PartitionId, PlatformTopologyError> {
+    let component = topology.component(endpoint.component()).ok_or_else(|| {
+        PlatformTopologyError::Topology(TopologyError::UnknownComponent {
+            component: endpoint.component().clone(),
+        })
+    })?;
+    component.port_direction(endpoint.port()).ok_or_else(|| {
+        PlatformTopologyError::Topology(TopologyError::UnknownPort {
+            component: endpoint.component().clone(),
+            port: endpoint.port().clone(),
+        })
+    })?;
+
+    Ok(component.partition())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlatformTopologyError {
+    MissingPath { source: Endpoint, target: Endpoint },
+    Topology(TopologyError),
+    Mmio(MmioError),
+}
+
+impl fmt::Display for PlatformTopologyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPath { source, target } => write!(
+                formatter,
+                "topology path from {}.{} to {}.{} is not declared",
+                source.component().as_str(),
+                source.port().as_str(),
+                target.component().as_str(),
+                target.port().as_str()
+            ),
+            Self::Topology(error) => write!(formatter, "{error}"),
+            Self::Mmio(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for PlatformTopologyError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Topology(error) => Some(error),
+            Self::Mmio(error) => Some(error),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
