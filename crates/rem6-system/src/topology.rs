@@ -2,11 +2,15 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use rem6_boot::{BootError, BootImage};
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionId, PartitionedScheduler, SchedulerError, Tick,
 };
-use rem6_memory::{MemoryError, MemoryResponse, PartitionedMemoryStore};
+use rem6_memory::{
+    AccessSize, Address, CacheLineLayout, MemoryError, MemoryResponse, MemoryTargetId,
+    PartitionedMemoryStore,
+};
 use rem6_mmio::MmioBus;
 use rem6_platform::Platform;
 use rem6_stats::StatsRegistry;
@@ -65,6 +69,70 @@ impl RiscvTopologyHostConfig {
 struct RiscvTopologyHost {
     controller: Arc<Mutex<SystemHostController>>,
     driver: RiscvSystemRunDriver,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvTopologyMemoryConfig {
+    target: MemoryTargetId,
+    line_layout: CacheLineLayout,
+    regions: Vec<RiscvTopologyMemoryRegion>,
+}
+
+impl RiscvTopologyMemoryConfig {
+    pub fn new(target: MemoryTargetId, line_layout: CacheLineLayout) -> Self {
+        Self {
+            target,
+            line_layout,
+            regions: Vec::new(),
+        }
+    }
+
+    pub fn add_region(mut self, start: Address, size: AccessSize) -> Self {
+        self.regions
+            .push(RiscvTopologyMemoryRegion::new(start, size));
+        self
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn line_layout(&self) -> CacheLineLayout {
+        self.line_layout
+    }
+
+    pub fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
+        &self.regions
+    }
+
+    fn build_store(&self) -> Result<PartitionedMemoryStore, MemoryError> {
+        let mut store = PartitionedMemoryStore::new();
+        store.add_partition(self.target, self.line_layout)?;
+        for region in &self.regions {
+            store.map_region(self.target, region.start(), region.size())?;
+        }
+        Ok(store)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvTopologyMemoryRegion {
+    start: Address,
+    size: AccessSize,
+}
+
+impl RiscvTopologyMemoryRegion {
+    pub const fn new(start: Address, size: AccessSize) -> Self {
+        Self { start, size }
+    }
+
+    pub const fn start(self) -> Address {
+        self.start
+    }
+
+    pub const fn size(self) -> AccessSize {
+        self.size
+    }
 }
 
 impl RiscvTopologySystem {
@@ -139,6 +207,21 @@ impl RiscvTopologySystem {
         mut self,
         memory: PartitionedMemoryStore,
     ) -> Result<Self, RiscvTopologySystemError> {
+        self.memory = Some(Arc::new(Mutex::new(memory)));
+        Ok(self)
+    }
+
+    pub fn with_boot_image_memory(
+        mut self,
+        config: RiscvTopologyMemoryConfig,
+        image: &BootImage,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        let mut memory = config
+            .build_store()
+            .map_err(RiscvTopologySystemError::Memory)?;
+        image
+            .load_into_partitioned_store(&mut memory, config.target())
+            .map_err(RiscvTopologySystemError::Boot)?;
         self.memory = Some(Arc::new(Mutex::new(memory)));
         Ok(self)
     }
@@ -316,6 +399,7 @@ pub enum RiscvTopologySystemError {
     MissingMemoryStore,
     MissingHostController,
     Memory(MemoryError),
+    Boot(BootError),
     System(SystemError),
 }
 
@@ -338,6 +422,7 @@ impl fmt::Display for RiscvTopologySystemError {
                 write!(formatter, "topology system has no host controller")
             }
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Boot(error) => write!(formatter, "{error}"),
             Self::System(error) => write!(formatter, "{error}"),
         }
     }
@@ -353,6 +438,7 @@ impl Error for RiscvTopologySystemError {
             Self::MissingMemoryStore => None,
             Self::MissingHostController => None,
             Self::Memory(error) => Some(error),
+            Self::Boot(error) => Some(error),
             Self::System(error) => Some(error),
         }
     }

@@ -10,8 +10,8 @@ use rem6_platform::{PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvSystemRunStopReason,
-    RiscvTopologyHostConfig, RiscvTopologySystem, RiscvTrapEventPort, StopRequest,
-    SystemHostController, SystemHostEventPort,
+    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem, RiscvTrapEventPort,
+    StopRequest, SystemHostController, SystemHostEventPort,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -396,19 +396,30 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         .build()
         .unwrap();
 
-    let store = program_store(
-        &[
-            (0x8000, i_type(b'R'.into(), 0, 0x0, 3, 0x13)),
-            (
-                0x8004,
-                s_type(UART_MMIO_DATA_OFFSET as i32, 3, 2, 0x0, 0x23),
-            ),
-            (0x8008, 0x0000_0073),
-            (0x9000, i_type(8, 2, 0x3, 5, 0x03)),
-            (0x9004, 0x0010_0073),
-        ],
-        &[(0x9818, vec![0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab])],
-    );
+    let image = BootImage::new(Address::new(0x8000))
+        .add_segment(
+            Address::new(0x8000),
+            word(i_type(b'R'.into(), 0, 0x0, 3, 0x13)),
+        )
+        .unwrap()
+        .add_segment(
+            Address::new(0x8004),
+            word(s_type(UART_MMIO_DATA_OFFSET as i32, 3, 2, 0x0, 0x23)),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x9000), word(i_type(8, 2, 0x3, 5, 0x03)))
+        .unwrap()
+        .add_segment(Address::new(0x9004), word(0x0010_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0x9818),
+            vec![0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab],
+        )
+        .unwrap();
+    let memory = RiscvTopologyMemoryConfig::new(MemoryTargetId::new(0), layout())
+        .add_region(Address::new(0x8000), AccessSize::new(0x3000).unwrap());
     let mut system = RiscvTopologySystem::with_min_remote_delay(
         topology,
         RiscvClusterTopologyConfig::new([
@@ -418,14 +429,14 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         2,
     )
     .unwrap()
+    .with_boot_image_memory(memory, &image)
+    .unwrap()
     .with_platform(platform)
     .unwrap()
     .with_host_controller(
         RiscvTopologyHostConfig::new(PartitionId::new(4), 2, GuestSourceId::new(42)),
         StatsRegistry::new(),
     )
-    .unwrap()
-    .with_memory_store(store)
     .unwrap();
     assert!(system.platform().is_some());
     assert!(system.platform_bus().is_some());
