@@ -12,11 +12,11 @@ use rem6_system::{
 use rem6_workload::{
     HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
-    WorkloadExecutionMode, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
-    WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute,
-    WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric,
-    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadGpuDevice, WorkloadGpuDmaCopy,
+    WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -1996,6 +1996,14 @@ fn workload_replay_executes_planned_host_actions() {
     assert_eq!(
         outcome.result().checkpoint_labels(),
         &["after-boot".to_string()]
+    );
+    assert_eq!(
+        outcome.result().execution_mode_switches(),
+        &[WorkloadExecutionModeSwitch::new(
+            2,
+            "cpu0",
+            WorkloadExecutionMode::Functional,
+        )]
     );
     let stats = outcome.result().stats_snapshot().unwrap();
     assert_eq!(stats.reset_tick(), 1);

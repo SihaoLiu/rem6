@@ -1163,6 +1163,35 @@ impl WorkloadExecutionMode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadExecutionModeSwitch {
+    tick: Tick,
+    target: String,
+    mode: WorkloadExecutionMode,
+}
+
+impl WorkloadExecutionModeSwitch {
+    pub fn new(tick: Tick, target: impl Into<String>, mode: WorkloadExecutionMode) -> Self {
+        Self {
+            tick,
+            target: target.into(),
+            mode,
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    pub const fn mode(&self) -> &WorkloadExecutionMode {
+        &self.mode
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostEventIntent {
     RoiBegin {
         label: String,
@@ -1416,6 +1445,7 @@ pub struct WorkloadReplayPlan {
     required_resources: Vec<WorkloadResource>,
     host_events: Vec<WorkloadHostEvent>,
     planned_checkpoint_labels: Vec<String>,
+    planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
@@ -1429,6 +1459,7 @@ impl WorkloadReplayPlan {
             topology: manifest.topology().cloned(),
             required_resources: manifest.required_resource_details()?,
             planned_checkpoint_labels: planned_checkpoint_labels(&host_events),
+            planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
@@ -1463,6 +1494,10 @@ impl WorkloadReplayPlan {
         &self.planned_checkpoint_labels
     }
 
+    pub fn planned_execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
+        &self.planned_execution_mode_switches
+    }
+
     pub fn planned_stop_reason(&self) -> Option<&str> {
         self.planned_stop_reason.as_deref()
     }
@@ -1482,6 +1517,7 @@ impl WorkloadReplayPlan {
         result.verify_stats_timing()?;
         self.verify_all_planned_events_reached(result.final_tick())?;
         self.verify_checkpoint_labels(result)?;
+        self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         Ok(())
     }
@@ -1529,6 +1565,38 @@ impl WorkloadReplayPlan {
         Ok(())
     }
 
+    fn verify_execution_mode_switches(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
+        for actual in result.execution_mode_switches() {
+            if !self
+                .planned_execution_mode_switches
+                .iter()
+                .any(|planned| planned == actual)
+            {
+                return Err(WorkloadError::UnexpectedExecutionModeSwitch {
+                    tick: actual.tick(),
+                    target: actual.target().to_string(),
+                    mode: actual.mode().clone(),
+                });
+            }
+        }
+
+        for planned in &self.planned_execution_mode_switches {
+            if !result
+                .execution_mode_switches()
+                .iter()
+                .any(|actual| actual == planned)
+            {
+                return Err(WorkloadError::MissingExecutionModeSwitch {
+                    tick: planned.tick(),
+                    target: planned.target().to_string(),
+                    mode: planned.mode().clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_stop_reason(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
         let Some(expected) = &self.planned_stop_reason else {
             return match result.stop_reason() {
@@ -1558,6 +1626,7 @@ pub struct WorkloadResult {
     stats_snapshot: Option<StatSnapshot>,
     parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
     checkpoint_labels: Vec<String>,
+    execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
 }
 
 impl WorkloadResult {
@@ -1569,6 +1638,7 @@ impl WorkloadResult {
             stats_snapshot: None,
             parallel_execution_summary: None,
             checkpoint_labels: Vec::new(),
+            execution_mode_switches: Vec::new(),
         }
     }
 
@@ -1595,6 +1665,17 @@ impl WorkloadResult {
         self
     }
 
+    pub fn with_execution_mode_switch(
+        mut self,
+        tick: Tick,
+        target: impl Into<String>,
+        mode: WorkloadExecutionMode,
+    ) -> Self {
+        self.execution_mode_switches
+            .push(WorkloadExecutionModeSwitch::new(tick, target, mode));
+        self
+    }
+
     pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
         self.manifest_identity.clone()
     }
@@ -1617,6 +1698,10 @@ impl WorkloadResult {
 
     pub fn checkpoint_labels(&self) -> &[String] {
         &self.checkpoint_labels
+    }
+
+    pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
+        &self.execution_mode_switches
     }
 
     pub fn verify_manifest(&self, manifest: &WorkloadManifest) -> Result<(), WorkloadError> {
@@ -1840,6 +1925,16 @@ pub enum WorkloadError {
     UnexpectedCheckpointLabel {
         label: String,
     },
+    MissingExecutionModeSwitch {
+        tick: Tick,
+        target: String,
+        mode: WorkloadExecutionMode,
+    },
+    UnexpectedExecutionModeSwitch {
+        tick: Tick,
+        target: String,
+        mode: WorkloadExecutionMode,
+    },
     StopReasonMismatch {
         expected: String,
         actual: Option<String>,
@@ -1867,6 +1962,20 @@ fn planned_checkpoint_labels(events: &[WorkloadHostEvent]) -> Vec<String> {
         .iter()
         .filter_map(|event| match event.intent() {
             HostEventIntent::Checkpoint { label } => Some(label.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn planned_execution_mode_switches(
+    events: &[WorkloadHostEvent],
+) -> Vec<WorkloadExecutionModeSwitch> {
+    events
+        .iter()
+        .filter_map(|event| match event.intent() {
+            HostEventIntent::SwitchExecutionMode { target, mode } => Some(
+                WorkloadExecutionModeSwitch::new(event.tick(), target.clone(), mode.clone()),
+            ),
             _ => None,
         })
         .collect()

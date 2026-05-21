@@ -8,12 +8,12 @@ use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
-    WorkloadDataCacheProtocolCount, WorkloadError, WorkloadExecutionMode, WorkloadGpuDevice,
-    WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement,
-    WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadTopology,
+    WorkloadDataCacheProtocolCount, WorkloadError, WorkloadExecutionMode,
+    WorkloadExecutionModeSwitch, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
+    WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1072,13 +1072,22 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
     let result = WorkloadResult::new(manifest.identity(), 96)
         .with_stop_reason("host-stop")
         .with_stats_snapshot(snapshot.clone())
-        .with_checkpoint_label("after-roi");
+        .with_checkpoint_label("after-roi")
+        .with_execution_mode_switch(40, "cpu0", WorkloadExecutionMode::Functional);
 
     assert_eq!(result.manifest_identity(), manifest.identity());
     assert_eq!(result.final_tick(), 96);
     assert_eq!(result.stop_reason(), Some("host-stop"));
     assert_eq!(result.stats_snapshot(), Some(&snapshot));
     assert_eq!(result.checkpoint_labels(), &["after-roi".to_string()]);
+    assert_eq!(
+        result.execution_mode_switches(),
+        &[WorkloadExecutionModeSwitch::new(
+            40,
+            "cpu0",
+            WorkloadExecutionMode::Functional,
+        )]
+    );
 }
 
 #[test]
@@ -1549,6 +1558,57 @@ fn workload_replay_plan_rejects_missing_planned_checkpoint() {
             label: "warm".to_string(),
         }
     );
+}
+
+#[test]
+fn workload_replay_plan_validates_planned_execution_mode_switches() {
+    let manifest = WorkloadManifest::builder(id("mode-switch-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            40,
+            HostEventIntent::SwitchExecutionMode {
+                target: "cpu0".to_string(),
+                mode: WorkloadExecutionMode::Functional,
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing = WorkloadResult::new(plan.manifest_identity(), 40);
+    let error = plan.verify_result(&missing).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::MissingExecutionModeSwitch {
+            tick: 40,
+            target: "cpu0".to_string(),
+            mode: WorkloadExecutionMode::Functional,
+        }
+    );
+
+    let unexpected = WorkloadResult::new(plan.manifest_identity(), 40).with_execution_mode_switch(
+        40,
+        "cpu1",
+        WorkloadExecutionMode::Detailed,
+    );
+    let error = plan.verify_result(&unexpected).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::UnexpectedExecutionModeSwitch {
+            tick: 40,
+            target: "cpu1".to_string(),
+            mode: WorkloadExecutionMode::Detailed,
+        }
+    );
+
+    let matched = WorkloadResult::new(plan.manifest_identity(), 40).with_execution_mode_switch(
+        40,
+        "cpu0",
+        WorkloadExecutionMode::Functional,
+    );
+    plan.verify_result(&matched).unwrap();
 }
 
 #[test]

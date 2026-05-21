@@ -1219,8 +1219,20 @@ impl RiscvWorkloadReplay {
         let controller = controller.lock().expect("system host controller lock");
         let host_action_outcomes = controller.run().action_outcomes().to_vec();
         for outcome in &host_action_outcomes {
-            if let SystemActionOutcome::Checkpoint { manifest, .. } = outcome {
-                result = result.with_checkpoint_label(manifest.label());
+            match outcome {
+                SystemActionOutcome::Checkpoint { manifest, .. } => {
+                    result = result.with_checkpoint_label(manifest.label());
+                }
+                SystemActionOutcome::ExecutionModeSwitched {
+                    tick, target, mode, ..
+                } => {
+                    result = result.with_execution_mode_switch(
+                        *tick,
+                        target.as_str(),
+                        workload_execution_mode_from_system(*mode),
+                    );
+                }
+                _ => {}
             }
         }
         Ok((
@@ -1488,6 +1500,16 @@ fn workload_execution_mode(mode: &rem6_workload::WorkloadExecutionMode) -> Execu
         rem6_workload::WorkloadExecutionMode::Functional => ExecutionMode::Functional,
         rem6_workload::WorkloadExecutionMode::Timing => ExecutionMode::Timing,
         rem6_workload::WorkloadExecutionMode::Detailed => ExecutionMode::Detailed,
+    }
+}
+
+fn workload_execution_mode_from_system(
+    mode: ExecutionMode,
+) -> rem6_workload::WorkloadExecutionMode {
+    match mode {
+        ExecutionMode::Functional => rem6_workload::WorkloadExecutionMode::Functional,
+        ExecutionMode::Timing => rem6_workload::WorkloadExecutionMode::Timing,
+        ExecutionMode::Detailed => rem6_workload::WorkloadExecutionMode::Detailed,
     }
 }
 
