@@ -4,7 +4,7 @@ use rem6_cpu::{
     RiscvCpuExecutionEvent,
 };
 use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
-use rem6_kernel::{PartitionEventId, PartitionId};
+use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
@@ -116,4 +116,38 @@ fn cluster_run_reports_core_drive_activity_by_cpu() {
     );
     assert_eq!(run.turns()[1].active_partition_count(), 2);
     assert!(run.partition_activity(PartitionId::new(2)).is_none());
+}
+
+#[test]
+fn cluster_run_reports_parallel_scheduler_partition_activity() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 2).unwrap();
+    for index in 0..3 {
+        scheduler
+            .schedule_parallel_at(PartitionId::new(index), 0, |_| {})
+            .unwrap();
+    }
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let run = RiscvClusterRun::new(
+        vec![RiscvClusterTurn::parallel_scheduler(plan, recorded)],
+        RiscvClusterStopReason::StopCondition,
+    );
+
+    let epoch = run.turns()[0].parallel_scheduler_epoch().unwrap();
+    let partition0_activity = epoch.partition_activity(PartitionId::new(0)).unwrap();
+    assert_eq!(partition0_activity.worker_count(), 1);
+    assert_eq!(partition0_activity.dispatch_count(), 1);
+    assert_eq!(partition0_activity.max_pending_events(), 1);
+    assert_eq!(epoch.active_partition_count(), 3);
+    assert!(epoch.has_partition_activity(PartitionId::new(1)));
+
+    let run_partition2 = run
+        .parallel_scheduler_partition_activity(PartitionId::new(2))
+        .unwrap();
+    assert_eq!(run_partition2.worker_count(), 1);
+    assert_eq!(run_partition2.dispatch_count(), 1);
+    assert_eq!(run_partition2.max_pending_events(), 1);
+    assert_eq!(run.active_parallel_scheduler_partition_count(), 3);
+    assert!(run.has_parallel_scheduler_partition_activity(PartitionId::new(0)));
+    assert!(!run.has_parallel_scheduler_partition_activity(PartitionId::new(3)));
 }

@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use rem6_accelerator::{AcceleratorDmaCopy, AcceleratorEngineId};
 use rem6_gpu::{GpuDeviceId, GpuDmaCopy};
-use rem6_kernel::{ParallelRunProfile, PartitionEventId, RecordedConservativeRunSummary, Tick};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRunProfile, PartitionEventId, PartitionId,
+    RecordedConservativeRunSummary, Tick,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvTopologyDmaCopy {
@@ -159,6 +162,22 @@ impl RiscvTopologyDmaStageRunSummary {
         self.scheduler_run.has_parallel_work()
     }
 
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.scheduler_run.partition_activity(partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.scheduler_run.has_partition_activity(partition)
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.scheduler_run.active_partition_count()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        self.scheduler_run.partition_activities()
+    }
+
     pub fn final_tick(&self) -> Tick {
         self.scheduler_run.summary().final_tick()
     }
@@ -289,6 +308,25 @@ impl RiscvTopologyDmaRunSummary {
         self.read.has_parallel_work() || self.write.has_parallel_work()
     }
 
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        let mut activities = self.read.partition_activities();
+        merge_parallel_partition_activity_maps(&mut activities, self.write.partition_activities());
+        activities
+    }
+
     pub fn final_tick(&self) -> Tick {
         self.write.final_tick()
     }
@@ -324,4 +362,24 @@ where
         }
     }
     merged
+}
+
+fn merge_parallel_partition_activity_maps(
+    target: &mut BTreeMap<PartitionId, ParallelPartitionActivity>,
+    source: BTreeMap<PartitionId, ParallelPartitionActivity>,
+) {
+    for (partition, activity) in source {
+        target
+            .entry(partition)
+            .and_modify(|stored| {
+                *stored = ParallelPartitionActivity::new(
+                    stored.worker_count() + activity.worker_count(),
+                    stored.dispatch_count() + activity.dispatch_count(),
+                    stored
+                        .max_pending_events()
+                        .max(activity.max_pending_events()),
+                );
+            })
+            .or_insert(activity);
+    }
 }

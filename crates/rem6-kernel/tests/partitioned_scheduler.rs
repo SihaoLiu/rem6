@@ -916,6 +916,14 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     );
     assert_eq!(batches[0].dispatch_count_for_partition(core0), 1);
     assert_eq!(batches[0].dispatch_count_for_partition(memory), 0);
+    let core0_activity = batches[0].partition_activity(core0).unwrap();
+    assert_eq!(core0_activity.worker_count(), 1);
+    assert_eq!(core0_activity.dispatch_count(), 1);
+    assert_eq!(core0_activity.max_pending_events(), 1);
+    assert!(core0_activity.has_activity());
+    assert_eq!(batches[0].active_partition_count(), 2);
+    assert!(batches[0].has_partition_activity(core0));
+    assert!(!batches[0].has_partition_activity(memory));
 
     assert_eq!(batches[1].horizon(), 4);
     assert_eq!(batches[1].worker_count(), 1);
@@ -942,10 +950,20 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     );
     assert_eq!(batches[1].dispatch_count(), 2);
     assert_eq!(batches[1].dispatch_count_for_partition(memory), 2);
+    let memory_batch_activity = batches[1].partition_activity(memory).unwrap();
+    assert_eq!(memory_batch_activity.worker_count(), 1);
+    assert_eq!(memory_batch_activity.dispatch_count(), 2);
+    assert_eq!(memory_batch_activity.max_pending_events(), 2);
     assert_eq!(
         batches[1].dispatches_for_partition(memory),
         batches[1].dispatches().to_vec()
     );
+    let memory_epoch_activity = epoch.partition_activity(memory).unwrap();
+    assert_eq!(memory_epoch_activity.worker_count(), 1);
+    assert_eq!(memory_epoch_activity.dispatch_count(), 2);
+    assert_eq!(memory_epoch_activity.max_pending_events(), 2);
+    assert_eq!(epoch.active_partition_count(), 3);
+    assert!(epoch.has_partition_activity(core1));
     assert_eq!(scheduler.now(), 4);
     assert!(scheduler.is_idle());
 }
@@ -1010,6 +1028,13 @@ fn scheduler_recorded_parallel_runner_accumulates_profile() {
             PartitionId::new(3),
         ]
     );
+    assert_eq!(run.active_partition_count(), 4);
+    let partition0_activity = run.partition_activity(PartitionId::new(0)).unwrap();
+    assert_eq!(partition0_activity.worker_count(), 1);
+    assert_eq!(partition0_activity.dispatch_count(), 1);
+    assert_eq!(partition0_activity.max_pending_events(), 1);
+    assert!(run.has_partition_activity(PartitionId::new(3)));
+    assert!(!run.has_partition_activity(PartitionId::new(4)));
     assert_eq!(
         run.epochs()[0].profile(),
         ParallelRunProfile::new(1, 0, 2, 4, 4, 2)

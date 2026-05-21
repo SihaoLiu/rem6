@@ -57,6 +57,13 @@ fn gpu_launch_runs_workgroups_on_compute_units_deterministically() {
     assert!(summary.has_device_activity());
     assert!(summary.has_compute_activity());
     assert!(!summary.has_dma_activity());
+    let gpu_activity = summary.partition_activity(gpu_partition).unwrap();
+    assert!(gpu_activity.worker_count() >= 1);
+    assert!(gpu_activity.dispatch_count() >= 1);
+    assert!(gpu_activity.max_pending_events() >= 1);
+    assert!(summary.has_partition_activity(gpu_partition));
+    assert!(!summary.has_partition_activity(PartitionId::new(3)));
+    assert!(summary.active_partition_count() >= 1);
     assert_eq!(
         gpu.completions(),
         vec![

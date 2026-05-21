@@ -3,10 +3,10 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_kernel::{
-    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelRunProfile, ParallelSchedulerContext,
-    ParallelWorkerRecord, PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition,
-    RecordedRunSummary, RunSummary, ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord,
-    SchedulerError, Tick,
+    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity, ParallelRunProfile,
+    ParallelSchedulerContext, ParallelWorkerRecord, PartitionFrontier, PartitionId,
+    PartitionedScheduler, ReadyPartition, RecordedRunSummary, RunSummary, ScheduledEventKind,
+    SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
 };
 use rem6_memory::AgentId;
 use rem6_mmio::MmioBus;
@@ -877,17 +877,20 @@ pub struct RiscvClusterSchedulerEpoch {
     dispatches: Vec<SchedulerDispatchRecord>,
     batches: Vec<ParallelEpochBatchRecord>,
     profile: ParallelRunProfile,
+    partition_activities: BTreeMap<PartitionId, ParallelPartitionActivity>,
 }
 
 impl RiscvClusterSchedulerEpoch {
     pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
         let profile = recorded.profile();
+        let partition_activities = recorded.partition_activities();
         Self {
             plan,
             summary: recorded.summary(),
             dispatches: recorded.dispatches().to_vec(),
             batches: recorded.batches().to_vec(),
             profile,
+            partition_activities,
         }
     }
 
@@ -984,6 +987,23 @@ impl RiscvClusterSchedulerEpoch {
             .iter()
             .flat_map(ParallelEpochBatchRecord::worker_partitions)
             .collect()
+    }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.partition_activities.get(&partition).copied()
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities.len()
+    }
+
+    pub fn partition_activities(&self) -> &BTreeMap<PartitionId, ParallelPartitionActivity> {
+        &self.partition_activities
     }
 
     pub fn workers(&self) -> Vec<ParallelWorkerRecord> {
@@ -1151,6 +1171,33 @@ impl RiscvClusterRun {
             })
     }
 
+    pub fn parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.parallel_scheduler_partition_activities()
+            .remove(&partition)
+    }
+
+    pub fn has_parallel_scheduler_partition_activity(&self, partition: PartitionId) -> bool {
+        self.parallel_scheduler_partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_parallel_scheduler_partition_count(&self) -> usize {
+        self.parallel_scheduler_partition_activities().len()
+    }
+
+    pub fn parallel_scheduler_partition_activities(
+        &self,
+    ) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        let mut activities = BTreeMap::new();
+        for epoch in self.parallel_scheduler_epochs() {
+            merge_parallel_partition_activity_maps(&mut activities, epoch.partition_activities());
+        }
+        activities
+    }
+
     pub fn parallel_scheduler_dispatches_for_partition(
         &self,
         partition: PartitionId,
@@ -1196,6 +1243,26 @@ fn drive_parallel_scheduler_turn(
         .run_next_epoch_parallel_recorded()
         .map_err(RiscvClusterError::Scheduler)?;
     Ok(RiscvClusterTurn::parallel_scheduler(plan, recorded))
+}
+
+fn merge_parallel_partition_activity_maps(
+    target: &mut BTreeMap<PartitionId, ParallelPartitionActivity>,
+    source: &BTreeMap<PartitionId, ParallelPartitionActivity>,
+) {
+    for (partition, activity) in source {
+        target
+            .entry(*partition)
+            .and_modify(|stored| {
+                *stored = ParallelPartitionActivity::new(
+                    stored.worker_count() + activity.worker_count(),
+                    stored.dispatch_count() + activity.dispatch_count(),
+                    stored
+                        .max_pending_events()
+                        .max(activity.max_pending_events()),
+                );
+            })
+            .or_insert(*activity);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

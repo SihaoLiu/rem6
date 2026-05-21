@@ -1,12 +1,13 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{
-    ConservativeRunSummary, ParallelEpochBatchRecord, ParallelRunProfile, ParallelSchedulerContext,
-    PartitionEventId, PartitionId, PartitionedScheduler, RecordedConservativeRunSummary,
-    RecordedRunSummary, SchedulerDispatchRecord, SchedulerError, Tick,
+    ConservativeRunSummary, ParallelEpochBatchRecord, ParallelPartitionActivity,
+    ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
+    PartitionedScheduler, RecordedConservativeRunSummary, RecordedRunSummary,
+    SchedulerDispatchRecord, SchedulerError, Tick,
 };
 use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_topology::{Endpoint, TopologyError};
@@ -678,6 +679,22 @@ impl ParallelGpuRunSummary {
 
     pub fn has_parallel_work(&self) -> bool {
         self.scheduler_run.has_parallel_work()
+    }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.scheduler_run.partition_activity(partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.scheduler_run.has_partition_activity(partition)
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.scheduler_run.active_partition_count()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        self.scheduler_run.partition_activities()
     }
 
     pub fn dispatches(&self) -> Vec<SchedulerDispatchRecord> {

@@ -1120,6 +1120,21 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
     assert_eq!(summary.final_tick(), 24);
     assert!(summary.has_parallel_work());
     assert!(summary.has_dma_activity());
+    assert!(summary.read().has_partition_activity(PartitionId::new(1)));
+    assert!(summary.read().has_partition_activity(PartitionId::new(2)));
+    assert!(summary.read().has_partition_activity(PartitionId::new(3)));
+    assert!(summary.read().active_partition_count() >= 3);
+    let read_gpu_partition = summary
+        .read()
+        .partition_activity(PartitionId::new(2))
+        .unwrap();
+    assert!(read_gpu_partition.worker_count() >= 1);
+    assert!(read_gpu_partition.dispatch_count() >= 1);
+    assert!(summary.has_partition_activity(PartitionId::new(1)));
+    assert!(summary.has_partition_activity(PartitionId::new(2)));
+    assert!(summary.has_partition_activity(PartitionId::new(3)));
+    assert!(!summary.has_partition_activity(PartitionId::new(4)));
+    assert!(summary.active_partition_count() >= 3);
     let read_gpu = summary.read().gpu_activity(gpu_id).unwrap();
     assert_eq!(read_gpu.trace_event_count(), 2);
     assert_eq!(read_gpu.pending_dma_write_count(), 1);
@@ -1348,6 +1363,12 @@ fn topology_system_records_gpu_and_accelerator_compute_batch_activity() {
     assert!(summary.has_compute_activity());
     assert!(summary.has_gpu_activity());
     assert!(summary.has_accelerator_activity());
+    assert!(summary.has_partition_activity(PartitionId::new(1)));
+    assert!(summary.has_partition_activity(PartitionId::new(2)));
+    assert!(summary.active_partition_count() >= 2);
+    let gpu_partition_activity = summary.partition_activity(PartitionId::new(2)).unwrap();
+    assert!(gpu_partition_activity.worker_count() >= 1);
+    assert!(gpu_partition_activity.dispatch_count() >= 1);
     let gpu_activity = summary.gpu_activity(gpu_id).unwrap();
     assert_eq!(gpu_activity.trace_event_count(), 8);
     assert_eq!(gpu_activity.workgroup_completion_count(), 3);

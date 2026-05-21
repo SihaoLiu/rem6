@@ -866,4 +866,13 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
     assert_eq!(run.active_partition_count(), 2);
     assert!(run.has_partition_activity(PartitionId::new(0)));
     assert!(!run.has_partition_activity(PartitionId::new(2)));
+    let scheduler_partition0 = run
+        .parallel_scheduler_partition_activity(PartitionId::new(0))
+        .unwrap();
+    assert!(scheduler_partition0.worker_count() >= 1);
+    assert!(scheduler_partition0.dispatch_count() >= 1);
+    assert!(scheduler_partition0.max_pending_events() >= 1);
+    assert!(run.active_parallel_scheduler_partition_count() >= 2);
+    assert!(run.has_parallel_scheduler_partition_activity(PartitionId::new(0)));
+    assert!(!run.has_parallel_scheduler_partition_activity(PartitionId::new(4)));
 }

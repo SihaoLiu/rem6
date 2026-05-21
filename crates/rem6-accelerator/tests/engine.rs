@@ -78,6 +78,13 @@ fn accelerator_engine_dispatches_remote_commands_on_parallel_scheduler_partition
     assert!(summary.has_device_activity());
     assert!(summary.has_command_activity());
     assert!(!summary.has_dma_activity());
+    let accelerator_activity = summary.partition_activity(accelerator_partition).unwrap();
+    assert!(accelerator_activity.worker_count() >= 1);
+    assert!(accelerator_activity.dispatch_count() >= 1);
+    assert!(accelerator_activity.max_pending_events() >= 1);
+    assert!(summary.has_partition_activity(accelerator_partition));
+    assert!(!summary.has_partition_activity(PartitionId::new(3)));
+    assert!(summary.active_partition_count() >= 1);
     assert_eq!(
         engine.trace(),
         vec![

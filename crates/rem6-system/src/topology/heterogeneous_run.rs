@@ -5,7 +5,10 @@ use rem6_accelerator::{
     AcceleratorTopologyDevice,
 };
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuKernelLaunch, GpuTopologyDevice};
-use rem6_kernel::{ParallelRunProfile, PartitionEventId, RecordedConservativeRunSummary, Tick};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRunProfile, PartitionEventId, PartitionId,
+    RecordedConservativeRunSummary, Tick,
+};
 
 use super::{RiscvTopologySystem, RiscvTopologySystemError};
 
@@ -119,6 +122,22 @@ impl RiscvTopologyHeterogeneousRunSummary {
 
     pub fn has_parallel_work(&self) -> bool {
         self.scheduler_run.has_parallel_work()
+    }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.scheduler_run.partition_activity(partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.scheduler_run.has_partition_activity(partition)
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.scheduler_run.active_partition_count()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        self.scheduler_run.partition_activities()
     }
 
     pub fn executed_events(&self) -> usize {

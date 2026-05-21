@@ -11,10 +11,10 @@ use crate::Tick;
 mod state;
 
 pub use state::{
-    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelRunProfile,
-    ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot, PendingEventSnapshot,
-    ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary, ScheduledEventKind,
-    SchedulerDispatchRecord, SchedulerSnapshot,
+    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
+    ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot,
+    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
+    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

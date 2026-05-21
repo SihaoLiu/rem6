@@ -10,9 +10,10 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
-    ParallelEpochBatchRecord, ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord,
-    PartitionEventId, PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition,
-    SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
+    ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
+    ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId, PartitionFrontier,
+    PartitionId, PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord,
+    SchedulerError, Tick,
 };
 use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
@@ -726,6 +727,33 @@ impl RiscvSystemRun {
             })
     }
 
+    pub fn parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.parallel_scheduler_partition_activities()
+            .remove(&partition)
+    }
+
+    pub fn has_parallel_scheduler_partition_activity(&self, partition: PartitionId) -> bool {
+        self.parallel_scheduler_partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_parallel_scheduler_partition_count(&self) -> usize {
+        self.parallel_scheduler_partition_activities().len()
+    }
+
+    pub fn parallel_scheduler_partition_activities(
+        &self,
+    ) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        let mut activities = BTreeMap::new();
+        for epoch in self.parallel_scheduler_epochs() {
+            merge_parallel_partition_activity_maps(&mut activities, epoch.partition_activities());
+        }
+        activities
+    }
+
     pub fn parallel_scheduler_dispatches_for_partition(
         &self,
         partition: PartitionId,
@@ -1086,6 +1114,26 @@ impl RiscvInstructionStats {
 
     pub fn committed_stats(&self) -> &BTreeMap<CpuId, StatId> {
         &self.committed
+    }
+}
+
+fn merge_parallel_partition_activity_maps(
+    target: &mut BTreeMap<PartitionId, ParallelPartitionActivity>,
+    source: &BTreeMap<PartitionId, ParallelPartitionActivity>,
+) {
+    for (partition, activity) in source {
+        target
+            .entry(*partition)
+            .and_modify(|stored| {
+                *stored = ParallelPartitionActivity::new(
+                    stored.worker_count() + activity.worker_count(),
+                    stored.dispatch_count() + activity.dispatch_count(),
+                    stored
+                        .max_pending_events()
+                        .max(activity.max_pending_events()),
+                );
+            })
+            .or_insert(*activity);
     }
 }
 

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::scheduler::{ConservativeRunSummary, PartitionEventId, PartitionId, RunSummary};
 use crate::Tick;
 
@@ -148,6 +150,23 @@ impl ParallelEpochBatchRecord {
     pub fn dispatch_count_for_partition(&self, partition: PartitionId) -> usize {
         self.dispatches_for_partition(partition).len()
     }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        collect_parallel_partition_activity([self])
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -194,6 +213,60 @@ impl ParallelWorkerRecord {
 
     pub const fn pending_events(self) -> usize {
         self.pending_events
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct ParallelPartitionActivity {
+    worker_count: usize,
+    dispatch_count: usize,
+    max_pending_events: usize,
+}
+
+impl ParallelPartitionActivity {
+    pub const fn new(
+        worker_count: usize,
+        dispatch_count: usize,
+        max_pending_events: usize,
+    ) -> Self {
+        Self {
+            worker_count,
+            dispatch_count,
+            max_pending_events,
+        }
+    }
+
+    pub const fn worker_count(self) -> usize {
+        self.worker_count
+    }
+
+    pub const fn dispatch_count(self) -> usize {
+        self.dispatch_count
+    }
+
+    pub const fn max_pending_events(self) -> usize {
+        self.max_pending_events
+    }
+
+    pub const fn has_activity(self) -> bool {
+        self.worker_count != 0 || self.dispatch_count != 0
+    }
+
+    fn record_worker(&mut self, worker: ParallelWorkerRecord) {
+        self.worker_count += 1;
+        self.max_pending_events = self.max_pending_events.max(worker.pending_events());
+    }
+
+    fn record_dispatch(&mut self) {
+        self.dispatch_count += 1;
+    }
+
+    fn merge(self, other: Self) -> Self {
+        Self {
+            worker_count: self.worker_count + other.worker_count,
+            dispatch_count: self.dispatch_count + other.dispatch_count,
+            max_pending_events: self.max_pending_events.max(other.max_pending_events),
+        }
     }
 }
 
@@ -475,6 +548,23 @@ impl RecordedRunSummary {
             .flat_map(ParallelEpochBatchRecord::worker_partitions)
             .collect()
     }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        collect_parallel_partition_activity(&self.batches)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -647,5 +737,62 @@ impl RecordedConservativeRunSummary {
             .iter()
             .flat_map(RecordedRunSummary::parallel_worker_partitions)
             .collect()
+    }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        let mut activities = BTreeMap::new();
+        for epoch in &self.epochs {
+            merge_parallel_partition_activities(&mut activities, epoch.partition_activities());
+        }
+        activities
+    }
+}
+
+fn collect_parallel_partition_activity<'a, I>(
+    batches: I,
+) -> BTreeMap<PartitionId, ParallelPartitionActivity>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut activities: BTreeMap<PartitionId, ParallelPartitionActivity> = BTreeMap::new();
+    for batch in batches {
+        for worker in batch.workers() {
+            activities
+                .entry(worker.partition())
+                .or_default()
+                .record_worker(*worker);
+        }
+        for dispatch in batch.dispatches() {
+            activities
+                .entry(dispatch.partition())
+                .or_default()
+                .record_dispatch();
+        }
+    }
+    activities
+}
+
+fn merge_parallel_partition_activities(
+    target: &mut BTreeMap<PartitionId, ParallelPartitionActivity>,
+    source: BTreeMap<PartitionId, ParallelPartitionActivity>,
+) {
+    for (partition, activity) in source {
+        target
+            .entry(partition)
+            .and_modify(|stored| *stored = stored.merge(activity))
+            .or_insert(activity);
     }
 }
