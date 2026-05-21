@@ -31,6 +31,21 @@ fn fabric_path(name: &str, latency: u64, bandwidth_bytes_per_tick: u64) -> Fabri
     .unwrap()
 }
 
+fn credit_fabric_path(
+    name: &str,
+    latency: u64,
+    bandwidth_bytes_per_tick: u64,
+    credit_depth: u32,
+) -> FabricPath {
+    FabricPath::new([
+        FabricPathHop::new(fabric_link(name), latency, bandwidth_bytes_per_tick)
+            .unwrap()
+            .with_credit_depth(credit_depth)
+            .unwrap(),
+    ])
+    .unwrap()
+}
+
 fn request(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
     MemoryRequest::read_shared(
         MemoryRequestId::new(AgentId::new(1), sequence),
@@ -988,6 +1003,127 @@ fn transport_parallel_batch_reserves_shared_fabric_by_stable_packet_order() {
         vec![
             (route_from_partition_one, 4, first_by_packet.id()),
             (route_from_partition_zero, 6, second_by_packet.id()),
+        ],
+    );
+}
+
+#[test]
+fn transport_parallel_batch_respects_finite_fabric_credit_depth() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let memory = endpoint("memory0");
+    let shared_path = credit_fabric_path("mesh_credit", 10, 8, 2);
+    let route_a = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core0"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_b = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core1"),
+                PartitionId::new(1),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_c = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core2"),
+                PartitionId::new(2),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req_a = request(90, 0x9000, 8);
+    let req_b = request(91, 0xa000, 8);
+    let req_c = request(92, 0xb000, 8);
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+
+    let delivery_a = Arc::clone(&deliveries);
+    let delivery_b = Arc::clone(&deliveries);
+    let delivery_c = Arc::clone(&deliveries);
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route_c,
+                    req_c.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        delivery_c.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+                ParallelMemoryTransaction::new(
+                    route_a,
+                    req_a.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        delivery_a.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+                ParallelMemoryTransaction::new(
+                    route_b,
+                    req_b.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        delivery_b.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+            ],
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 6);
+    assert_eq!(summary.final_tick(), 22);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![
+            (route_a, 11, req_a.id()),
+            (route_b, 12, req_b.id()),
+            (route_c, 22, req_c.id()),
         ],
     );
 }

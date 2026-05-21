@@ -270,6 +270,7 @@ pub struct FabricConnectionConfig {
     bandwidth_bytes_per_tick: u64,
     request_virtual_network: VirtualNetworkId,
     response_virtual_network: VirtualNetworkId,
+    credit_depth: Option<u32>,
 }
 
 impl FabricConnectionConfig {
@@ -279,6 +280,7 @@ impl FabricConnectionConfig {
             bandwidth_bytes_per_tick,
             request_virtual_network: VirtualNetworkId::new(0),
             response_virtual_network: VirtualNetworkId::new(0),
+            credit_depth: None,
         }
     }
 
@@ -290,6 +292,13 @@ impl FabricConnectionConfig {
         self.request_virtual_network = request_virtual_network;
         self.response_virtual_network = response_virtual_network;
         self
+    }
+
+    pub fn with_credit_depth(mut self, credit_depth: u32) -> Result<Self, FabricError> {
+        FabricPathHop::new(self.link.clone(), 1, self.bandwidth_bytes_per_tick)?
+            .with_credit_depth(credit_depth)?;
+        self.credit_depth = Some(credit_depth);
+        Ok(self)
     }
 
     pub fn link(&self) -> &FabricLinkId {
@@ -306,6 +315,10 @@ impl FabricConnectionConfig {
 
     pub fn response_virtual_network(&self) -> VirtualNetworkId {
         self.response_virtual_network
+    }
+
+    pub fn credit_depth(&self) -> Option<u32> {
+        self.credit_depth
     }
 }
 
@@ -623,17 +636,25 @@ impl TopologyBuilder {
         fabric: FabricConnectionConfig,
     ) -> Result<Self, TopologyError> {
         self.validate_connection(&from, &to, request_latency, response_latency)?;
-        let request_fabric_path = FabricPath::new([FabricPathHop::new(
-            fabric.link().clone(),
-            request_latency,
-            fabric.bandwidth_bytes_per_tick(),
+        let request_fabric_path = FabricPath::new([apply_credit_depth(
+            FabricPathHop::new(
+                fabric.link().clone(),
+                request_latency,
+                fabric.bandwidth_bytes_per_tick(),
+            )
+            .map_err(TopologyError::Fabric)?,
+            fabric.credit_depth(),
         )
         .map_err(TopologyError::Fabric)?])
         .map_err(TopologyError::Fabric)?;
-        let response_fabric_path = FabricPath::new([FabricPathHop::new(
-            fabric.link().clone(),
-            response_latency,
-            fabric.bandwidth_bytes_per_tick(),
+        let response_fabric_path = FabricPath::new([apply_credit_depth(
+            FabricPathHop::new(
+                fabric.link().clone(),
+                response_latency,
+                fabric.bandwidth_bytes_per_tick(),
+            )
+            .map_err(TopologyError::Fabric)?,
+            fabric.credit_depth(),
         )
         .map_err(TopologyError::Fabric)?])
         .map_err(TopologyError::Fabric)?;
@@ -705,6 +726,16 @@ impl TopologyBuilder {
                 component: endpoint.component().clone(),
                 port: endpoint.port().clone(),
             })
+    }
+}
+
+fn apply_credit_depth(
+    hop: FabricPathHop,
+    credit_depth: Option<u32>,
+) -> Result<FabricPathHop, FabricError> {
+    match credit_depth {
+        Some(depth) => hop.with_credit_depth(depth),
+        None => Ok(hop),
     }
 }
 

@@ -71,6 +71,97 @@ fn fabric_keeps_virtual_network_lanes_independent() {
 }
 
 #[test]
+fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
+    let mut fabric = FabricModel::new();
+    let route = path([FabricPathHop::new(link("mesh_credit"), 10, 8)
+        .unwrap()
+        .with_credit_depth(2)
+        .unwrap()]);
+
+    let transfers = fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(3, 8, 1), route.clone()),
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 1), route.clone()),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(transfers[0].packet().id(), FabricPacketId::new(1));
+    assert_eq!(transfers[0].hops()[0].start_tick(), 0);
+    assert_eq!(transfers[0].hops()[0].depart_tick(), 1);
+    assert_eq!(transfers[0].arrival_tick(), 11);
+    assert_eq!(transfers[1].packet().id(), FabricPacketId::new(2));
+    assert_eq!(transfers[1].hops()[0].start_tick(), 1);
+    assert_eq!(transfers[1].hops()[0].depart_tick(), 2);
+    assert_eq!(transfers[1].arrival_tick(), 12);
+    assert_eq!(transfers[2].packet().id(), FabricPacketId::new(3));
+    assert_eq!(transfers[2].hops()[0].start_tick(), 11);
+    assert_eq!(transfers[2].hops()[0].ready_tick(), 11);
+    assert_eq!(transfers[2].hops()[0].depart_tick(), 12);
+    assert_eq!(transfers[2].arrival_tick(), 22);
+}
+
+#[test]
+fn fabric_credit_depth_is_scoped_by_virtual_network() {
+    let mut fabric = FabricModel::new();
+    let route = path([FabricPathHop::new(link("mesh_credit_vn"), 10, 8)
+        .unwrap()
+        .with_credit_depth(1)
+        .unwrap()]);
+
+    let transfers = fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 2), route.clone()),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(transfers[0].hops()[0].start_tick(), 0);
+    assert_eq!(transfers[0].arrival_tick(), 11);
+    assert_eq!(transfers[1].hops()[0].start_tick(), 0);
+    assert_eq!(transfers[1].arrival_tick(), 11);
+}
+
+#[test]
+fn fabric_reports_credit_lane_state_in_deterministic_order() {
+    let mut fabric = FabricModel::new();
+    let mesh_a = path([FabricPathHop::new(link("mesh_a"), 10, 8)
+        .unwrap()
+        .with_credit_depth(2)
+        .unwrap()]);
+    let mesh_b = path([FabricPathHop::new(link("mesh_b"), 4, 8).unwrap()]);
+
+    fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(1, 8, 3), mesh_a.clone()),
+                (packet(2, 8, 3), mesh_a),
+                (packet(3, 8, 1), mesh_b),
+            ],
+        )
+        .unwrap();
+
+    let lanes = fabric.lane_snapshots();
+
+    assert_eq!(lanes.len(), 2);
+    assert_eq!(lanes[0].link().as_str(), "mesh_a");
+    assert_eq!(lanes[0].virtual_network(), VirtualNetworkId::new(3));
+    assert_eq!(lanes[0].next_available_tick(), 2);
+    assert_eq!(lanes[0].credit_return_ticks(), &[11, 12]);
+    assert_eq!(lanes[1].link().as_str(), "mesh_b");
+    assert_eq!(lanes[1].virtual_network(), VirtualNetworkId::new(1));
+    assert_eq!(lanes[1].next_available_tick(), 1);
+    assert_eq!(lanes[1].credit_return_ticks(), &[]);
+}
+
+#[test]
 fn fabric_pipelines_multi_hop_paths_by_link_occupancy() {
     let mut fabric = FabricModel::new();
     let route = path([
@@ -105,6 +196,13 @@ fn fabric_rejects_invalid_packets_paths_and_batches() {
     assert_eq!(
         FabricPathHop::new(link("mesh_x0"), 2, 0).err(),
         Some(FabricError::ZeroLinkBandwidth)
+    );
+    assert_eq!(
+        FabricPathHop::new(link("mesh_x0"), 2, 8)
+            .unwrap()
+            .with_credit_depth(0)
+            .err(),
+        Some(FabricError::ZeroCreditDepth)
     );
     assert_eq!(FabricPath::new([]).err(), Some(FabricError::EmptyPath));
 

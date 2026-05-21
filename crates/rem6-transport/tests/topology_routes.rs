@@ -33,6 +33,17 @@ fn fabric(link: &str, request_vn: u16, response_vn: u16) -> FabricConnectionConf
     )
 }
 
+fn credit_fabric(
+    link: &str,
+    request_vn: u16,
+    response_vn: u16,
+    credit_depth: u32,
+) -> FabricConnectionConfig {
+    fabric(link, request_vn, response_vn)
+        .with_credit_depth(credit_depth)
+        .unwrap()
+}
+
 fn topology() -> Topology {
     TopologyBuilder::new(3)
         .add_component(
@@ -122,6 +133,57 @@ fn memory_route_can_be_built_from_topology_endpoint_path() {
     assert_eq!(route.hops()[1].response_latency(), 5);
     assert!(route.hops()[1].request_fabric_path().is_some());
     assert!(route.hops()[1].response_fabric_path().is_some());
+}
+
+#[test]
+fn memory_route_preserves_topology_fabric_credit_depth() {
+    let topology = TopologyBuilder::new(2)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("cpu0", "dmem"),
+            endpoint("mem0", "requests"),
+            7,
+            9,
+            credit_fabric("mesh_credit", 3, 4, 2),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let route = MemoryRoute::from_topology(
+        &topology,
+        endpoint("cpu0", "dmem"),
+        endpoint("mem0", "requests"),
+    )
+    .unwrap();
+
+    let request_hop = &route.hops()[0].request_fabric_path().unwrap().hops()[0];
+    let response_hop = &route.hops()[0].response_fabric_path().unwrap().hops()[0];
+    assert_eq!(request_hop.credit_depth(), Some(2));
+    assert_eq!(response_hop.credit_depth(), Some(2));
+    assert_eq!(route.request_virtual_network(), VirtualNetworkId::new(3));
+    assert_eq!(route.response_virtual_network(), VirtualNetworkId::new(4));
 }
 
 #[test]

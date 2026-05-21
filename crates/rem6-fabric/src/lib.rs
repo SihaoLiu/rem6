@@ -55,6 +55,7 @@ pub enum FabricError {
     ZeroPacketBytes,
     ZeroLinkLatency,
     ZeroLinkBandwidth,
+    ZeroCreditDepth,
     DuplicatePacketInBatch { packet: FabricPacketId },
     TickOverflow,
 }
@@ -67,6 +68,7 @@ impl fmt::Display for FabricError {
             Self::ZeroPacketBytes => write!(formatter, "fabric packet must contain bytes"),
             Self::ZeroLinkLatency => write!(formatter, "fabric link latency must be positive"),
             Self::ZeroLinkBandwidth => write!(formatter, "fabric link bandwidth must be positive"),
+            Self::ZeroCreditDepth => write!(formatter, "fabric credit depth must be positive"),
             Self::DuplicatePacketInBatch { packet } => {
                 write!(formatter, "packet {} appears more than once", packet.get())
             }
@@ -119,6 +121,7 @@ pub struct FabricPathHop {
     link: FabricLinkId,
     latency: Tick,
     bandwidth_bytes_per_tick: u64,
+    credit_depth: Option<u32>,
 }
 
 impl FabricPathHop {
@@ -138,7 +141,17 @@ impl FabricPathHop {
             link,
             latency,
             bandwidth_bytes_per_tick,
+            credit_depth: None,
         })
+    }
+
+    pub fn with_credit_depth(mut self, credit_depth: u32) -> Result<Self, FabricError> {
+        if credit_depth == 0 {
+            return Err(FabricError::ZeroCreditDepth);
+        }
+
+        self.credit_depth = Some(credit_depth);
+        Ok(self)
     }
 
     pub fn link(&self) -> &FabricLinkId {
@@ -151,6 +164,10 @@ impl FabricPathHop {
 
     pub const fn bandwidth_bytes_per_tick(&self) -> u64 {
         self.bandwidth_bytes_per_tick
+    }
+
+    pub const fn credit_depth(&self) -> Option<u32> {
+        self.credit_depth
     }
 }
 
@@ -259,9 +276,111 @@ impl FabricLaneKey {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricLaneSnapshot {
+    link: FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    next_available_tick: Tick,
+    credit_return_ticks: Vec<Tick>,
+}
+
+impl FabricLaneSnapshot {
+    fn new(
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        next_available_tick: Tick,
+        credit_return_ticks: Vec<Tick>,
+    ) -> Self {
+        Self {
+            link,
+            virtual_network,
+            next_available_tick,
+            credit_return_ticks,
+        }
+    }
+
+    pub fn link(&self) -> &FabricLinkId {
+        &self.link
+    }
+
+    pub const fn virtual_network(&self) -> VirtualNetworkId {
+        self.virtual_network
+    }
+
+    pub const fn next_available_tick(&self) -> Tick {
+        self.next_available_tick
+    }
+
+    pub fn credit_return_ticks(&self) -> &[Tick] {
+        &self.credit_return_ticks
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct FabricLaneState {
+    next_available: Tick,
+    credit_returns: Vec<Tick>,
+}
+
+impl FabricLaneState {
+    fn reserve(
+        &mut self,
+        arrival_tick: Tick,
+        serialization_ticks: Tick,
+        link_latency: Tick,
+        credit_depth: Option<u32>,
+    ) -> Result<FabricLaneReservation, FabricError> {
+        let mut start_tick = arrival_tick.max(self.next_available);
+        if let Some(credit_depth) = credit_depth {
+            loop {
+                self.credit_returns
+                    .retain(|credit_return| *credit_return > start_tick);
+                if self.credit_returns.len() < credit_depth as usize {
+                    break;
+                }
+
+                let credit_ready_tick = self.credit_returns[0];
+                if credit_ready_tick <= start_tick {
+                    break;
+                }
+                start_tick = credit_ready_tick.max(self.next_available);
+            }
+        }
+
+        let ready_tick = start_tick;
+        let depart_tick = start_tick
+            .checked_add(serialization_ticks)
+            .ok_or(FabricError::TickOverflow)?;
+        let next_arrival_tick = depart_tick
+            .checked_add(link_latency)
+            .ok_or(FabricError::TickOverflow)?;
+
+        self.next_available = depart_tick;
+        if credit_depth.is_some() {
+            self.credit_returns.push(next_arrival_tick);
+            self.credit_returns.sort_unstable();
+        }
+
+        Ok(FabricLaneReservation {
+            ready_tick,
+            start_tick,
+            depart_tick,
+            arrival_tick: next_arrival_tick,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FabricLaneReservation {
+    ready_tick: Tick,
+    start_tick: Tick,
+    depart_tick: Tick,
+    arrival_tick: Tick,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FabricModel {
-    next_available: BTreeMap<FabricLaneKey, Tick>,
+    lanes: BTreeMap<FabricLaneKey, FabricLaneState>,
 }
 
 impl FabricModel {
@@ -303,6 +422,20 @@ impl FabricModel {
             .collect()
     }
 
+    pub fn lane_snapshots(&self) -> Vec<FabricLaneSnapshot> {
+        self.lanes
+            .iter()
+            .map(|(lane, state)| {
+                FabricLaneSnapshot::new(
+                    lane.link.clone(),
+                    lane.virtual_network,
+                    state.next_available,
+                    state.credit_returns.clone(),
+                )
+            })
+            .collect()
+    }
+
     fn reserve_transfer(
         &mut self,
         injection_tick: Tick,
@@ -314,28 +447,25 @@ impl FabricModel {
 
         for hop in path.hops() {
             let lane = FabricLaneKey::new(hop.link().clone(), packet.virtual_network());
-            let ready_tick = *self.next_available.get(&lane).unwrap_or(&0);
-            let start_tick = arrival_tick.max(ready_tick);
             let serialization_ticks =
                 serialization_ticks(packet.bytes(), hop.bandwidth_bytes_per_tick());
-            let depart_tick = start_tick
-                .checked_add(serialization_ticks)
-                .ok_or(FabricError::TickOverflow)?;
-            let next_arrival_tick = depart_tick
-                .checked_add(hop.latency())
-                .ok_or(FabricError::TickOverflow)?;
+            let reservation = self.lanes.entry(lane).or_default().reserve(
+                arrival_tick,
+                serialization_ticks,
+                hop.latency(),
+                hop.credit_depth(),
+            )?;
 
-            self.next_available.insert(lane, depart_tick);
             timings.push(FabricHopTiming {
                 link: hop.link().clone(),
                 virtual_network: packet.virtual_network(),
-                ready_tick,
-                start_tick,
+                ready_tick: reservation.ready_tick,
+                start_tick: reservation.start_tick,
                 serialization_ticks,
-                depart_tick,
-                arrival_tick: next_arrival_tick,
+                depart_tick: reservation.depart_tick,
+                arrival_tick: reservation.arrival_tick,
             });
-            arrival_tick = next_arrival_tick;
+            arrival_tick = reservation.arrival_tick;
         }
 
         Ok(FabricTransfer {
