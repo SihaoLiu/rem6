@@ -15,6 +15,14 @@ pub struct SchedulerSnapshot {
 }
 
 impl SchedulerSnapshot {
+    pub fn new(now: Tick, min_remote_delay: Tick, partitions: Vec<PartitionSnapshot>) -> Self {
+        Self {
+            now,
+            min_remote_delay,
+            partitions,
+        }
+    }
+
     pub fn now(&self) -> Tick {
         self.now
     }
@@ -49,6 +57,21 @@ pub struct PartitionSnapshot {
 }
 
 impl PartitionSnapshot {
+    pub fn quiescent(
+        partition: PartitionId,
+        now: Tick,
+        next_event_local: u64,
+        next_event_order: u64,
+    ) -> Self {
+        Self {
+            partition,
+            now,
+            next_event_local,
+            next_event_order,
+            pending_events: Vec::new(),
+        }
+    }
+
     pub fn partition(&self) -> PartitionId {
         self.partition
     }

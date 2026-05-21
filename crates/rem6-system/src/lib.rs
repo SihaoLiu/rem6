@@ -21,6 +21,7 @@ mod host;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod riscv_checkpoint;
+mod scheduler_checkpoint;
 mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
@@ -45,6 +46,10 @@ pub use memory_checkpoint::{
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
+};
+pub use scheduler_checkpoint::{
+    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
+    SchedulerCheckpointRecord,
 };
 pub use timer_checkpoint::{
     TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
@@ -1282,6 +1287,7 @@ pub enum SystemError {
     AcceleratorCheckpoint(AcceleratorCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
+    SchedulerCheckpoint(SchedulerCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
     InterruptControllerCheckpoint(InterruptControllerCheckpointError),
@@ -1302,6 +1308,7 @@ impl fmt::Display for SystemError {
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
+            Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::InterruptControllerCheckpoint(error) => write!(formatter, "{error}"),
@@ -1321,6 +1328,7 @@ impl Error for SystemError {
             Self::AcceleratorCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
+            Self::SchedulerCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
             Self::InterruptControllerCheckpoint(error) => Some(error),

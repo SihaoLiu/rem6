@@ -6,7 +6,7 @@ use crate::{
     AcceleratorCheckpointBank, DramMemoryCheckpointBank, GpuCheckpointBank, GuestEventDelivery,
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, RiscvCoreCheckpointBank,
-    StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    SchedulerCheckpointBank, StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +41,7 @@ pub struct SystemActionExecutor {
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
     gpu_checkpoints: Option<GpuCheckpointBank>,
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
+    scheduler_checkpoints: Option<SchedulerCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
     interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
@@ -60,6 +61,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
+            scheduler_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
@@ -79,6 +81,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
+            scheduler_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
@@ -98,6 +101,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
+            scheduler_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
@@ -117,6 +121,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
+            scheduler_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
             interrupt_controller_checkpoints: None,
@@ -136,6 +141,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
+            scheduler_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
@@ -156,6 +162,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
+            scheduler_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
@@ -176,6 +183,7 @@ impl SystemActionExecutor {
             accelerator_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
+            scheduler_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
             interrupt_controller_checkpoints: None,
@@ -236,6 +244,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_scheduler_checkpoint_bank(
+        &mut self,
+        scheduler_checkpoints: SchedulerCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        scheduler_checkpoints.register_all(&mut self.checkpoints)?;
+        self.scheduler_checkpoints = Some(scheduler_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_dram_memory_checkpoint_bank(
         &mut self,
         dram_memory_checkpoints: DramMemoryCheckpointBank,
@@ -274,6 +291,10 @@ impl SystemActionExecutor {
 
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
+    }
+
+    pub const fn scheduler_checkpoint_bank(&self) -> Option<&SchedulerCheckpointBank> {
+        self.scheduler_checkpoints.as_ref()
     }
 
     pub const fn accelerator_checkpoint_bank(&self) -> Option<&AcceleratorCheckpointBank> {
@@ -338,6 +359,11 @@ impl SystemActionExecutor {
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
+                if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+                    scheduler_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::SchedulerCheckpoint)?;
+                }
                 if let Some(memory_checkpoints) = &self.memory_checkpoints {
                     memory_checkpoints
                         .capture_all_into(&mut self.checkpoints)
@@ -393,6 +419,11 @@ impl SystemActionExecutor {
                     riscv_checkpoints
                         .restore_all_from(&self.checkpoints)
                         .map_err(SystemError::RiscvCheckpoint)?;
+                }
+                if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+                    scheduler_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::SchedulerCheckpoint)?;
                 }
                 if let Some(memory_checkpoints) = &self.memory_checkpoints {
                     memory_checkpoints
