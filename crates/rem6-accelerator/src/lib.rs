@@ -9,7 +9,7 @@ use rem6_kernel::{
     ConservativeRunSummary, ParallelEpochBatchRecord, ParallelPartitionActivity,
     ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
     PartitionedScheduler, RecordedConservativeRunSummary, RecordedRunSummary,
-    SchedulerDispatchRecord, SchedulerError, Tick,
+    SchedulerDispatchRecord, SchedulerError, Tick, WaitForEdgeKind, WaitForGraph, WaitForNode,
 };
 use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_transport::{
@@ -545,10 +545,58 @@ impl AcceleratorDmaIssueRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceleratorEngineSnapshot {
     lane_busy_until: Vec<Tick>,
+    queued_commands: Vec<AcceleratorQueuedCommandSnapshot>,
     trace: Vec<AcceleratorTraceEvent>,
     completed: Vec<AcceleratorCompletion>,
     pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
     dma_completions: Vec<AcceleratorDmaCompletion>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceleratorQueuedCommandSnapshot {
+    command: AcceleratorCommand,
+    lane: u32,
+    queued_at: Tick,
+    started_at: Tick,
+    completed_at: Tick,
+}
+
+impl AcceleratorQueuedCommandSnapshot {
+    pub const fn new(
+        command: AcceleratorCommand,
+        lane: u32,
+        queued_at: Tick,
+        started_at: Tick,
+        completed_at: Tick,
+    ) -> Self {
+        Self {
+            command,
+            lane,
+            queued_at,
+            started_at,
+            completed_at,
+        }
+    }
+
+    pub const fn command(&self) -> &AcceleratorCommand {
+        &self.command
+    }
+
+    pub const fn lane(&self) -> u32 {
+        self.lane
+    }
+
+    pub const fn queued_at(&self) -> Tick {
+        self.queued_at
+    }
+
+    pub const fn started_at(&self) -> Tick {
+        self.started_at
+    }
+
+    pub const fn completed_at(&self) -> Tick {
+        self.completed_at
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -699,11 +747,20 @@ impl AcceleratorEngineSnapshot {
     ) -> Self {
         Self {
             lane_busy_until,
+            queued_commands: Vec::new(),
             trace,
             completed,
             pending_dma_writes,
             dma_completions,
         }
+    }
+
+    pub fn with_queued_commands(
+        mut self,
+        queued_commands: Vec<AcceleratorQueuedCommandSnapshot>,
+    ) -> Self {
+        self.queued_commands = queued_commands;
+        self
     }
 
     pub fn lane_busy_until(&self) -> &[Tick] {
@@ -712,6 +769,14 @@ impl AcceleratorEngineSnapshot {
 
     pub fn lane_count(&self) -> usize {
         self.lane_busy_until.len()
+    }
+
+    pub fn queued_commands(&self) -> &[AcceleratorQueuedCommandSnapshot] {
+        &self.queued_commands
+    }
+
+    pub fn has_queued_commands(&self) -> bool {
+        !self.queued_commands.is_empty()
     }
 
     pub fn trace(&self) -> &[AcceleratorTraceEvent] {
@@ -836,6 +901,13 @@ impl AcceleratorEngine {
             .lock()
             .expect("accelerator state lock")
             .snapshot()
+    }
+
+    pub fn wait_for_graph(&self) -> WaitForGraph {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .wait_for_graph(self.id())
     }
 
     pub fn restore(&self, snapshot: &AcceleratorEngineSnapshot) {
@@ -1026,6 +1098,7 @@ impl AcceleratorEngine {
             return;
         }
 
+        self.record_queued_command(command.clone(), context.now(), reservation);
         let engine = self.clone();
         context
             .schedule_local_after(reservation.started_at - context.now(), move |context| {
@@ -1040,6 +1113,7 @@ impl AcceleratorEngine {
         command: AcceleratorCommand,
         reservation: AcceleratorReservation,
     ) {
+        self.clear_queued_command(command.id(), reservation.lane, reservation.started_at);
         self.record(AcceleratorTraceEvent::new(
             context.now(),
             AcceleratorTraceKind::Started {
@@ -1108,6 +1182,34 @@ impl AcceleratorEngine {
             .expect("accelerator state lock")
             .trace
             .push(event);
+    }
+
+    fn record_queued_command(
+        &self,
+        command: AcceleratorCommand,
+        queued_at: Tick,
+        reservation: AcceleratorReservation,
+    ) {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .queued_commands
+            .push(AcceleratorQueuedCommand::new(
+                command,
+                reservation.lane,
+                queued_at,
+                reservation.started_at,
+                reservation.completed_at,
+            ));
+    }
+
+    fn clear_queued_command(&self, command: AcceleratorCommandId, lane: u32, started_at: Tick) {
+        let mut state = self.state.lock().expect("accelerator state lock");
+        if let Some(index) = state.queued_commands.iter().position(|queued| {
+            queued.command.id() == command && queued.lane == lane && queued.started_at == started_at
+        }) {
+            state.queued_commands.remove(index);
+        }
     }
 
     fn accept_dma_read_response(&self, copy: AcceleratorDmaCopy, delivery: ResponseDelivery) {
@@ -1184,6 +1286,7 @@ struct AcceleratorReservation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AcceleratorEngineState {
     lane_busy_until: Vec<Tick>,
+    queued_commands: Vec<AcceleratorQueuedCommand>,
     trace: Vec<AcceleratorTraceEvent>,
     completed: Vec<AcceleratorCompletion>,
     pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
@@ -1194,6 +1297,7 @@ impl AcceleratorEngineState {
     fn new(lanes: u32) -> Self {
         Self {
             lane_busy_until: vec![0; lanes as usize],
+            queued_commands: Vec::new(),
             trace: Vec::new(),
             completed: Vec::new(),
             pending_dma_writes: Vec::new(),
@@ -1209,17 +1313,110 @@ impl AcceleratorEngineState {
             self.pending_dma_writes.clone(),
             self.dma_completions.clone(),
         )
+        .with_queued_commands(
+            self.queued_commands
+                .iter()
+                .map(AcceleratorQueuedCommand::snapshot)
+                .collect(),
+        )
     }
 
     fn from_snapshot(snapshot: &AcceleratorEngineSnapshot) -> Self {
         Self {
             lane_busy_until: snapshot.lane_busy_until.clone(),
+            queued_commands: snapshot
+                .queued_commands
+                .iter()
+                .map(AcceleratorQueuedCommand::from_snapshot)
+                .collect(),
             trace: snapshot.trace.clone(),
             completed: snapshot.completed.clone(),
             pending_dma_writes: snapshot.pending_dma_writes.clone(),
             dma_completions: snapshot.dma_completions.clone(),
         }
     }
+
+    fn wait_for_graph(&self, engine: AcceleratorEngineId) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        for queued in &self.queued_commands {
+            if queued.started_at <= queued.queued_at {
+                continue;
+            }
+            graph
+                .record_wait(
+                    accelerator_command_node(engine, queued.command.id()),
+                    accelerator_lane_node(engine, queued.lane),
+                    WaitForEdgeKind::Queue,
+                    queued.queued_at,
+                )
+                .expect("accelerator wait-for labels are generated from typed ids");
+        }
+        graph
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AcceleratorQueuedCommand {
+    command: AcceleratorCommand,
+    lane: u32,
+    queued_at: Tick,
+    started_at: Tick,
+    completed_at: Tick,
+}
+
+impl AcceleratorQueuedCommand {
+    fn new(
+        command: AcceleratorCommand,
+        lane: u32,
+        queued_at: Tick,
+        started_at: Tick,
+        completed_at: Tick,
+    ) -> Self {
+        Self {
+            command,
+            lane,
+            queued_at,
+            started_at,
+            completed_at,
+        }
+    }
+
+    fn snapshot(&self) -> AcceleratorQueuedCommandSnapshot {
+        AcceleratorQueuedCommandSnapshot::new(
+            self.command.clone(),
+            self.lane,
+            self.queued_at,
+            self.started_at,
+            self.completed_at,
+        )
+    }
+
+    fn from_snapshot(snapshot: &AcceleratorQueuedCommandSnapshot) -> Self {
+        Self {
+            command: snapshot.command.clone(),
+            lane: snapshot.lane,
+            queued_at: snapshot.queued_at,
+            started_at: snapshot.started_at,
+            completed_at: snapshot.completed_at,
+        }
+    }
+}
+
+fn accelerator_command_node(
+    engine: AcceleratorEngineId,
+    command: AcceleratorCommandId,
+) -> WaitForNode {
+    WaitForNode::transaction(format!(
+        "accelerator.{}.command.{}",
+        engine.get(),
+        command.get()
+    ))
+    .expect("accelerator command wait-for label is generated from numeric ids")
+}
+
+fn accelerator_lane_node(engine: AcceleratorEngineId, lane: u32) -> WaitForNode {
+    WaitForNode::resource(format!("accelerator.{}.lane.{}", engine.get(), lane))
+        .expect("accelerator lane wait-for label is generated from numeric ids")
 }
 
 fn response_data(response: &MemoryResponse) -> Option<Vec<u8>> {

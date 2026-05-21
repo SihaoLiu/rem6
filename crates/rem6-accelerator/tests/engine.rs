@@ -4,7 +4,10 @@ use rem6_accelerator::{
     AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError, AcceleratorPendingDmaWrite,
     AcceleratorTraceEvent, AcceleratorTraceKind,
 };
-use rem6_kernel::{ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{
+    ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError, WaitForEdgeKind,
+    WaitForNode,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryRequest,
     MemoryRequestId,
@@ -155,6 +158,88 @@ fn accelerator_engine_dispatches_remote_commands_on_parallel_scheduler_partition
             ),
         ],
     );
+}
+
+#[test]
+fn accelerator_wait_for_graph_tracks_queued_commands_until_lane_starts() {
+    let cpu_partition = PartitionId::new(0);
+    let accelerator_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let engine = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(14), accelerator_partition, 1)
+            .unwrap(),
+    );
+
+    engine
+        .submit_from_partition(
+            &mut scheduler,
+            cpu_partition,
+            2,
+            AcceleratorCommand::new(
+                AcceleratorCommandId::new(50),
+                AcceleratorCommandKind::NpuInference { tiles: 4 },
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    engine
+        .submit_from_partition(
+            &mut scheduler,
+            cpu_partition,
+            2,
+            AcceleratorCommand::new(
+                AcceleratorCommandId::new(51),
+                AcceleratorCommandKind::NpuInference { tiles: 8 },
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let first_epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(first_epoch.summary().final_tick(), 2);
+    let lane = WaitForNode::resource("accelerator.14.lane.0").unwrap();
+    let queued_command = WaitForNode::transaction("accelerator.14.command.51").unwrap();
+    let wait_for = engine.wait_for_graph().snapshot();
+    assert_eq!(wait_for.edge_count(), 1);
+    assert_eq!(wait_for.first_observed_tick(), Some(2));
+    assert_eq!(wait_for.last_observed_tick(), Some(2));
+    assert!(wait_for.contains_edge(&queued_command, &lane, WaitForEdgeKind::Queue));
+    assert_eq!(
+        wait_for.dependencies(&queued_command)[0].observation_count(),
+        1
+    );
+    let snapshot = engine.snapshot();
+    assert!(snapshot.has_queued_commands());
+    assert_eq!(snapshot.queued_commands().len(), 1);
+    assert_eq!(
+        snapshot.queued_commands()[0].command().id(),
+        AcceleratorCommandId::new(51)
+    );
+    assert_eq!(snapshot.queued_commands()[0].lane(), 0);
+    assert_eq!(snapshot.queued_commands()[0].queued_at(), 2);
+    assert_eq!(snapshot.queued_commands()[0].started_at(), 7);
+
+    let restored = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(14), accelerator_partition, 1)
+            .unwrap(),
+    );
+    restored.restore(&snapshot);
+    assert!(restored.wait_for_graph().snapshot().contains_edge(
+        &queued_command,
+        &lane,
+        WaitForEdgeKind::Queue
+    ));
+
+    while scheduler.now() < 7 {
+        scheduler.run_next_epoch_parallel_recorded().unwrap();
+    }
+    assert!(engine.wait_for_graph().is_empty());
+
+    scheduler.run_until_idle_parallel_recorded().unwrap();
+    assert!(engine.wait_for_graph().is_empty());
 }
 
 #[test]

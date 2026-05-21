@@ -3,9 +3,10 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_accelerator::{
-    AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion, AcceleratorDmaCompletion,
-    AcceleratorDmaCopy, AcceleratorEngine, AcceleratorEngineSnapshot, AcceleratorPendingDmaWrite,
-    AcceleratorTraceEvent, AcceleratorTraceKind,
+    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
+    AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngine, AcceleratorEngineSnapshot,
+    AcceleratorPendingDmaWrite, AcceleratorQueuedCommandSnapshot, AcceleratorTraceEvent,
+    AcceleratorTraceKind,
 };
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_gpu::{
@@ -350,6 +351,7 @@ impl Error for GpuCheckpointError {}
 fn encode_accelerator_snapshot(snapshot: &AcceleratorEngineSnapshot) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u64_vec(&mut payload, snapshot.lane_busy_until());
+    write_accelerator_queued_vec(&mut payload, snapshot.queued_commands());
     write_accelerator_trace_vec(&mut payload, snapshot.trace());
     write_accelerator_completion_vec(&mut payload, snapshot.completed());
     write_accelerator_pending_vec(&mut payload, snapshot.pending_dma_writes());
@@ -369,6 +371,12 @@ fn decode_accelerator_snapshot(
                 component: component.clone(),
                 reason,
             })?;
+    let queued_commands = read_accelerator_queued_vec(&mut reader).map_err(|reason| {
+        AcceleratorCheckpointError::InvalidChunk {
+            component: component.clone(),
+            reason,
+        }
+    })?;
     let trace = read_accelerator_trace_vec(&mut reader).map_err(|reason| {
         AcceleratorCheckpointError::InvalidChunk {
             component: component.clone(),
@@ -399,13 +407,16 @@ fn decode_accelerator_snapshot(
             component: component.clone(),
             reason,
         })?;
-    Ok(AcceleratorEngineSnapshot::new(
-        lanes,
-        trace,
-        completed,
-        pending_dma_writes,
-        dma_completions,
-    ))
+    Ok(
+        AcceleratorEngineSnapshot::new(
+            lanes,
+            trace,
+            completed,
+            pending_dma_writes,
+            dma_completions,
+        )
+        .with_queued_commands(queued_commands),
+    )
 }
 
 fn encode_gpu_snapshot(snapshot: &GpuDeviceSnapshot) -> Vec<u8> {
@@ -463,6 +474,45 @@ fn decode_gpu_snapshot(
         pending_dma_writes,
         dma_completions,
     ))
+}
+
+fn write_accelerator_queued_vec(
+    payload: &mut Vec<u8>,
+    queued: &[AcceleratorQueuedCommandSnapshot],
+) {
+    write_count(payload, queued.len());
+    for command in queued {
+        write_u64(payload, command.command().id().get());
+        write_accelerator_command_kind(payload, command.command().kind());
+        write_u64(payload, command.command().execution_latency());
+        write_u32(payload, command.lane());
+        write_u64(payload, command.queued_at());
+        write_u64(payload, command.started_at());
+        write_u64(payload, command.completed_at());
+    }
+}
+
+fn read_accelerator_queued_vec(
+    reader: &mut ChunkReader<'_>,
+) -> Result<Vec<AcceleratorQueuedCommandSnapshot>, String> {
+    let count = reader.read_count("accelerator queued command count")?;
+    let mut queued = Vec::with_capacity(count);
+    for _ in 0..count {
+        let command = AcceleratorCommand::new(
+            AcceleratorCommandId::new(reader.read_u64("accelerator queued command")?),
+            read_accelerator_command_kind(reader)?,
+            reader.read_u64("accelerator queued command latency")?,
+        )
+        .map_err(|error| error.to_string())?;
+        queued.push(AcceleratorQueuedCommandSnapshot::new(
+            command,
+            reader.read_u32("accelerator queued lane")?,
+            reader.read_u64("accelerator queued enqueue")?,
+            reader.read_u64("accelerator queued start")?,
+            reader.read_u64("accelerator queued completion")?,
+        ));
+    }
+    Ok(queued)
 }
 
 fn write_accelerator_trace_vec(payload: &mut Vec<u8>, events: &[AcceleratorTraceEvent]) {
