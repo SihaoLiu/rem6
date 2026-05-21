@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rem6_cache::CacheControllerResultKind;
 use rem6_coherence::{
     CpuResponseRecord, HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
@@ -346,6 +348,160 @@ fn msi_bank_harness_parallel_cycle_plan_is_stable_and_side_effect_free() {
     assert_eq!(run.scheduled_miss_count(), 2);
     assert_eq!(run.immediate_hit_count(), 0);
     assert_ne!(harness.snapshot(), before);
+}
+
+#[test]
+fn msi_bank_harness_snapshot_restore_preserves_parallel_cycle_history() {
+    let mut source = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    source
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    source
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+
+    let first = source
+        .submit_parallel_cycle(
+            41,
+            [
+                (agent(2), read(2, 20, 0x1018)),
+                (agent(1), read(1, 10, 0x1004)),
+            ],
+        )
+        .unwrap();
+    let second = source
+        .submit_parallel_cycle(
+            47,
+            [
+                (agent(1), read(1, 11, 0x1004)),
+                (agent(2), read(2, 21, 0x1018)),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(
+        source.parallel_cycle_runs(),
+        &[first.clone(), second.clone()]
+    );
+    let snapshot = source.snapshot();
+    assert_eq!(snapshot.parallel_cycle_runs(), source.parallel_cycle_runs());
+
+    let rebuilt = MsiBankDirectoryHarnessSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+    assert_eq!(rebuilt, snapshot);
+    assert_eq!(
+        rebuilt.parallel_cycle_runs(),
+        &[first.clone(), second.clone()]
+    );
+
+    let mut restored = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    restored
+        .insert_backing_line(Address::new(0x1000), line_data(0xee))
+        .unwrap();
+    restored
+        .submit_parallel_cycle(53, [(agent(1), read(1, 30, 0x1004))])
+        .unwrap();
+    assert_ne!(restored.parallel_cycle_runs(), source.parallel_cycle_runs());
+
+    restored.restore(&snapshot).unwrap();
+
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.parallel_cycle_runs(), &[first, second]);
+    assert_eq!(
+        restored
+            .parallel_cycle_runs()
+            .iter()
+            .map(|run| (run.tick(), run.accepted_count(), run.response_count()))
+            .collect::<Vec<_>>(),
+        vec![(41, 2, 2), (47, 2, 2)]
+    );
+}
+
+#[test]
+fn msi_bank_harness_parallel_cycle_history_summarizes_restored_records() {
+    let mut source = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    source
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    source
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    source
+        .submit_parallel_cycle(
+            61,
+            [
+                (agent(2), read(2, 20, 0x1018)),
+                (agent(1), read(1, 10, 0x1004)),
+            ],
+        )
+        .unwrap();
+    source
+        .submit_parallel_cycle(
+            67,
+            [
+                (agent(1), read(1, 11, 0x1004)),
+                (agent(2), read(2, 21, 0x1018)),
+            ],
+        )
+        .unwrap();
+    let snapshot = source.snapshot();
+    let restored = MsiBankDirectoryHarnessSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+
+    let history = restored.parallel_cycle_history();
+
+    assert_eq!(history.cycle_count(), 2);
+    assert!(!history.is_empty());
+    assert!(history.has_parallel_work());
+    assert_eq!(history.parallel_cycle_count(), 2);
+    assert_eq!(history.single_request_cycle_count(), 0);
+    assert_eq!(history.ticks(), vec![61, 67]);
+    assert_eq!(history.total_accepted(), 4);
+    assert_eq!(history.total_responses(), 4);
+    assert_eq!(history.total_immediate_hits(), 2);
+    assert_eq!(history.total_scheduled_misses(), 2);
+    assert_eq!(history.max_accepted_per_cycle(), 2);
+    assert_eq!(
+        history.touched_lines(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+    assert_eq!(history.accepted_by_tick(61), 2);
+    assert_eq!(history.accepted_by_tick(67), 2);
+    assert_eq!(history.accepted_by_tick(100), 0);
+    assert_eq!(history.accepted_by_line(Address::new(0x1000)), 2);
+    assert_eq!(history.accepted_by_line(Address::new(0x1010)), 2);
+    assert_eq!(history.accepted_by_line(Address::new(0x2000)), 0);
+    assert_eq!(history.accepted_by_agent(agent(1)), 2);
+    assert_eq!(history.accepted_by_agent(agent(2)), 2);
+    assert_eq!(history.accepted_by_agent(agent(3)), 0);
+    assert_eq!(
+        history.accepted_by_agent_counts(),
+        BTreeMap::from([(agent(1), 2), (agent(2), 2)])
+    );
+    assert_eq!(
+        history.accepted_by_line_counts(),
+        BTreeMap::from([(Address::new(0x1000), 2), (Address::new(0x1010), 2)])
+    );
+    assert_eq!(
+        history.accepted_by_tick_counts(),
+        BTreeMap::from([(61, 2), (67, 2)])
+    );
+    assert_eq!(source.parallel_cycle_history(), history);
+
+    let first_run = &restored.parallel_cycle_runs()[0];
+    assert_eq!(first_run.agents(), vec![agent(1), agent(2)]);
+    assert_eq!(
+        first_run.requests(),
+        vec![request_id(1, 10), request_id(2, 20)]
+    );
+    assert_eq!(
+        first_run.lines(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+    assert!(first_run.has_agent(agent(1)));
+    assert!(first_run.has_agent(agent(2)));
+    assert!(!first_run.has_agent(agent(3)));
+    assert!(first_run.has_line(Address::new(0x1000)));
+    assert!(first_run.has_line(Address::new(0x1010)));
+    assert!(!first_run.has_line(Address::new(0x2000)));
 }
 
 #[test]

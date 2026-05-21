@@ -196,3 +196,53 @@ fn system_action_executor_checkpoints_and_restores_msi_bank() {
     );
     assert_eq!(live.lock().unwrap().snapshot(), expected);
 }
+
+#[test]
+fn msi_bank_checkpoint_preserves_parallel_cycle_history() {
+    let mut live = harness();
+    let recorded = live
+        .submit_parallel_cycle(
+            72,
+            [
+                (agent(2), read(2, 70, 0x1018)),
+                (agent(1), read(1, 71, 0x1004)),
+            ],
+        )
+        .unwrap();
+    let expected = live.snapshot();
+    assert_eq!(
+        expected.parallel_cycle_runs(),
+        std::slice::from_ref(&recorded)
+    );
+
+    let live = Arc::new(Mutex::new(live));
+    let component = CheckpointComponentId::new("l1d-msi").unwrap();
+    let port = MsiBankCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut registry = CheckpointRegistry::new();
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+
+    {
+        let mut live = live.lock().unwrap();
+        live.submit_parallel_cycle(88, [(agent(1), write(1, 80, 0x1004, vec![0xdd; 8]))])
+            .unwrap();
+        assert_ne!(live.parallel_cycle_runs(), expected.parallel_cycle_runs());
+    }
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored.snapshot(), &expected);
+    assert_eq!(restored.parallel_cycle_history().cycle_count(), 1);
+    assert_eq!(restored.parallel_cycle_history().total_accepted(), 2);
+    assert_eq!(restored.parallel_cycle_history().total_responses(), 2);
+    assert_eq!(
+        restored.parallel_cycle_history().max_accepted_per_cycle(),
+        2
+    );
+    assert!(restored.parallel_cycle_history().has_parallel_work());
+    assert_eq!(
+        restored.snapshot().parallel_cycle_runs(),
+        std::slice::from_ref(&recorded)
+    );
+    assert_eq!(live.lock().unwrap().parallel_cycle_runs(), &[recorded]);
+}

@@ -45,8 +45,8 @@ use snoop::{DirectorySnoopWork, SnoopRoute};
 
 pub use backing::LineBackingStore;
 pub use bank::{
-    MsiBankBackingLineSnapshot, MsiBankCycleAccepted, MsiBankCycleEntry, MsiBankCyclePlan,
-    MsiBankCycleRun, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
+    MsiBankBackingLineSnapshot, MsiBankCycleAccepted, MsiBankCycleEntry, MsiBankCycleHistory,
+    MsiBankCyclePlan, MsiBankCycleRun, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
 };
 pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{

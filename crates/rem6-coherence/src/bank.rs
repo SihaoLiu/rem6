@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cache::{
     CacheControllerError, CacheControllerResultKind, MsiCacheBank, MsiCacheBankSnapshot,
@@ -22,6 +22,7 @@ pub struct MsiBankDirectoryHarness {
     backing: BTreeMap<Address, Vec<u8>>,
     cpu_responses: Vec<CpuResponseRecord>,
     directory_decisions: Vec<DirectoryDecision>,
+    parallel_cycle_runs: Vec<MsiBankCycleRun>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +53,7 @@ pub struct MsiBankDirectoryHarnessSnapshot {
     backing_lines: Vec<MsiBankBackingLineSnapshot>,
     cpu_responses: Vec<CpuResponseRecord>,
     directory_decisions: Vec<DirectoryDecision>,
+    parallel_cycle_runs: Vec<MsiBankCycleRun>,
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +189,152 @@ pub struct MsiBankCycleRun {
     response_count: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankCycleHistory {
+    cycle_count: usize,
+    total_accepted: usize,
+    total_responses: usize,
+    total_immediate_hits: usize,
+    total_scheduled_misses: usize,
+    max_accepted_per_cycle: usize,
+    has_parallel_work: bool,
+    parallel_cycle_count: usize,
+    single_request_cycle_count: usize,
+    ticks: Vec<u64>,
+    touched_lines: Vec<Address>,
+    accepted_by_agent: BTreeMap<AgentId, usize>,
+    accepted_by_line: BTreeMap<Address, usize>,
+    accepted_by_tick: BTreeMap<u64, usize>,
+}
+
+impl MsiBankCycleHistory {
+    pub fn from_runs(runs: &[MsiBankCycleRun]) -> Self {
+        let mut touched_lines = BTreeSet::new();
+        let mut accepted_by_agent = BTreeMap::new();
+        let mut total_accepted = 0;
+        let mut total_responses = 0;
+        let mut total_immediate_hits = 0;
+        let mut total_scheduled_misses = 0;
+        let mut max_accepted_per_cycle = 0;
+        let mut has_parallel_work = false;
+        let mut parallel_cycle_count = 0;
+        let mut single_request_cycle_count = 0;
+        let mut ticks = Vec::with_capacity(runs.len());
+        let mut accepted_by_line = BTreeMap::new();
+        let mut accepted_by_tick = BTreeMap::new();
+
+        for run in runs {
+            ticks.push(run.tick());
+            total_accepted += run.accepted_count();
+            total_responses += run.response_count();
+            total_immediate_hits += run.immediate_hit_count();
+            total_scheduled_misses += run.scheduled_miss_count();
+            max_accepted_per_cycle = max_accepted_per_cycle.max(run.accepted_count());
+            has_parallel_work |= run.has_parallel_work();
+            if run.has_parallel_work() {
+                parallel_cycle_count += 1;
+            } else if !run.is_empty() {
+                single_request_cycle_count += 1;
+            }
+            accepted_by_tick.insert(run.tick(), run.accepted_count());
+            for accepted in run.accepted() {
+                touched_lines.insert(accepted.line_address());
+                *accepted_by_agent.entry(accepted.agent()).or_insert(0) += 1;
+                *accepted_by_line.entry(accepted.line_address()).or_insert(0) += 1;
+            }
+        }
+
+        Self {
+            cycle_count: runs.len(),
+            total_accepted,
+            total_responses,
+            total_immediate_hits,
+            total_scheduled_misses,
+            max_accepted_per_cycle,
+            has_parallel_work,
+            parallel_cycle_count,
+            single_request_cycle_count,
+            ticks,
+            touched_lines: touched_lines.into_iter().collect(),
+            accepted_by_agent,
+            accepted_by_line,
+            accepted_by_tick,
+        }
+    }
+
+    pub const fn cycle_count(&self) -> usize {
+        self.cycle_count
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.cycle_count == 0
+    }
+
+    pub const fn total_accepted(&self) -> usize {
+        self.total_accepted
+    }
+
+    pub const fn total_responses(&self) -> usize {
+        self.total_responses
+    }
+
+    pub const fn total_immediate_hits(&self) -> usize {
+        self.total_immediate_hits
+    }
+
+    pub const fn total_scheduled_misses(&self) -> usize {
+        self.total_scheduled_misses
+    }
+
+    pub const fn max_accepted_per_cycle(&self) -> usize {
+        self.max_accepted_per_cycle
+    }
+
+    pub const fn has_parallel_work(&self) -> bool {
+        self.has_parallel_work
+    }
+
+    pub const fn parallel_cycle_count(&self) -> usize {
+        self.parallel_cycle_count
+    }
+
+    pub const fn single_request_cycle_count(&self) -> usize {
+        self.single_request_cycle_count
+    }
+
+    pub fn ticks(&self) -> Vec<u64> {
+        self.ticks.clone()
+    }
+
+    pub fn touched_lines(&self) -> Vec<Address> {
+        self.touched_lines.clone()
+    }
+
+    pub fn accepted_by_agent(&self, agent: AgentId) -> usize {
+        self.accepted_by_agent.get(&agent).copied().unwrap_or(0)
+    }
+
+    pub fn accepted_by_agent_counts(&self) -> BTreeMap<AgentId, usize> {
+        self.accepted_by_agent.clone()
+    }
+
+    pub fn accepted_by_line(&self, line: Address) -> usize {
+        self.accepted_by_line.get(&line).copied().unwrap_or(0)
+    }
+
+    pub fn accepted_by_line_counts(&self) -> BTreeMap<Address, usize> {
+        self.accepted_by_line.clone()
+    }
+
+    pub fn accepted_by_tick(&self, tick: u64) -> usize {
+        self.accepted_by_tick.get(&tick).copied().unwrap_or(0)
+    }
+
+    pub fn accepted_by_tick_counts(&self) -> BTreeMap<u64, usize> {
+        self.accepted_by_tick.clone()
+    }
+}
+
 impl MsiBankCycleRun {
     pub fn new(tick: u64, accepted: Vec<MsiBankCycleAccepted>, response_count: usize) -> Self {
         Self {
@@ -220,6 +368,39 @@ impl MsiBankCycleRun {
         self.accepted.len() > 1
     }
 
+    pub fn agents(&self) -> Vec<AgentId> {
+        self.accepted
+            .iter()
+            .map(MsiBankCycleAccepted::agent)
+            .collect()
+    }
+
+    pub fn requests(&self) -> Vec<MemoryRequestId> {
+        self.accepted
+            .iter()
+            .map(MsiBankCycleAccepted::request)
+            .collect()
+    }
+
+    pub fn lines(&self) -> Vec<Address> {
+        self.accepted
+            .iter()
+            .map(MsiBankCycleAccepted::line_address)
+            .collect()
+    }
+
+    pub fn has_agent(&self, agent: AgentId) -> bool {
+        self.accepted
+            .iter()
+            .any(|accepted| accepted.agent() == agent)
+    }
+
+    pub fn has_line(&self, line: Address) -> bool {
+        self.accepted
+            .iter()
+            .any(|accepted| accepted.line_address() == line)
+    }
+
     pub fn immediate_hit_count(&self) -> usize {
         self.accepted
             .iter()
@@ -250,6 +431,7 @@ impl MsiBankDirectoryHarnessSnapshot {
         backing_lines: Vec<MsiBankBackingLineSnapshot>,
         cpu_responses: Vec<CpuResponseRecord>,
         directory_decisions: Vec<DirectoryDecision>,
+        parallel_cycle_runs: Vec<MsiBankCycleRun>,
     ) -> Self {
         Self {
             layout,
@@ -258,6 +440,7 @@ impl MsiBankDirectoryHarnessSnapshot {
             backing_lines,
             cpu_responses,
             directory_decisions,
+            parallel_cycle_runs,
         }
     }
 
@@ -319,6 +502,14 @@ impl MsiBankDirectoryHarnessSnapshot {
     pub fn directory_decisions(&self) -> &[DirectoryDecision] {
         &self.directory_decisions
     }
+
+    pub fn parallel_cycle_runs(&self) -> &[MsiBankCycleRun] {
+        &self.parallel_cycle_runs
+    }
+
+    pub fn parallel_cycle_history(&self) -> MsiBankCycleHistory {
+        MsiBankCycleHistory::from_runs(&self.parallel_cycle_runs)
+    }
 }
 
 impl MsiBankDirectoryHarness {
@@ -343,6 +534,7 @@ impl MsiBankDirectoryHarness {
             backing: BTreeMap::new(),
             cpu_responses: Vec::new(),
             directory_decisions: Vec::new(),
+            parallel_cycle_runs: Vec::new(),
         })
     }
 
@@ -442,8 +634,12 @@ impl MsiBankDirectoryHarness {
             ));
         }
         let response_count = next.cpu_responses.len() - response_count_before;
+        let run = MsiBankCycleRun::new(plan.tick, accepted, response_count);
+        if !run.is_empty() {
+            next.parallel_cycle_runs.push(run.clone());
+        }
         *self = next;
-        Ok(MsiBankCycleRun::new(plan.tick, accepted, response_count))
+        Ok(run)
     }
 
     fn validate_parallel_cycle_requests(
@@ -546,6 +742,14 @@ impl MsiBankDirectoryHarness {
         &self.directory_decisions
     }
 
+    pub fn parallel_cycle_runs(&self) -> &[MsiBankCycleRun] {
+        &self.parallel_cycle_runs
+    }
+
+    pub fn parallel_cycle_history(&self) -> MsiBankCycleHistory {
+        MsiBankCycleHistory::from_runs(&self.parallel_cycle_runs)
+    }
+
     pub fn snapshot(&self) -> MsiBankDirectoryHarnessSnapshot {
         MsiBankDirectoryHarnessSnapshot::new(
             self.layout,
@@ -562,6 +766,7 @@ impl MsiBankDirectoryHarness {
                 .collect(),
             self.cpu_responses.clone(),
             self.directory_decisions.clone(),
+            self.parallel_cycle_runs.clone(),
         )
     }
 
@@ -622,6 +827,7 @@ impl MsiBankDirectoryHarness {
         self.backing = backing;
         self.cpu_responses = snapshot.cpu_responses.clone();
         self.directory_decisions = snapshot.directory_decisions.clone();
+        self.parallel_cycle_runs = snapshot.parallel_cycle_runs.clone();
         Ok(())
     }
 

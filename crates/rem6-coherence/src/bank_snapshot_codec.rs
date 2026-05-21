@@ -10,9 +10,12 @@ use rem6_memory::{
 };
 use rem6_protocol_msi::{MsiCacheLine, MsiEvent, MsiLineId, MsiState};
 
-use crate::{CpuResponseRecord, MsiBankBackingLineSnapshot, MsiBankDirectoryHarnessSnapshot};
+use crate::{
+    CpuResponseRecord, MsiBankBackingLineSnapshot, MsiBankCycleAccepted, MsiBankCycleRun,
+    MsiBankDirectoryHarnessSnapshot, SubmitKind, SubmitResult,
+};
 
-const FORMAT_VERSION: u64 = 1;
+const FORMAT_VERSION: u64 = 2;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
@@ -55,6 +58,11 @@ fn encode_snapshot(snapshot: &MsiBankDirectoryHarnessSnapshot) -> Vec<u8> {
     write_u64(&mut payload, snapshot.directory_decisions().len() as u64);
     for decision in snapshot.directory_decisions() {
         write_directory_decision(&mut payload, decision);
+    }
+
+    write_u64(&mut payload, snapshot.parallel_cycle_runs().len() as u64);
+    for run in snapshot.parallel_cycle_runs() {
+        write_cycle_run(&mut payload, run);
     }
 
     payload
@@ -105,6 +113,12 @@ fn decode_snapshot(payload: &[u8]) -> Result<MsiBankDirectoryHarnessSnapshot, St
         directory_decisions.push(read_directory_decision(&mut cursor)?);
     }
 
+    let cycle_count = cursor.read_count("MSI parallel cycle count")?;
+    let mut parallel_cycle_runs = Vec::with_capacity(cycle_count);
+    for _ in 0..cycle_count {
+        parallel_cycle_runs.push(read_cycle_run(&mut cursor)?);
+    }
+
     cursor.finish()?;
     Ok(MsiBankDirectoryHarnessSnapshot::new(
         layout,
@@ -113,6 +127,7 @@ fn decode_snapshot(payload: &[u8]) -> Result<MsiBankDirectoryHarnessSnapshot, St
         backing_lines,
         cpu_responses,
         directory_decisions,
+        parallel_cycle_runs,
     ))
 }
 
@@ -314,6 +329,69 @@ fn read_cpu_response(cursor: &mut PayloadCursor<'_>) -> Result<CpuResponseRecord
         u8_to_response_status(cursor.read_u8("MSI CPU response status")?)?,
         cursor.read_optional_vec("MSI CPU response data")?,
     ))
+}
+
+fn write_cycle_run(payload: &mut Vec<u8>, run: &MsiBankCycleRun) {
+    write_u64(payload, run.tick());
+    write_u64(payload, run.response_count() as u64);
+    write_u64(payload, run.accepted().len() as u64);
+    for accepted in run.accepted() {
+        write_cycle_accepted(payload, accepted);
+    }
+}
+
+fn read_cycle_run(cursor: &mut PayloadCursor<'_>) -> Result<MsiBankCycleRun, String> {
+    let tick = cursor.read_u64("MSI parallel cycle tick")?;
+    let response_count = cursor.read_count("MSI parallel cycle response count")?;
+    let accepted_count = cursor.read_count("MSI parallel cycle accepted count")?;
+    let mut accepted = Vec::with_capacity(accepted_count);
+    for _ in 0..accepted_count {
+        accepted.push(read_cycle_accepted(cursor)?);
+    }
+    Ok(MsiBankCycleRun::new(tick, accepted, response_count))
+}
+
+fn write_cycle_accepted(payload: &mut Vec<u8>, accepted: &MsiBankCycleAccepted) {
+    write_u32(payload, accepted.agent().get());
+    write_request_id(payload, accepted.request());
+    write_u64(payload, accepted.line_address().get());
+    write_submit_result(payload, accepted.result());
+}
+
+fn read_cycle_accepted(cursor: &mut PayloadCursor<'_>) -> Result<MsiBankCycleAccepted, String> {
+    let agent = AgentId::new(cursor.read_u32("MSI parallel cycle accepted agent")?);
+    let request = read_request_id(cursor)?;
+    let line_address = Address::new(cursor.read_u64("MSI parallel cycle accepted line")?);
+    let result = read_submit_result(cursor)?;
+    Ok(MsiBankCycleAccepted::new(
+        agent,
+        request,
+        line_address,
+        result,
+    ))
+}
+
+fn write_submit_result(payload: &mut Vec<u8>, result: &SubmitResult) {
+    write_u8(payload, submit_kind_to_u8(result.kind()));
+    write_u8(payload, cache_result_to_u8(result.cache_result()));
+    match result.directory_decision() {
+        Some(decision) => {
+            write_bool(payload, true);
+            write_directory_decision(payload, decision);
+        }
+        None => write_bool(payload, false),
+    }
+}
+
+fn read_submit_result(cursor: &mut PayloadCursor<'_>) -> Result<SubmitResult, String> {
+    let kind = u8_to_submit_kind(cursor.read_u8("MSI submit result kind")?)?;
+    let cache_result = u8_to_cache_result(cursor.read_u8("MSI submit cache result")?)?;
+    let result = SubmitResult::new(kind, cache_result);
+    if cursor.read_bool("MSI submit directory decision flag")? {
+        Ok(result.with_directory_decision(read_directory_decision(cursor)?))
+    } else {
+        Ok(result)
+    }
 }
 
 fn write_request(payload: &mut Vec<u8>, request: &MemoryRequest) {
@@ -628,6 +706,21 @@ fn u8_to_response_status(value: u8) -> Result<ResponseStatus, String> {
         0 => Ok(ResponseStatus::Completed),
         1 => Ok(ResponseStatus::Retry),
         _ => Err(format!("unknown memory response status {value}")),
+    }
+}
+
+fn submit_kind_to_u8(kind: SubmitKind) -> u8 {
+    match kind {
+        SubmitKind::ImmediateHit => 0,
+        SubmitKind::ScheduledMiss => 1,
+    }
+}
+
+fn u8_to_submit_kind(value: u8) -> Result<SubmitKind, String> {
+    match value {
+        0 => Ok(SubmitKind::ImmediateHit),
+        1 => Ok(SubmitKind::ScheduledMiss),
+        _ => Err(format!("unknown MSI submit kind {value}")),
     }
 }
 

@@ -4,7 +4,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
-use rem6_coherence::{HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot};
+use rem6_coherence::{
+    HarnessError, MsiBankCycleHistory, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
+};
 
 const MSI_BANK_CHUNK: &str = "msi-bank";
 
@@ -31,6 +33,10 @@ impl MsiBankCheckpointRecord {
 
     pub fn snapshot(&self) -> &MsiBankDirectoryHarnessSnapshot {
         &self.snapshot
+    }
+
+    pub fn parallel_cycle_history(&self) -> MsiBankCycleHistory {
+        self.snapshot.parallel_cycle_history()
     }
 }
 
