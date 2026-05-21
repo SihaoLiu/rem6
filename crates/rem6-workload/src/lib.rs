@@ -320,6 +320,74 @@ impl WorkloadRouteFabric {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadRouteHop {
+    endpoint: String,
+    partition: u32,
+    request_latency: Tick,
+    response_latency: Tick,
+    fabric: Option<WorkloadRouteFabric>,
+}
+
+impl WorkloadRouteHop {
+    pub fn new(
+        endpoint: impl Into<String>,
+        partition: u32,
+        request_latency: Tick,
+        response_latency: Tick,
+    ) -> Result<Self, WorkloadError> {
+        let endpoint = endpoint.into();
+        if endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+        if request_latency == 0 {
+            return Err(WorkloadError::ZeroRouteHopLatency {
+                endpoint,
+                latency: WorkloadRouteLatency::Request,
+            });
+        }
+        if response_latency == 0 {
+            return Err(WorkloadError::ZeroRouteHopLatency {
+                endpoint,
+                latency: WorkloadRouteLatency::Response,
+            });
+        }
+
+        Ok(Self {
+            endpoint,
+            partition,
+            request_latency,
+            response_latency,
+            fabric: None,
+        })
+    }
+
+    pub fn with_fabric(mut self, fabric: WorkloadRouteFabric) -> Self {
+        self.fabric = Some(fabric);
+        self
+    }
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    pub const fn partition(&self) -> u32 {
+        self.partition
+    }
+
+    pub const fn request_latency(&self) -> Tick {
+        self.request_latency
+    }
+
+    pub const fn response_latency(&self) -> Tick {
+        self.response_latency
+    }
+
+    pub fn fabric(&self) -> Option<&WorkloadRouteFabric> {
+        self.fabric.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadMemoryRoute {
     id: WorkloadRouteId,
     source_endpoint: String,
@@ -328,7 +396,7 @@ pub struct WorkloadMemoryRoute {
     target_partition: u32,
     request_latency: Tick,
     response_latency: Tick,
-    fabric: Option<WorkloadRouteFabric>,
+    hops: Vec<WorkloadRouteHop>,
 }
 
 impl WorkloadMemoryRoute {
@@ -370,16 +438,59 @@ impl WorkloadMemoryRoute {
             id,
             source_endpoint,
             source_partition,
+            target_endpoint: target_endpoint.clone(),
+            target_partition,
+            request_latency,
+            response_latency,
+            hops: vec![WorkloadRouteHop {
+                endpoint: target_endpoint,
+                partition: target_partition,
+                request_latency,
+                response_latency,
+                fabric: None,
+            }],
+        })
+    }
+
+    pub fn new_path<I>(
+        id: WorkloadRouteId,
+        source_endpoint: impl Into<String>,
+        source_partition: u32,
+        hops: I,
+    ) -> Result<Self, WorkloadError>
+    where
+        I: IntoIterator<Item = WorkloadRouteHop>,
+    {
+        let source_endpoint = source_endpoint.into();
+        if source_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        let hops: Vec<_> = hops.into_iter().collect();
+        let Some(last) = hops.last() else {
+            return Err(WorkloadError::EmptyMemoryRoutePath { route: id });
+        };
+        let target_endpoint = last.endpoint().to_string();
+        let target_partition = last.partition();
+        let request_latency = hops.iter().map(WorkloadRouteHop::request_latency).sum();
+        let response_latency = hops.iter().map(WorkloadRouteHop::response_latency).sum();
+
+        Ok(Self {
+            id,
+            source_endpoint,
+            source_partition,
             target_endpoint,
             target_partition,
             request_latency,
             response_latency,
-            fabric: None,
+            hops,
         })
     }
 
     pub fn with_fabric(mut self, fabric: WorkloadRouteFabric) -> Self {
-        self.fabric = Some(fabric);
+        if let Some(hop) = self.hops.first_mut() {
+            hop.fabric = Some(fabric);
+        }
         self
     }
 
@@ -411,8 +522,12 @@ impl WorkloadMemoryRoute {
         self.response_latency
     }
 
+    pub fn hops(&self) -> &[WorkloadRouteHop] {
+        &self.hops
+    }
+
     pub fn fabric(&self) -> Option<&WorkloadRouteFabric> {
-        self.fabric.as_ref()
+        self.hops.first().and_then(WorkloadRouteHop::fabric)
     }
 }
 
@@ -648,6 +763,9 @@ impl WorkloadTopology {
     pub fn add_memory_route(mut self, route: WorkloadMemoryRoute) -> Result<Self, WorkloadError> {
         self.validate_partition(route.source_partition())?;
         self.validate_partition(route.target_partition())?;
+        for hop in route.hops() {
+            self.validate_partition(hop.partition())?;
+        }
         if self
             .memory_routes
             .iter()
@@ -1535,6 +1653,13 @@ pub enum WorkloadError {
     },
     ZeroRouteLatency {
         route: WorkloadRouteId,
+        latency: WorkloadRouteLatency,
+    },
+    EmptyMemoryRoutePath {
+        route: WorkloadRouteId,
+    },
+    ZeroRouteHopLatency {
+        endpoint: String,
         latency: WorkloadRouteLatency,
     },
     EmptyFabricLink,

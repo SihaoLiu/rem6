@@ -78,7 +78,15 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, u64::from(route.target_partition()));
         hash_u64(hash, route.request_latency());
         hash_u64(hash, route.response_latency());
-        hash_route_fabric(hash, route.fabric());
+        hash_u64(hash, route.hops().len() as u64);
+        for hop in route.hops() {
+            hash_str(hash, "route.hop");
+            hash_str(hash, hop.endpoint());
+            hash_u64(hash, u64::from(hop.partition()));
+            hash_u64(hash, hop.request_latency());
+            hash_u64(hash, hop.response_latency());
+            hash_route_fabric(hash, hop.fabric());
+        }
     }
     hash_u64(hash, topology.riscv_cores().len() as u64);
     for core in topology.riscv_cores() {

@@ -12,7 +12,7 @@ use rem6_workload::{
     WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
     WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteId, WorkloadTopology,
+    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -308,6 +308,57 @@ fn workload_memory_route_records_fabric_path_metadata() {
             .unwrap_err(),
         WorkloadError::ZeroFabricCreditDepth {
             link: "mesh.cpu.mem".to_string(),
+        },
+    );
+}
+
+#[test]
+fn workload_memory_route_records_multihop_fabric_path_metadata() {
+    let cpu_to_router = WorkloadRouteFabric::new("mesh.cpu.router0", 8)
+        .unwrap()
+        .with_virtual_networks(1, 2)
+        .with_credit_depth(2)
+        .unwrap();
+    let router_to_memory = WorkloadRouteFabric::new("mesh.router0.memory", 16)
+        .unwrap()
+        .with_virtual_networks(3, 4)
+        .with_credit_depth(4)
+        .unwrap();
+    let router_hop = WorkloadRouteHop::new("router0.cpu", 1, 2, 3)
+        .unwrap()
+        .with_fabric(cpu_to_router.clone());
+    let memory_hop = WorkloadRouteHop::new("memory", 2, 5, 7)
+        .unwrap()
+        .with_fabric(router_to_memory.clone());
+
+    let route = WorkloadMemoryRoute::new_path(
+        route_id("cpu0.fetch"),
+        "cpu0.ifetch",
+        0,
+        [router_hop.clone(), memory_hop.clone()],
+    )
+    .unwrap();
+
+    assert_eq!(route.source_endpoint(), "cpu0.ifetch");
+    assert_eq!(route.source_partition(), 0);
+    assert_eq!(route.target_endpoint(), "memory");
+    assert_eq!(route.target_partition(), 2);
+    assert_eq!(route.request_latency(), 7);
+    assert_eq!(route.response_latency(), 10);
+    assert_eq!(route.hops(), &[router_hop, memory_hop]);
+    assert_eq!(route.hops()[0].fabric(), Some(&cpu_to_router));
+    assert_eq!(route.hops()[1].fabric(), Some(&router_to_memory));
+
+    assert_eq!(
+        WorkloadMemoryRoute::new_path(
+            route_id("empty.path"),
+            "cpu0.ifetch",
+            0,
+            std::iter::empty::<WorkloadRouteHop>(),
+        )
+        .unwrap_err(),
+        WorkloadError::EmptyMemoryRoutePath {
+            route: route_id("empty.path"),
         },
     );
 }

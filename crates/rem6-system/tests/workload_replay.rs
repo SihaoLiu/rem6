@@ -14,8 +14,8 @@ use rem6_workload::{
     WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent,
     WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteId,
-    WorkloadTopology,
+    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -313,6 +313,60 @@ fn replay_topology_with_fabric_fetch() -> WorkloadTopology {
                         .with_credit_depth(2)
                         .unwrap(),
                 ),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_multihop_fabric_fetch() -> WorkloadTopology {
+    let cpu_to_router = WorkloadRouteFabric::new("cpu_router", 4)
+        .unwrap()
+        .with_virtual_networks(1, 2)
+        .with_credit_depth(2)
+        .unwrap();
+    let router_to_memory = WorkloadRouteFabric::new("router_memory", 8)
+        .unwrap()
+        .with_virtual_networks(1, 2)
+        .with_credit_depth(2)
+        .unwrap();
+
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new_path(
+                route_id("cpu0.fetch"),
+                "cpu0.ifetch",
+                0,
+                [
+                    WorkloadRouteHop::new("router0.cpu", 1, 2, 2)
+                        .unwrap()
+                        .with_fabric(cpu_to_router),
+                    WorkloadRouteHop::new("memory", 2, 2, 3)
+                        .unwrap()
+                        .with_fabric(router_to_memory),
+                ],
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_riscv_core(
@@ -1060,6 +1114,22 @@ fn replay_manifest_with_fabric_fetch() -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_multihop_fabric_fetch() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("multihop-fabric-fetch"), boot_image())
+        .with_topology(replay_topology_with_multihop_fabric_fetch())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_gpu_kernel() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay-gpu-kernel"), boot_image())
         .with_topology(replay_topology_with_gpu_kernel())
@@ -1572,6 +1642,39 @@ fn workload_replay_routes_declared_fabric_path_and_reports_activity() {
         summary.resource_activity_count(),
         outcome.run().resource_activity_count(),
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_declared_multihop_fabric_path_and_reports_activity() {
+    let manifest = replay_manifest_with_multihop_fabric_fetch();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    let links = outcome
+        .run()
+        .fabric_activities()
+        .keys()
+        .map(|(link, _virtual_network)| link.as_str().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(links.iter().any(|link| link == "cpu_router"));
+    assert!(links.iter().any(|link| link == "router_memory"));
+    assert!(summary.fabric_transfer_count() >= 4);
+    assert_eq!(
+        summary.fabric_transfer_count(),
+        outcome.run().fabric_transfer_count(),
+    );
+    assert_eq!(
+        summary.active_fabric_lane_count(),
+        outcome.run().active_fabric_lane_count(),
+    );
+    assert!(summary.has_fabric_activity());
     plan.verify_result(outcome.result()).unwrap();
 }
 

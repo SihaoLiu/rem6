@@ -68,6 +68,17 @@ impl fmt::Display for WorkloadError {
                 "route {} {latency:?} latency must be positive",
                 route.as_str()
             ),
+            Self::EmptyMemoryRoutePath { route } => {
+                write!(
+                    formatter,
+                    "memory route {} must include at least one hop",
+                    route.as_str()
+                )
+            }
+            Self::ZeroRouteHopLatency { endpoint, latency } => write!(
+                formatter,
+                "route hop {endpoint} {latency:?} latency must be positive"
+            ),
             Self::EmptyFabricLink => write!(formatter, "fabric link id must not be empty"),
             Self::ZeroFabricBandwidth { link } => {
                 write!(

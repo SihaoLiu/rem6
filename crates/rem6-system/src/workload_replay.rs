@@ -35,7 +35,7 @@ use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
     WorkloadGpuDmaCopy, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteId, WorkloadTopology,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 mod cache_response;
@@ -926,7 +926,7 @@ impl RiscvWorkloadReplay {
         let mut transport = if topology
             .memory_routes()
             .iter()
-            .any(|route| route.fabric().is_some())
+            .any(|route| route.hops().iter().any(|hop| hop.fabric().is_some()))
         {
             MemoryTransport::with_fabric(FabricModel::new())
         } else {
@@ -1577,43 +1577,45 @@ fn workload_memory_route(
     let source = TransportEndpointId::new(route.source_endpoint())
         .map_err(RiscvWorkloadReplayError::Transport)?;
     let source_partition = PartitionId::new(route.source_partition());
-    let target = TransportEndpointId::new(route.target_endpoint())
+    let hops = route
+        .hops()
+        .iter()
+        .map(workload_memory_route_hop)
+        .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
+    let route_fabric = route.hops().iter().find_map(WorkloadRouteHop::fabric);
+    let route = MemoryRoute::new_path(source, source_partition, hops)
         .map_err(RiscvWorkloadReplayError::Transport)?;
-    let target_partition = PartitionId::new(route.target_partition());
 
-    let Some(fabric) = route.fabric() else {
-        return MemoryRoute::new(
-            source,
-            source_partition,
-            target,
-            target_partition,
-            route.request_latency(),
-            route.response_latency(),
-        )
-        .map_err(RiscvWorkloadReplayError::Transport);
-    };
+    Ok(match route_fabric {
+        Some(fabric) => route.with_virtual_networks(
+            VirtualNetworkId::new(fabric.request_virtual_network()),
+            VirtualNetworkId::new(fabric.response_virtual_network()),
+        ),
+        None => route,
+    })
+}
 
-    let hop = MemoryRouteHop::new(
-        target,
-        target_partition,
-        route.request_latency(),
-        route.response_latency(),
+fn workload_memory_route_hop(
+    hop: &WorkloadRouteHop,
+) -> Result<MemoryRouteHop, RiscvWorkloadReplayError> {
+    let endpoint =
+        TransportEndpointId::new(hop.endpoint()).map_err(RiscvWorkloadReplayError::Transport)?;
+    let mut route_hop = MemoryRouteHop::new(
+        endpoint,
+        PartitionId::new(hop.partition()),
+        hop.request_latency(),
+        hop.response_latency(),
     )
-    .map_err(RiscvWorkloadReplayError::Transport)?
-    .with_request_fabric_path(workload_route_fabric_path(fabric, route.request_latency())?)
-    .with_response_fabric_path(workload_route_fabric_path(
-        fabric,
-        route.response_latency(),
-    )?);
+    .map_err(RiscvWorkloadReplayError::Transport)?;
 
-    MemoryRoute::new_path(source, source_partition, [hop])
-        .map_err(RiscvWorkloadReplayError::Transport)
-        .map(|route| {
-            route.with_virtual_networks(
-                VirtualNetworkId::new(fabric.request_virtual_network()),
-                VirtualNetworkId::new(fabric.response_virtual_network()),
-            )
-        })
+    if let Some(fabric) = hop.fabric() {
+        route_hop = route_hop
+            .with_request_fabric_path(workload_route_fabric_path(fabric, hop.request_latency())?);
+        route_hop = route_hop
+            .with_response_fabric_path(workload_route_fabric_path(fabric, hop.response_latency())?);
+    }
+
+    Ok(route_hop)
 }
 
 fn workload_route_fabric_path(
