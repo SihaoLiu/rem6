@@ -23,6 +23,7 @@ use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod coherence_checkpoint;
 mod data_cache_run;
 mod fabric_checkpoint;
 mod heterogeneous_checkpoint;
@@ -37,6 +38,9 @@ mod topology;
 mod uart_checkpoint;
 mod workload_replay;
 
+pub use coherence_checkpoint::{
+    MsiBankCheckpointBank, MsiBankCheckpointError, MsiBankCheckpointPort, MsiBankCheckpointRecord,
+};
 pub use data_cache_run::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
 pub use fabric_checkpoint::{
     FabricCheckpointBank, FabricCheckpointError, FabricCheckpointPort, FabricCheckpointRecord,
@@ -1626,6 +1630,7 @@ pub enum SystemError {
     Stats(StatsError),
     Checkpoint(CheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
+    MsiBankCheckpoint(MsiBankCheckpointError),
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
@@ -1648,6 +1653,7 @@ impl fmt::Display for SystemError {
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
+            Self::MsiBankCheckpoint(error) => write!(formatter, "{error}"),
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
@@ -1669,6 +1675,7 @@ impl Error for SystemError {
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),
+            Self::MsiBankCheckpoint(error) => Some(error),
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),

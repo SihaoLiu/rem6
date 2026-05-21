@@ -28,6 +28,7 @@ use rem6_transport::{
 
 mod backing;
 mod bank;
+mod bank_snapshot_codec;
 mod deferred;
 mod directory_snapshot;
 mod mesi;
