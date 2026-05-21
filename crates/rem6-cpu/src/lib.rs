@@ -21,6 +21,7 @@ use rem6_transport::{
     ResponseDelivery, TargetOutcome, TransportEndpointId, TransportError,
 };
 
+mod bimode_predictor;
 mod branch_predictor;
 mod error;
 mod gshare_predictor;
@@ -29,6 +30,11 @@ mod riscv_activity;
 mod riscv_cluster;
 mod topology;
 
+pub use bimode_predictor::{
+    BiModeBranchPredictor, BiModeBranchPredictorConfig, BiModeBranchPredictorError,
+    BiModeBranchPredictorSnapshot, BiModeDirectionArray, BiModeHistory, BiModeHistoryUpdate,
+    BiModePrediction, BiModeSquash, BiModeThreadSnapshot, BiModeTrainingUpdate,
+};
 pub use branch_predictor::{
     BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
     BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationId, BranchSpeculationRepair,
