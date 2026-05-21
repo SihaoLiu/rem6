@@ -23,6 +23,7 @@ use rem6_transport::{
 
 mod branch_predictor;
 mod error;
+mod gshare_predictor;
 mod indirect_target_predictor;
 mod riscv_activity;
 mod riscv_cluster;
@@ -38,6 +39,11 @@ pub use branch_predictor::{
     ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
+pub use gshare_predictor::{
+    GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
+    GShareBranchPredictorSnapshot, GShareHistory, GShareHistoryUpdate, GSharePrediction,
+    GShareSquash, GShareThreadSnapshot, GShareTrainingUpdate,
+};
 pub use indirect_target_predictor::{
     IndirectTargetCommit, IndirectTargetEntry, IndirectTargetHistory, IndirectTargetPathEntry,
     IndirectTargetPrediction, IndirectTargetPredictor, IndirectTargetPredictorConfig,
