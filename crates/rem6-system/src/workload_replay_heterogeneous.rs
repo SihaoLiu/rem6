@@ -17,9 +17,9 @@ use crate::workload_replay::RiscvWorkloadReplayError;
 
 #[derive(Clone)]
 pub(crate) struct WorkloadGpuRuntime {
-    gpu: GpuDevice,
-    source_partition: PartitionId,
-    submission_latency: u64,
+    pub(crate) gpu: GpuDevice,
+    pub(crate) source_partition: PartitionId,
+    pub(crate) submission_latency: u64,
 }
 
 impl WorkloadGpuRuntime {

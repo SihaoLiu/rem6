@@ -8,10 +8,11 @@ use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
-    WorkloadError, WorkloadGpuDevice, WorkloadGpuKernelLaunch, WorkloadHostEvent,
-    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
+    WorkloadError, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
+    WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -349,6 +350,123 @@ fn workload_topology_rejects_invalid_gpu_declarations() {
     assert_eq!(
         missing_device,
         WorkloadError::MissingGpuDevice { device: 99 }
+    );
+}
+
+#[test]
+fn workload_topology_records_gpu_dma_copies() {
+    let topology = riscv_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("gpu0.dma"), "gpu0.dma", 3, "memory", 2, 3, 5)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap()
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                12,
+                200,
+                route_id("gpu0.dma"),
+                77,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(topology.gpu_dma_copies().len(), 1);
+    assert_eq!(topology.gpu_dma_copies()[0].device(), 12);
+    assert_eq!(topology.gpu_dma_copies()[0].transfer(), 200);
+    assert_eq!(topology.gpu_dma_copies()[0].route(), &route_id("gpu0.dma"));
+    assert_eq!(topology.gpu_dma_copies()[0].agent(), 77);
+    assert_eq!(topology.gpu_dma_copies()[0].source(), Address::new(0x9024));
+    assert_eq!(
+        topology.gpu_dma_copies()[0].destination(),
+        Address::new(0x9048)
+    );
+    assert_eq!(topology.gpu_dma_copies()[0].bytes(), 4);
+}
+
+#[test]
+fn workload_topology_rejects_invalid_gpu_dma_copies() {
+    let topology = riscv_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("gpu0.dma"), "gpu0.dma", 3, "memory", 2, 3, 5)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap();
+
+    let missing_device = topology
+        .clone()
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                99,
+                200,
+                route_id("gpu0.dma"),
+                77,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        missing_device,
+        WorkloadError::MissingGpuDevice { device: 99 }
+    );
+
+    let missing_route = topology
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                12,
+                201,
+                route_id("gpu0.missing-dma"),
+                77,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        missing_route,
+        WorkloadError::MissingGpuDmaRoute {
+            device: 12,
+            route: route_id("gpu0.missing-dma"),
+        }
     );
 }
 

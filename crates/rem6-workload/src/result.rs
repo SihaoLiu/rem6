@@ -66,6 +66,9 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_trace_event_count: usize,
     gpu_workgroup_completion_count: usize,
     active_gpu_device_count: usize,
+    gpu_dma_copy_count: usize,
+    gpu_dma_completion_count: usize,
+    active_gpu_dma_device_count: usize,
     accelerator_command_count: usize,
     accelerator_trace_event_count: usize,
     accelerator_completion_count: usize,
@@ -161,6 +164,18 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_trace_event_count = trace_event_count;
         self.gpu_workgroup_completion_count = workgroup_completion_count;
         self.active_gpu_device_count = active_device_count;
+        self
+    }
+
+    pub const fn with_gpu_dma_counts(
+        mut self,
+        copy_count: usize,
+        completion_count: usize,
+        active_device_count: usize,
+    ) -> Self {
+        self.gpu_dma_copy_count = copy_count;
+        self.gpu_dma_completion_count = completion_count;
+        self.active_gpu_dma_device_count = active_device_count;
         self
     }
 
@@ -306,6 +321,22 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_kernel_launch_count != 0
             || self.gpu_trace_event_count != 0
             || self.gpu_workgroup_completion_count != 0
+    }
+
+    pub const fn gpu_dma_copy_count(&self) -> usize {
+        self.gpu_dma_copy_count
+    }
+
+    pub const fn gpu_dma_completion_count(&self) -> usize {
+        self.gpu_dma_completion_count
+    }
+
+    pub const fn active_gpu_dma_device_count(&self) -> usize {
+        self.active_gpu_dma_device_count
+    }
+
+    pub const fn has_gpu_dma_activity(&self) -> bool {
+        self.gpu_dma_copy_count != 0 || self.gpu_dma_completion_count != 0
     }
 
     pub const fn accelerator_command_count(&self) -> usize {

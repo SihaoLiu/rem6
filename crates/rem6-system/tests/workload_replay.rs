@@ -5,10 +5,12 @@ use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryPr
 use rem6_gpu::GpuDeviceId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
-use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay, SystemActionOutcome};
+use rem6_system::{
+    RiscvSystemRunStopReason, RiscvWorkloadReplay, RiscvWorkloadReplayError, SystemActionOutcome,
+};
 use rem6_workload::{
     HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
-    WorkloadAcceleratorDevice, WorkloadDataCacheProtocol, WorkloadGpuDevice,
+    WorkloadAcceleratorDevice, WorkloadDataCacheProtocol, WorkloadGpuDevice, WorkloadGpuDmaCopy,
     WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
     WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
@@ -113,6 +115,16 @@ fn boot_image_with_data_store() -> BootImage {
         .add_segment(Address::new(0x800c), word(0x0000_0073))
         .unwrap()
         .add_segment(Address::new(0x9008), vec![0; 8])
+        .unwrap()
+}
+
+fn boot_image_with_gpu_dma_data() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x9024), vec![0x3a, 0x4b, 0x5c, 0x6d])
+        .unwrap()
+        .add_segment(Address::new(0x9048), vec![0; 4])
         .unwrap()
 }
 
@@ -239,6 +251,70 @@ fn replay_topology_with_gpu_kernel() -> WorkloadTopology {
         .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
         .unwrap()
         .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 2, 1).unwrap())
+        .unwrap()
+}
+
+fn replay_topology_with_gpu_dma_copy() -> WorkloadTopology {
+    WorkloadTopology::new(5, 2, 4, WorkloadHostPlacement::new(4, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 3, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("gpu0.dma"), "gpu0.dma", 3, "memory", 2, 3, 5)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap()
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                12,
+                200,
+                route_id("gpu0.dma"),
+                77,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
         .unwrap()
 }
 
@@ -454,6 +530,25 @@ fn replay_manifest_with_gpu_kernel() -> WorkloadManifest {
         ))
         .build()
         .unwrap()
+}
+
+fn replay_manifest_with_gpu_dma_copy() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-gpu-dma-copy"),
+        boot_image_with_gpu_dma_data(),
+    )
+    .with_topology(replay_topology_with_gpu_dma_copy())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
 }
 
 fn replay_manifest_with_accelerator_command() -> WorkloadManifest {
@@ -735,6 +830,75 @@ fn workload_replay_runs_declared_gpu_kernel_on_parallel_scheduler() {
     assert!(summary.has_gpu_compute_activity());
     assert!(summary.has_full_system_parallel_scheduler_work());
     plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_runs_declared_gpu_dma_copy_on_parallel_memory_backend() {
+    let manifest = replay_manifest_with_gpu_dma_copy();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let partition = outcome
+        .memory_snapshot()
+        .partitions()
+        .iter()
+        .find(|partition| partition.target() == MemoryTargetId::new(0))
+        .unwrap();
+    let destination = partition
+        .lines()
+        .iter()
+        .find(|line| line.line() == Address::new(0x9040))
+        .unwrap();
+    assert_eq!(&destination.data()[8..12], &[0x3a, 0x4b, 0x5c, 0x6d]);
+    let gpu = outcome.gpu_snapshot(GpuDeviceId::new(12)).unwrap();
+    assert_eq!(gpu.dma_completions().len(), 1);
+    assert!(gpu.pending_dma_writes().is_empty());
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(summary.gpu_dma_copy_count(), 1);
+    assert_eq!(summary.gpu_dma_completion_count(), 1);
+    assert_eq!(summary.active_gpu_dma_device_count(), 1);
+    assert!(summary.has_gpu_dma_activity());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_rejects_overflowing_gpu_dma_request_sequence() {
+    let topology = replay_topology_with_gpu_dma_copy()
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                12,
+                u64::MAX,
+                route_id("gpu0.dma"),
+                78,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-gpu-dma-overflow"),
+        boot_image_with_gpu_dma_data(),
+    )
+    .with_topology(topology)
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let error = RiscvWorkloadReplay::new(plan).run_parallel().unwrap_err();
+
+    assert_eq!(
+        error,
+        RiscvWorkloadReplayError::GpuDmaRequestSequenceOverflow { transfer: u64::MAX }
+    );
 }
 
 #[test]

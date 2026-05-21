@@ -18,7 +18,7 @@ use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
     DramTargetActivity, DramTiming,
 };
-use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuError};
+use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
@@ -32,14 +32,15 @@ use rem6_transport::{
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
-    WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    WorkloadGpuDmaCopy, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache,
+    WorkloadRouteId, WorkloadTopology,
 };
 
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, build_accelerator_devices, build_gpu_devices, gpu_snapshots,
     schedule_accelerator_commands, schedule_gpu_kernel_launches, WorkloadAcceleratorActivity,
-    WorkloadGpuActivity,
+    WorkloadGpuActivity, WorkloadGpuRuntime,
 };
 use crate::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
@@ -130,6 +131,13 @@ impl WorkloadMemoryBackend {
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct WorkloadGpuDmaActivity {
+    copy_count: usize,
+    completion_count: usize,
+    active_device_count: usize,
 }
 
 enum WorkloadDataCacheHarness {
@@ -652,6 +660,9 @@ impl RiscvWorkloadReplay {
         let memory = self.load_memory_backend()?;
         let data_cache = self.build_data_cache(&memory)?;
         let gpu_devices = build_gpu_devices(topology)?;
+        let transport = self.build_transport()?;
+        let gpu_dma_activity =
+            self.run_gpu_dma_copies(topology, &route_map, &gpu_devices, &transport, &memory)?;
         let gpu_before = gpu_snapshots(&gpu_devices);
         let accelerator_devices = build_accelerator_devices(topology)?;
         let accelerator_before = accelerator_snapshots(&accelerator_devices);
@@ -662,7 +673,6 @@ impl RiscvWorkloadReplay {
             topology.parallel_worker_limit(),
         )
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
-        let transport = self.build_transport()?;
         let controller = Arc::new(Mutex::new(SystemHostController::new(
             HostEventPolicy,
             StatsRegistry::new(),
@@ -751,8 +761,13 @@ impl RiscvWorkloadReplay {
             &accelerator_before,
             &accelerator_snapshots,
         );
-        let (result, host_action_outcomes) =
-            self.result_from_run(&run, &controller, &gpu_activity, &accelerator_activity)?;
+        let (result, host_action_outcomes) = self.result_from_run(
+            &run,
+            &controller,
+            &gpu_activity,
+            &gpu_dma_activity,
+            &accelerator_activity,
+        )?;
         self.plan
             .verify_result(&result)
             .map_err(RiscvWorkloadReplayError::Workload)?;
@@ -899,6 +914,161 @@ impl RiscvWorkloadReplay {
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 
         RiscvCluster::new(cores).map_err(RiscvWorkloadReplayError::RiscvCluster)
+    }
+
+    fn run_gpu_dma_copies(
+        &self,
+        topology: &WorkloadTopology,
+        route_map: &BTreeMap<WorkloadRouteId, MemoryRouteId>,
+        devices: &BTreeMap<GpuDeviceId, WorkloadGpuRuntime>,
+        transport: &MemoryTransport,
+        memory: &WorkloadMemoryBackend,
+    ) -> Result<WorkloadGpuDmaActivity, RiscvWorkloadReplayError> {
+        if topology.gpu_dma_copies().is_empty() {
+            return Ok(WorkloadGpuDmaActivity::default());
+        }
+
+        let before = gpu_snapshots(devices);
+        let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
+            topology.partition_count(),
+            topology.min_remote_delay(),
+            topology.parallel_worker_limit(),
+        )
+        .map_err(RiscvWorkloadReplayError::Scheduler)?;
+        for copy in topology.gpu_dma_copies() {
+            let device = GpuDeviceId::new(copy.device());
+            let runtime = devices.get(&device).ok_or_else(|| {
+                RiscvWorkloadReplayError::Workload(WorkloadError::MissingGpuDevice {
+                    device: copy.device(),
+                })
+            })?;
+            let dma = self.gpu_dma_copy(topology, route_map, copy)?;
+            let read_memory = memory.clone();
+            runtime
+                .gpu
+                .submit_dma_copy_read(
+                    &mut scheduler,
+                    transport,
+                    dma,
+                    MemoryTrace::new(),
+                    move |delivery, _context| memory_response(&read_memory, &delivery),
+                )
+                .map_err(RiscvWorkloadReplayError::Gpu)?;
+        }
+        scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvWorkloadReplayError::Scheduler)?;
+        for copy in topology.gpu_dma_copies() {
+            let device = GpuDeviceId::new(copy.device());
+            let runtime = devices.get(&device).ok_or_else(|| {
+                RiscvWorkloadReplayError::Workload(WorkloadError::MissingGpuDevice {
+                    device: copy.device(),
+                })
+            })?;
+            let write_memory = memory.clone();
+            if runtime
+                .gpu
+                .issue_next_dma_write(
+                    &mut scheduler,
+                    transport,
+                    MemoryTrace::new(),
+                    move |delivery, _context| memory_response(&write_memory, &delivery),
+                )
+                .map_err(RiscvWorkloadReplayError::Gpu)?
+                .is_none()
+            {
+                return Err(RiscvWorkloadReplayError::MissingGpuDmaWrite { device });
+            }
+        }
+        scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvWorkloadReplayError::Scheduler)?;
+
+        let after = gpu_snapshots(devices);
+        let mut active_device_count = 0;
+        let mut completion_count = 0;
+        for (device, after) in &after {
+            let Some(before) = before.get(device) else {
+                continue;
+            };
+            let device_completions = after
+                .dma_completions()
+                .len()
+                .saturating_sub(before.dma_completions().len());
+            if device_completions != 0 {
+                active_device_count += 1;
+            }
+            completion_count += device_completions;
+        }
+
+        Ok(WorkloadGpuDmaActivity {
+            copy_count: topology.gpu_dma_copies().len(),
+            completion_count,
+            active_device_count,
+        })
+    }
+
+    fn gpu_dma_copy(
+        &self,
+        topology: &WorkloadTopology,
+        route_map: &BTreeMap<WorkloadRouteId, MemoryRouteId>,
+        copy: &WorkloadGpuDmaCopy,
+    ) -> Result<GpuDmaCopy, RiscvWorkloadReplayError> {
+        let route = route_map.get(copy.route()).copied().ok_or_else(|| {
+            RiscvWorkloadReplayError::MissingRoute {
+                route: copy.route().clone(),
+            }
+        })?;
+        let size = AccessSize::new(copy.bytes()).map_err(RiscvWorkloadReplayError::Memory)?;
+        let layout = self.gpu_dma_layout(topology, copy, size)?;
+        let read_sequence = copy.transfer().checked_mul(2).ok_or(
+            RiscvWorkloadReplayError::GpuDmaRequestSequenceOverflow {
+                transfer: copy.transfer(),
+            },
+        )?;
+        let write_sequence = read_sequence.checked_add(1).ok_or(
+            RiscvWorkloadReplayError::GpuDmaRequestSequenceOverflow {
+                transfer: copy.transfer(),
+            },
+        )?;
+        let read_request = MemoryRequest::read_shared(
+            MemoryRequestId::new(AgentId::new(copy.agent()), read_sequence),
+            copy.source(),
+            size,
+            layout,
+        )
+        .map_err(RiscvWorkloadReplayError::Memory)?;
+
+        GpuDmaCopy::new(
+            GpuDmaId::new(copy.transfer()),
+            route,
+            read_request,
+            route,
+            MemoryRequestId::new(AgentId::new(copy.agent()), write_sequence),
+            copy.destination(),
+        )
+        .map_err(RiscvWorkloadReplayError::Gpu)
+    }
+
+    fn gpu_dma_layout(
+        &self,
+        topology: &WorkloadTopology,
+        copy: &WorkloadGpuDmaCopy,
+        size: AccessSize,
+    ) -> Result<CacheLineLayout, RiscvWorkloadReplayError> {
+        let source_range = rem6_memory::AddressRange::new(copy.source(), size)
+            .map_err(RiscvWorkloadReplayError::Memory)?;
+        let destination_range = rem6_memory::AddressRange::new(copy.destination(), size)
+            .map_err(RiscvWorkloadReplayError::Memory)?;
+        let target = topology
+            .memory_targets()
+            .iter()
+            .find(|target| {
+                target.range().contains_range(source_range)
+                    && target.range().contains_range(destination_range)
+            })
+            .ok_or(RiscvWorkloadReplayError::MissingMemoryTarget)?;
+        CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)
     }
 
     fn build_data_cache(
@@ -1137,6 +1307,7 @@ impl RiscvWorkloadReplay {
         run: &RiscvSystemRun,
         controller: &Arc<Mutex<SystemHostController>>,
         gpu_activity: &WorkloadGpuActivity,
+        gpu_dma_activity: &WorkloadGpuDmaActivity,
         accelerator_activity: &WorkloadAcceleratorActivity,
     ) -> Result<(WorkloadResult, Vec<SystemActionOutcome>), RiscvWorkloadReplayError> {
         let final_tick = run
@@ -1164,6 +1335,7 @@ impl RiscvWorkloadReplay {
                 .with_parallel_execution_summary(parallel_execution_summary(
                     run,
                     gpu_activity,
+                    gpu_dma_activity,
                     accelerator_activity,
                 ))
                 .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
@@ -1175,6 +1347,7 @@ impl RiscvWorkloadReplay {
 fn parallel_execution_summary(
     run: &RiscvSystemRun,
     gpu_activity: &WorkloadGpuActivity,
+    gpu_dma_activity: &WorkloadGpuDmaActivity,
     accelerator_activity: &WorkloadAcceleratorActivity,
 ) -> WorkloadParallelExecutionSummary {
     let scheduler = run.parallel_scheduler_profile();
@@ -1217,6 +1390,11 @@ fn parallel_execution_summary(
             gpu_activity.trace_event_count,
             gpu_activity.workgroup_completion_count,
             gpu_activity.active_device_count,
+        )
+        .with_gpu_dma_counts(
+            gpu_dma_activity.copy_count,
+            gpu_dma_activity.completion_count,
+            gpu_dma_activity.active_device_count,
         )
         .with_accelerator_compute_counts(
             accelerator_activity.command_count,
@@ -1384,6 +1562,8 @@ pub enum RiscvWorkloadReplayError {
     MissingDataCacheAgent,
     MissingDataCacheLine,
     MissingDataCacheResponse { request: MemoryRequestId },
+    GpuDmaRequestSequenceOverflow { transfer: u64 },
+    MissingGpuDmaWrite { device: GpuDeviceId },
     MissingRoute { route: WorkloadRouteId },
     MissingFinalTick,
     Workload(WorkloadError),
@@ -1424,6 +1604,15 @@ impl fmt::Display for RiscvWorkloadReplayError {
                 "workload replay data cache did not record response for request {} from agent {}",
                 request.sequence(),
                 request.agent().get()
+            ),
+            Self::GpuDmaRequestSequenceOverflow { transfer } => write!(
+                formatter,
+                "workload replay GPU DMA transfer {transfer} cannot be mapped to request sequences"
+            ),
+            Self::MissingGpuDmaWrite { device } => write!(
+                formatter,
+                "workload replay GPU device {} has no pending DMA write",
+                device.get()
             ),
             Self::MissingRoute { route } => {
                 write!(
@@ -1475,6 +1664,8 @@ impl Error for RiscvWorkloadReplayError {
             | Self::MissingDataCacheAgent
             | Self::MissingDataCacheLine
             | Self::MissingDataCacheResponse { .. }
+            | Self::GpuDmaRequestSequenceOverflow { .. }
+            | Self::MissingGpuDmaWrite { .. }
             | Self::MissingRoute { .. }
             | Self::MissingFinalTick => None,
         }

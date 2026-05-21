@@ -1,4 +1,5 @@
 use rem6_kernel::Tick;
+use rem6_memory::Address;
 
 use crate::{WorkloadError, WorkloadRouteId};
 
@@ -100,6 +101,71 @@ impl WorkloadGpuKernelLaunch {
 
     pub const fn workgroup_latency(&self) -> Tick {
         self.workgroup_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadGpuDmaCopy {
+    device: u32,
+    transfer: u64,
+    route: WorkloadRouteId,
+    agent: u32,
+    source: Address,
+    destination: Address,
+    bytes: u64,
+}
+
+impl WorkloadGpuDmaCopy {
+    pub fn new(
+        device: u32,
+        transfer: u64,
+        route: WorkloadRouteId,
+        agent: u32,
+        source: Address,
+        destination: Address,
+        bytes: u64,
+    ) -> Result<Self, WorkloadError> {
+        if bytes == 0 {
+            return Err(WorkloadError::ZeroGpuDmaBytes { device, transfer });
+        }
+
+        Ok(Self {
+            device,
+            transfer,
+            route,
+            agent,
+            source,
+            destination,
+            bytes,
+        })
+    }
+
+    pub const fn device(&self) -> u32 {
+        self.device
+    }
+
+    pub const fn transfer(&self) -> u64 {
+        self.transfer
+    }
+
+    pub const fn route(&self) -> &WorkloadRouteId {
+        &self.route
+    }
+
+    pub const fn agent(&self) -> u32 {
+        self.agent
+    }
+
+    pub const fn source(&self) -> Address {
+        self.source
+    }
+
+    pub const fn destination(&self) -> Address {
+        self.destination
+    }
+
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
     }
 }
 

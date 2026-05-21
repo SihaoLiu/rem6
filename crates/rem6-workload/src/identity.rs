@@ -127,6 +127,17 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, u64::from(launch.workgroups()));
         hash_u64(hash, launch.workgroup_latency());
     }
+    hash_u64(hash, topology.gpu_dma_copies().len() as u64);
+    for copy in topology.gpu_dma_copies() {
+        hash_str(hash, "gpu.dma_copy");
+        hash_u64(hash, u64::from(copy.device()));
+        hash_u64(hash, copy.transfer());
+        hash_str(hash, copy.route().as_str());
+        hash_u64(hash, u64::from(copy.agent()));
+        hash_u64(hash, copy.source().get());
+        hash_u64(hash, copy.destination().get());
+        hash_u64(hash, copy.bytes());
+    }
     hash_u64(hash, topology.accelerator_devices().len() as u64);
     for device in topology.accelerator_devices() {
         hash_str(hash, "accelerator.device");
