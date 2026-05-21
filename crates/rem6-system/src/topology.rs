@@ -25,7 +25,8 @@ use rem6_uart::UartId;
 
 use crate::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEventId, GuestSourceId,
-    HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
+    HostEventPolicy, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, RiscvSystemRun, RiscvSystemRunDriver, RiscvTrapEventPort, SystemError,
     SystemHostController, SystemHostEventPort, TimerCheckpointBank, TimerCheckpointPort,
     UartCheckpointBank, UartCheckpointPort,
@@ -103,6 +104,11 @@ fn default_timer_checkpoint_component(timer: TimerId) -> CheckpointComponentId {
 fn default_uart_checkpoint_component(uart: UartId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("uart{}", uart.get()))
         .expect("formatted UART checkpoint component is nonempty")
+}
+
+fn default_interrupt_checkpoint_component() -> CheckpointComponentId {
+    CheckpointComponentId::new("interrupt0")
+        .expect("static interrupt checkpoint component is nonempty")
 }
 
 #[derive(Clone, Debug)]
@@ -740,6 +746,21 @@ impl RiscvTopologySystem {
         let Some(platform) = self.platform.as_ref() else {
             return Ok(());
         };
+        let interrupt_bank =
+            InterruptControllerCheckpointBank::new([InterruptControllerCheckpointPort::new(
+                default_interrupt_checkpoint_component(),
+                platform.interrupt_controller(),
+            )])
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
+        host.controller
+            .lock()
+            .expect("topology host controller lock")
+            .executor_mut()
+            .attach_interrupt_controller_checkpoint_bank(interrupt_bank)
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
+
         let timer_bank = TimerCheckpointBank::new(platform.timers().map(|(timer, device)| {
             TimerCheckpointPort::new(default_timer_checkpoint_component(timer), device.clone())
         }))

@@ -1275,6 +1275,7 @@ pub enum SystemError {
     RiscvCheckpoint(RiscvCoreCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
+    InterruptControllerCheckpoint(InterruptControllerCheckpointError),
     TimerCheckpoint(TimerCheckpointError),
     UartCheckpoint(UartCheckpointError),
 }
@@ -1292,6 +1293,7 @@ impl fmt::Display for SystemError {
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
+            Self::InterruptControllerCheckpoint(error) => write!(formatter, "{error}"),
             Self::TimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
         }
@@ -1308,6 +1310,7 @@ impl Error for SystemError {
             Self::RiscvCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
+            Self::InterruptControllerCheckpoint(error) => Some(error),
             Self::TimerCheckpoint(error) => Some(error),
             Self::UartCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,

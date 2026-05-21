@@ -4,8 +4,9 @@ use rem6_stats::{StatSnapshot, StatsRegistry, StatsResetRecord};
 
 use crate::{
     DramMemoryCheckpointBank, GuestEventDelivery, GuestEventId, GuestSourceId, HostAction,
-    HostActionRecord, HostEventPolicy, MemoryStoreCheckpointBank, RiscvCoreCheckpointBank,
-    StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    HostActionRecord, HostEventPolicy, InterruptControllerCheckpointBank,
+    MemoryStoreCheckpointBank, RiscvCoreCheckpointBank, StopRequest, SystemError,
+    TimerCheckpointBank, UartCheckpointBank,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,6 +41,7 @@ pub struct SystemActionExecutor {
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
+    interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
 }
@@ -56,6 +58,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
         }
@@ -72,6 +75,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
         }
@@ -88,6 +92,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
         }
@@ -104,6 +109,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
         }
@@ -120,6 +126,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
         }
@@ -137,6 +144,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
         }
@@ -154,6 +162,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
+            interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
         }
@@ -202,6 +211,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_interrupt_controller_checkpoint_bank(
+        &mut self,
+        interrupt_controller_checkpoints: InterruptControllerCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        interrupt_controller_checkpoints.register_all(&mut self.checkpoints)?;
+        self.interrupt_controller_checkpoints = Some(interrupt_controller_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_uart_checkpoint_bank(
         &mut self,
         uart_checkpoints: UartCheckpointBank,
@@ -230,6 +248,12 @@ impl SystemActionExecutor {
 
     pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
         self.dram_memory_checkpoints.as_ref()
+    }
+
+    pub const fn interrupt_controller_checkpoint_bank(
+        &self,
+    ) -> Option<&InterruptControllerCheckpointBank> {
+        self.interrupt_controller_checkpoints.as_ref()
     }
 
     pub const fn timer_checkpoint_bank(&self) -> Option<&TimerCheckpointBank> {
@@ -272,6 +296,13 @@ impl SystemActionExecutor {
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
+                if let Some(interrupt_controller_checkpoints) =
+                    &self.interrupt_controller_checkpoints
+                {
+                    interrupt_controller_checkpoints
+                        .capture_all_into(&mut self.checkpoints, record.tick())
+                        .map_err(SystemError::Checkpoint)?;
+                }
                 if let Some(timer_checkpoints) = &self.timer_checkpoints {
                     timer_checkpoints
                         .capture_all_into(&mut self.checkpoints)
@@ -310,6 +341,13 @@ impl SystemActionExecutor {
                     dram_memory_checkpoints
                         .restore_all_from(&self.checkpoints)
                         .map_err(SystemError::DramMemoryCheckpoint)?;
+                }
+                if let Some(interrupt_controller_checkpoints) =
+                    &self.interrupt_controller_checkpoints
+                {
+                    interrupt_controller_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::InterruptControllerCheckpoint)?;
                 }
                 if let Some(timer_checkpoints) = &self.timer_checkpoints {
                     timer_checkpoints

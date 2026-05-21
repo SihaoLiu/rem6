@@ -4,6 +4,7 @@ use rem6_boot::BootImage;
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
+use rem6_interrupt::{InterruptLineId, InterruptPriority, InterruptSourceId, InterruptTargetId};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -872,6 +873,123 @@ fn topology_host_controller_checkpoints_attached_timer() {
         }
     );
     assert_eq!(timer.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_interrupt_controller() {
+    let topology = topology_with_timer();
+    let timer_id = TimerId::new(0);
+    let platform = platform_with_timer(&topology, timer_id);
+    let source = GuestSourceId::new(48);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let interrupt_component = CheckpointComponentId::new("interrupt0").unwrap();
+    let controller = system.platform().unwrap().interrupt_controller();
+    let line = InterruptLineId::new(41);
+    let target = InterruptTargetId::new(0);
+    let target_partition = PartitionId::new(0);
+    let interrupt_source = InterruptSourceId::new(51);
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .set_priority(line, InterruptPriority::new(7))
+            .unwrap();
+        controller.assert(line, interrupt_source, 12).unwrap();
+        assert!(controller.claim(target, target_partition, 13).is_some());
+    }
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .interrupt_controller_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        29,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(194),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-interrupt".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let captured = controller.lock().unwrap().snapshot(29);
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &interrupt_component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&interrupt_component, "interrupt")
+            .unwrap()
+            .len()
+            > 96
+    );
+
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .complete(target, target_partition, line, 30)
+            .unwrap();
+        controller
+            .set_priority(line, InterruptPriority::ZERO)
+            .unwrap();
+        controller.assert(line, interrupt_source, 31).unwrap();
+        assert_ne!(controller.snapshot(29), captured);
+    }
+
+    let restore = HostActionRecord::new(
+        38,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(195),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 38,
+            event: GuestEventId::new(195),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(29), captured);
 }
 
 #[test]

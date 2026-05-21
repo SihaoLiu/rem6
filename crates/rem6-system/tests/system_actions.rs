@@ -7,7 +7,7 @@ use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_interrupt::{
     InterruptController, InterruptError, InterruptLineChannel, InterruptLineId, InterruptLinePort,
-    InterruptRoute, InterruptSourceId, InterruptTargetId,
+    InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
@@ -19,6 +19,7 @@ use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEvent, GuestEventDelivery,
     GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
     SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
@@ -840,6 +841,125 @@ fn system_action_executor_refreshes_and_restores_live_timer_checkpoint() {
         }
     );
     assert_eq!(timer.snapshot(), captured);
+}
+
+#[test]
+fn system_action_executor_refreshes_and_restores_live_interrupt_controller_checkpoint() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(18);
+    let component = CheckpointComponentId::new("interrupt0").unwrap();
+    let target = InterruptTargetId::new(0);
+    let cpu = PartitionId::new(0);
+    let claimed_line = InterruptLineId::new(80);
+    let pending_line = InterruptLineId::new(81);
+    let extra_line = InterruptLineId::new(82);
+    let claimed_source = InterruptSourceId::new(60);
+    let pending_source = InterruptSourceId::new(61);
+    let claimed =
+        rem6_interrupt::InterruptClaim::new(claimed_line, target, cpu, claimed_source, 7, 11);
+    let mut controller = InterruptController::new();
+    controller
+        .register_route(InterruptRoute::new(claimed_line, target, cpu))
+        .unwrap();
+    controller
+        .register_route(InterruptRoute::new(pending_line, target, cpu))
+        .unwrap();
+    controller
+        .set_priority(claimed_line, InterruptPriority::new(9))
+        .unwrap();
+    controller
+        .set_priority(pending_line, InterruptPriority::ZERO)
+        .unwrap();
+    controller.assert(pending_line, pending_source, 5).unwrap();
+    controller.assert(claimed_line, claimed_source, 7).unwrap();
+    assert_eq!(controller.claim(target, cpu, 11), Some(claimed));
+    let controller = Arc::new(Mutex::new(controller));
+    let bank = InterruptControllerCheckpointBank::new([InterruptControllerCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&controller),
+    )])
+    .unwrap();
+    let checkpoints = CheckpointRegistry::new();
+    let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), checkpoints);
+    executor
+        .attach_interrupt_controller_checkpoint_bank(bank)
+        .unwrap();
+    assert!(executor.interrupt_controller_checkpoint_bank().is_some());
+
+    let checkpoint = HostActionRecord::new(
+        140,
+        host,
+        host,
+        GuestEventId::new(19),
+        source,
+        HostAction::Checkpoint {
+            label: "with-interrupt".to_string(),
+        },
+    );
+
+    let checkpoint_outcome = executor.apply(&checkpoint).unwrap();
+    let manifest = match checkpoint_outcome {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let captured = controller.lock().unwrap().snapshot(140);
+
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&component, "interrupt")
+            .unwrap()
+            .len()
+            > 96
+    );
+    {
+        let mut controller = controller.lock().unwrap();
+        controller.complete(target, cpu, claimed_line, 141).unwrap();
+        controller
+            .set_priority(pending_line, InterruptPriority::new(4))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(extra_line, target, cpu))
+            .unwrap();
+        controller
+            .assert(extra_line, InterruptSourceId::new(62), 142)
+            .unwrap();
+        assert_ne!(controller.snapshot(140), captured);
+    }
+
+    let restore = HostActionRecord::new(
+        144,
+        host,
+        host,
+        GuestEventId::new(20),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 144,
+            event: GuestEventId::new(20),
+            source,
+            manifest,
+        }
+    );
+    let controller = controller.lock().unwrap();
+    assert_eq!(controller.snapshot(140), captured);
+    assert_eq!(controller.claimed(), vec![claimed]);
+    assert_eq!(
+        controller.priority(pending_line).unwrap(),
+        InterruptPriority::ZERO
+    );
+    assert_eq!(
+        controller.priority(extra_line),
+        Err(InterruptError::UnknownLine { line: extra_line })
+    );
 }
 
 #[test]
