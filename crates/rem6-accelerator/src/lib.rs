@@ -1,3 +1,5 @@
+mod topology;
+
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -11,6 +13,7 @@ use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
     TransportError,
 };
+pub use topology::{AcceleratorTopologyConfig, AcceleratorTopologyDevice};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AcceleratorEngineId(u32);
@@ -131,12 +134,19 @@ pub enum AcceleratorError {
         command: AcceleratorCommandId,
         request: MemoryRequestId,
     },
+    SourcePartitionMismatch {
+        endpoint: rem6_topology::Endpoint,
+        expected: PartitionId,
+        actual: PartitionId,
+    },
     TickOverflow {
         now: Tick,
         delay: Tick,
     },
     Memory(MemoryError),
     Scheduler(SchedulerError),
+    Topology(rem6_topology::TopologyError),
+    TopologyRoute(rem6_transport::TopologyRouteError),
     Transport(TransportError),
 }
 
@@ -162,11 +172,25 @@ impl fmt::Display for AcceleratorError {
                 request.sequence(),
                 request.agent().get(),
             ),
+            Self::SourcePartitionMismatch {
+                endpoint,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "endpoint {}.{} is on partition {} but accelerator partition is {}",
+                endpoint.component().as_str(),
+                endpoint.port().as_str(),
+                actual.index(),
+                expected.index(),
+            ),
             Self::TickOverflow { now, delay } => {
                 write!(formatter, "tick {now} overflows when adding delay {delay}")
             }
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Topology(error) => write!(formatter, "{error}"),
+            Self::TopologyRoute(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
@@ -177,6 +201,8 @@ impl Error for AcceleratorError {
         match self {
             Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            Self::Topology(error) => Some(error),
+            Self::TopologyRoute(error) => Some(error),
             Self::Transport(error) => Some(error),
             _ => None,
         }
