@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 rem6-memory = { path = "../rem6-memory" }
 rem6-protocol-mesi = { path = "../rem6-protocol-mesi" }
+rem6-protocol-moesi = { path = "../rem6-protocol-moesi" }
 rem6-protocol-msi = { path = "../rem6-protocol-msi" }
 rem6-transport = { path = "../rem6-transport" }
 

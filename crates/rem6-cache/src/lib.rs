@@ -11,6 +11,13 @@ use rem6_protocol_mesi::{
 use rem6_protocol_msi::{MsiCacheLine, MsiError, MsiEvent, MsiLineId, MsiState, MsiTransition};
 use rem6_transport::TargetOutcome;
 
+mod moesi;
+
+pub use moesi::{
+    MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
+    MoesiCacheControllerResultKind,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheControllerResultKind {
     Hit,
