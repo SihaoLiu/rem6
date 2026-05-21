@@ -499,6 +499,35 @@ impl AcceleratorPreparedDmaRead {
     }
 }
 
+pub struct AcceleratorPreparedDmaWrite {
+    issue: AcceleratorDmaIssueRecord,
+    transaction: ParallelMemoryTransaction,
+    rollback: AcceleratorDmaWriteRollback,
+}
+
+impl AcceleratorPreparedDmaWrite {
+    pub fn into_parts(
+        self,
+    ) -> (
+        AcceleratorDmaIssueRecord,
+        ParallelMemoryTransaction,
+        AcceleratorDmaWriteRollback,
+    ) {
+        (self.issue, self.transaction, self.rollback)
+    }
+}
+
+pub struct AcceleratorDmaWriteRollback {
+    engine: AcceleratorEngine,
+    pending: AcceleratorPendingDmaWrite,
+}
+
+impl AcceleratorDmaWriteRollback {
+    pub fn restore(self) {
+        self.engine.push_pending_dma_write(self.pending);
+    }
+}
+
 pub struct AcceleratorDmaIssueRecord {
     engine: AcceleratorEngine,
     event: AcceleratorTraceEvent,
@@ -679,9 +708,39 @@ impl AcceleratorEngine {
             + Send
             + 'static,
     {
+        let Some(prepared) = self.prepare_next_dma_write(scheduler.now(), trace, responder)? else {
+            return Ok(None);
+        };
+        let (issue, transaction, rollback) = prepared.into_parts();
+        let event = match transport.submit_parallel_batch(scheduler, [transaction]) {
+            Ok(events) => events
+                .into_iter()
+                .next()
+                .expect("one DMA write transaction was submitted"),
+            Err(error) => {
+                rollback.restore();
+                return Err(AcceleratorError::Transport(error));
+            }
+        };
+        issue.record();
+        Ok(Some(event))
+    }
+
+    pub fn prepare_next_dma_write<F>(
+        &self,
+        issued_at: Tick,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<AcceleratorPreparedDmaWrite>, AcceleratorError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
         let Some(pending) = self.pop_pending_dma_write() else {
             return Ok(None);
         };
+        let rollback_pending = pending.clone();
         let write_request = match pending.copy.make_write_request(pending.data.clone()) {
             Ok(request) => request,
             Err(error) => {
@@ -700,25 +759,27 @@ impl AcceleratorEngine {
             0,
         );
         let route = pending.copy.write_route();
-        let event = match transport.submit_parallel(
-            scheduler,
+        let transaction = ParallelMemoryTransaction::new(
             route,
             write_request,
             trace,
             responder,
             move |delivery| sink_engine.accept_dma_write_response(completion, delivery),
-        ) {
-            Ok(event) => event,
-            Err(error) => {
-                self.push_pending_dma_write(pending);
-                return Err(AcceleratorError::Transport(error));
-            }
-        };
-        self.record(AcceleratorTraceEvent::new(
-            scheduler.now(),
-            AcceleratorTraceKind::DmaWriteIssued { command, request },
-        ));
-        Ok(Some(event))
+        );
+        Ok(Some(AcceleratorPreparedDmaWrite {
+            issue: AcceleratorDmaIssueRecord {
+                engine: self.clone(),
+                event: AcceleratorTraceEvent::new(
+                    issued_at,
+                    AcceleratorTraceKind::DmaWriteIssued { command, request },
+                ),
+            },
+            transaction,
+            rollback: AcceleratorDmaWriteRollback {
+                engine: self.clone(),
+                pending: rollback_pending,
+            },
+        }))
     }
 
     fn accept_on_partition(

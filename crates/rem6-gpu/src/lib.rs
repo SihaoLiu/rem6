@@ -560,6 +560,35 @@ impl GpuPreparedDmaRead {
     }
 }
 
+pub struct GpuPreparedDmaWrite {
+    issue: GpuDmaIssueRecord,
+    transaction: ParallelMemoryTransaction,
+    rollback: GpuDmaWriteRollback,
+}
+
+impl GpuPreparedDmaWrite {
+    pub fn into_parts(
+        self,
+    ) -> (
+        GpuDmaIssueRecord,
+        ParallelMemoryTransaction,
+        GpuDmaWriteRollback,
+    ) {
+        (self.issue, self.transaction, self.rollback)
+    }
+}
+
+pub struct GpuDmaWriteRollback {
+    gpu: GpuDevice,
+    pending: GpuPendingDmaWrite,
+}
+
+impl GpuDmaWriteRollback {
+    pub fn restore(self) {
+        self.gpu.push_pending_dma_write(self.pending);
+    }
+}
+
 pub struct GpuDmaIssueRecord {
     gpu: GpuDevice,
     event: GpuTraceEvent,
@@ -740,9 +769,39 @@ impl GpuDevice {
             + Send
             + 'static,
     {
+        let Some(prepared) = self.prepare_next_dma_write(scheduler.now(), trace, responder)? else {
+            return Ok(None);
+        };
+        let (issue, transaction, rollback) = prepared.into_parts();
+        let event = match transport.submit_parallel_batch(scheduler, [transaction]) {
+            Ok(events) => events
+                .into_iter()
+                .next()
+                .expect("one GPU DMA write transaction was submitted"),
+            Err(error) => {
+                rollback.restore();
+                return Err(GpuError::Transport(error));
+            }
+        };
+        issue.record();
+        Ok(Some(event))
+    }
+
+    pub fn prepare_next_dma_write<F>(
+        &self,
+        issued_at: Tick,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<GpuPreparedDmaWrite>, GpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
         let Some(pending) = self.pop_pending_dma_write() else {
             return Ok(None);
         };
+        let rollback_pending = pending.clone();
         let write_request = match pending.copy.make_write_request(pending.data.clone()) {
             Ok(request) => request,
             Err(error) => {
@@ -761,25 +820,27 @@ impl GpuDevice {
             0,
         );
         let route = pending.copy.write_route();
-        let event = match transport.submit_parallel(
-            scheduler,
+        let transaction = ParallelMemoryTransaction::new(
             route,
             write_request,
             trace,
             responder,
             move |delivery| sink_gpu.accept_dma_write_response(completion, delivery),
-        ) {
-            Ok(event) => event,
-            Err(error) => {
-                self.push_pending_dma_write(pending);
-                return Err(GpuError::Transport(error));
-            }
-        };
-        self.record(GpuTraceEvent::new(
-            scheduler.now(),
-            GpuTraceKind::DmaWriteIssued { transfer, request },
-        ));
-        Ok(Some(event))
+        );
+        Ok(Some(GpuPreparedDmaWrite {
+            issue: GpuDmaIssueRecord {
+                gpu: self.clone(),
+                event: GpuTraceEvent::new(
+                    issued_at,
+                    GpuTraceKind::DmaWriteIssued { transfer, request },
+                ),
+            },
+            transaction,
+            rollback: GpuDmaWriteRollback {
+                gpu: self.clone(),
+                pending: rollback_pending,
+            },
+        }))
     }
 
     fn accept_launch(&self, context: &mut ParallelSchedulerContext<'_>, launch: GpuKernelLaunch) {

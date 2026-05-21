@@ -9,7 +9,8 @@ use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopolo
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_fabric::{FabricLinkId, VirtualNetworkId};
 use rem6_gpu::{
-    GpuComputeConfig, GpuDeviceId, GpuDmaCopy, GpuDmaId, GpuPendingDmaWrite, GpuTopologyConfig,
+    GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuPendingDmaWrite,
+    GpuTopologyConfig,
 };
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
@@ -835,6 +836,185 @@ fn topology_system_batches_gpu_and_accelerator_dma_reads_on_shared_fabric() {
                 gpu_route,
                 transport_endpoint("gpu0", "dma"),
                 memory_request(800),
+                ResponseStatus::Completed,
+            ),
+        ],
+    );
+}
+
+#[test]
+fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
+    let accelerator_id = AcceleratorEngineId::new(79);
+    let gpu_id = GpuDeviceId::new(80);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 79, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(memory_store())
+    .unwrap()
+    .with_accelerator(accelerator_config(accelerator_id))
+    .unwrap()
+    .with_gpu(gpu_config(gpu_id))
+    .unwrap();
+    let accelerator_route = system.accelerator(accelerator_id).unwrap().dma_route();
+    let gpu_route = system.gpu(gpu_id).unwrap().memory_route().unwrap();
+    let trace = MemoryTrace::new();
+
+    system
+        .run_dma_copies_parallel(
+            [
+                RiscvTopologyDmaCopy::gpu(gpu_id, gpu_dma_copy(gpu_route, 410, 0x100c)),
+                RiscvTopologyDmaCopy::accelerator(
+                    accelerator_id,
+                    dma_copy(accelerator_route, 340, 0x1004),
+                ),
+            ],
+            trace.clone(),
+        )
+        .unwrap();
+
+    let destination = system
+        .memory_store()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x3000))
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0x21, 0x32, 0x43, 0x54]);
+    assert_eq!(&destination[12..16], &[0x65, 0x76, 0x87, 0x98]);
+    assert_eq!(
+        system
+            .accelerator(accelerator_id)
+            .unwrap()
+            .engine()
+            .dma_completions(),
+        vec![AcceleratorDmaCompletion::new(
+            AcceleratorCommandId::new(340),
+            memory_request(680),
+            memory_request(681),
+            10,
+            22,
+        )],
+    );
+    assert_eq!(
+        system.gpu(gpu_id).unwrap().gpu().dma_completions(),
+        vec![GpuDmaCompletion::new(
+            GpuDmaId::new(410),
+            memory_request(820),
+            memory_request(821),
+            11,
+            23,
+        )],
+    );
+
+    let events = trace.snapshot();
+    assert_eq!(events.len(), 12);
+    let mut read_sources = events[..2].to_vec();
+    read_sources.sort_by_key(|event| (event.route().get(), event.request_id().sequence()));
+    assert_eq!(
+        read_sources,
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                accelerator_route,
+                transport_endpoint("accelerator0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(680),
+            ),
+            MemoryTraceEvent::request(
+                0,
+                gpu_route,
+                transport_endpoint("gpu0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(820),
+            ),
+        ],
+    );
+    assert_eq!(
+        &events[2..6],
+        &[
+            MemoryTraceEvent::request(
+                4,
+                accelerator_route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(680),
+            ),
+            MemoryTraceEvent::request(
+                5,
+                gpu_route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(820),
+            ),
+            MemoryTraceEvent::response(
+                10,
+                accelerator_route,
+                transport_endpoint("accelerator0", "dma"),
+                memory_request(680),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                11,
+                gpu_route,
+                transport_endpoint("gpu0", "dma"),
+                memory_request(820),
+                ResponseStatus::Completed,
+            ),
+        ],
+    );
+    let mut write_sources = events[6..8].to_vec();
+    write_sources.sort_by_key(|event| (event.route().get(), event.request_id().sequence()));
+    assert_eq!(
+        write_sources,
+        vec![
+            MemoryTraceEvent::request(
+                12,
+                accelerator_route,
+                transport_endpoint("accelerator0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(681),
+            ),
+            MemoryTraceEvent::request(
+                12,
+                gpu_route,
+                transport_endpoint("gpu0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(821),
+            ),
+        ],
+    );
+    assert_eq!(
+        &events[8..],
+        &[
+            MemoryTraceEvent::request(
+                16,
+                accelerator_route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(681),
+            ),
+            MemoryTraceEvent::request(
+                17,
+                gpu_route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(821),
+            ),
+            MemoryTraceEvent::response(
+                22,
+                accelerator_route,
+                transport_endpoint("accelerator0", "dma"),
+                memory_request(681),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                23,
+                gpu_route,
+                transport_endpoint("gpu0", "dma"),
+                memory_request(821),
                 ResponseStatus::Completed,
             ),
         ],

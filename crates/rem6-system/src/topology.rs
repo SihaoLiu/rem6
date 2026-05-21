@@ -4,8 +4,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{
-    AcceleratorCommand, AcceleratorDmaCopy, AcceleratorDmaIssueRecord, AcceleratorEngineId,
-    AcceleratorError, AcceleratorTopologyConfig, AcceleratorTopologyDevice,
+    AcceleratorCommand, AcceleratorDmaCopy, AcceleratorDmaIssueRecord, AcceleratorDmaWriteRollback,
+    AcceleratorEngineId, AcceleratorError, AcceleratorTopologyConfig, AcceleratorTopologyDevice,
 };
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
@@ -16,8 +16,8 @@ use rem6_dram::{
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{
-    GpuDeviceId, GpuDmaCopy, GpuDmaIssueRecord, GpuError, GpuKernelLaunch, GpuTopologyConfig,
-    GpuTopologyDevice,
+    GpuDeviceId, GpuDmaCopy, GpuDmaIssueRecord, GpuDmaWriteRollback, GpuError, GpuKernelLaunch,
+    GpuTopologyConfig, GpuTopologyDevice,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
@@ -91,6 +91,20 @@ impl RiscvTopologyDmaIssueRecord {
         match self {
             Self::Accelerator(record) => record.record(),
             Self::Gpu(record) => record.record(),
+        }
+    }
+}
+
+enum RiscvTopologyDmaWriteRollback {
+    Accelerator(AcceleratorDmaWriteRollback),
+    Gpu(GpuDmaWriteRollback),
+}
+
+impl RiscvTopologyDmaWriteRollback {
+    fn restore(self) {
+        match self {
+            Self::Accelerator(rollback) => rollback.restore(),
+            Self::Gpu(rollback) => rollback.restore(),
         }
     }
 }
@@ -950,6 +964,124 @@ impl RiscvTopologySystem {
             .transport
             .submit_parallel_batch(&mut self.scheduler, transactions)
             .map_err(RiscvTopologySystemError::Transport)?;
+        for issue in issue_records {
+            issue.record();
+        }
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        if let Some(error) = take_memory_error(&memory_error) {
+            return Err(error);
+        }
+
+        Ok(events)
+    }
+
+    pub fn run_dma_copies_parallel<I>(
+        &mut self,
+        copies: I,
+        trace: MemoryTrace,
+    ) -> Result<(), RiscvTopologySystemError>
+    where
+        I: IntoIterator<Item = RiscvTopologyDmaCopy>,
+    {
+        let copies: Vec<_> = copies.into_iter().collect();
+        if copies.is_empty() {
+            return Ok(());
+        }
+
+        self.run_dma_copy_reads_parallel(copies.clone(), trace.clone())?;
+        self.run_dma_copy_writes_parallel(copies, trace)?;
+        Ok(())
+    }
+
+    fn run_dma_copy_writes_parallel(
+        &mut self,
+        copies: Vec<RiscvTopologyDmaCopy>,
+        trace: MemoryTrace,
+    ) -> Result<Vec<PartitionEventId>, RiscvTopologySystemError> {
+        let memory = self
+            .memory
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
+            .clone();
+        let memory_error = Arc::new(Mutex::new(None));
+        let issued_at = self.scheduler.now();
+        let mut issue_records = Vec::new();
+        let mut rollbacks = Vec::new();
+        let mut transactions = Vec::<ParallelMemoryTransaction>::new();
+
+        for copy in copies {
+            match copy {
+                RiscvTopologyDmaCopy::Accelerator { engine, .. } => {
+                    let accelerator = self
+                        .accelerators
+                        .get(&engine)
+                        .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?
+                        .engine()
+                        .clone();
+                    let write_memory = memory.clone();
+                    let write_error = Arc::clone(&memory_error);
+                    let Some(prepared) = accelerator
+                        .prepare_next_dma_write(
+                            issued_at,
+                            trace.clone(),
+                            move |delivery, _context| {
+                                topology_memory_response(&write_memory, &write_error, &delivery)
+                            },
+                        )
+                        .map_err(RiscvTopologySystemError::Accelerator)?
+                    else {
+                        return Err(RiscvTopologySystemError::AcceleratorDmaWriteNotReady {
+                            engine,
+                        });
+                    };
+                    let (issue, transaction, rollback) = prepared.into_parts();
+                    issue_records.push(RiscvTopologyDmaIssueRecord::Accelerator(issue));
+                    rollbacks.push(RiscvTopologyDmaWriteRollback::Accelerator(rollback));
+                    transactions.push(transaction);
+                }
+                RiscvTopologyDmaCopy::Gpu { device, .. } => {
+                    let gpu = self
+                        .gpus
+                        .get(&device)
+                        .ok_or(RiscvTopologySystemError::UnknownGpu { device })?
+                        .gpu()
+                        .clone();
+                    let write_memory = memory.clone();
+                    let write_error = Arc::clone(&memory_error);
+                    let Some(prepared) = gpu
+                        .prepare_next_dma_write(
+                            issued_at,
+                            trace.clone(),
+                            move |delivery, _context| {
+                                topology_memory_response(&write_memory, &write_error, &delivery)
+                            },
+                        )
+                        .map_err(RiscvTopologySystemError::Gpu)?
+                    else {
+                        return Err(RiscvTopologySystemError::GpuDmaWriteNotReady { device });
+                    };
+                    let (issue, transaction, rollback) = prepared.into_parts();
+                    issue_records.push(RiscvTopologyDmaIssueRecord::Gpu(issue));
+                    rollbacks.push(RiscvTopologyDmaWriteRollback::Gpu(rollback));
+                    transactions.push(transaction);
+                }
+            }
+        }
+
+        let events = match self
+            .transport
+            .submit_parallel_batch(&mut self.scheduler, transactions)
+        {
+            Ok(events) => events,
+            Err(error) => {
+                for rollback in rollbacks {
+                    rollback.restore();
+                }
+                return Err(RiscvTopologySystemError::Transport(error));
+            }
+        };
         for issue in issue_records {
             issue.record();
         }
