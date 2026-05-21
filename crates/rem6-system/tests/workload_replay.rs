@@ -16,7 +16,7 @@ use rem6_workload::{
     WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
     WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -1999,11 +1999,14 @@ fn workload_replay_executes_planned_host_actions() {
     );
     assert_eq!(
         outcome.result().execution_mode_switches(),
-        &[WorkloadExecutionModeSwitch::new(
-            2,
-            "cpu0",
-            WorkloadExecutionMode::Functional,
-        )]
+        &[
+            WorkloadExecutionModeSwitch::new(2, "cpu0", WorkloadExecutionMode::Functional,)
+                .with_stats_scope(1, 1)
+        ]
+    );
+    assert_eq!(
+        outcome.result().execution_mode_switches()[0].stats_scope(),
+        Some(&WorkloadStatsScope::new(1, 1))
     );
     let stats = outcome.result().stats_snapshot().unwrap();
     assert_eq!(stats.reset_tick(), 1);

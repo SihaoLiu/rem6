@@ -1224,12 +1224,19 @@ impl RiscvWorkloadReplay {
                     result = result.with_checkpoint_label(manifest.label());
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
-                    tick, target, mode, ..
+                    tick,
+                    target,
+                    mode,
+                    stats_epoch,
+                    stats_reset_tick,
+                    ..
                 } => {
-                    result = result.with_execution_mode_switch(
+                    result = result.with_execution_mode_switch_stats_scope(
                         *tick,
                         target.as_str(),
                         workload_execution_mode_from_system(*mode),
+                        *stats_epoch,
+                        *stats_reset_tick,
                     );
                 }
                 _ => {}

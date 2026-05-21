@@ -13,7 +13,7 @@ use rem6_workload::{
     WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
     WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1091,6 +1091,31 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
 }
 
 #[test]
+fn workload_result_records_execution_mode_stats_scope() {
+    let manifest = WorkloadManifest::builder(id("mode-scope-result"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    let result = WorkloadResult::new(manifest.identity(), 96)
+        .with_execution_mode_switch_stats_scope(52, "cpu0", WorkloadExecutionMode::Timing, 3, 40);
+
+    assert_eq!(
+        result.execution_mode_switches(),
+        &[
+            WorkloadExecutionModeSwitch::new(52, "cpu0", WorkloadExecutionMode::Timing)
+                .with_stats_scope(3, 40)
+        ]
+    );
+    assert_eq!(
+        result.execution_mode_switches()[0].stats_scope(),
+        Some(&WorkloadStatsScope::new(3, 40))
+    );
+}
+
+#[test]
 fn workload_result_records_parallel_execution_summary() {
     let manifest = WorkloadManifest::builder(id("result-parallel-run"), boot_image())
         .add_resource(kernel_resource())
@@ -1609,6 +1634,16 @@ fn workload_replay_plan_validates_planned_execution_mode_switches() {
         WorkloadExecutionMode::Functional,
     );
     plan.verify_result(&matched).unwrap();
+
+    let scoped = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_execution_mode_switch_stats_scope(
+            40,
+            "cpu0",
+            WorkloadExecutionMode::Functional,
+            1,
+            20,
+        );
+    plan.verify_result(&scoped).unwrap();
 }
 
 #[test]

@@ -1167,6 +1167,7 @@ pub struct WorkloadExecutionModeSwitch {
     tick: Tick,
     target: String,
     mode: WorkloadExecutionMode,
+    stats_scope: Option<WorkloadStatsScope>,
 }
 
 impl WorkloadExecutionModeSwitch {
@@ -1175,7 +1176,13 @@ impl WorkloadExecutionModeSwitch {
             tick,
             target: target.into(),
             mode,
+            stats_scope: None,
         }
+    }
+
+    pub const fn with_stats_scope(mut self, epoch: u64, reset_tick: Tick) -> Self {
+        self.stats_scope = Some(WorkloadStatsScope::new(epoch, reset_tick));
+        self
     }
 
     pub const fn tick(&self) -> Tick {
@@ -1188,6 +1195,30 @@ impl WorkloadExecutionModeSwitch {
 
     pub const fn mode(&self) -> &WorkloadExecutionMode {
         &self.mode
+    }
+
+    pub const fn stats_scope(&self) -> Option<&WorkloadStatsScope> {
+        self.stats_scope.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadStatsScope {
+    epoch: u64,
+    reset_tick: Tick,
+}
+
+impl WorkloadStatsScope {
+    pub const fn new(epoch: u64, reset_tick: Tick) -> Self {
+        Self { epoch, reset_tick }
+    }
+
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub const fn reset_tick(&self) -> Tick {
+        self.reset_tick
     }
 }
 
@@ -1570,7 +1601,7 @@ impl WorkloadReplayPlan {
             if !self
                 .planned_execution_mode_switches
                 .iter()
-                .any(|planned| planned == actual)
+                .any(|planned| execution_mode_switch_matches(planned, actual))
             {
                 return Err(WorkloadError::UnexpectedExecutionModeSwitch {
                     tick: actual.tick(),
@@ -1584,7 +1615,7 @@ impl WorkloadReplayPlan {
             if !result
                 .execution_mode_switches()
                 .iter()
-                .any(|actual| actual == planned)
+                .any(|actual| execution_mode_switch_matches(planned, actual))
             {
                 return Err(WorkloadError::MissingExecutionModeSwitch {
                     tick: planned.tick(),
@@ -1673,6 +1704,21 @@ impl WorkloadResult {
     ) -> Self {
         self.execution_mode_switches
             .push(WorkloadExecutionModeSwitch::new(tick, target, mode));
+        self
+    }
+
+    pub fn with_execution_mode_switch_stats_scope(
+        mut self,
+        tick: Tick,
+        target: impl Into<String>,
+        mode: WorkloadExecutionMode,
+        stats_epoch: u64,
+        stats_reset_tick: Tick,
+    ) -> Self {
+        self.execution_mode_switches.push(
+            WorkloadExecutionModeSwitch::new(tick, target, mode)
+                .with_stats_scope(stats_epoch, stats_reset_tick),
+        );
         self
     }
 
@@ -1979,6 +2025,15 @@ fn planned_execution_mode_switches(
             _ => None,
         })
         .collect()
+}
+
+fn execution_mode_switch_matches(
+    expected: &WorkloadExecutionModeSwitch,
+    actual: &WorkloadExecutionModeSwitch,
+) -> bool {
+    expected.tick() == actual.tick()
+        && expected.target() == actual.target()
+        && expected.mode() == actual.mode()
 }
 
 fn planned_stop_reason(events: &[WorkloadHostEvent]) -> Option<String> {
