@@ -14,17 +14,21 @@ use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
     TransportEndpointId, TransportError,
 };
-use rem6_workload::{WorkloadError, WorkloadReplayPlan, WorkloadResult, WorkloadRouteId};
+use rem6_workload::{
+    HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadReplayPlan, WorkloadResult,
+    WorkloadRouteId,
+};
 
 use crate::{
-    GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRun, RiscvSystemRunDriver,
-    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
-    SystemHostEventPort,
+    GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
+    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
+    SystemActionOutcome, SystemHostController, SystemHostEventPort,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
 const WORKLOAD_STOP_REASON_HOST: &str = "host-stop";
 const WORKLOAD_STOP_REASON_IDLE: &str = "idle";
+const PLANNED_HOST_EVENT_ID_BASE: u64 = 10_000;
 
 #[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplay {
@@ -64,6 +68,12 @@ impl RiscvWorkloadReplay {
             HostEventPolicy,
             StatsRegistry::new(),
         )));
+        self.schedule_planned_host_events(
+            &mut scheduler,
+            &controller,
+            PartitionId::new(topology.host().partition()),
+            GuestSourceId::new(topology.host().source()),
+        )?;
         let trap_port = RiscvTrapEventPort::new(
             SystemHostEventPort::with_controller(
                 PartitionId::new(topology.host().partition()),
@@ -93,12 +103,47 @@ impl RiscvWorkloadReplay {
                 |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
             )
             .map_err(RiscvWorkloadReplayError::System)?;
-        let result = self.result_from_run(&run, &controller)?;
+        let (result, host_action_outcomes) = self.result_from_run(&run, &controller)?;
         self.plan
             .verify_result(&result)
             .map_err(RiscvWorkloadReplayError::Workload)?;
 
-        Ok(RiscvWorkloadReplayOutcome::new(run, result))
+        Ok(RiscvWorkloadReplayOutcome::new(
+            run,
+            result,
+            host_action_outcomes,
+        ))
+    }
+
+    fn schedule_planned_host_events(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        controller: &Arc<Mutex<SystemHostController>>,
+        host_partition: PartitionId,
+        host_source: GuestSourceId,
+    ) -> Result<(), RiscvWorkloadReplayError> {
+        for (index, event) in self.plan.host_events().iter().enumerate() {
+            let Some(guest_event) = planned_host_guest_event(event, index, host_source) else {
+                continue;
+            };
+            let controller = Arc::clone(controller);
+            scheduler
+                .schedule_parallel_at(host_partition, event.tick(), move |context| {
+                    let delivery = GuestEventDelivery::new(
+                        context.now(),
+                        host_partition,
+                        host_partition,
+                        guest_event,
+                    );
+                    controller
+                        .lock()
+                        .expect("system host controller lock")
+                        .handle_delivery(delivery);
+                })
+                .map_err(RiscvWorkloadReplayError::Scheduler)?;
+        }
+
+        Ok(())
     }
 
     fn build_transport(&self) -> Result<MemoryTransport, RiscvWorkloadReplayError> {
@@ -223,7 +268,7 @@ impl RiscvWorkloadReplay {
         &self,
         run: &RiscvSystemRun,
         controller: &Arc<Mutex<SystemHostController>>,
-    ) -> Result<WorkloadResult, RiscvWorkloadReplayError> {
+    ) -> Result<(WorkloadResult, Vec<SystemActionOutcome>), RiscvWorkloadReplayError> {
         let final_tick = run
             .final_tick()
             .ok_or(RiscvWorkloadReplayError::MissingFinalTick)?;
@@ -238,24 +283,59 @@ impl RiscvWorkloadReplay {
         };
 
         let controller = controller.lock().expect("system host controller lock");
-        for outcome in controller.run().action_outcomes() {
+        let host_action_outcomes = controller.run().action_outcomes().to_vec();
+        for outcome in &host_action_outcomes {
             if let SystemActionOutcome::Checkpoint { manifest, .. } = outcome {
                 result = result.with_checkpoint_label(manifest.label());
             }
         }
-        Ok(result.with_stats_snapshot(controller.executor().stats().snapshot(final_tick)))
+        Ok((
+            result.with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
+            host_action_outcomes,
+        ))
     }
+}
+
+fn planned_host_guest_event(
+    event: &WorkloadHostEvent,
+    index: usize,
+    source: GuestSourceId,
+) -> Option<GuestEvent> {
+    let kind = match event.intent() {
+        HostEventIntent::RoiBegin { .. } => GuestEventKind::RoiBegin,
+        HostEventIntent::RoiEnd { .. } => GuestEventKind::RoiEnd,
+        HostEventIntent::StatsReset { .. } => GuestEventKind::StatsReset,
+        HostEventIntent::StatsDump { .. } => GuestEventKind::StatsDump,
+        HostEventIntent::Checkpoint { label } => GuestEventKind::Checkpoint {
+            label: label.clone(),
+        },
+        HostEventIntent::Stop { .. } => return None,
+    };
+    Some(GuestEvent::new(
+        GuestEventId::new(PLANNED_HOST_EVENT_ID_BASE + index as u64),
+        source,
+        kind,
+    ))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvWorkloadReplayOutcome {
     run: RiscvSystemRun,
     result: WorkloadResult,
+    host_action_outcomes: Vec<SystemActionOutcome>,
 }
 
 impl RiscvWorkloadReplayOutcome {
-    pub const fn new(run: RiscvSystemRun, result: WorkloadResult) -> Self {
-        Self { run, result }
+    pub const fn new(
+        run: RiscvSystemRun,
+        result: WorkloadResult,
+        host_action_outcomes: Vec<SystemActionOutcome>,
+    ) -> Self {
+        Self {
+            run,
+            result,
+            host_action_outcomes,
+        }
     }
 
     pub const fn run(&self) -> &RiscvSystemRun {
@@ -264,6 +344,10 @@ impl RiscvWorkloadReplayOutcome {
 
     pub const fn result(&self) -> &WorkloadResult {
         &self.result
+    }
+
+    pub fn host_action_outcomes(&self) -> &[SystemActionOutcome] {
+        &self.host_action_outcomes
     }
 }
 

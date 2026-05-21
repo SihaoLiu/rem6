@@ -888,6 +888,18 @@ impl WorkloadReplayPlan {
             }
         }
 
+        for label in &self.planned_checkpoint_labels {
+            if !result
+                .checkpoint_labels()
+                .iter()
+                .any(|actual| actual == label)
+            {
+                return Err(WorkloadError::MissingCheckpointLabel {
+                    label: label.clone(),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -1054,6 +1066,9 @@ pub enum WorkloadError {
         event_tick: Tick,
         final_tick: Tick,
     },
+    MissingCheckpointLabel {
+        label: String,
+    },
     UnexpectedCheckpointLabel {
         label: String,
     },
@@ -1156,6 +1171,12 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "planned host event at tick {event_tick} is after final tick {final_tick}"
             ),
+            Self::MissingCheckpointLabel { label } => {
+                write!(
+                    formatter,
+                    "planned checkpoint label {label} was not recorded"
+                )
+            }
             Self::UnexpectedCheckpointLabel { label } => {
                 write!(formatter, "checkpoint label {label} was not planned")
             }

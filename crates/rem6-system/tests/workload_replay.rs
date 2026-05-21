@@ -1,6 +1,6 @@
 use rem6_boot::BootImage;
 use rem6_memory::{AccessSize, Address, AddressRange};
-use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay};
+use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay, SystemActionOutcome};
 use rem6_workload::{
     HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
     WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
@@ -105,6 +105,40 @@ fn replay_manifest() -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-host-actions"), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::RoiBegin {
+                label: "roi".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::Checkpoint {
+                label: "after-boot".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            2,
+            HostEventIntent::RoiEnd {
+                label: "roi".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
 #[test]
 fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     let manifest = replay_manifest();
@@ -131,6 +165,45 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     assert_eq!(outcome.run().scheduled_traps().len(), 2);
     assert!(outcome.run().active_partition_count() >= 2);
     assert!(outcome.run().max_parallel_scheduler_workers() >= 1);
+}
+
+#[test]
+fn workload_replay_executes_planned_host_actions() {
+    let manifest = replay_manifest_with_planned_host_actions();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(
+        outcome.result().checkpoint_labels(),
+        &["after-boot".to_string()]
+    );
+    let stats = outcome.result().stats_snapshot().unwrap();
+    assert_eq!(stats.reset_tick(), 1);
+    assert_eq!(stats.epoch(), 1);
+
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::StatsReset(record)
+            if record.tick() == 1 && record.epoch() == 1
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::StatsSnapshot(snapshot)
+            if snapshot.tick() == 2 && snapshot.reset_tick() == 1
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::Checkpoint { tick, event, source, manifest }
+            if *tick == 1
+                && event.get() == 10_002
+                && source.get() == 51
+                && manifest.label() == "after-boot"
+    )));
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]

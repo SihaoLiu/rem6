@@ -483,6 +483,22 @@ fn workload_replay_plan_rejects_unplanned_outputs() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_missing_planned_checkpoint() {
+    let manifest = replay_manifest_with_planned_outputs();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let result = WorkloadResult::new(plan.manifest_identity(), 80).with_stop_reason("done");
+
+    let error = plan.verify_result(&result).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::MissingCheckpointLabel {
+            label: "warm".to_string(),
+        }
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_stop_reason_without_planned_stop() {
     let manifest = WorkloadManifest::builder(id("no-stop-run"), boot_image())
         .add_resource(kernel_resource())
