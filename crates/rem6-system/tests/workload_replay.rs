@@ -334,6 +334,25 @@ fn replay_manifest_with_msi_data_cache_load() -> WorkloadManifest {
     .unwrap()
 }
 
+fn replay_manifest_with_msi_data_cache_store() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-msi-data-cache-store"),
+        boot_image_with_data_store(),
+    )
+    .with_topology(replay_topology_with_msi_data_cache())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
 fn replay_manifest_with_data_store() -> WorkloadManifest {
     WorkloadManifest::builder(
         workload_id("riscv-replay-data-store"),
@@ -572,6 +591,32 @@ fn workload_replay_preserves_riscv_data_store_in_memory_snapshot() {
     let cpu0 = CpuId::new(0);
     let activity = outcome.run().cpu_activity(cpu0).unwrap();
     assert_eq!(activity.data_access_issue_count(), 1);
+    let partition = outcome
+        .memory_snapshot()
+        .partitions()
+        .iter()
+        .find(|partition| partition.target() == MemoryTargetId::new(0))
+        .unwrap();
+    let line = partition
+        .lines()
+        .iter()
+        .find(|line| line.line() == Address::new(0x9000))
+        .unwrap();
+    assert_eq!(&line.data()[8..16], &0x7b_u64.to_le_bytes());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_preserves_cached_riscv_data_store_in_memory_snapshot() {
+    let manifest = replay_manifest_with_msi_data_cache_store();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(outcome.run().data_cache_run_count(), 1);
     let partition = outcome
         .memory_snapshot()
         .partitions()

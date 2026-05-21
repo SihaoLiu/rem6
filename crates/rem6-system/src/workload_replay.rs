@@ -103,6 +103,26 @@ impl WorkloadMemoryBackend {
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
     }
+
+    fn insert_line(
+        &self,
+        target: MemoryTargetId,
+        line: Address,
+        data: Vec<u8>,
+    ) -> Result<(), RiscvWorkloadReplayError> {
+        match self {
+            Self::Store(store) => store
+                .lock()
+                .expect("workload replay memory lock")
+                .insert_line(target, line, data)
+                .map_err(RiscvWorkloadReplayError::Memory),
+            Self::Dram(dram) => dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .insert_line(target, line, data)
+                .map_err(RiscvWorkloadReplayError::Dram),
+        }
+    }
 }
 
 enum WorkloadDataCacheHarness {
@@ -113,6 +133,7 @@ enum WorkloadDataCacheHarness {
 
 struct WorkloadDataCacheBackend {
     protocol: RiscvDataCacheProtocol,
+    target: MemoryTargetId,
     line: Address,
     harness: WorkloadDataCacheHarness,
     records: Vec<RiscvDataCacheRunRecord>,
@@ -126,6 +147,7 @@ impl WorkloadDataCacheBackend {
         line_data: Vec<u8>,
         agents: Vec<PartitionedCacheAgentConfig>,
     ) -> Result<Self, RiscvWorkloadReplayError> {
+        let target = MemoryTargetId::new(config.memory_target());
         let line = layout.line_address(config.line_address());
         let backing = LineBackingStore::new(layout, line, line_data)
             .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
@@ -179,6 +201,7 @@ impl WorkloadDataCacheBackend {
 
         Ok(Self {
             protocol,
+            target,
             line,
             harness,
             records: Vec::new(),
@@ -192,6 +215,55 @@ impl WorkloadDataCacheBackend {
 
     fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
         self.error.take()
+    }
+
+    fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    fn line(&self) -> Address {
+        self.line
+    }
+
+    fn final_line_data(&self) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
+        match &self.harness {
+            WorkloadDataCacheHarness::Msi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+                if let Some(data) = snapshot
+                    .caches()
+                    .values()
+                    .find_map(|cache| cache.cached_data().map(<[u8]>::to_vec))
+                {
+                    return Ok(data);
+                }
+                snapshot
+                    .backing()
+                    .map(|backing| backing.data().to_vec())
+                    .ok_or(RiscvWorkloadReplayError::MissingDataCacheLine)
+            }
+            WorkloadDataCacheHarness::Mesi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
+                Ok(snapshot
+                    .caches()
+                    .values()
+                    .find_map(|cache| cache.cached_data().map(<[u8]>::to_vec))
+                    .unwrap_or_else(|| snapshot.backing().data().to_vec()))
+            }
+            WorkloadDataCacheHarness::Moesi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
+                Ok(snapshot
+                    .caches()
+                    .values()
+                    .find_map(|cache| cache.cached_data().map(<[u8]>::to_vec))
+                    .unwrap_or_else(|| snapshot.backing().data().to_vec()))
+            }
+        }
     }
 
     fn respond(&mut self, delivery: &RequestDelivery) -> Option<TargetOutcome> {
@@ -518,10 +590,16 @@ impl RiscvWorkloadReplay {
         }
         let mut run = run_result.map_err(RiscvWorkloadReplayError::System)?;
         if let Some(data_cache) = data_cache.as_ref() {
-            let records = data_cache
-                .lock()
-                .expect("workload data cache lock")
-                .records();
+            let (target, line, line_data, records) = {
+                let data_cache = data_cache.lock().expect("workload data cache lock");
+                (
+                    data_cache.target(),
+                    data_cache.line(),
+                    data_cache.final_line_data()?,
+                    data_cache.records(),
+                )
+            };
+            memory.insert_line(target, line, line_data)?;
             if !records.is_empty() {
                 run = run.with_data_cache_run_records(records);
             }
@@ -1001,6 +1079,7 @@ pub enum RiscvWorkloadReplayError {
     MissingTopology,
     MissingMemoryTarget,
     MissingDataCacheAgent,
+    MissingDataCacheLine,
     MissingDataCacheResponse { request: MemoryRequestId },
     MissingRoute { route: WorkloadRouteId },
     MissingFinalTick,
@@ -1031,6 +1110,9 @@ impl fmt::Display for RiscvWorkloadReplayError {
                     formatter,
                     "workload replay data cache has no RISC-V data agents"
                 )
+            }
+            Self::MissingDataCacheLine => {
+                write!(formatter, "workload replay data cache has no line data")
             }
             Self::MissingDataCacheResponse { request } => write!(
                 formatter,
@@ -1082,6 +1164,7 @@ impl Error for RiscvWorkloadReplayError {
             Self::MissingTopology
             | Self::MissingMemoryTarget
             | Self::MissingDataCacheAgent
+            | Self::MissingDataCacheLine
             | Self::MissingDataCacheResponse { .. }
             | Self::MissingRoute { .. }
             | Self::MissingFinalTick => None,
