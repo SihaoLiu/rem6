@@ -8,6 +8,8 @@ use rem6_cpu::{
     CpuId, RiscvCluster, RiscvClusterError, RiscvClusterSchedulerEpoch, RiscvClusterTurn,
     RiscvCore, RiscvCoreDriveAction,
 };
+use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
+use rem6_fabric::{FabricActivityProfile, FabricLaneActivity, FabricLinkId, VirtualNetworkId};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
@@ -15,6 +17,7 @@ use rem6_kernel::{
     PartitionId, PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord,
     SchedulerError, Tick,
 };
+use rem6_memory::MemoryTargetId;
 use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
@@ -592,6 +595,8 @@ pub struct RiscvSystemRun {
     turns: Vec<RiscvClusterTurn>,
     scheduled_traps: Vec<ScheduledRiscvTrap>,
     stop_reason: RiscvSystemRunStopReason,
+    fabric_activity: Vec<FabricLaneActivity>,
+    dram_activity: Vec<DramTargetActivity>,
 }
 
 impl RiscvSystemRun {
@@ -604,7 +609,19 @@ impl RiscvSystemRun {
             turns,
             scheduled_traps,
             stop_reason,
+            fabric_activity: Vec::new(),
+            dram_activity: Vec::new(),
         }
+    }
+
+    pub fn with_fabric_activity(mut self, fabric_activity: Vec<FabricLaneActivity>) -> Self {
+        self.fabric_activity = fabric_activity;
+        self
+    }
+
+    pub fn with_dram_activity(mut self, dram_activity: Vec<DramTargetActivity>) -> Self {
+        self.dram_activity = dram_activity;
+        self
     }
 
     pub fn turns(&self) -> &[RiscvClusterTurn] {
@@ -776,6 +793,74 @@ impl RiscvSystemRun {
             .into_iter()
             .flat_map(|epoch| epoch.ready_partitions().iter().copied())
             .collect()
+    }
+
+    pub fn fabric_activity(
+        &self,
+        link: &FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    ) -> Option<FabricLaneActivity> {
+        self.fabric_activities()
+            .remove(&(link.clone(), virtual_network))
+    }
+
+    pub fn fabric_activities(
+        &self,
+    ) -> BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity> {
+        collect_run_fabric_activity(&self.fabric_activity)
+    }
+
+    pub fn fabric_profile(&self) -> FabricActivityProfile {
+        let activities = self.fabric_activities();
+        FabricActivityProfile::from_lanes(activities.values())
+    }
+
+    pub fn active_fabric_lane_count(&self) -> usize {
+        self.fabric_activities().len()
+    }
+
+    pub fn fabric_transfer_count(&self) -> usize {
+        self.fabric_activities()
+            .values()
+            .map(FabricLaneActivity::transfer_count)
+            .sum()
+    }
+
+    pub fn has_fabric_activity(&self) -> bool {
+        self.fabric_transfer_count() != 0
+    }
+
+    pub fn dram_target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
+        self.dram_target_activities().remove(&target)
+    }
+
+    pub fn dram_target_activities(&self) -> BTreeMap<MemoryTargetId, DramTargetActivity> {
+        collect_run_dram_activity(&self.dram_activity)
+    }
+
+    pub fn dram_profile(&self) -> DramMemoryActivityProfile {
+        let activities = self.dram_target_activities();
+        DramMemoryActivityProfile::from_target_activities(activities.values())
+    }
+
+    pub fn active_dram_target_count(&self) -> usize {
+        self.dram_profile().active_target_count()
+    }
+
+    pub fn dram_access_count(&self) -> usize {
+        self.dram_profile().access_count()
+    }
+
+    pub fn has_dram_activity(&self) -> bool {
+        self.dram_access_count() != 0
+    }
+
+    pub fn resource_activity_count(&self) -> usize {
+        self.fabric_transfer_count() + self.dram_access_count()
+    }
+
+    pub fn has_resource_activity(&self) -> bool {
+        self.resource_activity_count() != 0
     }
 }
 
@@ -1131,6 +1216,51 @@ fn merge_parallel_partition_activity_maps(
                     stored
                         .max_pending_events()
                         .max(activity.max_pending_events()),
+                );
+            })
+            .or_insert(*activity);
+    }
+}
+
+fn collect_run_fabric_activity(
+    source: &[FabricLaneActivity],
+) -> BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity> {
+    let mut activities = BTreeMap::new();
+    merge_run_fabric_activity_maps(&mut activities, source);
+    activities
+}
+
+fn merge_run_fabric_activity_maps(
+    target: &mut BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity>,
+    source: &[FabricLaneActivity],
+) {
+    for activity in source {
+        target
+            .entry((activity.link().clone(), activity.virtual_network()))
+            .and_modify(|stored| *stored = stored.clone().merge_window(activity.clone()))
+            .or_insert_with(|| activity.clone());
+    }
+}
+
+fn collect_run_dram_activity(
+    source: &[DramTargetActivity],
+) -> BTreeMap<MemoryTargetId, DramTargetActivity> {
+    let mut activities = BTreeMap::new();
+    merge_run_dram_activity_maps(&mut activities, source);
+    activities
+}
+
+fn merge_run_dram_activity_maps(
+    target: &mut BTreeMap<MemoryTargetId, DramTargetActivity>,
+    source: &[DramTargetActivity],
+) {
+    for activity in source {
+        target
+            .entry(activity.target())
+            .and_modify(|stored| {
+                *stored = DramTargetActivity::new(
+                    stored.target(),
+                    stored.profile().merge_window(activity.profile()),
                 );
             })
             .or_insert(*activity);

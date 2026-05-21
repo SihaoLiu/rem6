@@ -1293,6 +1293,8 @@ impl RiscvTopologySystem {
             .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
+        let fabric_activity_start = self.transport.mark_fabric_activity();
+        let dram_activity_start = mark_dram_activity(&memory);
 
         let fetch_memory = memory.clone();
         let fetch_error = Arc::clone(&memory_error);
@@ -1341,6 +1343,7 @@ impl RiscvTopologySystem {
                 event_for,
             )
         };
+        drop(scheduler);
 
         let run = match result {
             Ok(run) => run,
@@ -1354,8 +1357,14 @@ impl RiscvTopologySystem {
         if let Some(memory_error) = take_memory_error(&memory_error) {
             return Err(memory_error);
         }
+        let fabric_activity = fabric_activity_start
+            .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
+            .unwrap_or_default();
+        let dram_activity = dram_activities_since(&memory, dram_activity_start);
 
-        Ok(run)
+        Ok(run
+            .with_fabric_activity(fabric_activity)
+            .with_dram_activity(dram_activity))
     }
 
     pub fn drive_attached_until_host_stop_parallel<E>(
