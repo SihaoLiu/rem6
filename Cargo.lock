@@ -73,6 +73,7 @@ version = "0.1.0"
 dependencies = [
  "rem6-memory",
  "rem6-protocol-mesi",
+ "rem6-protocol-moesi",
  "rem6-protocol-msi",
 ]
 
@@ -143,6 +144,13 @@ dependencies = [
 
 [[package]]
 name = "rem6-protocol-mesi"
+version = "0.1.0"
+dependencies = [
+ "rem6-memory",
+]
+
+[[package]]
+name = "rem6-protocol-moesi"
 version = "0.1.0"
 dependencies = [
  "rem6-memory",

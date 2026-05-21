@@ -8,6 +8,13 @@ use rem6_protocol_mesi::{
 };
 use rem6_protocol_msi::{DirectoryLineSnapshot, MsiEvent, MsiLineId, MsiState};
 
+mod moesi;
+
+pub use moesi::{
+    MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,
+    MoesiDirectoryGrant, MoesiDirectoryLineState, MoesiDirectorySnoop,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DirectoryDataSource {
     BackingMemory,
