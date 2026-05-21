@@ -161,6 +161,7 @@ dependencies = [
  "rem6-checkpoint",
  "rem6-cpu",
  "rem6-dram",
+ "rem6-fabric",
  "rem6-interrupt",
  "rem6-isa-riscv",
  "rem6-kernel",

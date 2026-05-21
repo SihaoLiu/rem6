@@ -13,6 +13,7 @@ use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
 };
+use rem6_fabric::FabricModel;
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick,
@@ -385,7 +386,7 @@ impl RiscvTopologySystem {
             min_remote_delay,
         )
         .map_err(RiscvTopologySystemError::Scheduler)?;
-        let mut transport = MemoryTransport::new();
+        let mut transport = MemoryTransport::with_fabric(FabricModel::new());
         let cluster = RiscvCluster::from_topology(&topology, &mut transport, cluster_config)
             .map_err(RiscvTopologySystemError::CpuTopology)?;
 

@@ -11,6 +11,7 @@ rem6-boot = { path = "../rem6-boot" }
 rem6-checkpoint = { path = "../rem6-checkpoint" }
 rem6-cpu = { path = "../rem6-cpu" }
 rem6-dram = { path = "../rem6-dram" }
+rem6-fabric = { path = "../rem6-fabric" }
 rem6-interrupt = { path = "../rem6-interrupt" }
 rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }
