@@ -16,12 +16,17 @@ use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod riscv_checkpoint;
 mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
 
+pub use interrupt_checkpoint::{
+    InterruptControllerCheckpointBank, InterruptControllerCheckpointError,
+    InterruptControllerCheckpointPort, InterruptControllerCheckpointRecord,
+};
 pub use memory_checkpoint::{
     DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
     DramMemoryCheckpointRecord, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,

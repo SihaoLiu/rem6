@@ -287,6 +287,85 @@ fn interrupt_controller_claims_highest_priority_line_and_masks_zero_priority() {
 }
 
 #[test]
+fn interrupt_controller_snapshot_restore_reinstates_routed_controller_state() {
+    let target = InterruptTargetId::new(0);
+    let cpu = PartitionId::new(3);
+    let claimed_line = InterruptLineId::new(16);
+    let masked_line = InterruptLineId::new(17);
+    let extra_line = InterruptLineId::new(18);
+    let claimed_source = InterruptSourceId::new(41);
+    let masked_source = InterruptSourceId::new(42);
+    let claimed_route = InterruptRoute::new(claimed_line, target, cpu);
+    let masked_route = InterruptRoute::new(masked_line, target, cpu);
+    let claimed = InterruptClaim::new(claimed_line, target, cpu, claimed_source, 4, 12);
+    let mut controller = InterruptController::new();
+
+    controller.register_route(masked_route).unwrap();
+    controller.register_route(claimed_route).unwrap();
+    controller
+        .set_priority(masked_line, InterruptPriority::ZERO)
+        .unwrap();
+    controller
+        .set_priority(claimed_line, InterruptPriority::new(9))
+        .unwrap();
+    controller.assert(masked_line, masked_source, 3).unwrap();
+    controller.assert(claimed_line, claimed_source, 4).unwrap();
+    assert_eq!(controller.claim(target, cpu, 12), Some(claimed));
+
+    let captured = controller.snapshot(14);
+    assert_eq!(captured.tick(), 14);
+    assert_eq!(captured.routes(), &[claimed_route, masked_route]);
+    assert_eq!(
+        captured.priorities(),
+        &[
+            (claimed_line, InterruptPriority::new(9)),
+            (masked_line, InterruptPriority::ZERO),
+        ]
+    );
+    assert_eq!(captured.claimed(), &[claimed]);
+    assert_eq!(
+        captured.pending(),
+        &[PendingInterrupt::routed(
+            masked_line,
+            target,
+            cpu,
+            masked_source,
+            3,
+        )]
+    );
+
+    controller.complete(target, cpu, claimed_line, 15).unwrap();
+    controller
+        .set_priority(masked_line, InterruptPriority::new(5))
+        .unwrap();
+    controller
+        .register_route(InterruptRoute::new(extra_line, target, cpu))
+        .unwrap();
+    controller
+        .assert(extra_line, InterruptSourceId::new(43), 16)
+        .unwrap();
+
+    controller.restore(&captured);
+
+    assert_eq!(controller.snapshot(14), captured);
+    assert_eq!(
+        controller.priority(masked_line).unwrap(),
+        InterruptPriority::ZERO
+    );
+    assert_eq!(
+        controller.priority(claimed_line).unwrap(),
+        InterruptPriority::new(9)
+    );
+    assert_eq!(
+        controller.priority(extra_line),
+        Err(InterruptError::UnknownLine { line: extra_line })
+    );
+    assert_eq!(controller.claim(target, cpu, 20), Some(claimed));
+    controller.complete(target, cpu, claimed_line, 21).unwrap();
+    assert_eq!(controller.claim(target, cpu, 22), None);
+}
+
+#[test]
 fn interrupt_line_channel_routes_signals_to_target_partition() {
     let device = PartitionId::new(0);
     let cpu = PartitionId::new(1);

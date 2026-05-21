@@ -600,19 +600,28 @@ impl InterruptClaim {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterruptSnapshot {
     tick: Tick,
+    routes: Vec<InterruptRoute>,
+    priorities: Vec<(InterruptLineId, InterruptPriority)>,
     pending: Vec<PendingInterrupt>,
+    claimed: Vec<InterruptClaim>,
     history: Vec<InterruptEvent>,
 }
 
 impl InterruptSnapshot {
     pub const fn new(
         tick: Tick,
+        routes: Vec<InterruptRoute>,
+        priorities: Vec<(InterruptLineId, InterruptPriority)>,
         pending: Vec<PendingInterrupt>,
+        claimed: Vec<InterruptClaim>,
         history: Vec<InterruptEvent>,
     ) -> Self {
         Self {
             tick,
+            routes,
+            priorities,
             pending,
+            claimed,
             history,
         }
     }
@@ -621,8 +630,20 @@ impl InterruptSnapshot {
         self.tick
     }
 
+    pub fn routes(&self) -> &[InterruptRoute] {
+        &self.routes
+    }
+
+    pub fn priorities(&self) -> &[(InterruptLineId, InterruptPriority)] {
+        &self.priorities
+    }
+
     pub fn pending(&self) -> &[PendingInterrupt] {
         &self.pending
+    }
+
+    pub fn claimed(&self) -> &[InterruptClaim] {
+        &self.claimed
     }
 
     pub fn history(&self) -> &[InterruptEvent] {
@@ -864,7 +885,39 @@ impl InterruptController {
     }
 
     pub fn snapshot(&self, tick: Tick) -> InterruptSnapshot {
-        InterruptSnapshot::new(tick, self.pending(), self.history.clone())
+        InterruptSnapshot::new(
+            tick,
+            self.routes.values().copied().collect(),
+            self.priorities
+                .iter()
+                .map(|(line, priority)| (*line, *priority))
+                .collect(),
+            self.pending(),
+            self.claimed(),
+            self.history.clone(),
+        )
+    }
+
+    pub fn restore(&mut self, snapshot: &InterruptSnapshot) {
+        self.routes = snapshot
+            .routes()
+            .iter()
+            .map(|route| (route.line(), *route))
+            .collect();
+        self.priorities = snapshot.priorities().iter().copied().collect();
+        self.pending = snapshot
+            .pending()
+            .iter()
+            .cloned()
+            .map(|pending| (pending.line(), pending))
+            .collect();
+        self.claimed = snapshot
+            .claimed()
+            .iter()
+            .copied()
+            .map(|claim| ((claim.target(), claim.target_partition()), claim))
+            .collect();
+        self.history = snapshot.history().to_vec();
     }
 
     fn route_for(&self, line: InterruptLineId) -> Result<InterruptRoute, InterruptError> {
