@@ -1,7 +1,8 @@
 use rem6_boot::BootImage;
 use rem6_cpu::CpuId;
+use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
 use rem6_isa_riscv::Register;
-use rem6_memory::{AccessSize, Address, AddressRange, MemoryTargetId};
+use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay, SystemActionOutcome};
 use rem6_workload::{
     HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
@@ -19,6 +20,10 @@ fn resource_id(value: &str) -> WorkloadResourceId {
 
 fn route_id(value: &str) -> WorkloadRouteId {
     WorkloadRouteId::new(value).unwrap()
+}
+
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
 }
 
 fn word(raw: u32) -> Vec<u8> {
@@ -82,6 +87,26 @@ fn boot_image_with_data_store() -> BootImage {
         .unwrap()
         .add_segment(Address::new(0x9008), vec![0; 8])
         .unwrap()
+}
+
+fn dram_geometry() -> DramGeometry {
+    DramGeometry::new(4, 64, 16).unwrap()
+}
+
+fn dram_timing() -> DramTiming {
+    DramTiming::new(4, 8, 10, 3, 5).unwrap()
+}
+
+fn hbm_profile(target: u32) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::hbm(
+        MemoryTargetId::new(target),
+        layout(),
+        2,
+        2,
+        dram_geometry(),
+        dram_timing(),
+    )
+    .unwrap()
 }
 
 fn kernel_resource() -> WorkloadResource {
@@ -180,6 +205,46 @@ fn replay_topology_with_data_route() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_profiled_data_route() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(hbm_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_manifest() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay"), boot_image())
         .with_topology(replay_topology())
@@ -194,6 +259,25 @@ fn replay_manifest() -> WorkloadManifest {
         ))
         .build()
         .unwrap()
+}
+
+fn replay_manifest_with_profiled_data_load() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-profiled-data-load"),
+        boot_image_with_data_load(),
+    )
+    .with_topology(replay_topology_with_profiled_data_route())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
 }
 
 fn replay_manifest_with_data_load() -> WorkloadManifest {
@@ -387,6 +471,41 @@ fn workload_replay_preserves_riscv_data_store_in_memory_snapshot() {
         .find(|line| line.line() == Address::new(0x9000))
         .unwrap();
     assert_eq!(&line.data()[8..16], &0x7b_u64.to_le_bytes());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_uses_profiled_external_memory() {
+    let manifest = replay_manifest_with_profiled_data_load();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(48)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(outcome.run().dram_profile().active_target_count(), 1);
+    assert!(outcome.run().dram_profile().read_count() >= 3);
+    assert!(outcome.run().dram_profile().max_ready_latency_cycles() >= 12);
+    let dram = outcome.dram_snapshot().unwrap();
+    let target = dram
+        .targets()
+        .iter()
+        .find(|target| target.target() == MemoryTargetId::new(0))
+        .unwrap();
+    assert_eq!(
+        target.profile().unwrap().technology(),
+        DramMemoryTechnology::Hbm
+    );
+    assert_eq!(target.profile().unwrap().parallel_port_count(), 4);
     plan.verify_result(outcome.result()).unwrap();
 }
 

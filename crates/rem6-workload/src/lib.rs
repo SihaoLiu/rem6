@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_boot::{BootError, BootImage};
+use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 use rem6_kernel::Tick;
 use rem6_memory::{Address, AddressRange};
 use rem6_stats::StatSnapshot;
@@ -163,6 +164,7 @@ pub struct WorkloadMemoryTarget {
     target: u32,
     line_bytes: u64,
     range: AddressRange,
+    external_memory_profile: Option<ExternalMemoryProfile>,
 }
 
 impl WorkloadMemoryTarget {
@@ -179,7 +181,37 @@ impl WorkloadMemoryTarget {
             target,
             line_bytes,
             range,
+            external_memory_profile: None,
         })
+    }
+
+    pub fn with_external_memory_profile(
+        mut self,
+        profile: ExternalMemoryProfile,
+    ) -> Result<Self, WorkloadError> {
+        if profile.target().get() != self.target {
+            return Err(WorkloadError::MemoryProfileTargetMismatch {
+                target: self.target,
+                profile_target: profile.target().get(),
+            });
+        }
+        if profile.line_layout().bytes() != self.line_bytes {
+            return Err(WorkloadError::MemoryProfileLineSizeMismatch {
+                target: self.target,
+                line_bytes: self.line_bytes,
+                profile_line_bytes: profile.line_layout().bytes(),
+            });
+        }
+        if profile.geometry().line_size() != profile.line_layout().bytes() {
+            return Err(WorkloadError::MemoryProfileGeometryLineSizeMismatch {
+                target: self.target,
+                layout_line_bytes: profile.line_layout().bytes(),
+                geometry_line_bytes: profile.geometry().line_size(),
+            });
+        }
+
+        self.external_memory_profile = Some(profile);
+        Ok(self)
     }
 
     pub const fn target(self) -> u32 {
@@ -192,6 +224,10 @@ impl WorkloadMemoryTarget {
 
     pub const fn range(self) -> AddressRange {
         self.range
+    }
+
+    pub fn external_memory_profile(&self) -> Option<&ExternalMemoryProfile> {
+        self.external_memory_profile.as_ref()
     }
 }
 
@@ -512,6 +548,13 @@ impl WorkloadTopology {
 
     pub fn memory_targets(&self) -> &[WorkloadMemoryTarget] {
         &self.memory_targets
+    }
+
+    pub fn external_memory_profile(&self, target: u32) -> Option<&ExternalMemoryProfile> {
+        self.memory_targets
+            .iter()
+            .find(|memory_target| memory_target.target() == target)
+            .and_then(WorkloadMemoryTarget::external_memory_profile)
     }
 
     pub fn memory_routes(&self) -> &[WorkloadMemoryRoute] {
@@ -1069,6 +1112,20 @@ pub enum WorkloadError {
     ZeroLineBytes {
         target: u32,
     },
+    MemoryProfileTargetMismatch {
+        target: u32,
+        profile_target: u32,
+    },
+    MemoryProfileLineSizeMismatch {
+        target: u32,
+        line_bytes: u64,
+        profile_line_bytes: u64,
+    },
+    MemoryProfileGeometryLineSizeMismatch {
+        target: u32,
+        layout_line_bytes: u64,
+        geometry_line_bytes: u64,
+    },
     ZeroRouteLatency {
         route: WorkloadRouteId,
         latency: WorkloadRouteLatency,
@@ -1161,6 +1218,29 @@ impl fmt::Display for WorkloadError {
                     "memory target {target} line bytes must be positive"
                 )
             }
+            Self::MemoryProfileTargetMismatch {
+                target,
+                profile_target,
+            } => write!(
+                formatter,
+                "memory target {target} cannot use external memory profile for target {profile_target}"
+            ),
+            Self::MemoryProfileLineSizeMismatch {
+                target,
+                line_bytes,
+                profile_line_bytes,
+            } => write!(
+                formatter,
+                "memory target {target} has {line_bytes}-byte lines but external memory profile uses {profile_line_bytes}"
+            ),
+            Self::MemoryProfileGeometryLineSizeMismatch {
+                target,
+                layout_line_bytes,
+                geometry_line_bytes,
+            } => write!(
+                formatter,
+                "memory target {target} external memory profile has {layout_line_bytes}-byte layout lines but {geometry_line_bytes}-byte DRAM geometry lines"
+            ),
             Self::ZeroRouteLatency { route, latency } => write!(
                 formatter,
                 "route {} {latency:?} latency must be positive",
@@ -1339,6 +1419,7 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, target.line_bytes());
         hash_u64(hash, target.range().start().get());
         hash_u64(hash, target.range().size().bytes());
+        hash_external_memory_profile(hash, target.external_memory_profile());
     }
     hash_u64(hash, topology.memory_routes().len() as u64);
     for route in topology.memory_routes() {
@@ -1366,6 +1447,56 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
             }
             (None, None) => hash_str(hash, "data.none"),
             _ => hash_str(hash, "data.invalid"),
+        }
+    }
+}
+
+fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryProfile>) {
+    let Some(profile) = profile else {
+        hash_str(hash, "memory.profile.none");
+        return;
+    };
+
+    hash_str(hash, "memory.profile.v1");
+    hash_u64(hash, u64::from(profile.target().get()));
+    hash_u64(hash, profile.line_layout().bytes());
+    hash_u64(hash, u64::from(profile.geometry().bank_count()));
+    hash_u64(hash, profile.geometry().row_size());
+    hash_u64(hash, profile.geometry().line_size());
+    hash_u64(hash, profile.timing().activate_latency());
+    hash_u64(hash, profile.timing().read_latency());
+    hash_u64(hash, profile.timing().write_latency());
+    hash_u64(hash, profile.timing().precharge_latency());
+    hash_u64(hash, profile.timing().bus_turnaround());
+    match profile.technology() {
+        DramMemoryTechnology::Ddr => hash_str(hash, "ddr"),
+        DramMemoryTechnology::Hbm => hash_str(hash, "hbm"),
+        DramMemoryTechnology::Lpddr => hash_str(hash, "lpddr"),
+    }
+    match profile.topology() {
+        ExternalMemoryTopology::Ddr {
+            channels,
+            ranks_per_channel,
+        } => {
+            hash_str(hash, "ddr.topology");
+            hash_u64(hash, u64::from(channels));
+            hash_u64(hash, u64::from(ranks_per_channel));
+        }
+        ExternalMemoryTopology::Hbm {
+            stacks,
+            pseudo_channels_per_stack,
+        } => {
+            hash_str(hash, "hbm.topology");
+            hash_u64(hash, u64::from(stacks));
+            hash_u64(hash, u64::from(pseudo_channels_per_stack));
+        }
+        ExternalMemoryTopology::Lpddr {
+            channels,
+            dies_per_channel,
+        } => {
+            hash_str(hash, "lpddr.topology");
+            hash_u64(hash, u64::from(channels));
+            hash_u64(hash, u64::from(dies_per_channel));
         }
     }
 }

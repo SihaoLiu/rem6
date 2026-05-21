@@ -1,6 +1,9 @@
 use rem6_boot::BootImage;
+use rem6_dram::{
+    DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology,
+};
 use rem6_kernel::Tick;
-use rem6_memory::{AccessSize, Address};
+use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadHostPlacement,
@@ -19,6 +22,58 @@ fn resource_id(value: &str) -> WorkloadResourceId {
 
 fn route_id(value: &str) -> WorkloadRouteId {
     WorkloadRouteId::new(value).unwrap()
+}
+
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
+}
+
+fn memory_target(id: u32) -> MemoryTargetId {
+    MemoryTargetId::new(id)
+}
+
+fn dram_geometry() -> DramGeometry {
+    DramGeometry::new(4, 64, 16).unwrap()
+}
+
+fn dram_timing() -> DramTiming {
+    DramTiming::new(4, 8, 10, 3, 5).unwrap()
+}
+
+fn hbm_profile(target: u32) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::hbm(
+        memory_target(target),
+        layout(),
+        2,
+        2,
+        dram_geometry(),
+        dram_timing(),
+    )
+    .unwrap()
+}
+
+fn hbm_profile_with_layout(target: u32, line_layout: CacheLineLayout) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::hbm(
+        memory_target(target),
+        line_layout,
+        2,
+        2,
+        DramGeometry::new(4, 64, line_layout.bytes()).unwrap(),
+        dram_timing(),
+    )
+    .unwrap()
+}
+
+fn hbm_profile_with_geometry(target: u32, geometry: DramGeometry) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::hbm(
+        memory_target(target),
+        layout(),
+        2,
+        2,
+        geometry,
+        dram_timing(),
+    )
+    .unwrap()
 }
 
 fn boot_image() -> BootImage {
@@ -47,6 +102,84 @@ fn disk_resource() -> WorkloadResource {
         "resources/rootfs.img",
     )
     .unwrap()
+}
+
+#[test]
+fn workload_memory_target_records_external_memory_profile() {
+    let profile = hbm_profile(0);
+    let target = WorkloadMemoryTarget::new(
+        0,
+        16,
+        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    )
+    .unwrap()
+    .with_external_memory_profile(profile)
+    .unwrap();
+
+    assert_eq!(target.external_memory_profile(), Some(&profile));
+    assert_eq!(
+        target.external_memory_profile().unwrap().technology(),
+        DramMemoryTechnology::Hbm
+    );
+    assert_eq!(
+        target.external_memory_profile().unwrap().topology(),
+        ExternalMemoryTopology::Hbm {
+            stacks: 2,
+            pseudo_channels_per_stack: 2,
+        }
+    );
+}
+
+#[test]
+fn workload_memory_target_rejects_mismatched_external_memory_profile() {
+    let range =
+        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+            .unwrap();
+
+    let wrong_target = WorkloadMemoryTarget::new(0, 16, range)
+        .unwrap()
+        .with_external_memory_profile(hbm_profile(1))
+        .unwrap_err();
+    assert_eq!(
+        wrong_target,
+        WorkloadError::MemoryProfileTargetMismatch {
+            target: 0,
+            profile_target: 1,
+        }
+    );
+
+    let wrong_line_size = WorkloadMemoryTarget::new(0, 16, range)
+        .unwrap()
+        .with_external_memory_profile(hbm_profile_with_layout(
+            0,
+            CacheLineLayout::new(32).unwrap(),
+        ))
+        .unwrap_err();
+    assert_eq!(
+        wrong_line_size,
+        WorkloadError::MemoryProfileLineSizeMismatch {
+            target: 0,
+            line_bytes: 16,
+            profile_line_bytes: 32,
+        }
+    );
+
+    let wrong_geometry_line_size = WorkloadMemoryTarget::new(0, 16, range)
+        .unwrap()
+        .with_external_memory_profile(hbm_profile_with_geometry(
+            0,
+            DramGeometry::new(4, 64, 32).unwrap(),
+        ))
+        .unwrap_err();
+    assert_eq!(
+        wrong_geometry_line_size,
+        WorkloadError::MemoryProfileGeometryLineSizeMismatch {
+            target: 0,
+            layout_line_bytes: 16,
+            geometry_line_bytes: 32,
+        }
+    );
 }
 
 fn replay_manifest_with_planned_outputs() -> WorkloadManifest {
@@ -385,6 +518,92 @@ fn workload_manifest_records_topology_for_full_system_replay() {
         .build()
         .unwrap();
     assert_ne!(manifest.identity(), different_topology.identity());
+}
+
+#[test]
+fn workload_topology_exposes_external_memory_profile_by_target() {
+    let profile = hbm_profile(0);
+    let topology = WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                rem6_memory::AddressRange::new(
+                    Address::new(0x8000),
+                    AccessSize::new(0x2000).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(profile)
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(topology.external_memory_profile(0), Some(&profile));
+    assert_eq!(topology.external_memory_profile(1), None);
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_external_memory_profile() {
+    let hbm_two_by_two = WorkloadMemoryTarget::new(
+        0,
+        16,
+        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    )
+    .unwrap()
+    .with_external_memory_profile(hbm_profile(0))
+    .unwrap();
+
+    let hbm_one_by_four = WorkloadMemoryTarget::new(
+        0,
+        16,
+        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    )
+    .unwrap()
+    .with_external_memory_profile(
+        ExternalMemoryProfile::hbm(
+            memory_target(0),
+            layout(),
+            1,
+            4,
+            dram_geometry(),
+            dram_timing(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let first = WorkloadManifest::builder(id("profiled-topology"), boot_image())
+        .with_topology(
+            WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+                .unwrap()
+                .add_memory_target(hbm_two_by_two)
+                .unwrap(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    let second = WorkloadManifest::builder(id("profiled-topology"), boot_image())
+        .with_topology(
+            WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+                .unwrap()
+                .add_memory_target(hbm_one_by_four)
+                .unwrap(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    assert_ne!(first.identity(), second.identity());
 }
 
 #[test]

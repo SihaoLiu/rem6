@@ -7,6 +7,10 @@ use rem6_boot::BootError;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
 };
+use rem6_dram::{
+    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
+    DramTargetActivity, DramTiming,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, AgentId, CacheLineLayout, MemoryError, MemoryTargetId, PartitionedMemorySnapshot,
@@ -33,6 +37,46 @@ const WORKLOAD_STOP_REASON_HOST: &str = "host-stop";
 const WORKLOAD_STOP_REASON_IDLE: &str = "idle";
 const PLANNED_HOST_EVENT_ID_BASE: u64 = 10_000;
 
+#[derive(Clone)]
+enum WorkloadMemoryBackend {
+    Store(Arc<Mutex<PartitionedMemoryStore>>),
+    Dram(Arc<Mutex<DramMemoryController>>),
+}
+
+impl WorkloadMemoryBackend {
+    fn memory_snapshot(&self) -> PartitionedMemorySnapshot {
+        match self {
+            Self::Store(store) => store
+                .lock()
+                .expect("workload replay memory lock")
+                .snapshot(),
+            Self::Dram(dram) => dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .snapshot()
+                .store()
+                .clone(),
+        }
+    }
+
+    fn dram_snapshot(&self) -> Option<DramMemorySnapshot> {
+        match self {
+            Self::Store(_) => None,
+            Self::Dram(dram) => Some(dram.lock().expect("workload replay DRAM lock").snapshot()),
+        }
+    }
+
+    fn dram_target_activities(&self) -> Vec<DramTargetActivity> {
+        match self {
+            Self::Store(_) => Vec::new(),
+            Self::Dram(dram) => dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .target_activities(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplay {
     plan: WorkloadReplayPlan,
@@ -58,7 +102,7 @@ impl RiscvWorkloadReplay {
             .topology()
             .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
         let route_map = self.build_route_map()?;
-        let store = Arc::new(Mutex::new(self.load_memory()?));
+        let memory = self.load_memory_backend()?;
         let cluster = self.build_cluster(&route_map)?;
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
@@ -87,7 +131,7 @@ impl RiscvWorkloadReplay {
             GuestSourceId::new(topology.host().source()),
         );
         let driver = RiscvSystemRunDriver::new(trap_port);
-        let run = driver
+        let mut run = driver
             .drive_until_host_stop_parallel(
                 &cluster,
                 &mut scheduler,
@@ -95,25 +139,27 @@ impl RiscvWorkloadReplay {
                 MemoryTrace::new(),
                 MemoryTrace::new(),
                 |_cpu| {
-                    let store = Arc::clone(&store);
-                    move |delivery, _context| memory_response(&store, &delivery)
+                    let memory = memory.clone();
+                    move |delivery, _context| memory_response(&memory, &delivery)
                 },
                 |_cpu| {
-                    let store = Arc::clone(&store);
-                    move |delivery, _context| memory_response(&store, &delivery)
+                    let memory = memory.clone();
+                    move |delivery, _context| memory_response(&memory, &delivery)
                 },
                 self.max_turns,
                 |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
             )
             .map_err(RiscvWorkloadReplayError::System)?;
+        let dram_target_activities = memory.dram_target_activities();
+        if !dram_target_activities.is_empty() {
+            run = run.with_dram_activity(dram_target_activities);
+        }
         let (result, host_action_outcomes) = self.result_from_run(&run, &controller)?;
         self.plan
             .verify_result(&result)
             .map_err(RiscvWorkloadReplayError::Workload)?;
-        let memory_snapshot = store
-            .lock()
-            .expect("workload replay memory lock")
-            .snapshot();
+        let memory_snapshot = memory.memory_snapshot();
+        let dram_snapshot = memory.dram_snapshot();
 
         Ok(RiscvWorkloadReplayOutcome::new(
             cluster,
@@ -121,6 +167,7 @@ impl RiscvWorkloadReplay {
             result,
             host_action_outcomes,
             memory_snapshot,
+            dram_snapshot,
         ))
     }
 
@@ -267,7 +314,70 @@ impl RiscvWorkloadReplay {
         CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)
     }
 
-    fn load_memory(&self) -> Result<PartitionedMemoryStore, RiscvWorkloadReplayError> {
+    fn load_memory_backend(&self) -> Result<WorkloadMemoryBackend, RiscvWorkloadReplayError> {
+        let store = self.load_partitioned_memory_store()?;
+        if self.uses_profiled_external_memory()? {
+            let dram = self.load_dram_memory(store)?;
+            return Ok(WorkloadMemoryBackend::Dram(Arc::new(Mutex::new(dram))));
+        }
+
+        Ok(WorkloadMemoryBackend::Store(Arc::new(Mutex::new(store))))
+    }
+
+    fn uses_profiled_external_memory(&self) -> Result<bool, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+        Ok(topology
+            .memory_targets()
+            .iter()
+            .any(|target| target.external_memory_profile().is_some()))
+    }
+
+    fn load_dram_memory(
+        &self,
+        store: PartitionedMemoryStore,
+    ) -> Result<DramMemoryController, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+        let mut dram = DramMemoryController::new();
+        for target in topology.memory_targets() {
+            let target_id = MemoryTargetId::new(target.target());
+            if let Some(profile) = target.external_memory_profile().copied() {
+                dram.add_profile(profile)
+                    .map_err(RiscvWorkloadReplayError::Dram)?;
+            } else {
+                let layout = CacheLineLayout::new(target.line_bytes())
+                    .map_err(RiscvWorkloadReplayError::Memory)?;
+                let geometry = DramGeometry::new(1, target.line_bytes(), target.line_bytes())
+                    .map_err(RiscvWorkloadReplayError::DramModel)?;
+                let timing =
+                    DramTiming::new(1, 1, 1, 1, 0).map_err(RiscvWorkloadReplayError::DramModel)?;
+                dram.add_target(DramControllerConfig::new(
+                    target_id, layout, geometry, timing,
+                ))
+                .map_err(RiscvWorkloadReplayError::Dram)?;
+            }
+            dram.map_region(target_id, target.range().start(), target.range().size())
+                .map_err(RiscvWorkloadReplayError::Dram)?;
+        }
+
+        let snapshot = store.snapshot();
+        for partition in snapshot.partitions() {
+            for line in partition.lines() {
+                dram.insert_line(partition.target(), line.line(), line.data().to_vec())
+                    .map_err(RiscvWorkloadReplayError::Dram)?;
+            }
+        }
+        Ok(dram)
+    }
+
+    fn load_partitioned_memory_store(
+        &self,
+    ) -> Result<PartitionedMemoryStore, RiscvWorkloadReplayError> {
         let topology = self
             .plan
             .topology()
@@ -353,6 +463,7 @@ pub struct RiscvWorkloadReplayOutcome {
     result: WorkloadResult,
     host_action_outcomes: Vec<SystemActionOutcome>,
     memory_snapshot: PartitionedMemorySnapshot,
+    dram_snapshot: Option<DramMemorySnapshot>,
 }
 
 impl RiscvWorkloadReplayOutcome {
@@ -362,6 +473,7 @@ impl RiscvWorkloadReplayOutcome {
         result: WorkloadResult,
         host_action_outcomes: Vec<SystemActionOutcome>,
         memory_snapshot: PartitionedMemorySnapshot,
+        dram_snapshot: Option<DramMemorySnapshot>,
     ) -> Self {
         Self {
             cluster,
@@ -369,6 +481,7 @@ impl RiscvWorkloadReplayOutcome {
             result,
             host_action_outcomes,
             memory_snapshot,
+            dram_snapshot,
         }
     }
 
@@ -391,6 +504,10 @@ impl RiscvWorkloadReplayOutcome {
     pub const fn memory_snapshot(&self) -> &PartitionedMemorySnapshot {
         &self.memory_snapshot
     }
+
+    pub const fn dram_snapshot(&self) -> Option<&DramMemorySnapshot> {
+        self.dram_snapshot.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -401,6 +518,8 @@ pub enum RiscvWorkloadReplayError {
     MissingFinalTick,
     Workload(WorkloadError),
     Boot(BootError),
+    Dram(DramMemoryError),
+    DramModel(rem6_dram::DramError),
     Memory(MemoryError),
     Cpu(CpuError),
     RiscvCluster(rem6_cpu::RiscvClusterError),
@@ -426,6 +545,8 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::MissingFinalTick => write!(formatter, "RISC-V run did not report a final tick"),
             Self::Workload(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
+            Self::Dram(error) => write!(formatter, "{error}"),
+            Self::DramModel(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
@@ -441,6 +562,8 @@ impl Error for RiscvWorkloadReplayError {
         match self {
             Self::Workload(error) => Some(error),
             Self::Boot(error) => Some(error),
+            Self::Dram(error) => Some(error),
+            Self::DramModel(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Cpu(error) => Some(error),
             Self::RiscvCluster(error) => Some(error),
@@ -455,17 +578,37 @@ impl Error for RiscvWorkloadReplayError {
     }
 }
 
-fn memory_response(
-    store: &Arc<Mutex<PartitionedMemoryStore>>,
-    delivery: &RequestDelivery,
-) -> TargetOutcome {
-    let response = store
-        .lock()
-        .expect("workload memory store lock")
-        .respond(delivery.request())
-        .expect("workload memory response")
-        .response()
-        .cloned()
-        .expect("workload memory response payload");
-    TargetOutcome::Respond(response)
+fn memory_response(memory: &WorkloadMemoryBackend, delivery: &RequestDelivery) -> TargetOutcome {
+    match memory {
+        WorkloadMemoryBackend::Store(store) => {
+            let response = store
+                .lock()
+                .expect("workload memory store lock")
+                .respond(delivery.request())
+                .expect("workload memory response")
+                .response()
+                .cloned()
+                .expect("workload memory response payload");
+            TargetOutcome::Respond(response)
+        }
+        WorkloadMemoryBackend::Dram(dram) => {
+            let outcome = dram
+                .lock()
+                .expect("workload DRAM lock")
+                .accept(delivery.tick(), delivery.request())
+                .expect("workload DRAM response");
+            let Some(response) = outcome.response().cloned() else {
+                return TargetOutcome::NoResponse;
+            };
+            let delay = outcome
+                .ready_cycle()
+                .checked_sub(delivery.tick())
+                .expect("workload DRAM response is not ready before request arrival");
+            if delay == 0 {
+                TargetOutcome::Respond(response)
+            } else {
+                TargetOutcome::RespondAfter { delay, response }
+            }
+        }
+    }
 }
