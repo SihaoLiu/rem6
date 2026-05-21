@@ -3,10 +3,10 @@ use rem6_kernel::Tick;
 use rem6_stats::{StatSnapshot, StatsRegistry, StatsResetRecord};
 
 use crate::{
-    DramMemoryCheckpointBank, GuestEventDelivery, GuestEventId, GuestSourceId, HostAction,
-    HostActionRecord, HostEventPolicy, InterruptControllerCheckpointBank,
-    MemoryStoreCheckpointBank, RiscvCoreCheckpointBank, StopRequest, SystemError,
-    TimerCheckpointBank, UartCheckpointBank,
+    AcceleratorCheckpointBank, DramMemoryCheckpointBank, GpuCheckpointBank, GuestEventDelivery,
+    GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, RiscvCoreCheckpointBank,
+    StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,6 +38,8 @@ pub enum SystemActionOutcome {
 pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
+    accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
+    gpu_checkpoints: Option<GpuCheckpointBank>,
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
@@ -55,6 +57,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
@@ -72,6 +76,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
@@ -89,6 +95,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
@@ -106,6 +114,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
@@ -123,6 +133,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
@@ -141,6 +153,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
@@ -159,6 +173,8 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            accelerator_checkpoints: None,
+            gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
@@ -190,6 +206,24 @@ impl SystemActionExecutor {
     ) -> Result<(), CheckpointError> {
         memory_checkpoints.register_all(&mut self.checkpoints)?;
         self.memory_checkpoints = Some(memory_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_accelerator_checkpoint_bank(
+        &mut self,
+        accelerator_checkpoints: AcceleratorCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        accelerator_checkpoints.register_all(&mut self.checkpoints)?;
+        self.accelerator_checkpoints = Some(accelerator_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_gpu_checkpoint_bank(
+        &mut self,
+        gpu_checkpoints: GpuCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        gpu_checkpoints.register_all(&mut self.checkpoints)?;
+        self.gpu_checkpoints = Some(gpu_checkpoints);
         Ok(())
     }
 
@@ -242,6 +276,14 @@ impl SystemActionExecutor {
         self.riscv_checkpoints.as_ref()
     }
 
+    pub const fn accelerator_checkpoint_bank(&self) -> Option<&AcceleratorCheckpointBank> {
+        self.accelerator_checkpoints.as_ref()
+    }
+
+    pub const fn gpu_checkpoint_bank(&self) -> Option<&GpuCheckpointBank> {
+        self.gpu_checkpoints.as_ref()
+    }
+
     pub const fn memory_checkpoint_bank(&self) -> Option<&MemoryStoreCheckpointBank> {
         self.memory_checkpoints.as_ref()
     }
@@ -281,6 +323,16 @@ impl SystemActionExecutor {
                 .map(SystemActionOutcome::StatsSnapshot)
                 .map_err(SystemError::Stats),
             HostAction::Checkpoint { label } => {
+                if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
+                    accelerator_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
+                    gpu_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
                 if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
                     riscv_checkpoints
                         .capture_all_into(&mut self.checkpoints)
@@ -327,6 +379,16 @@ impl SystemActionExecutor {
                 self.checkpoints
                     .restore(manifest)
                     .map_err(SystemError::Checkpoint)?;
+                if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
+                    accelerator_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::AcceleratorCheckpoint)?;
+                }
+                if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
+                    gpu_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::GpuCheckpoint)?;
+                }
                 if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
                     riscv_checkpoints
                         .restore_all_from(&self.checkpoints)

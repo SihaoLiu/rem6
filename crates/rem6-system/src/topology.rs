@@ -39,7 +39,8 @@ use rem6_transport::{
 use rem6_uart::UartId;
 
 use crate::{
-    DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEventId, GuestSourceId,
+    AcceleratorCheckpointBank, AcceleratorCheckpointPort, DramMemoryCheckpointBank,
+    DramMemoryCheckpointPort, GpuCheckpointBank, GpuCheckpointPort, GuestEventId, GuestSourceId,
     HostEventPolicy, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, RiscvSystemRun, RiscvSystemRunDriver, RiscvTrapEventPort, SystemError,
@@ -161,6 +162,16 @@ fn default_dram_checkpoint_component(target: MemoryTargetId) -> CheckpointCompon
 fn default_riscv_checkpoint_component(cpu: CpuId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("cpu{}", cpu.get()))
         .expect("formatted CPU checkpoint component is nonempty")
+}
+
+fn default_accelerator_checkpoint_component(engine: AcceleratorEngineId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("accelerator{}", engine.get()))
+        .expect("formatted accelerator checkpoint component is nonempty")
+}
+
+fn default_gpu_checkpoint_component(device: GpuDeviceId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("gpu{}", device.get()))
+        .expect("formatted GPU checkpoint component is nonempty")
 }
 
 fn default_timer_checkpoint_component(timer: TimerId) -> CheckpointComponentId {
@@ -520,6 +531,7 @@ impl RiscvTopologySystem {
             AcceleratorTopologyDevice::from_topology(&self.topology, &mut self.transport, config)
                 .map_err(RiscvTopologySystemError::Accelerator)?;
         self.accelerators.insert(engine, device);
+        self.attach_heterogeneous_checkpoint_to_host()?;
         Ok(self)
     }
 
@@ -532,6 +544,7 @@ impl RiscvTopologySystem {
         let device = GpuTopologyDevice::from_topology(&self.topology, &mut self.transport, config)
             .map_err(RiscvTopologySystemError::Gpu)?;
         self.gpus.insert(device_id, device);
+        self.attach_heterogeneous_checkpoint_to_host()?;
         Ok(self)
     }
 
@@ -576,6 +589,7 @@ impl RiscvTopologySystem {
             driver: RiscvSystemRunDriver::new(trap_port),
         });
         self.attach_riscv_checkpoint_to_host()?;
+        self.attach_heterogeneous_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
         self.attach_platform_checkpoint_to_host()?;
         Ok(self)
@@ -1231,6 +1245,49 @@ impl RiscvTopologySystem {
                     .map_err(SystemError::Checkpoint)
                     .map_err(RiscvTopologySystemError::System)?;
             }
+        }
+        Ok(())
+    }
+
+    fn attach_heterogeneous_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
+        let Some(host) = self.host.as_ref() else {
+            return Ok(());
+        };
+        let accelerator_bank =
+            AcceleratorCheckpointBank::new(self.accelerators.iter().map(|(engine, device)| {
+                AcceleratorCheckpointPort::new(
+                    default_accelerator_checkpoint_component(*engine),
+                    device.engine().clone(),
+                )
+            }))
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
+        if accelerator_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_accelerator_checkpoint_bank(accelerator_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
+        let gpu_bank = GpuCheckpointBank::new(self.gpus.iter().map(|(device_id, device)| {
+            GpuCheckpointPort::new(
+                default_gpu_checkpoint_component(*device_id),
+                device.gpu().clone(),
+            )
+        }))
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        if gpu_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_gpu_checkpoint_bank(gpu_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
         }
         Ok(())
     }

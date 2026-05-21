@@ -16,6 +16,7 @@ use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod heterogeneous_checkpoint;
 mod host;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
@@ -24,6 +25,11 @@ mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
 
+pub use heterogeneous_checkpoint::{
+    AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,
+    AcceleratorCheckpointRecord, GpuCheckpointBank, GpuCheckpointError, GpuCheckpointPort,
+    GpuCheckpointRecord,
+};
 pub use host::{
     SystemActionExecutor, SystemActionOutcome, SystemHostController, SystemRunController,
 };
@@ -1273,6 +1279,8 @@ pub enum SystemError {
     RiscvCluster(RiscvClusterError),
     Stats(StatsError),
     Checkpoint(CheckpointError),
+    AcceleratorCheckpoint(AcceleratorCheckpointError),
+    GpuCheckpoint(GpuCheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
@@ -1291,6 +1299,8 @@ impl fmt::Display for SystemError {
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
+            Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
+            Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
@@ -1308,6 +1318,8 @@ impl Error for SystemError {
             Self::RiscvCluster(error) => Some(error),
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
+            Self::AcceleratorCheckpoint(error) => Some(error),
+            Self::GpuCheckpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
