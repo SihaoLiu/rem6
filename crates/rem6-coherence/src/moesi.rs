@@ -1,20 +1,31 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use rem6_cache::{MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResultKind};
 use rem6_directory::{
     MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,
     MoesiDirectoryGrant, MoesiDirectoryLineState,
 };
+use rem6_kernel::{
+    ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
+    SchedulerError,
+};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse,
     ResponseStatus,
 };
 use rem6_protocol_moesi::{MoesiEvent, MoesiLineId, MoesiState};
-use rem6_transport::TargetOutcome;
+use rem6_transport::{
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, TargetOutcome,
+    TransportEndpointId, TransportError,
+};
 
-use crate::{HarnessError, LineBackingStore, SubmitKind};
+use crate::{
+    HarnessError, LineBackingStore, PartitionedCacheAgentConfig, PartitionedRouteHopConfig,
+    SubmitKind,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MoesiHarnessError {
@@ -27,6 +38,8 @@ pub enum MoesiHarnessError {
     Cache(MoesiCacheControllerError),
     Directory(MoesiDirectoryError),
     Memory(MemoryError),
+    Scheduler(SchedulerError),
+    Transport(TransportError),
     Backing(HarnessError),
 }
 
@@ -62,6 +75,8 @@ impl fmt::Display for MoesiHarnessError {
             Self::Cache(error) => write!(formatter, "{error}"),
             Self::Directory(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),
         }
     }
@@ -73,6 +88,8 @@ impl Error for MoesiHarnessError {
             Self::Cache(error) => Some(error),
             Self::Directory(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::Scheduler(error) => Some(error),
+            Self::Transport(error) => Some(error),
             Self::Backing(error) => Some(error),
             _ => None,
         }
@@ -196,6 +213,31 @@ pub struct MoesiDirectoryLineHarness {
     backing: LineBackingStore,
     cpu_responses: Vec<MoesiCpuResponseRecord>,
     directory_decisions: Vec<MoesiDirectoryDecision>,
+}
+
+#[derive(Clone)]
+struct PartitionedMoesiRoute {
+    id: MemoryRouteId,
+    route: MemoryRoute,
+}
+
+impl PartitionedMoesiRoute {
+    fn new(id: MemoryRouteId, route: MemoryRoute) -> Self {
+        Self { id, route }
+    }
+}
+
+pub struct PartitionedMoesiDirectoryLineHarness {
+    scheduler: PartitionedScheduler,
+    transport: rem6_transport::MemoryTransport,
+    line: MoesiLineId,
+    directory: Arc<Mutex<MoesiDirectory>>,
+    caches: BTreeMap<AgentId, Arc<Mutex<MoesiCacheController>>>,
+    routes: BTreeMap<AgentId, PartitionedMoesiRoute>,
+    backing: Arc<Mutex<LineBackingStore>>,
+    trace: MemoryTrace,
+    cpu_responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
+    directory_decisions: Arc<Mutex<Vec<MoesiDirectoryDecisionRecord>>>,
 }
 
 impl MoesiDirectoryLineHarness {
@@ -389,6 +431,248 @@ impl MoesiDirectoryLineHarness {
     }
 }
 
+impl PartitionedMoesiDirectoryLineHarness {
+    pub fn new<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        backing: LineBackingStore,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        agents: I,
+    ) -> Result<Self, MoesiHarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        let line_address = layout.line_address(line_address);
+        if backing.line_address() != line_address {
+            return Err(MoesiHarnessError::Backing(HarnessError::WrongLine {
+                expected: line_address,
+                actual: backing.line_address(),
+            }));
+        }
+
+        let mut partition_count = directory_partition
+            .index()
+            .checked_add(1)
+            .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?;
+        let mut transport = rem6_transport::MemoryTransport::new();
+        let mut caches = BTreeMap::new();
+        let mut routes = BTreeMap::new();
+
+        for config in agents {
+            partition_count = partition_count.max(
+                config
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            expand_partition_count_for_moesi_hops(&mut partition_count, config.route_hops())?;
+            if caches
+                .insert(
+                    config.agent(),
+                    Arc::new(Mutex::new(MoesiCacheController::new(
+                        config.agent(),
+                        layout,
+                        line_address,
+                    ))),
+                )
+                .is_some()
+            {
+                return Err(MoesiHarnessError::DuplicateCache {
+                    agent: config.agent(),
+                });
+            }
+
+            let route = moesi_route_from_config(
+                config.endpoint().clone(),
+                config.partition(),
+                directory_endpoint.clone(),
+                directory_partition,
+                config.request_latency(),
+                config.response_latency(),
+                config.request_virtual_network(),
+                config.response_virtual_network(),
+                config.route_hops(),
+            )?;
+            let route_id = transport
+                .add_route(route.clone())
+                .map_err(MoesiHarnessError::Transport)?;
+            routes.insert(config.agent(), PartitionedMoesiRoute::new(route_id, route));
+        }
+
+        Ok(Self {
+            scheduler: PartitionedScheduler::with_min_remote_delay(partition_count, 1)
+                .map_err(MoesiHarnessError::Scheduler)?,
+            transport,
+            line: MoesiLineId::new(line_address),
+            directory: Arc::new(Mutex::new(MoesiDirectory::new())),
+            caches,
+            routes,
+            backing: Arc::new(Mutex::new(backing)),
+            trace: MemoryTrace::new(),
+            cpu_responses: Arc::new(Mutex::new(Vec::new())),
+            directory_decisions: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn submit_cpu_request_parallel(
+        &mut self,
+        agent: AgentId,
+        request: MemoryRequest,
+    ) -> Result<MoesiSubmitResult, MoesiHarnessError> {
+        let cache = self.cache_arc(agent)?;
+        let result = cache
+            .lock()
+            .expect("cache lock")
+            .accept_cpu_request(request)
+            .map_err(map_moesi_cache_error)?;
+        let cache_result = result.kind();
+
+        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+            self.cpu_responses
+                .lock()
+                .expect("response lock")
+                .push(moesi_response_record(
+                    self.scheduler.now(),
+                    cache_result,
+                    response,
+                ));
+            return Ok(MoesiSubmitResult::new(
+                SubmitKind::ImmediateHit,
+                cache_result,
+            ));
+        }
+
+        let downstream = result
+            .downstream_request()
+            .cloned()
+            .ok_or(MoesiHarnessError::Cache(
+                MoesiCacheControllerError::NoPendingMiss,
+            ))?;
+        let requester_route = self
+            .routes
+            .get(&agent)
+            .cloned()
+            .ok_or(MoesiHarnessError::UnknownCache { agent })?;
+        let directory = Arc::clone(&self.directory);
+        let caches = self.caches.clone();
+        let cache_routes = self.routes.clone();
+        let backing = Arc::clone(&self.backing);
+        let trace = self.trace.clone();
+        let response_cache = Arc::clone(&cache);
+        let responses = Arc::clone(&self.cpu_responses);
+        let decisions = Arc::clone(&self.directory_decisions);
+
+        self.transport
+            .submit_parallel(
+                &mut self.scheduler,
+                requester_route.id,
+                downstream,
+                trace.clone(),
+                move |delivery, context| {
+                    let decision = directory
+                        .lock()
+                        .expect("directory lock")
+                        .accept(delivery.request().clone())
+                        .expect("directory decision");
+                    let fill_event =
+                        moesi_fill_event(&decision).expect("directory grant fill event");
+                    let response = partitioned_moesi_directory_response(
+                        delivery.request(),
+                        &decision,
+                        &caches,
+                        &backing,
+                    )
+                    .expect("directory response");
+                    decisions.lock().expect("decision lock").push(
+                        MoesiDirectoryDecisionRecord::new(
+                            delivery.tick(),
+                            delivery.request().id().agent(),
+                            decision.clone(),
+                        ),
+                    );
+
+                    let snoop_delay = schedule_partitioned_moesi_snoops_parallel(
+                        context,
+                        &decision,
+                        &cache_routes,
+                        &caches,
+                    )
+                    .expect("scheduled directory snoops");
+                    let route_delay = requester_route.route.response_latency();
+                    let pre_response_delay = snoop_delay.saturating_sub(route_delay);
+                    schedule_partitioned_moesi_cache_response_parallel(
+                        context,
+                        pre_response_delay,
+                        requester_route,
+                        response,
+                        fill_event,
+                        trace,
+                        response_cache,
+                        responses,
+                    )
+                    .expect("scheduled cache response");
+
+                    TargetOutcome::NoResponse
+                },
+                |_| {},
+            )
+            .map_err(MoesiHarnessError::Transport)?;
+
+        Ok(MoesiSubmitResult::new(
+            SubmitKind::ScheduledMiss,
+            cache_result,
+        ))
+    }
+
+    pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, MoesiHarnessError> {
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(MoesiHarnessError::Scheduler)
+    }
+
+    pub fn cache_state(&self, agent: AgentId) -> Result<MoesiState, MoesiHarnessError> {
+        Ok(self.cache_arc(agent)?.lock().expect("cache lock").state())
+    }
+
+    pub fn directory_state(&self) -> MoesiDirectoryLineState {
+        self.directory
+            .lock()
+            .expect("directory lock")
+            .line_state(self.line)
+    }
+
+    pub fn trace(&self) -> Vec<MemoryTraceEvent> {
+        self.trace.snapshot()
+    }
+
+    pub fn cpu_responses(&self) -> Vec<MoesiCpuResponseRecord> {
+        self.cpu_responses.lock().expect("response lock").clone()
+    }
+
+    pub fn directory_decisions(&self) -> Vec<MoesiDirectoryDecisionRecord> {
+        self.directory_decisions
+            .lock()
+            .expect("decision lock")
+            .clone()
+    }
+
+    pub const fn line(&self) -> MoesiLineId {
+        self.line
+    }
+
+    fn cache_arc(
+        &self,
+        agent: AgentId,
+    ) -> Result<Arc<Mutex<MoesiCacheController>>, MoesiHarnessError> {
+        self.caches
+            .get(&agent)
+            .cloned()
+            .ok_or(MoesiHarnessError::UnknownCache { agent })
+    }
+}
+
 fn moesi_fill_event(decision: &MoesiDirectoryDecision) -> Result<MoesiEvent, MoesiHarnessError> {
     let state = decision
         .grant()
@@ -401,6 +685,285 @@ fn moesi_fill_event(decision: &MoesiDirectoryDecision) -> Result<MoesiEvent, Moe
         MoesiState::Exclusive => Ok(MoesiEvent::DataExclusive),
         MoesiState::Modified => Ok(MoesiEvent::DataModified),
         state => Err(MoesiHarnessError::UnexpectedGrantState { state }),
+    }
+}
+
+fn expand_partition_count_for_moesi_hops(
+    partition_count: &mut u32,
+    hops: &[PartitionedRouteHopConfig],
+) -> Result<(), MoesiHarnessError> {
+    for hop in hops {
+        *partition_count = (*partition_count).max(
+            hop.partition()
+                .index()
+                .checked_add(1)
+                .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+        );
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn moesi_route_from_config(
+    source_endpoint: TransportEndpointId,
+    source_partition: PartitionId,
+    target_endpoint: TransportEndpointId,
+    target_partition: PartitionId,
+    request_latency: u64,
+    response_latency: u64,
+    request_virtual_network: rem6_fabric::VirtualNetworkId,
+    response_virtual_network: rem6_fabric::VirtualNetworkId,
+    route_hops: &[PartitionedRouteHopConfig],
+) -> Result<MemoryRoute, MoesiHarnessError> {
+    if route_hops.is_empty() {
+        return Ok(MemoryRoute::new(
+            source_endpoint,
+            source_partition,
+            target_endpoint,
+            target_partition,
+            request_latency,
+            response_latency,
+        )
+        .map_err(MoesiHarnessError::Transport)?
+        .with_virtual_networks(request_virtual_network, response_virtual_network));
+    }
+
+    let hops = route_hops
+        .iter()
+        .map(|hop| {
+            let mut route_hop = MemoryRouteHop::new(
+                hop.endpoint().clone(),
+                hop.partition(),
+                hop.request_latency(),
+                hop.response_latency(),
+            )
+            .map_err(MoesiHarnessError::Transport)?;
+            if let Some(path) = hop.request_fabric_path() {
+                route_hop = route_hop.with_request_fabric_path(path.clone());
+            }
+            if let Some(path) = hop.response_fabric_path() {
+                route_hop = route_hop.with_response_fabric_path(path.clone());
+            }
+            Ok(route_hop)
+        })
+        .collect::<Result<Vec<_>, MoesiHarnessError>>()?;
+
+    Ok(
+        MemoryRoute::new_path(source_endpoint, source_partition, hops)
+            .map_err(MoesiHarnessError::Transport)?
+            .with_virtual_networks(request_virtual_network, response_virtual_network),
+    )
+}
+
+fn partitioned_moesi_directory_response(
+    request: &MemoryRequest,
+    decision: &MoesiDirectoryDecision,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MoesiCacheController>>>,
+    backing: &Arc<Mutex<LineBackingStore>>,
+) -> Result<MemoryResponse, MoesiHarnessError> {
+    let grant = decision
+        .grant()
+        .copied()
+        .ok_or(MoesiHarnessError::MissingDirectoryGrant {
+            request: request.id(),
+        })?;
+    let source_data = partitioned_moesi_source_data(decision, caches)?;
+
+    match grant.data_source() {
+        MoesiDirectoryDataSource::BackingMemory => backing
+            .lock()
+            .expect("backing lock")
+            .respond(request)
+            .map_err(MoesiHarnessError::Backing),
+        MoesiDirectoryDataSource::OwnerCache(_) if request.returns_data() => {
+            MemoryResponse::completed(request, source_data).map_err(MoesiHarnessError::Memory)
+        }
+        MoesiDirectoryDataSource::OwnerCache(_) | MoesiDirectoryDataSource::NoData => {
+            MemoryResponse::completed(request, None).map_err(MoesiHarnessError::Memory)
+        }
+    }
+}
+
+fn partitioned_moesi_source_data(
+    decision: &MoesiDirectoryDecision,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MoesiCacheController>>>,
+) -> Result<Option<Vec<u8>>, MoesiHarnessError> {
+    let grant = decision
+        .grant()
+        .copied()
+        .ok_or(MoesiHarnessError::MissingDirectoryGrant {
+            request: decision.request(),
+        })?;
+    Ok(match grant.data_source() {
+        MoesiDirectoryDataSource::BackingMemory | MoesiDirectoryDataSource::NoData => None,
+        MoesiDirectoryDataSource::OwnerCache(agent) => {
+            let cache = caches
+                .get(&agent)
+                .ok_or(MoesiHarnessError::UnknownCache { agent })?;
+            let locked = cache.lock().expect("cache lock");
+            Some(
+                locked
+                    .cached_data()
+                    .ok_or(MoesiHarnessError::GrantDataUnavailable {
+                        agent,
+                        line: grant.line(),
+                    })?
+                    .to_vec(),
+            )
+        }
+    })
+}
+
+fn schedule_partitioned_moesi_snoops_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
+    decision: &MoesiDirectoryDecision,
+    cache_routes: &BTreeMap<AgentId, PartitionedMoesiRoute>,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MoesiCacheController>>>,
+) -> Result<u64, MoesiHarnessError> {
+    let mut max_delay = 0;
+    for snoop in decision.snoops() {
+        let route = cache_routes
+            .get(&snoop.target())
+            .ok_or(MoesiHarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let delay = route.route.response_latency();
+        max_delay = max_delay.max(delay);
+        let cache =
+            caches
+                .get(&snoop.target())
+                .cloned()
+                .ok_or(MoesiHarnessError::UnknownCache {
+                    agent: snoop.target(),
+                })?;
+        let event = snoop.event();
+        context
+            .schedule_remote_after(route.route.source_partition(), delay, move |_| {
+                cache
+                    .lock()
+                    .expect("cache lock")
+                    .accept_snoop(event)
+                    .map_err(map_moesi_cache_error)
+                    .expect("scheduled snoop");
+            })
+            .map_err(MoesiHarnessError::Scheduler)?;
+    }
+
+    Ok(max_delay)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_partitioned_moesi_cache_response_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
+    pre_response_delay: u64,
+    requester_route: PartitionedMoesiRoute,
+    response: MemoryResponse,
+    fill_event: MoesiEvent,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<MoesiCacheController>>,
+    responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
+) -> Result<(), MoesiHarnessError> {
+    if pre_response_delay == 0 {
+        let last_hop = requester_route.route.hops().len() - 1;
+        return schedule_partitioned_moesi_cache_response_hop_parallel(
+            context,
+            requester_route,
+            last_hop,
+            response,
+            fill_event,
+            trace,
+            response_cache,
+            responses,
+        );
+    }
+
+    context
+        .schedule_local_after(pre_response_delay, move |context| {
+            let last_hop = requester_route.route.hops().len() - 1;
+            schedule_partitioned_moesi_cache_response_hop_parallel(
+                context,
+                requester_route,
+                last_hop,
+                response,
+                fill_event,
+                trace,
+                response_cache,
+                responses,
+            )
+            .expect("scheduled cache response hop");
+        })
+        .map(|_| ())
+        .map_err(MoesiHarnessError::Scheduler)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_partitioned_moesi_cache_response_hop_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
+    requester_route: PartitionedMoesiRoute,
+    hop_index: usize,
+    response: MemoryResponse,
+    fill_event: MoesiEvent,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<MoesiCacheController>>,
+    responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
+) -> Result<(), MoesiHarnessError> {
+    let hop = requester_route.route.hops()[hop_index].clone();
+    let (endpoint, partition) = moesi_route_response_destination(&requester_route.route, hop_index);
+    let route_id = requester_route.id;
+    context
+        .schedule_remote_after(partition, hop.response_latency(), move |context| {
+            trace.record(MemoryTraceEvent::response(
+                context.now(),
+                route_id,
+                endpoint,
+                response.request_id(),
+                response.status(),
+            ));
+
+            if hop_index == 0 {
+                let result = response_cache
+                    .lock()
+                    .expect("cache lock")
+                    .accept_fill(response, fill_event)
+                    .expect("cache fill");
+                if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+                    responses
+                        .lock()
+                        .expect("response lock")
+                        .push(moesi_response_record(
+                            context.now(),
+                            result.kind(),
+                            response,
+                        ));
+                }
+            } else {
+                schedule_partitioned_moesi_cache_response_hop_parallel(
+                    context,
+                    requester_route,
+                    hop_index - 1,
+                    response,
+                    fill_event,
+                    trace,
+                    response_cache,
+                    responses,
+                )
+                .expect("scheduled cache response hop");
+            }
+        })
+        .map(|_| ())
+        .map_err(MoesiHarnessError::Scheduler)
+}
+
+fn moesi_route_response_destination(
+    route: &MemoryRoute,
+    hop_index: usize,
+) -> (TransportEndpointId, PartitionId) {
+    if hop_index == 0 {
+        (route.source().clone(), route.source_partition())
+    } else {
+        let previous_hop = &route.hops()[hop_index - 1];
+        (previous_hop.endpoint().clone(), previous_hop.partition())
     }
 }
 

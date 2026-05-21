@@ -37,7 +37,7 @@ pub use mesi::{
 };
 pub use moesi::{
     MoesiCpuResponseRecord, MoesiDirectoryDecisionRecord, MoesiDirectoryLineHarness,
-    MoesiHarnessError, MoesiSubmitResult,
+    MoesiHarnessError, MoesiSubmitResult, PartitionedMoesiDirectoryLineHarness,
 };
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
