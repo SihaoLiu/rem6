@@ -1971,6 +1971,29 @@ fn workload_replay_uses_profiled_external_memory() {
     assert_eq!(outcome.run().dram_profile().active_target_count(), 1);
     assert!(outcome.run().dram_profile().read_count() >= 3);
     assert!(outcome.run().dram_profile().max_ready_latency_cycles() >= 12);
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(
+        summary.active_dram_target_count(),
+        outcome.run().dram_profile().active_target_count(),
+    );
+    assert_eq!(
+        summary.dram_access_count(),
+        outcome.run().dram_profile().access_count(),
+    );
+    assert_eq!(
+        summary.dram_read_count(),
+        outcome.run().dram_profile().read_count(),
+    );
+    assert_eq!(
+        summary.dram_max_ready_latency_cycles(),
+        outcome.run().dram_profile().max_ready_latency_cycles(),
+    );
+    assert!(summary.has_dram_activity());
+    assert_eq!(
+        summary.resource_activity_count(),
+        outcome.run().resource_activity_count(),
+    );
+    assert!(summary.has_resource_activity());
     let dram = outcome.dram_snapshot().unwrap();
     let target = dram
         .targets()

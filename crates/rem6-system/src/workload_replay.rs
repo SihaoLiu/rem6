@@ -1426,6 +1426,8 @@ fn parallel_execution_summary(
     activities: WorkloadReplayActivityRefs<'_>,
 ) -> WorkloadParallelExecutionSummary {
     let scheduler = run.parallel_scheduler_profile();
+    let fabric = run.fabric_profile();
+    let dram = run.dram_profile();
     let cpu_activities = run.cpu_activities();
     let riscv_fetch_issue_count = cpu_activities
         .values()
@@ -1484,6 +1486,29 @@ fn parallel_execution_summary(
         .with_data_cache_diagnostics(
             run.data_cache_wait_for_edge_count(),
             run.data_cache_deadlock_diagnostic_count(),
+        )
+        .with_fabric_activity(
+            fabric.active_lane_count(),
+            fabric.transfer_count(),
+            fabric.byte_count(),
+            fabric.occupied_ticks(),
+            fabric.queue_delay_ticks(),
+            fabric.max_queue_delay_ticks(),
+            fabric.contended_lane_count(),
+        )
+        .with_dram_activity(
+            dram.active_target_count(),
+            dram.active_port_count(),
+            dram.active_bank_count(),
+            dram.access_count(),
+            dram.read_count(),
+            dram.write_count(),
+            dram.row_hit_count(),
+            dram.row_miss_count(),
+            dram.command_count(),
+            dram.turnaround_count(),
+            dram.total_ready_latency_cycles(),
+            dram.max_ready_latency_cycles(),
         )
         .with_resource_diagnostics(
             run.fabric_wait_for_edge_count(),

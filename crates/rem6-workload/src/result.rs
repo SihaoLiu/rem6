@@ -68,8 +68,27 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
     data_cache_wait_for_edge_count: usize,
     data_cache_deadlock_diagnostic_count: usize,
+    active_fabric_lane_count: usize,
+    fabric_transfer_count: usize,
+    fabric_byte_count: u64,
+    fabric_occupied_ticks: u64,
+    fabric_queue_delay_ticks: u64,
+    fabric_max_queue_delay_ticks: u64,
+    contended_fabric_lane_count: usize,
     fabric_wait_for_edge_count: usize,
     fabric_deadlock_diagnostic_count: usize,
+    active_dram_target_count: usize,
+    active_dram_port_count: usize,
+    active_dram_bank_count: usize,
+    dram_access_count: usize,
+    dram_read_count: usize,
+    dram_write_count: usize,
+    dram_row_hit_count: usize,
+    dram_row_miss_count: usize,
+    dram_command_count: usize,
+    dram_turnaround_count: usize,
+    dram_total_ready_latency_cycles: u64,
+    dram_max_ready_latency_cycles: u64,
     dram_wait_for_edge_count: usize,
     dram_deadlock_diagnostic_count: usize,
     gpu_kernel_launch_count: usize,
@@ -189,6 +208,58 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.data_cache_wait_for_edge_count = wait_for_edge_count;
         self.data_cache_deadlock_diagnostic_count = deadlock_diagnostic_count;
+        self
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub const fn with_fabric_activity(
+        mut self,
+        active_lane_count: usize,
+        transfer_count: usize,
+        byte_count: u64,
+        occupied_ticks: u64,
+        queue_delay_ticks: u64,
+        max_queue_delay_ticks: u64,
+        contended_lane_count: usize,
+    ) -> Self {
+        self.active_fabric_lane_count = active_lane_count;
+        self.fabric_transfer_count = transfer_count;
+        self.fabric_byte_count = byte_count;
+        self.fabric_occupied_ticks = occupied_ticks;
+        self.fabric_queue_delay_ticks = queue_delay_ticks;
+        self.fabric_max_queue_delay_ticks = max_queue_delay_ticks;
+        self.contended_fabric_lane_count = contended_lane_count;
+        self
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub const fn with_dram_activity(
+        mut self,
+        active_target_count: usize,
+        active_port_count: usize,
+        active_bank_count: usize,
+        access_count: usize,
+        read_count: usize,
+        write_count: usize,
+        row_hit_count: usize,
+        row_miss_count: usize,
+        command_count: usize,
+        turnaround_count: usize,
+        total_ready_latency_cycles: u64,
+        max_ready_latency_cycles: u64,
+    ) -> Self {
+        self.active_dram_target_count = active_target_count;
+        self.active_dram_port_count = active_port_count;
+        self.active_dram_bank_count = active_bank_count;
+        self.dram_access_count = access_count;
+        self.dram_read_count = read_count;
+        self.dram_write_count = write_count;
+        self.dram_row_hit_count = row_hit_count;
+        self.dram_row_miss_count = row_miss_count;
+        self.dram_command_count = command_count;
+        self.dram_turnaround_count = turnaround_count;
+        self.dram_total_ready_latency_cycles = total_ready_latency_cycles;
+        self.dram_max_ready_latency_cycles = max_ready_latency_cycles;
         self
     }
 
@@ -449,6 +520,42 @@ impl WorkloadParallelExecutionSummary {
         self.fabric_wait_for_edge_count != 0 || self.fabric_deadlock_diagnostic_count != 0
     }
 
+    pub const fn active_fabric_lane_count(&self) -> usize {
+        self.active_fabric_lane_count
+    }
+
+    pub const fn fabric_transfer_count(&self) -> usize {
+        self.fabric_transfer_count
+    }
+
+    pub const fn fabric_byte_count(&self) -> u64 {
+        self.fabric_byte_count
+    }
+
+    pub const fn fabric_occupied_ticks(&self) -> u64 {
+        self.fabric_occupied_ticks
+    }
+
+    pub const fn fabric_queue_delay_ticks(&self) -> u64 {
+        self.fabric_queue_delay_ticks
+    }
+
+    pub const fn fabric_max_queue_delay_ticks(&self) -> u64 {
+        self.fabric_max_queue_delay_ticks
+    }
+
+    pub const fn contended_fabric_lane_count(&self) -> usize {
+        self.contended_fabric_lane_count
+    }
+
+    pub const fn has_fabric_activity(&self) -> bool {
+        self.fabric_transfer_count != 0
+    }
+
+    pub const fn has_fabric_contention(&self) -> bool {
+        self.contended_fabric_lane_count != 0
+    }
+
     pub const fn dram_wait_for_edge_count(&self) -> usize {
         self.dram_wait_for_edge_count
     }
@@ -461,6 +568,62 @@ impl WorkloadParallelExecutionSummary {
         self.dram_wait_for_edge_count != 0 || self.dram_deadlock_diagnostic_count != 0
     }
 
+    pub const fn active_dram_target_count(&self) -> usize {
+        self.active_dram_target_count
+    }
+
+    pub const fn active_dram_port_count(&self) -> usize {
+        self.active_dram_port_count
+    }
+
+    pub const fn active_dram_bank_count(&self) -> usize {
+        self.active_dram_bank_count
+    }
+
+    pub const fn dram_access_count(&self) -> usize {
+        self.dram_access_count
+    }
+
+    pub const fn dram_read_count(&self) -> usize {
+        self.dram_read_count
+    }
+
+    pub const fn dram_write_count(&self) -> usize {
+        self.dram_write_count
+    }
+
+    pub const fn dram_row_hit_count(&self) -> usize {
+        self.dram_row_hit_count
+    }
+
+    pub const fn dram_row_miss_count(&self) -> usize {
+        self.dram_row_miss_count
+    }
+
+    pub const fn dram_command_count(&self) -> usize {
+        self.dram_command_count
+    }
+
+    pub const fn dram_turnaround_count(&self) -> usize {
+        self.dram_turnaround_count
+    }
+
+    pub const fn dram_total_ready_latency_cycles(&self) -> u64 {
+        self.dram_total_ready_latency_cycles
+    }
+
+    pub const fn dram_max_ready_latency_cycles(&self) -> u64 {
+        self.dram_max_ready_latency_cycles
+    }
+
+    pub const fn has_dram_activity(&self) -> bool {
+        self.dram_access_count != 0
+    }
+
+    pub const fn has_dram_row_misses(&self) -> bool {
+        self.dram_row_miss_count != 0
+    }
+
     pub const fn resource_wait_for_edge_count(&self) -> usize {
         self.fabric_wait_for_edge_count + self.dram_wait_for_edge_count
     }
@@ -471,6 +634,14 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn has_resource_diagnostics(&self) -> bool {
         self.has_fabric_diagnostics() || self.has_dram_diagnostics()
+    }
+
+    pub const fn resource_activity_count(&self) -> usize {
+        self.fabric_transfer_count + self.dram_access_count + self.resource_wait_for_edge_count()
+    }
+
+    pub const fn has_resource_activity(&self) -> bool {
+        self.resource_activity_count() != 0
     }
 
     pub const fn full_system_wait_for_edge_count(&self) -> usize {

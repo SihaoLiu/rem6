@@ -901,7 +901,9 @@ fn workload_result_records_parallel_execution_summary() {
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
         ])
-        .with_data_cache_diagnostics(17, 19);
+        .with_data_cache_diagnostics(17, 19)
+        .with_fabric_activity(2, 7, 224, 31, 13, 8, 1)
+        .with_dram_activity(1, 2, 3, 5, 4, 1, 2, 3, 11, 1, 83, 21);
 
     let result = WorkloadResult::new(manifest.identity(), 96)
         .with_parallel_execution_summary(summary.clone());
@@ -967,6 +969,36 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.data_cache_deadlock_diagnostic_count(), 19);
     assert!(summary.has_unattributed_data_cache_parallel_runs());
     assert!(summary.has_data_cache_diagnostics());
+    assert_eq!(summary.active_fabric_lane_count(), 2);
+    assert_eq!(summary.fabric_transfer_count(), 7);
+    assert_eq!(summary.fabric_byte_count(), 224);
+    assert_eq!(summary.fabric_occupied_ticks(), 31);
+    assert_eq!(summary.fabric_queue_delay_ticks(), 13);
+    assert_eq!(summary.fabric_max_queue_delay_ticks(), 8);
+    assert_eq!(summary.contended_fabric_lane_count(), 1);
+    assert!(summary.has_fabric_activity());
+    assert!(summary.has_fabric_contention());
+    assert_eq!(summary.active_dram_target_count(), 1);
+    assert_eq!(summary.active_dram_port_count(), 2);
+    assert_eq!(summary.active_dram_bank_count(), 3);
+    assert_eq!(summary.dram_access_count(), 5);
+    assert_eq!(summary.dram_read_count(), 4);
+    assert_eq!(summary.dram_write_count(), 1);
+    assert_eq!(summary.dram_row_hit_count(), 2);
+    assert_eq!(summary.dram_row_miss_count(), 3);
+    assert_eq!(summary.dram_command_count(), 11);
+    assert_eq!(summary.dram_turnaround_count(), 1);
+    assert_eq!(summary.dram_total_ready_latency_cycles(), 83);
+    assert_eq!(summary.dram_max_ready_latency_cycles(), 21);
+    assert!(summary.has_dram_activity());
+    assert!(summary.has_dram_row_misses());
+    assert_eq!(
+        summary.resource_activity_count(),
+        summary.fabric_transfer_count()
+            + summary.dram_access_count()
+            + summary.resource_wait_for_edge_count(),
+    );
+    assert!(summary.has_resource_activity());
     assert_eq!(summary.full_system_parallel_scheduler_epoch_count(), 12);
     assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 18);
