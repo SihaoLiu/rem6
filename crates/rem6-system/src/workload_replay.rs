@@ -44,9 +44,9 @@ use crate::workload_replay_heterogeneous::{
 };
 use crate::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
-    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvSystemRun, RiscvSystemRunDriver,
-    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
-    SystemHostEventPort,
+    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvInstructionStats, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome,
+    SystemHostController, SystemHostEventPort,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -613,6 +613,25 @@ where
     }
 }
 
+fn workload_instruction_stats(
+    topology: &WorkloadTopology,
+    stats: &mut StatsRegistry,
+) -> Result<RiscvInstructionStats, RiscvWorkloadReplayError> {
+    topology
+        .riscv_cores()
+        .iter()
+        .map(|core| {
+            let stat = stats
+                .register_counter(format!("cpu{}.committed_insts", core.cpu()), "count")
+                .map_err(|error| {
+                    RiscvWorkloadReplayError::System(crate::SystemError::Stats(error))
+                })?;
+            Ok((CpuId::new(core.cpu()), stat))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(RiscvInstructionStats::new)
+}
+
 fn dram_snapshot_line_data(
     snapshot: &DramMemorySnapshot,
     target: MemoryTargetId,
@@ -673,9 +692,11 @@ impl RiscvWorkloadReplay {
             topology.parallel_worker_limit(),
         )
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
+        let mut stats = StatsRegistry::new();
+        let instruction_stats = workload_instruction_stats(topology, &mut stats)?;
         let controller = Arc::new(Mutex::new(SystemHostController::new(
             HostEventPolicy,
-            StatsRegistry::new(),
+            stats,
         )));
         self.schedule_planned_host_events(
             &mut scheduler,
@@ -692,7 +713,7 @@ impl RiscvWorkloadReplay {
             .map_err(RiscvWorkloadReplayError::System)?,
             GuestSourceId::new(topology.host().source()),
         );
-        let driver = RiscvSystemRunDriver::new(trap_port);
+        let driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
         let gpu_launch_count =
             schedule_gpu_kernel_launches(topology, &gpu_devices, &mut scheduler)?;
         let accelerator_command_count =

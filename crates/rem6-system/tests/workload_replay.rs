@@ -33,6 +33,14 @@ fn layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
 }
 
+fn stat_value(stats: &rem6_stats::StatSnapshot, path: &str) -> Option<u64> {
+    stats
+        .samples()
+        .iter()
+        .find(|sample| sample.path() == path)
+        .map(rem6_stats::StatSample::value)
+}
+
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
@@ -842,6 +850,9 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
         outcome.run().stop_reason(),
         RiscvSystemRunStopReason::HostStop(_)
     ));
+    let stats = outcome.result().stats_snapshot().unwrap();
+    assert_eq!(stat_value(stats, "cpu0.committed_insts"), Some(1));
+    assert_eq!(stat_value(stats, "cpu1.committed_insts"), Some(1));
     assert_eq!(outcome.run().scheduled_traps().len(), 2);
     assert!(outcome.run().active_partition_count() >= 2);
     assert!(outcome.run().max_parallel_scheduler_workers() >= 1);
