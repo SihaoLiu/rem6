@@ -1,8 +1,8 @@
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
     AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngine, AcceleratorEngineConfig,
-    AcceleratorEngineId, AcceleratorError, AcceleratorPendingDmaWrite, AcceleratorTraceEvent,
-    AcceleratorTraceKind,
+    AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError, AcceleratorPendingDmaWrite,
+    AcceleratorTraceEvent, AcceleratorTraceKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
@@ -355,6 +355,98 @@ fn accelerator_dma_copy_rejects_requests_without_return_data() {
             command: AcceleratorCommandId::new(31),
             request: request.id(),
         }),
+    );
+}
+
+#[test]
+fn accelerator_engine_restores_snapshot_state_and_lane_reservations() {
+    let cpu_partition = PartitionId::new(0);
+    let accelerator_partition = PartitionId::new(1);
+    let engine = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(12), accelerator_partition, 1)
+            .unwrap(),
+    );
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    engine
+        .submit_from_partition(
+            &mut scheduler,
+            cpu_partition,
+            2,
+            AcceleratorCommand::new(
+                AcceleratorCommandId::new(40),
+                AcceleratorCommandKind::NpuInference { tiles: 3 },
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    let snapshot = engine.snapshot();
+    assert_eq!(snapshot.lane_count(), 1);
+    assert!(!snapshot.has_pending_dma_writes());
+    let rebuilt = AcceleratorEngineSnapshot::new(
+        snapshot.lane_busy_until().to_vec(),
+        snapshot.trace().to_vec(),
+        snapshot.completed().to_vec(),
+        snapshot.pending_dma_writes().to_vec(),
+        snapshot.dma_completions().to_vec(),
+    );
+    assert_eq!(rebuilt, snapshot);
+
+    let mut mutation_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    engine
+        .submit_from_partition(
+            &mut mutation_scheduler,
+            cpu_partition,
+            2,
+            AcceleratorCommand::new(
+                AcceleratorCommandId::new(41),
+                AcceleratorCommandKind::GpuKernel { workgroups: 1 },
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    mutation_scheduler.run_until_idle_parallel().unwrap();
+    assert_ne!(engine.snapshot(), snapshot);
+
+    engine.restore(&snapshot);
+    assert_eq!(engine.snapshot(), snapshot);
+
+    let mut restored_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    engine
+        .submit_from_partition(
+            &mut restored_scheduler,
+            cpu_partition,
+            2,
+            AcceleratorCommand::new(
+                AcceleratorCommandId::new(42),
+                AcceleratorCommandKind::DmaCopy { bytes: 16 },
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    restored_scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        engine.completed(),
+        vec![
+            AcceleratorCompletion::new(
+                AcceleratorCommandId::new(40),
+                AcceleratorCommandKind::NpuInference { tiles: 3 },
+                0,
+                2,
+                7,
+            ),
+            AcceleratorCompletion::new(
+                AcceleratorCommandId::new(42),
+                AcceleratorCommandKind::DmaCopy { bytes: 16 },
+                0,
+                7,
+                11,
+            ),
+        ],
     );
 }
 

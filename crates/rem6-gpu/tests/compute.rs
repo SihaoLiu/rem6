@@ -1,6 +1,7 @@
 use rem6_gpu::{
-    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuError, GpuKernelId, GpuKernelLaunch,
-    GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion, GpuWorkgroupId,
+    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuError, GpuKernelId,
+    GpuKernelLaunch, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind,
+    GpuWorkgroupCompletion, GpuWorkgroupId,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 
@@ -198,4 +199,87 @@ fn gpu_launch_rejects_invalid_config_and_submission_before_enqueueing() {
     assert_eq!(scheduler.now(), 0);
     assert!(gpu.trace().is_empty());
     assert!(gpu.completions().is_empty());
+}
+
+#[test]
+fn gpu_device_restores_snapshot_state_and_slot_reservations() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(6), gpu_partition, 2, 1).unwrap());
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    gpu.submit_kernel_from_partition(
+        &mut scheduler,
+        cpu_partition,
+        2,
+        GpuKernelLaunch::new(GpuKernelId::new(30), 3, 4).unwrap(),
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    let snapshot = gpu.snapshot();
+    assert_eq!(snapshot.slot_count(), 2);
+    assert!(!snapshot.has_queued_workgroups());
+    assert!(!snapshot.has_pending_dma_writes());
+    assert!(snapshot.slots().iter().all(GpuSlotSnapshot::is_idle));
+    let rebuilt_slots = snapshot
+        .slots()
+        .iter()
+        .map(|slot| {
+            GpuSlotSnapshot::new(
+                slot.available_at(),
+                slot.pump_scheduled(),
+                slot.queued().to_vec(),
+            )
+        })
+        .collect();
+    let rebuilt = GpuDeviceSnapshot::new(
+        rebuilt_slots,
+        snapshot.trace().to_vec(),
+        snapshot.completions().to_vec(),
+        snapshot.pending_dma_writes().to_vec(),
+        snapshot.dma_completions().to_vec(),
+    );
+    assert_eq!(rebuilt, snapshot);
+    let queued =
+        GpuQueuedWorkgroupSnapshot::new(GpuKernelId::new(33), GpuWorkgroupId::new(4), 2, 1, 13, 21);
+    assert_eq!(queued.kernel(), GpuKernelId::new(33));
+    assert_eq!(queued.workgroup(), GpuWorkgroupId::new(4));
+    assert_eq!(queued.compute_unit(), 2);
+    assert_eq!(queued.slot(), 1);
+    assert_eq!(queued.started_at(), 13);
+    assert_eq!(queued.completed_at(), 21);
+
+    let mut mutation_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    gpu.submit_kernel_from_partition(
+        &mut mutation_scheduler,
+        cpu_partition,
+        2,
+        GpuKernelLaunch::new(GpuKernelId::new(31), 2, 3).unwrap(),
+    )
+    .unwrap();
+    mutation_scheduler.run_until_idle_parallel().unwrap();
+    assert_ne!(gpu.snapshot(), snapshot);
+
+    gpu.restore(&snapshot);
+    assert_eq!(gpu.snapshot(), snapshot);
+
+    let mut restored_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    gpu.submit_kernel_from_partition(
+        &mut restored_scheduler,
+        cpu_partition,
+        2,
+        GpuKernelLaunch::new(GpuKernelId::new(32), 1, 5).unwrap(),
+    )
+    .unwrap();
+    restored_scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        gpu.completions(),
+        vec![
+            GpuWorkgroupCompletion::new(GpuKernelId::new(30), GpuWorkgroupId::new(0), 0, 0, 2, 6,),
+            GpuWorkgroupCompletion::new(GpuKernelId::new(30), GpuWorkgroupId::new(1), 1, 0, 2, 6,),
+            GpuWorkgroupCompletion::new(GpuKernelId::new(30), GpuWorkgroupId::new(2), 0, 0, 6, 10,),
+            GpuWorkgroupCompletion::new(GpuKernelId::new(32), GpuWorkgroupId::new(0), 1, 0, 6, 11,),
+        ],
+    );
 }

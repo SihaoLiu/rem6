@@ -539,6 +539,61 @@ impl AcceleratorDmaIssueRecord {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceleratorEngineSnapshot {
+    lane_busy_until: Vec<Tick>,
+    trace: Vec<AcceleratorTraceEvent>,
+    completed: Vec<AcceleratorCompletion>,
+    pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
+    dma_completions: Vec<AcceleratorDmaCompletion>,
+}
+
+impl AcceleratorEngineSnapshot {
+    pub fn new(
+        lane_busy_until: Vec<Tick>,
+        trace: Vec<AcceleratorTraceEvent>,
+        completed: Vec<AcceleratorCompletion>,
+        pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
+        dma_completions: Vec<AcceleratorDmaCompletion>,
+    ) -> Self {
+        Self {
+            lane_busy_until,
+            trace,
+            completed,
+            pending_dma_writes,
+            dma_completions,
+        }
+    }
+
+    pub fn lane_busy_until(&self) -> &[Tick] {
+        &self.lane_busy_until
+    }
+
+    pub fn lane_count(&self) -> usize {
+        self.lane_busy_until.len()
+    }
+
+    pub fn trace(&self) -> &[AcceleratorTraceEvent] {
+        &self.trace
+    }
+
+    pub fn completed(&self) -> &[AcceleratorCompletion] {
+        &self.completed
+    }
+
+    pub fn pending_dma_writes(&self) -> &[AcceleratorPendingDmaWrite] {
+        &self.pending_dma_writes
+    }
+
+    pub fn has_pending_dma_writes(&self) -> bool {
+        !self.pending_dma_writes.is_empty()
+    }
+
+    pub fn dma_completions(&self) -> &[AcceleratorDmaCompletion] {
+        &self.dma_completions
+    }
+}
+
 #[derive(Clone)]
 pub struct AcceleratorEngine {
     config: AcceleratorEngineConfig,
@@ -633,6 +688,18 @@ impl AcceleratorEngine {
             .expect("accelerator state lock")
             .dma_completions
             .clone()
+    }
+
+    pub fn snapshot(&self) -> AcceleratorEngineSnapshot {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .snapshot()
+    }
+
+    pub fn restore(&self, snapshot: &AcceleratorEngineSnapshot) {
+        *self.state.lock().expect("accelerator state lock") =
+            AcceleratorEngineState::from_snapshot(snapshot);
     }
 
     pub fn submit_dma_copy_read<F>(
@@ -965,6 +1032,26 @@ impl AcceleratorEngineState {
             completed: Vec::new(),
             pending_dma_writes: Vec::new(),
             dma_completions: Vec::new(),
+        }
+    }
+
+    fn snapshot(&self) -> AcceleratorEngineSnapshot {
+        AcceleratorEngineSnapshot::new(
+            self.lane_busy_until.clone(),
+            self.trace.clone(),
+            self.completed.clone(),
+            self.pending_dma_writes.clone(),
+            self.dma_completions.clone(),
+        )
+    }
+
+    fn from_snapshot(snapshot: &AcceleratorEngineSnapshot) -> Self {
+        Self {
+            lane_busy_until: snapshot.lane_busy_until.clone(),
+            trace: snapshot.trace.clone(),
+            completed: snapshot.completed.clone(),
+            pending_dma_writes: snapshot.pending_dma_writes.clone(),
+            dma_completions: snapshot.dma_completions.clone(),
         }
     }
 }
