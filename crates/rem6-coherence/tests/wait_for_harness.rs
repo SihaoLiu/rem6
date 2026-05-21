@@ -1,6 +1,7 @@
 use rem6_coherence::{
-    HarnessError, MesiHarnessError, PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
-    PartitionedDramMemoryConfig, PartitionedMesiDirectoryLineHarness,
+    HarnessError, MesiHarnessError, MoesiHarnessError, PartitionedCacheAgentConfig,
+    PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
+    PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_kernel::{PartitionId, WaitForEdgeKind, WaitForNode};
@@ -9,6 +10,7 @@ use rem6_memory::{
     MemoryTargetId,
 };
 use rem6_protocol_mesi::MesiState;
+use rem6_protocol_moesi::MoesiState;
 use rem6_protocol_msi::MsiState;
 use rem6_transport::TransportEndpointId;
 
@@ -145,6 +147,28 @@ fn mesi_harness_with_dram_memory() -> PartitionedMesiDirectoryLineHarness {
             cache_config(1, 0, "mesi_l1d0", 3, 9),
             cache_config(2, 1, "mesi_l1d1", 5, 7),
             cache_config(3, 3, "mesi_l1d2", 2, 4),
+        ],
+    )
+    .unwrap()
+}
+
+fn moesi_harness_with_dram_memory() -> PartitionedMoesiDirectoryLineHarness {
+    PartitionedMoesiDirectoryLineHarness::new_with_dram_memory(
+        layout(),
+        Address::new(0x5000),
+        PartitionId::new(2),
+        endpoint("moesi_dir0"),
+        PartitionedDramMemoryConfig::new(
+            PartitionId::new(4),
+            endpoint("moesi_mem0"),
+            7,
+            11,
+            dram_memory(0x5000, 0x8000),
+        ),
+        [
+            cache_config(1, 0, "moesi_l1d0", 3, 9),
+            cache_config(2, 1, "moesi_l1d1", 5, 7),
+            cache_config(3, 3, "moesi_l1d2", 2, 4),
         ],
     )
     .unwrap()
@@ -352,6 +376,110 @@ fn mesi_parallel_fill_clears_all_waiters_for_busy_line() {
     let target = cache_node(1, 0x3000);
     assert_eq!(graph.dependencies(&request_node(1, 41)).len(), 1);
     assert_eq!(graph.dependencies(&request_node(1, 42)).len(), 1);
+    assert_eq!(graph.dependents(&target).len(), 2);
+
+    harness.run_until_idle_parallel_recorded().unwrap();
+    assert!(harness.wait_for_graph().is_empty());
+}
+
+#[test]
+fn moesi_parallel_busy_line_records_wait_for_edge_until_fill() {
+    let mut harness = moesi_harness_with_dram_memory();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 50, 0x5000, 4))
+        .unwrap();
+    let blocked = read(1, 51, 0x5008, 4);
+    assert_eq!(
+        harness
+            .submit_cpu_request_parallel(agent(1), blocked)
+            .unwrap_err(),
+        MoesiHarnessError::LineBusy {
+            state: MoesiState::InvalidToExclusive
+        }
+    );
+
+    let graph = harness.wait_for_graph();
+    let source = request_node(1, 51);
+    let target = cache_node(1, 0x5000);
+    let dependencies = graph.dependencies(&source);
+    assert_eq!(dependencies.len(), 1);
+    assert_eq!(dependencies[0].target(), &target);
+    assert_eq!(dependencies[0].kind(), WaitForEdgeKind::Queue);
+    assert_eq!(dependencies[0].first_observed_tick(), 0);
+    assert_eq!(dependencies[0].last_observed_tick(), 0);
+    assert_eq!(dependencies[0].observation_count(), 1);
+    assert_eq!(graph.deadlock_diagnostic(), None);
+
+    harness.run_until_idle_parallel_recorded().unwrap();
+    assert!(harness.wait_for_graph().is_empty());
+}
+
+#[test]
+fn moesi_parallel_repeated_busy_line_updates_wait_observation() {
+    let mut harness = moesi_harness_with_dram_memory();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 60, 0x5000, 4))
+        .unwrap();
+    let blocked = read(1, 61, 0x5008, 4);
+    assert_eq!(
+        harness
+            .submit_cpu_request_parallel(agent(1), blocked.clone())
+            .unwrap_err(),
+        MoesiHarnessError::LineBusy {
+            state: MoesiState::InvalidToExclusive
+        }
+    );
+    assert_eq!(
+        harness
+            .submit_cpu_request_parallel(agent(1), blocked)
+            .unwrap_err(),
+        MoesiHarnessError::LineBusy {
+            state: MoesiState::InvalidToExclusive
+        }
+    );
+
+    let graph = harness.wait_for_graph();
+    let dependencies = graph.dependencies(&request_node(1, 61));
+    assert_eq!(dependencies.len(), 1);
+    assert_eq!(dependencies[0].target(), &cache_node(1, 0x5000));
+    assert_eq!(dependencies[0].first_observed_tick(), 0);
+    assert_eq!(dependencies[0].last_observed_tick(), 0);
+    assert_eq!(dependencies[0].observation_count(), 2);
+
+    harness.run_until_idle_parallel_recorded().unwrap();
+    assert!(harness.wait_for_graph().is_empty());
+}
+
+#[test]
+fn moesi_parallel_fill_clears_all_waiters_for_busy_line() {
+    let mut harness = moesi_harness_with_dram_memory();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 70, 0x5000, 4))
+        .unwrap();
+    assert_eq!(
+        harness
+            .submit_cpu_request_parallel(agent(1), read(1, 71, 0x5008, 4))
+            .unwrap_err(),
+        MoesiHarnessError::LineBusy {
+            state: MoesiState::InvalidToExclusive
+        }
+    );
+    assert_eq!(
+        harness
+            .submit_cpu_request_parallel(agent(1), write(1, 72, 0x5004, vec![0xaa]))
+            .unwrap_err(),
+        MoesiHarnessError::LineBusy {
+            state: MoesiState::InvalidToExclusive
+        }
+    );
+
+    let graph = harness.wait_for_graph();
+    let target = cache_node(1, 0x5000);
+    assert_eq!(graph.dependencies(&request_node(1, 71)).len(), 1);
+    assert_eq!(graph.dependencies(&request_node(1, 72)).len(), 1);
     assert_eq!(graph.dependents(&target).len(), 2);
 
     harness.run_until_idle_parallel_recorded().unwrap();
