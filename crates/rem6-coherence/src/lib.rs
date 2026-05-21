@@ -37,7 +37,7 @@ pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{
     MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness,
     MesiDirectoryLineHarnessSnapshot, MesiHarnessError, MesiSubmitResult,
-    PartitionedMesiDirectoryLineHarness,
+    PartitionedMesiDirectoryLineHarness, PartitionedMesiDirectoryLineHarnessSnapshot,
 };
 pub use moesi::{
     MoesiCpuResponseRecord, MoesiDirectoryDecisionRecord, MoesiDirectoryLineHarness,

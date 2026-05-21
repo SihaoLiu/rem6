@@ -31,11 +31,13 @@ use super::{
 };
 
 mod response;
+mod snapshot;
 
 use response::{
     schedule_partitioned_mesi_cache_response, schedule_partitioned_mesi_cache_response_parallel,
     schedule_partitioned_mesi_memory_response, schedule_partitioned_mesi_memory_response_parallel,
 };
+pub use snapshot::PartitionedMesiDirectoryLineHarnessSnapshot;
 
 #[derive(Clone)]
 struct PartitionedMesiRoute {

@@ -15,7 +15,9 @@ use crate::{HarnessError, SubmitKind};
 mod partitioned;
 mod serial;
 
-pub use partitioned::PartitionedMesiDirectoryLineHarness;
+pub use partitioned::{
+    PartitionedMesiDirectoryLineHarness, PartitionedMesiDirectoryLineHarnessSnapshot,
+};
 pub use serial::{MesiDirectoryLineHarness, MesiDirectoryLineHarnessSnapshot};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,6 +36,7 @@ pub enum MesiHarnessError {
     Memory(MemoryError),
     Dram(DramMemoryError),
     Scheduler(SchedulerError),
+    SnapshotResourceMismatch { resource: &'static str },
     Topology(TopologyError),
     Transport(TransportError),
     Backing(HarnessError),
@@ -92,6 +95,10 @@ impl fmt::Display for MesiHarnessError {
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::SnapshotResourceMismatch { resource } => write!(
+                formatter,
+                "snapshot resource {resource} does not match harness configuration"
+            ),
             Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),

@@ -1,12 +1,13 @@
 use rem6_cache::MesiCacheControllerResultKind;
 use rem6_coherence::{
     DramMemoryAccessRecord, LineBackingStore, MesiCpuResponseRecord, MesiDirectoryLineHarness,
-    PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
-    PartitionedMesiDirectoryLineHarness, PartitionedRouteHopConfig, SubmitKind,
+    MesiHarnessError, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
+    PartitionedMemoryConfig, PartitionedMesiDirectoryLineHarness, PartitionedRouteHopConfig,
+    SubmitKind,
 };
 use rem6_directory::{MesiDirectoryDataSource, MesiDirectoryLineState, MesiDirectorySnoop};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
-use rem6_kernel::PartitionId;
+use rem6_kernel::{PartitionId, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, ResponseStatus,
@@ -102,6 +103,21 @@ fn partitioned_harness() -> PartitionedMesiDirectoryLineHarness {
             cache_config(1, 0, "l1d0", 3, 9),
             cache_config(2, 1, "l1d1", 5, 7),
             cache_config(3, 3, "l1d2", 2, 4),
+        ],
+    )
+    .unwrap()
+}
+
+fn partitioned_harness_with_two_caches() -> PartitionedMesiDirectoryLineHarness {
+    PartitionedMesiDirectoryLineHarness::new(
+        layout(),
+        Address::new(0x3000),
+        LineBackingStore::new(layout(), Address::new(0x3000), line_data()).unwrap(),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        [
+            cache_config(1, 0, "l1d0", 3, 9),
+            cache_config(2, 1, "l1d1", 5, 7),
         ],
     )
     .unwrap()
@@ -546,6 +562,269 @@ fn mesi_harness_snapshot_restore_reinstates_serial_state() {
             ResponseStatus::Completed,
             Some(vec![0, 0xcc, 0xaa, 0xbb]),
         ))
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_restores_state() {
+    let mut source = partitioned_harness_with_memory();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    source
+        .submit_cpu_request(agent(1), write(1, 1, 0x3002, vec![0xaa, 0xbb]))
+        .unwrap();
+    source
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = partitioned_harness_with_memory();
+    restored
+        .submit_cpu_request(agent(3), write(3, 7, 0x3001, vec![0xee]))
+        .unwrap();
+    restored.run_until_idle();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+    assert_eq!(
+        restored.directory_state(),
+        MesiDirectoryLineState::new(line())
+            .with_sharer(agent(1))
+            .with_sharer(agent(2))
+    );
+    assert_eq!(restored.trace(), snapshot.trace());
+    assert_eq!(restored.cpu_responses(), snapshot.cpu_responses());
+    assert_eq!(
+        restored.directory_decisions(),
+        snapshot.directory_decisions()
+    );
+
+    let hit = restored
+        .submit_cpu_request(agent(2), read(2, 9, 0x3000, 4))
+        .unwrap();
+    assert_eq!(hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&MesiCpuResponseRecord::new(
+            snapshot.scheduler().now(),
+            MesiCacheControllerResultKind::Hit,
+            request_id(2, 9),
+            ResponseStatus::Completed,
+            Some(vec![0, 1, 0xaa, 0xbb]),
+        ))
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_restores_backing_after_downgrade() {
+    let mut source = partitioned_harness_with_memory();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    source
+        .submit_cpu_request(agent(1), write(1, 1, 0x3002, vec![0xaa, 0xbb]))
+        .unwrap();
+    source
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = partitioned_harness_with_memory();
+    restored.restore_quiescent(&snapshot).unwrap();
+    restored
+        .submit_cpu_request_parallel(agent(3), read(3, 1, 0x3000, 4))
+        .unwrap();
+    restored.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&MesiCpuResponseRecord::new(
+            68,
+            MesiCacheControllerResultKind::Fill,
+            request_id(3, 1),
+            ResponseStatus::Completed,
+            Some(vec![0, 1, 0xaa, 0xbb]),
+        ))
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_restores_exclusive_owner_state() {
+    let mut source = partitioned_harness();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    assert_eq!(
+        snapshot.directory(),
+        &MesiDirectoryLineState::new(line()).with_owner(agent(1), MesiState::Exclusive)
+    );
+
+    let mut restored = partitioned_harness();
+    restored
+        .submit_cpu_request_parallel(agent(2), read(2, 7, 0x3000, 4))
+        .unwrap();
+    restored.run_until_idle_parallel().unwrap();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    let store = restored
+        .submit_cpu_request(agent(1), write(1, 8, 0x3002, vec![0xaa, 0xbb]))
+        .unwrap();
+    assert_eq!(store.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(restored.cache_state(agent(1)).unwrap(), MesiState::Modified);
+    assert_eq!(
+        restored.directory_state(),
+        MesiDirectoryLineState::new(line()).with_owner(agent(1), MesiState::Exclusive)
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_restores_dram_memory_state() {
+    let mut source = partitioned_harness_with_dram_memory();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    assert!(snapshot.dram_memory().is_some());
+    assert_eq!(snapshot.dram_accesses(), source.dram_memory_accesses());
+
+    let mut expected = source;
+    expected
+        .submit_cpu_request_parallel(agent(2), read(2, 1, 0x3008, 4))
+        .unwrap();
+    expected.run_until_idle_parallel().unwrap();
+
+    let mut restored = partitioned_harness_with_dram_memory();
+    restored
+        .submit_cpu_request(agent(2), write(2, 7, 0x3001, vec![0xee]))
+        .unwrap();
+    restored.run_until_idle();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+    assert_eq!(restored.dram_memory_accesses(), snapshot.dram_accesses());
+
+    restored
+        .submit_cpu_request_parallel(agent(2), read(2, 1, 0x3008, 4))
+        .unwrap();
+    restored.run_until_idle_parallel().unwrap();
+    assert_eq!(
+        restored.quiescent_snapshot().unwrap(),
+        expected.quiescent_snapshot().unwrap()
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_restores_intermediate_hop_state() {
+    let mut source = partitioned_harness_with_dram_memory_hops();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    assert_eq!(snapshot.trace(), source.trace());
+
+    let mut expected = source;
+    expected
+        .submit_cpu_request_parallel(agent(2), read(2, 1, 0x3008, 4))
+        .unwrap();
+    expected.run_until_idle_parallel().unwrap();
+
+    let mut restored = partitioned_harness_with_dram_memory_hops();
+    restored
+        .submit_cpu_request_parallel(agent(3), read(3, 9, 0x300c, 4))
+        .unwrap();
+    restored.run_until_idle_parallel().unwrap();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    restored
+        .submit_cpu_request_parallel(agent(2), read(2, 1, 0x3008, 4))
+        .unwrap();
+    restored.run_until_idle_parallel().unwrap();
+    assert_eq!(restored.trace(), expected.trace());
+    assert_eq!(restored.cpu_responses(), expected.cpu_responses());
+    assert_eq!(
+        restored.quiescent_snapshot().unwrap(),
+        expected.quiescent_snapshot().unwrap()
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_rejects_pending_events() {
+    let mut harness = partitioned_harness();
+    harness
+        .submit_cpu_request(agent(1), read(1, 3, 0x3000, 4))
+        .unwrap();
+
+    assert_eq!(
+        harness.quiescent_snapshot().unwrap_err(),
+        MesiHarnessError::Scheduler(SchedulerError::SnapshotContainsPendingEvents {
+            pending_events: 1
+        })
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_restore_quiescent_rejects_current_pending_events() {
+    let mut source = partitioned_harness();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = partitioned_harness();
+    restored
+        .submit_cpu_request(agent(2), read(2, 7, 0x3000, 4))
+        .unwrap();
+    assert_eq!(
+        restored.restore_quiescent(&snapshot).unwrap_err(),
+        MesiHarnessError::Scheduler(SchedulerError::SnapshotContainsPendingEvents {
+            pending_events: 1
+        })
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_rejects_resource_mismatch() {
+    let mut source = partitioned_harness_with_memory();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = partitioned_harness_with_dram_memory();
+    assert_eq!(
+        restored.restore_quiescent(&snapshot).unwrap_err(),
+        MesiHarnessError::SnapshotResourceMismatch { resource: "dram" }
+    );
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_snapshot_rejects_cache_shape_mismatch() {
+    let mut source = partitioned_harness_with_two_caches();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = partitioned_harness();
+    assert_eq!(
+        restored.restore_quiescent(&snapshot).unwrap_err(),
+        MesiHarnessError::UnknownCache { agent: agent(3) }
     );
 }
 
