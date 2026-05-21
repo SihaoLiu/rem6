@@ -28,6 +28,7 @@ mod gshare_predictor;
 mod indirect_target_predictor;
 mod loop_predictor;
 mod ltage_predictor;
+mod multiperspective_perceptron;
 mod riscv_activity;
 mod riscv_cluster;
 mod statistical_corrector;
@@ -71,6 +72,14 @@ pub use ltage_predictor::{
     LTageBranchPredictor, LTageBranchPredictorConfig, LTageBranchPredictorError,
     LTageBranchPredictorSnapshot, LTageHistory, LTagePrediction, LTageProvider, LTageRepair,
     LTageTrainingUpdate,
+};
+pub use multiperspective_perceptron::{
+    MultiperspectivePerceptron, MultiperspectivePerceptronConfig, MultiperspectivePerceptronError,
+    MultiperspectivePerceptronFeature, MultiperspectivePerceptronFeatureKind,
+    MultiperspectivePerceptronFeatureUpdate, MultiperspectivePerceptronFilterEntry,
+    MultiperspectivePerceptronHistory, MultiperspectivePerceptronPrediction,
+    MultiperspectivePerceptronSnapshot, MultiperspectivePerceptronThreadSnapshot,
+    MultiperspectivePerceptronTrainingUpdate,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
