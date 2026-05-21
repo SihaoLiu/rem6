@@ -7,8 +7,8 @@ use rem6_boot::BootError;
 use rem6_coherence::{
     CpuResponseRecord, HarnessError, LineBackingStore, MesiCpuResponseRecord, MesiHarnessError,
     MoesiCpuResponseRecord, MoesiHarnessError, PartitionedCacheAgentConfig,
-    PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
-    PartitionedMoesiDirectoryLineHarness,
+    PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
+    PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
@@ -30,8 +30,8 @@ use rem6_transport::{
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
-    WorkloadHostEvent, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult,
-    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
+    WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
 };
 
 use crate::{
@@ -131,6 +131,11 @@ enum WorkloadDataCacheHarness {
     Moesi(PartitionedMoesiDirectoryLineHarness),
 }
 
+enum WorkloadDataCacheLineMemory {
+    Line(Vec<u8>),
+    Dram(PartitionedDramMemoryConfig),
+}
+
 struct WorkloadDataCacheLineBackend {
     protocol: RiscvDataCacheProtocol,
     target: MemoryTargetId,
@@ -145,13 +150,11 @@ impl WorkloadDataCacheLineBackend {
         config: &WorkloadRiscvDataCache,
         layout: CacheLineLayout,
         line_address: Address,
-        line_data: Vec<u8>,
+        memory: WorkloadDataCacheLineMemory,
         agents: Vec<PartitionedCacheAgentConfig>,
     ) -> Result<Self, RiscvWorkloadReplayError> {
         let target = MemoryTargetId::new(config.memory_target());
         let line = layout.line_address(line_address);
-        let backing = LineBackingStore::new(layout, line, line_data)
-            .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
         let directory_partition = PartitionId::new(config.directory_partition());
         let directory_endpoint = TransportEndpointId::new(config.directory_endpoint())
             .map_err(RiscvWorkloadReplayError::Transport)?;
@@ -159,42 +162,93 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheProtocol::Msi => (
                 RiscvDataCacheProtocol::Msi,
                 WorkloadDataCacheHarness::Msi(
-                    PartitionedDirectoryLineHarness::new(
-                        layout,
-                        line,
-                        backing,
-                        directory_partition,
-                        directory_endpoint,
-                        agents,
-                    )
+                    match memory {
+                        WorkloadDataCacheLineMemory::Line(line_data) => {
+                            PartitionedDirectoryLineHarness::new(
+                                layout,
+                                line,
+                                LineBackingStore::new(layout, line, line_data)
+                                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?,
+                                directory_partition,
+                                directory_endpoint,
+                                agents,
+                            )
+                        }
+                        WorkloadDataCacheLineMemory::Dram(memory) => {
+                            PartitionedDirectoryLineHarness::new_with_dram_memory(
+                                layout,
+                                line,
+                                directory_partition,
+                                directory_endpoint,
+                                memory,
+                                agents,
+                            )
+                        }
+                    }
                     .map_err(RiscvWorkloadReplayError::MsiDataCache)?,
                 ),
             ),
             WorkloadDataCacheProtocol::Mesi => (
                 RiscvDataCacheProtocol::Mesi,
                 WorkloadDataCacheHarness::Mesi(
-                    PartitionedMesiDirectoryLineHarness::new(
-                        layout,
-                        line,
-                        backing,
-                        directory_partition,
-                        directory_endpoint,
-                        agents,
-                    )
+                    match memory {
+                        WorkloadDataCacheLineMemory::Line(line_data) => {
+                            LineBackingStore::new(layout, line, line_data)
+                                .map_err(MesiHarnessError::Backing)
+                                .and_then(|backing| {
+                                    PartitionedMesiDirectoryLineHarness::new(
+                                        layout,
+                                        line,
+                                        backing,
+                                        directory_partition,
+                                        directory_endpoint,
+                                        agents,
+                                    )
+                                })
+                        }
+                        WorkloadDataCacheLineMemory::Dram(memory) => {
+                            PartitionedMesiDirectoryLineHarness::new_with_dram_memory(
+                                layout,
+                                line,
+                                directory_partition,
+                                directory_endpoint,
+                                memory,
+                                agents,
+                            )
+                        }
+                    }
                     .map_err(RiscvWorkloadReplayError::MesiDataCache)?,
                 ),
             ),
             WorkloadDataCacheProtocol::Moesi => (
                 RiscvDataCacheProtocol::Moesi,
                 WorkloadDataCacheHarness::Moesi(
-                    PartitionedMoesiDirectoryLineHarness::new(
-                        layout,
-                        line,
-                        backing,
-                        directory_partition,
-                        directory_endpoint,
-                        agents,
-                    )
+                    match memory {
+                        WorkloadDataCacheLineMemory::Line(line_data) => {
+                            LineBackingStore::new(layout, line, line_data)
+                                .map_err(MoesiHarnessError::Backing)
+                                .and_then(|backing| {
+                                    PartitionedMoesiDirectoryLineHarness::new(
+                                        layout,
+                                        line,
+                                        backing,
+                                        directory_partition,
+                                        directory_endpoint,
+                                        agents,
+                                    )
+                                })
+                        }
+                        WorkloadDataCacheLineMemory::Dram(memory) => {
+                            PartitionedMoesiDirectoryLineHarness::new_with_dram_memory(
+                                layout,
+                                line,
+                                directory_partition,
+                                directory_endpoint,
+                                memory,
+                                agents,
+                            )
+                        }
+                    }
                     .map_err(RiscvWorkloadReplayError::MoesiDataCache)?,
                 ),
             ),
@@ -242,6 +296,11 @@ impl WorkloadDataCacheLineBackend {
                 snapshot
                     .backing()
                     .map(|backing| backing.data().to_vec())
+                    .or_else(|| {
+                        snapshot
+                            .dram_memory()
+                            .and_then(|dram| dram_snapshot_line_data(dram, self.target, self.line))
+                    })
                     .ok_or(RiscvWorkloadReplayError::MissingDataCacheLine)
             }
             WorkloadDataCacheHarness::Mesi(harness) => {
@@ -539,6 +598,25 @@ where
     }
 }
 
+fn dram_snapshot_line_data(
+    snapshot: &DramMemorySnapshot,
+    target: MemoryTargetId,
+    line: Address,
+) -> Option<Vec<u8>> {
+    snapshot
+        .store()
+        .partitions()
+        .iter()
+        .find(|partition| partition.target() == target)
+        .and_then(|partition| {
+            partition
+                .lines()
+                .iter()
+                .find(|candidate| candidate.line() == line)
+        })
+        .map(|line| line.data().to_vec())
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplay {
     plan: WorkloadReplayPlan,
@@ -826,11 +904,12 @@ impl RiscvWorkloadReplay {
             .map(|line_address| {
                 let line = layout.line_address(*line_address);
                 let line_data = memory.line_data(target_id, line)?;
+                let line_memory = self.data_cache_line_memory(topology, target, line, line_data)?;
                 WorkloadDataCacheLineBackend::new(
                     config,
                     layout,
                     *line_address,
-                    line_data,
+                    line_memory,
                     agents.clone(),
                 )
             })
@@ -839,6 +918,60 @@ impl RiscvWorkloadReplay {
         Ok(Some(Arc::new(Mutex::new(WorkloadDataCacheBackend::new(
             lines,
         )))))
+    }
+
+    fn data_cache_line_memory(
+        &self,
+        topology: &WorkloadTopology,
+        target: &WorkloadMemoryTarget,
+        line: Address,
+        line_data: Vec<u8>,
+    ) -> Result<WorkloadDataCacheLineMemory, RiscvWorkloadReplayError> {
+        let Some(profile) = target.external_memory_profile().copied() else {
+            return Ok(WorkloadDataCacheLineMemory::Line(line_data));
+        };
+
+        let memory_route = self.data_cache_memory_route(topology)?;
+        let mut dram = DramMemoryController::new();
+        let target_id = MemoryTargetId::new(target.target());
+        dram.add_profile(profile)
+            .map_err(RiscvWorkloadReplayError::Dram)?;
+        dram.map_region(target_id, target.range().start(), target.range().size())
+            .map_err(RiscvWorkloadReplayError::Dram)?;
+        dram.insert_line(target_id, line, line_data)
+            .map_err(RiscvWorkloadReplayError::Dram)?;
+
+        Ok(WorkloadDataCacheLineMemory::Dram(
+            PartitionedDramMemoryConfig::new(
+                PartitionId::new(memory_route.target_partition()),
+                TransportEndpointId::new(memory_route.target_endpoint())
+                    .map_err(RiscvWorkloadReplayError::Transport)?,
+                memory_route.request_latency(),
+                memory_route.response_latency(),
+                dram,
+            ),
+        ))
+    }
+
+    fn data_cache_memory_route<'a>(
+        &self,
+        topology: &'a WorkloadTopology,
+    ) -> Result<&'a WorkloadMemoryRoute, RiscvWorkloadReplayError> {
+        let Some(data_route) = topology
+            .riscv_cores()
+            .iter()
+            .filter_map(|core| core.data_route())
+            .next()
+        else {
+            return Err(RiscvWorkloadReplayError::MissingDataCacheAgent);
+        };
+        topology
+            .memory_routes()
+            .iter()
+            .find(|route| route.id() == data_route)
+            .ok_or_else(|| RiscvWorkloadReplayError::MissingRoute {
+                route: data_route.clone(),
+            })
     }
 
     fn data_cache_agents(

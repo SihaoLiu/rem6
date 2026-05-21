@@ -299,6 +299,21 @@ fn replay_topology_with_profiled_data_route() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_profiled_msi_data_cache() -> WorkloadTopology {
+    replay_topology_with_profiled_data_route()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_manifest() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay"), boot_image())
         .with_topology(replay_topology())
@@ -321,6 +336,25 @@ fn replay_manifest_with_profiled_data_load() -> WorkloadManifest {
         boot_image_with_data_load(),
     )
     .with_topology(replay_topology_with_profiled_data_route())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_profiled_msi_data_cache_load() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-profiled-msi-data-cache-load"),
+        boot_image_with_data_load(),
+    )
+    .with_topology(replay_topology_with_profiled_msi_data_cache())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -755,6 +789,34 @@ fn workload_replay_uses_profiled_external_memory() {
         DramMemoryTechnology::Hbm
     );
     assert_eq!(target.profile().unwrap().parallel_port_count(), 4);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_profiled_data_cache_miss_through_dram() {
+    let manifest = replay_manifest_with_profiled_msi_data_cache_load();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(48)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(outcome.run().data_cache_run_count(), 1);
+    let cache_run = &outcome.run().data_cache_runs()[0];
+    assert_eq!(cache_run.dram_access_count(), 1);
+    let dram_activity = cache_run
+        .dram_target_activity(MemoryTargetId::new(0))
+        .unwrap();
+    assert_eq!(dram_activity.profile().read_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }
 
