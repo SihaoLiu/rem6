@@ -1,8 +1,9 @@
 use rem6_cache::CacheControllerResultKind;
 use rem6_coherence::{
     CpuResponseRecord, DirectoryDecisionRecord, DramMemoryAccessRecord, HarnessError,
-    LineBackingStore, PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
-    PartitionedDramMemoryConfig, PartitionedMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
+    LineBackingStore, ParallelCoherenceRunHistory, PartitionedCacheAgentConfig,
+    PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
+    PartitionedRouteHopConfig, SubmitKind,
 };
 use rem6_directory::{DirectoryDataSource, DirectoryLineState, DirectorySnoop};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
@@ -599,6 +600,110 @@ fn partitioned_directory_harness_quiescent_snapshot_restores_fabric_lane_state()
     assert_eq!(
         restored.quiescent_snapshot().unwrap(),
         expected.quiescent_snapshot().unwrap()
+    );
+}
+
+#[test]
+fn partitioned_directory_harness_quiescent_snapshot_restores_parallel_run_history() {
+    let mut source = harness_with_fabric_memory();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    let first = source.run_until_idle_parallel_recorded().unwrap();
+    source
+        .submit_cpu_request_parallel(agent(2), read(2, 1, 0x1008, 4))
+        .unwrap();
+    let second = source.run_until_idle_parallel_recorded().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    assert_eq!(source.parallel_runs(), &[first.clone(), second.clone()]);
+    assert_eq!(snapshot.parallel_runs(), source.parallel_runs());
+    assert_eq!(
+        source.parallel_run_history(),
+        snapshot.parallel_run_history()
+    );
+
+    let history = snapshot.parallel_run_history();
+    assert_eq!(history.run_count(), 2);
+    assert_eq!(history.profile(), first.profile().merge(second.profile()));
+    assert_eq!(
+        history.total_cpu_responses(),
+        first.cpu_response_count() + second.cpu_response_count()
+    );
+    assert_eq!(
+        history.total_directory_decisions(),
+        first.directory_decision_count() + second.directory_decision_count()
+    );
+    assert_eq!(
+        history.total_protocol_activity(),
+        first.protocol_activity_count() + second.protocol_activity_count()
+    );
+    assert_eq!(
+        history.total_fabric_transfers(),
+        first.fabric_transfer_count() + second.fabric_transfer_count()
+    );
+    assert!(history.has_parallel_work());
+    assert!(history.has_directory_activity());
+    assert!(history.has_resource_activity());
+
+    let mut restored = harness_with_fabric_memory();
+    restored
+        .submit_cpu_request_parallel(agent(2), write(2, 9, 0x100c, vec![0xdd]))
+        .unwrap();
+    restored.run_until_idle_parallel_recorded().unwrap();
+    assert_ne!(restored.parallel_runs(), snapshot.parallel_runs());
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.parallel_runs(), &[first, second]);
+    assert_eq!(restored.parallel_run_history(), history);
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn partitioned_directory_harness_parallel_run_history_merges_independent_lines() {
+    let mut fabric_line = harness_with_fabric_memory();
+    fabric_line
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    let fabric_run = fabric_line.run_until_idle_parallel_recorded().unwrap();
+    let fabric_history = fabric_line.parallel_run_history();
+
+    let mut dram_line = harness_with_dram_memory();
+    dram_line
+        .submit_cpu_request_parallel(agent(2), write(2, 1, 0x1008, vec![0xaa, 0xbb]))
+        .unwrap();
+    let dram_run = dram_line.run_until_idle_parallel_recorded().unwrap();
+    let dram_history = dram_line.parallel_run_history();
+
+    let merged = fabric_history.clone().merge(dram_history.clone());
+    assert_eq!(merged.run_count(), 2);
+    assert_eq!(
+        merged.profile(),
+        fabric_run.profile().merge(dram_run.profile())
+    );
+    assert_eq!(
+        merged.total_cpu_responses(),
+        fabric_history.total_cpu_responses() + dram_history.total_cpu_responses()
+    );
+    assert_eq!(
+        merged.total_directory_decisions(),
+        fabric_history.total_directory_decisions() + dram_history.total_directory_decisions()
+    );
+    assert_eq!(
+        merged.total_dram_accesses(),
+        fabric_history.total_dram_accesses() + dram_history.total_dram_accesses()
+    );
+    assert_eq!(
+        merged.total_fabric_transfers(),
+        fabric_history.total_fabric_transfers() + dram_history.total_fabric_transfers()
+    );
+    assert!(merged.has_parallel_work());
+    assert!(merged.has_directory_activity());
+    assert!(merged.has_dram_activity());
+    assert!(merged.has_resource_activity());
+    assert_eq!(
+        ParallelCoherenceRunHistory::from_histories([fabric_history, dram_history]),
+        merged
     );
 }
 

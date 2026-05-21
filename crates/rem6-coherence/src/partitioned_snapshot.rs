@@ -12,7 +12,8 @@ use rem6_transport::{MemoryTrace, MemoryTraceEvent};
 
 use crate::{
     map_cache_error, CpuResponseRecord, DirectoryDecisionRecord, DramMemoryAccessRecord,
-    HarnessError, LineBackingStore, PartitionedDirectoryLineHarness,
+    HarnessError, LineBackingStore, ParallelCoherenceRunHistory, ParallelCoherenceRunSummary,
+    PartitionedDirectoryLineHarness,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +29,7 @@ pub struct PartitionedDirectoryLineHarnessSnapshot {
     cpu_responses: Vec<CpuResponseRecord>,
     directory_decisions: Vec<DirectoryDecisionRecord>,
     dram_accesses: Vec<DramMemoryAccessRecord>,
+    parallel_runs: Vec<ParallelCoherenceRunSummary>,
 }
 
 impl PartitionedDirectoryLineHarnessSnapshot {
@@ -44,6 +46,7 @@ impl PartitionedDirectoryLineHarnessSnapshot {
         cpu_responses: Vec<CpuResponseRecord>,
         directory_decisions: Vec<DirectoryDecisionRecord>,
         dram_accesses: Vec<DramMemoryAccessRecord>,
+        parallel_runs: Vec<ParallelCoherenceRunSummary>,
     ) -> Self {
         Self {
             line,
@@ -57,6 +60,7 @@ impl PartitionedDirectoryLineHarnessSnapshot {
             cpu_responses,
             directory_decisions,
             dram_accesses,
+            parallel_runs,
         }
     }
 
@@ -103,6 +107,14 @@ impl PartitionedDirectoryLineHarnessSnapshot {
     pub fn dram_accesses(&self) -> Vec<DramMemoryAccessRecord> {
         self.dram_accesses.clone()
     }
+
+    pub fn parallel_runs(&self) -> &[ParallelCoherenceRunSummary] {
+        &self.parallel_runs
+    }
+
+    pub fn parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.parallel_runs)
+    }
 }
 
 impl PartitionedDirectoryLineHarness {
@@ -140,6 +152,7 @@ impl PartitionedDirectoryLineHarness {
                 .expect("decision lock")
                 .clone(),
             self.dram_accesses.lock().expect("DRAM access lock").clone(),
+            self.parallel_runs.clone(),
         ))
     }
 
@@ -200,6 +213,7 @@ impl PartitionedDirectoryLineHarness {
         *self.directory_decisions.lock().expect("decision lock") =
             snapshot.directory_decisions.clone();
         *self.dram_accesses.lock().expect("DRAM access lock") = snapshot.dram_accesses.clone();
+        self.parallel_runs = snapshot.parallel_runs.clone();
         Ok(())
     }
 

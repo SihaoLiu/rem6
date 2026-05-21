@@ -9,7 +9,10 @@ use rem6_memory::AgentId;
 use rem6_protocol_mesi::MesiLineId;
 use rem6_transport::{MemoryTrace, MemoryTraceEvent};
 
-use crate::{DramMemoryAccessRecord, HarnessError, LineBackingStore};
+use crate::{
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
+    ParallelCoherenceRunSummary,
+};
 
 use super::super::{
     map_mesi_cache_error, MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiHarnessError,
@@ -28,6 +31,7 @@ pub struct PartitionedMesiDirectoryLineHarnessSnapshot {
     cpu_responses: Vec<MesiCpuResponseRecord>,
     directory_decisions: Vec<MesiDirectoryDecisionRecord>,
     dram_accesses: Vec<DramMemoryAccessRecord>,
+    parallel_runs: Vec<ParallelCoherenceRunSummary>,
 }
 
 impl PartitionedMesiDirectoryLineHarnessSnapshot {
@@ -43,6 +47,7 @@ impl PartitionedMesiDirectoryLineHarnessSnapshot {
         cpu_responses: Vec<MesiCpuResponseRecord>,
         directory_decisions: Vec<MesiDirectoryDecisionRecord>,
         dram_accesses: Vec<DramMemoryAccessRecord>,
+        parallel_runs: Vec<ParallelCoherenceRunSummary>,
     ) -> Self {
         Self {
             line,
@@ -55,6 +60,7 @@ impl PartitionedMesiDirectoryLineHarnessSnapshot {
             cpu_responses,
             directory_decisions,
             dram_accesses,
+            parallel_runs,
         }
     }
 
@@ -97,6 +103,14 @@ impl PartitionedMesiDirectoryLineHarnessSnapshot {
     pub fn dram_accesses(&self) -> Vec<DramMemoryAccessRecord> {
         self.dram_accesses.clone()
     }
+
+    pub fn parallel_runs(&self) -> &[ParallelCoherenceRunSummary] {
+        &self.parallel_runs
+    }
+
+    pub fn parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.parallel_runs)
+    }
 }
 
 impl PartitionedMesiDirectoryLineHarness {
@@ -129,6 +143,7 @@ impl PartitionedMesiDirectoryLineHarness {
                 .expect("decision lock")
                 .clone(),
             self.dram_accesses.lock().expect("DRAM access lock").clone(),
+            self.parallel_runs.clone(),
         ))
     }
 
@@ -174,6 +189,7 @@ impl PartitionedMesiDirectoryLineHarness {
         *self.directory_decisions.lock().expect("decision lock") =
             snapshot.directory_decisions.clone();
         *self.dram_accesses.lock().expect("DRAM access lock") = snapshot.dram_accesses.clone();
+        self.parallel_runs = snapshot.parallel_runs.clone();
         Ok(())
     }
 

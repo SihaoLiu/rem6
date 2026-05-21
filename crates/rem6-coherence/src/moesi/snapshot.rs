@@ -10,7 +10,10 @@ use rem6_memory::AgentId;
 use rem6_protocol_moesi::MoesiLineId;
 use rem6_transport::{MemoryTrace, MemoryTraceEvent};
 
-use crate::{DramMemoryAccessRecord, HarnessError, LineBackingStore};
+use crate::{
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
+    ParallelCoherenceRunSummary,
+};
 
 use super::{
     map_moesi_cache_error, MoesiCpuResponseRecord, MoesiDirectoryDecisionRecord, MoesiHarnessError,
@@ -30,6 +33,7 @@ pub struct PartitionedMoesiDirectoryLineHarnessSnapshot {
     cpu_responses: Vec<MoesiCpuResponseRecord>,
     directory_decisions: Vec<MoesiDirectoryDecisionRecord>,
     dram_accesses: Vec<DramMemoryAccessRecord>,
+    parallel_runs: Vec<ParallelCoherenceRunSummary>,
 }
 
 impl PartitionedMoesiDirectoryLineHarnessSnapshot {
@@ -46,6 +50,7 @@ impl PartitionedMoesiDirectoryLineHarnessSnapshot {
         cpu_responses: Vec<MoesiCpuResponseRecord>,
         directory_decisions: Vec<MoesiDirectoryDecisionRecord>,
         dram_accesses: Vec<DramMemoryAccessRecord>,
+        parallel_runs: Vec<ParallelCoherenceRunSummary>,
     ) -> Self {
         Self {
             line,
@@ -59,6 +64,7 @@ impl PartitionedMoesiDirectoryLineHarnessSnapshot {
             cpu_responses,
             directory_decisions,
             dram_accesses,
+            parallel_runs,
         }
     }
 
@@ -105,6 +111,14 @@ impl PartitionedMoesiDirectoryLineHarnessSnapshot {
     pub fn dram_accesses(&self) -> Vec<DramMemoryAccessRecord> {
         self.dram_accesses.clone()
     }
+
+    pub fn parallel_runs(&self) -> &[ParallelCoherenceRunSummary] {
+        &self.parallel_runs
+    }
+
+    pub fn parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.parallel_runs)
+    }
 }
 
 impl PartitionedMoesiDirectoryLineHarness {
@@ -140,6 +154,7 @@ impl PartitionedMoesiDirectoryLineHarness {
                 .expect("decision lock")
                 .clone(),
             self.dram_accesses.lock().expect("DRAM access lock").clone(),
+            self.parallel_runs.clone(),
         ))
     }
 
@@ -187,6 +202,7 @@ impl PartitionedMoesiDirectoryLineHarness {
         *self.directory_decisions.lock().expect("decision lock") =
             snapshot.directory_decisions.clone();
         *self.dram_accesses.lock().expect("DRAM access lock") = snapshot.dram_accesses.clone();
+        self.parallel_runs = snapshot.parallel_runs.clone();
         Ok(())
     }
 

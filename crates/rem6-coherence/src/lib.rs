@@ -61,7 +61,9 @@ pub use moesi::{
 };
 pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
 use summary::CoherenceResourceActivityWindow;
-pub use summary::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
+pub use summary::{
+    ParallelCoherenceRunHistory, ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
+};
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
     TopologyDramMemoryConfig,
@@ -884,6 +886,7 @@ pub struct PartitionedDirectoryLineHarness {
     cpu_responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    parallel_runs: Vec<ParallelCoherenceRunSummary>,
     wait_for: wait_for::CoherenceWaitFor,
 }
 
@@ -1127,6 +1130,7 @@ impl PartitionedDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            parallel_runs: Vec::new(),
             wait_for: wait_for::CoherenceWaitFor::new(),
         })
     }
@@ -1334,7 +1338,7 @@ impl PartitionedDirectoryLineHarness {
             .saturating_sub(dram_accesses_before);
         let (fabric_activity, dram_activity) =
             resource_window.collect(&self.transport, self.dram_memory.as_ref());
-        Ok(ParallelCoherenceRunSummary::new(
+        let run = ParallelCoherenceRunSummary::new(
             scheduler_run,
             cpu_response_count,
             directory_decision_count,
@@ -1342,7 +1346,11 @@ impl PartitionedDirectoryLineHarness {
             fabric_activity,
             dram_activity,
             ParallelCoherenceWaitForGraphs::new(wait_for_graph_before, self.wait_for.graph()),
-        ))
+        );
+        if run.has_parallel_observation() {
+            self.parallel_runs.push(run.clone());
+        }
+        Ok(run)
     }
 
     pub fn cache_state(&self, agent: AgentId) -> Result<MsiState, HarnessError> {
@@ -1384,6 +1392,14 @@ impl PartitionedDirectoryLineHarness {
 
     pub fn dram_memory_accesses(&self) -> Vec<DramMemoryAccessRecord> {
         self.dram_accesses.lock().expect("DRAM access lock").clone()
+    }
+
+    pub fn parallel_runs(&self) -> &[ParallelCoherenceRunSummary] {
+        &self.parallel_runs
+    }
+
+    pub fn parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.parallel_runs)
     }
 
     pub const fn line(&self) -> MsiLineId {

@@ -33,6 +33,21 @@ pub struct ParallelCoherenceWaitForGraphs {
     remaining: WaitForGraph,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ParallelCoherenceRunHistory {
+    profile: ParallelRunProfile,
+    run_count: usize,
+    runs_with_parallel_work: usize,
+    runs_with_directory_activity: usize,
+    runs_with_dram_activity: usize,
+    runs_with_resource_activity: usize,
+    runs_with_wait_for_edges: usize,
+    total_cpu_responses: usize,
+    total_directory_decisions: usize,
+    total_dram_accesses: usize,
+    total_fabric_transfers: usize,
+}
+
 impl ParallelCoherenceWaitForGraphs {
     pub const fn new(initial: WaitForGraph, remaining: WaitForGraph) -> Self {
         Self { initial, remaining }
@@ -388,6 +403,177 @@ impl ParallelCoherenceRunSummary {
 
     pub fn has_resource_activity(&self) -> bool {
         self.resource_activity_count() != 0
+    }
+
+    pub fn has_parallel_observation(&self) -> bool {
+        self.has_parallel_work()
+            || self.protocol_activity_count() != 0
+            || self.has_resource_activity()
+            || self.initial_has_wait_for_edges()
+            || self.remaining_has_wait_for_edges()
+    }
+}
+
+impl ParallelCoherenceRunHistory {
+    pub fn from_runs(runs: &[ParallelCoherenceRunSummary]) -> Self {
+        let mut history = Self {
+            profile: ParallelRunProfile::default(),
+            run_count: runs.len(),
+            runs_with_parallel_work: 0,
+            runs_with_directory_activity: 0,
+            runs_with_dram_activity: 0,
+            runs_with_resource_activity: 0,
+            runs_with_wait_for_edges: 0,
+            total_cpu_responses: 0,
+            total_directory_decisions: 0,
+            total_dram_accesses: 0,
+            total_fabric_transfers: 0,
+        };
+
+        for run in runs {
+            history.profile = history.profile.merge(run.profile());
+            history.runs_with_parallel_work += usize::from(run.has_parallel_work());
+            history.runs_with_directory_activity += usize::from(run.has_directory_activity());
+            history.runs_with_dram_activity += usize::from(run.has_dram_activity());
+            history.runs_with_resource_activity += usize::from(run.has_resource_activity());
+            history.runs_with_wait_for_edges +=
+                usize::from(run.initial_has_wait_for_edges() || run.remaining_has_wait_for_edges());
+            history.total_cpu_responses += run.cpu_response_count();
+            history.total_directory_decisions += run.directory_decision_count();
+            history.total_dram_accesses += run.dram_access_count();
+            history.total_fabric_transfers += run.fabric_transfer_count();
+        }
+
+        history
+    }
+
+    pub fn from_histories<I>(histories: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        histories
+            .into_iter()
+            .fold(Self::default(), |merged, history| merged.merge(history))
+    }
+
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            profile: self.profile.merge(other.profile),
+            run_count: self.run_count + other.run_count,
+            runs_with_parallel_work: self.runs_with_parallel_work + other.runs_with_parallel_work,
+            runs_with_directory_activity: self.runs_with_directory_activity
+                + other.runs_with_directory_activity,
+            runs_with_dram_activity: self.runs_with_dram_activity + other.runs_with_dram_activity,
+            runs_with_resource_activity: self.runs_with_resource_activity
+                + other.runs_with_resource_activity,
+            runs_with_wait_for_edges: self.runs_with_wait_for_edges
+                + other.runs_with_wait_for_edges,
+            total_cpu_responses: self.total_cpu_responses + other.total_cpu_responses,
+            total_directory_decisions: self.total_directory_decisions
+                + other.total_directory_decisions,
+            total_dram_accesses: self.total_dram_accesses + other.total_dram_accesses,
+            total_fabric_transfers: self.total_fabric_transfers + other.total_fabric_transfers,
+        }
+    }
+
+    pub const fn profile(&self) -> ParallelRunProfile {
+        self.profile
+    }
+
+    pub const fn run_count(&self) -> usize {
+        self.run_count
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.run_count == 0
+    }
+
+    pub const fn total_epochs(&self) -> usize {
+        self.profile.epoch_count()
+    }
+
+    pub const fn total_empty_epochs(&self) -> usize {
+        self.profile.empty_epoch_count()
+    }
+
+    pub const fn total_batches(&self) -> usize {
+        self.profile.batch_count()
+    }
+
+    pub const fn total_dispatches(&self) -> usize {
+        self.profile.dispatch_count()
+    }
+
+    pub const fn total_parallel_workers(&self) -> usize {
+        self.profile.total_parallel_workers()
+    }
+
+    pub const fn max_parallel_workers(&self) -> usize {
+        self.profile.max_parallel_workers()
+    }
+
+    pub const fn runs_with_parallel_work(&self) -> usize {
+        self.runs_with_parallel_work
+    }
+
+    pub const fn has_parallel_work(&self) -> bool {
+        self.runs_with_parallel_work != 0
+    }
+
+    pub const fn runs_with_directory_activity(&self) -> usize {
+        self.runs_with_directory_activity
+    }
+
+    pub const fn has_directory_activity(&self) -> bool {
+        self.runs_with_directory_activity != 0
+    }
+
+    pub const fn runs_with_dram_activity(&self) -> usize {
+        self.runs_with_dram_activity
+    }
+
+    pub const fn has_dram_activity(&self) -> bool {
+        self.runs_with_dram_activity != 0
+    }
+
+    pub const fn runs_with_resource_activity(&self) -> usize {
+        self.runs_with_resource_activity
+    }
+
+    pub const fn has_resource_activity(&self) -> bool {
+        self.runs_with_resource_activity != 0
+    }
+
+    pub const fn runs_with_wait_for_edges(&self) -> usize {
+        self.runs_with_wait_for_edges
+    }
+
+    pub const fn has_wait_for_edges(&self) -> bool {
+        self.runs_with_wait_for_edges != 0
+    }
+
+    pub const fn total_cpu_responses(&self) -> usize {
+        self.total_cpu_responses
+    }
+
+    pub const fn total_directory_decisions(&self) -> usize {
+        self.total_directory_decisions
+    }
+
+    pub const fn total_dram_accesses(&self) -> usize {
+        self.total_dram_accesses
+    }
+
+    pub const fn total_fabric_transfers(&self) -> usize {
+        self.total_fabric_transfers
+    }
+
+    pub const fn total_protocol_activity(&self) -> usize {
+        self.total_cpu_responses + self.total_directory_decisions + self.total_dram_accesses
+    }
+
+    pub const fn total_resource_activity(&self) -> usize {
+        self.total_fabric_transfers + self.total_dram_accesses
     }
 }
 

@@ -591,6 +591,58 @@ fn partitioned_moesi_harness_quiescent_snapshot_restores_fabric_lane_state() {
 }
 
 #[test]
+fn partitioned_moesi_harness_quiescent_snapshot_restores_parallel_run_history() {
+    let mut source = partitioned_harness_with_fabric_routes();
+    source
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x5002, vec![0xaa, 0xbb]))
+        .unwrap();
+    let first = source.run_until_idle_parallel_recorded().unwrap();
+    source
+        .submit_cpu_request_parallel(agent(2), read(2, 1, 0x5000, 4))
+        .unwrap();
+    let second = source.run_until_idle_parallel_recorded().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    assert_eq!(source.parallel_runs(), &[first.clone(), second.clone()]);
+    assert_eq!(snapshot.parallel_runs(), source.parallel_runs());
+    assert_eq!(
+        source.parallel_run_history(),
+        snapshot.parallel_run_history()
+    );
+
+    let history = snapshot.parallel_run_history();
+    assert_eq!(history.run_count(), 2);
+    assert_eq!(history.profile(), first.profile().merge(second.profile()));
+    assert_eq!(
+        history.total_cpu_responses(),
+        first.cpu_response_count() + second.cpu_response_count()
+    );
+    assert_eq!(
+        history.total_directory_decisions(),
+        first.directory_decision_count() + second.directory_decision_count()
+    );
+    assert_eq!(
+        history.total_fabric_transfers(),
+        first.fabric_transfer_count() + second.fabric_transfer_count()
+    );
+    assert!(history.has_parallel_work());
+    assert!(history.has_directory_activity());
+    assert!(history.has_resource_activity());
+
+    let mut restored = partitioned_harness_with_fabric_routes();
+    restored
+        .submit_cpu_request_parallel(agent(3), read(3, 9, 0x5008, 4))
+        .unwrap();
+    restored.run_until_idle_parallel_recorded().unwrap();
+    assert_ne!(restored.parallel_runs(), snapshot.parallel_runs());
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.parallel_runs(), &[first, second]);
+    assert_eq!(restored.parallel_run_history(), history);
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+}
+
+#[test]
 fn partitioned_moesi_harness_quiescent_snapshot_rejects_pending_events() {
     let mut harness = partitioned_harness();
     harness

@@ -31,9 +31,9 @@ use rem6_transport::{
 use crate::summary::CoherenceResourceActivityWindow;
 use crate::wait_for::CoherenceWaitFor;
 use crate::{
-    DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunSummary,
-    ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
-    PartitionedRouteHopConfig, SubmitKind,
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
+    ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig,
+    PartitionedDramMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
 };
 
 mod response;
@@ -338,6 +338,7 @@ pub struct PartitionedMoesiDirectoryLineHarness {
     cpu_responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<MoesiDirectoryDecisionRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    parallel_runs: Vec<ParallelCoherenceRunSummary>,
     wait_for: CoherenceWaitFor,
 }
 
@@ -691,6 +692,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            parallel_runs: Vec::new(),
             wait_for: CoherenceWaitFor::new(),
         })
     }
@@ -809,6 +811,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            parallel_runs: Vec::new(),
             wait_for: CoherenceWaitFor::new(),
         })
     }
@@ -1031,7 +1034,7 @@ impl PartitionedMoesiDirectoryLineHarness {
         let (fabric_activity, dram_activity) =
             resource_window.collect(&self.transport, self.dram_memory.as_ref());
 
-        Ok(ParallelCoherenceRunSummary::new(
+        let run = ParallelCoherenceRunSummary::new(
             scheduler_run,
             cpu_response_count,
             directory_decision_count,
@@ -1039,7 +1042,11 @@ impl PartitionedMoesiDirectoryLineHarness {
             fabric_activity,
             dram_activity,
             ParallelCoherenceWaitForGraphs::new(wait_for_graph_before, self.wait_for.graph()),
-        ))
+        );
+        if run.has_parallel_observation() {
+            self.parallel_runs.push(run.clone());
+        }
+        Ok(run)
     }
 
     pub fn cache_state(&self, agent: AgentId) -> Result<MoesiState, MoesiHarnessError> {
@@ -1081,6 +1088,14 @@ impl PartitionedMoesiDirectoryLineHarness {
 
     pub fn dram_memory_accesses(&self) -> Vec<DramMemoryAccessRecord> {
         self.dram_accesses.lock().expect("DRAM access lock").clone()
+    }
+
+    pub fn parallel_runs(&self) -> &[ParallelCoherenceRunSummary] {
+        &self.parallel_runs
+    }
+
+    pub fn parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.parallel_runs)
     }
 
     pub fn wait_for_graph(&self) -> WaitForGraph {
