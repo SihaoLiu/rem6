@@ -729,6 +729,7 @@ fn workload_result_records_parallel_execution_summary() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_scheduler_counts(3, 1, 7, 5)
         .with_scheduler_partitions(4, 2)
+        .with_riscv_core_counts(2, 2, 4, 3, 1, 2)
         .with_data_cache_parallel_counts(6, 9, 11, 13, 3)
         .with_data_cache_run_attribution(5, 1)
         .with_data_cache_protocol_counts([
@@ -747,6 +748,13 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.scheduler_batch_count(), 5);
     assert_eq!(summary.active_scheduler_partition_count(), 4);
     assert_eq!(summary.max_parallel_scheduler_workers(), 2);
+    assert_eq!(summary.riscv_core_count(), 2);
+    assert_eq!(summary.active_riscv_core_count(), 2);
+    assert_eq!(summary.riscv_fetch_issue_count(), 4);
+    assert_eq!(summary.riscv_committed_instruction_count(), 3);
+    assert_eq!(summary.riscv_data_access_issue_count(), 1);
+    assert_eq!(summary.riscv_scheduled_trap_count(), 2);
+    assert!(summary.has_riscv_core_activity());
     assert_eq!(summary.data_cache_parallel_run_count(), 6);
     assert_eq!(summary.data_cache_parallel_scheduler_epoch_count(), 9);
     assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);

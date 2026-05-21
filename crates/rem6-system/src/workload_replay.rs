@@ -764,6 +764,7 @@ impl RiscvWorkloadReplay {
         let (result, host_action_outcomes) = self.result_from_run(
             &run,
             &controller,
+            topology,
             &gpu_activity,
             &gpu_dma_activity,
             &accelerator_activity,
@@ -1306,6 +1307,7 @@ impl RiscvWorkloadReplay {
         &self,
         run: &RiscvSystemRun,
         controller: &Arc<Mutex<SystemHostController>>,
+        topology: &WorkloadTopology,
         gpu_activity: &WorkloadGpuActivity,
         gpu_dma_activity: &WorkloadGpuDmaActivity,
         accelerator_activity: &WorkloadAcceleratorActivity,
@@ -1334,6 +1336,7 @@ impl RiscvWorkloadReplay {
             result
                 .with_parallel_execution_summary(parallel_execution_summary(
                     run,
+                    topology,
                     gpu_activity,
                     gpu_dma_activity,
                     accelerator_activity,
@@ -1346,11 +1349,29 @@ impl RiscvWorkloadReplay {
 
 fn parallel_execution_summary(
     run: &RiscvSystemRun,
+    topology: &WorkloadTopology,
     gpu_activity: &WorkloadGpuActivity,
     gpu_dma_activity: &WorkloadGpuDmaActivity,
     accelerator_activity: &WorkloadAcceleratorActivity,
 ) -> WorkloadParallelExecutionSummary {
     let scheduler = run.parallel_scheduler_profile();
+    let cpu_activities = run.cpu_activities();
+    let riscv_fetch_issue_count = cpu_activities
+        .values()
+        .map(|activity| activity.fetch_issue_count())
+        .sum();
+    let riscv_committed_instruction_count = cpu_activities
+        .values()
+        .map(|activity| activity.instruction_execution_count())
+        .sum();
+    let riscv_data_access_issue_count = cpu_activities
+        .values()
+        .map(|activity| activity.data_access_issue_count())
+        .sum();
+    let riscv_scheduled_trap_count = cpu_activities
+        .values()
+        .map(|activity| activity.scheduled_trap_count())
+        .sum();
     WorkloadParallelExecutionSummary::default()
         .with_scheduler_counts(
             scheduler.epoch_count(),
@@ -1361,6 +1382,14 @@ fn parallel_execution_summary(
         .with_scheduler_partitions(
             run.active_parallel_scheduler_partition_count(),
             run.max_parallel_scheduler_workers(),
+        )
+        .with_riscv_core_counts(
+            topology.riscv_cores().len(),
+            cpu_activities.len(),
+            riscv_fetch_issue_count,
+            riscv_committed_instruction_count,
+            riscv_data_access_issue_count,
+            riscv_scheduled_trap_count,
         )
         .with_data_cache_parallel_counts(
             run.data_cache_run_count(),

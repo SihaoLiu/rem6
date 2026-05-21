@@ -52,6 +52,12 @@ pub struct WorkloadParallelExecutionSummary {
     scheduler_batch_count: usize,
     active_scheduler_partition_count: usize,
     max_parallel_scheduler_workers: usize,
+    riscv_core_count: usize,
+    active_riscv_core_count: usize,
+    riscv_fetch_issue_count: usize,
+    riscv_committed_instruction_count: usize,
+    riscv_data_access_issue_count: usize,
+    riscv_scheduled_trap_count: usize,
     data_cache_parallel_run_count: usize,
     data_cache_parallel_scheduler_epoch_count: usize,
     data_cache_parallel_scheduler_dispatch_count: usize,
@@ -97,6 +103,24 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.active_scheduler_partition_count = active_partition_count;
         self.max_parallel_scheduler_workers = max_parallel_workers;
+        self
+    }
+
+    pub const fn with_riscv_core_counts(
+        mut self,
+        core_count: usize,
+        active_core_count: usize,
+        fetch_issue_count: usize,
+        committed_instruction_count: usize,
+        data_access_issue_count: usize,
+        scheduled_trap_count: usize,
+    ) -> Self {
+        self.riscv_core_count = core_count;
+        self.active_riscv_core_count = active_core_count;
+        self.riscv_fetch_issue_count = fetch_issue_count;
+        self.riscv_committed_instruction_count = committed_instruction_count;
+        self.riscv_data_access_issue_count = data_access_issue_count;
+        self.riscv_scheduled_trap_count = scheduled_trap_count;
         self
     }
 
@@ -215,6 +239,37 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn max_parallel_scheduler_workers(&self) -> usize {
         self.max_parallel_scheduler_workers
+    }
+
+    pub const fn riscv_core_count(&self) -> usize {
+        self.riscv_core_count
+    }
+
+    pub const fn active_riscv_core_count(&self) -> usize {
+        self.active_riscv_core_count
+    }
+
+    pub const fn riscv_fetch_issue_count(&self) -> usize {
+        self.riscv_fetch_issue_count
+    }
+
+    pub const fn riscv_committed_instruction_count(&self) -> usize {
+        self.riscv_committed_instruction_count
+    }
+
+    pub const fn riscv_data_access_issue_count(&self) -> usize {
+        self.riscv_data_access_issue_count
+    }
+
+    pub const fn riscv_scheduled_trap_count(&self) -> usize {
+        self.riscv_scheduled_trap_count
+    }
+
+    pub const fn has_riscv_core_activity(&self) -> bool {
+        self.riscv_fetch_issue_count != 0
+            || self.riscv_committed_instruction_count != 0
+            || self.riscv_data_access_issue_count != 0
+            || self.riscv_scheduled_trap_count != 0
     }
 
     pub const fn data_cache_parallel_run_count(&self) -> usize {

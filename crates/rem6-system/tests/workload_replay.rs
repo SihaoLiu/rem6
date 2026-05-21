@@ -775,6 +775,44 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
         summary.max_parallel_scheduler_workers(),
         outcome.run().max_parallel_scheduler_workers(),
     );
+    assert_eq!(summary.riscv_core_count(), 2);
+    assert_eq!(
+        summary.active_riscv_core_count(),
+        outcome.run().active_cpu_count(),
+    );
+    assert_eq!(summary.active_riscv_core_count(), 2);
+    let run_cpu_activity = outcome.run().cpu_activities();
+    assert_eq!(
+        summary.riscv_fetch_issue_count(),
+        run_cpu_activity
+            .values()
+            .map(|activity| activity.fetch_issue_count())
+            .sum::<usize>(),
+    );
+    assert_eq!(
+        summary.riscv_committed_instruction_count(),
+        run_cpu_activity
+            .values()
+            .map(|activity| activity.instruction_execution_count())
+            .sum::<usize>(),
+    );
+    assert_eq!(summary.riscv_committed_instruction_count(), 2);
+    assert_eq!(
+        summary.riscv_data_access_issue_count(),
+        run_cpu_activity
+            .values()
+            .map(|activity| activity.data_access_issue_count())
+            .sum::<usize>(),
+    );
+    assert_eq!(
+        summary.riscv_scheduled_trap_count(),
+        run_cpu_activity
+            .values()
+            .map(|activity| activity.scheduled_trap_count())
+            .sum::<usize>(),
+    );
+    assert_eq!(summary.riscv_scheduled_trap_count(), 2);
+    assert!(summary.has_riscv_core_activity());
     assert_eq!(summary.data_cache_parallel_run_count(), 0);
     assert_eq!(summary.attributed_data_cache_parallel_run_count(), 0);
     assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 0);
