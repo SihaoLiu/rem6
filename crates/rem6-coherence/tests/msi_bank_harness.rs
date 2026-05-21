@@ -1,5 +1,8 @@
 use rem6_cache::CacheControllerResultKind;
-use rem6_coherence::{MsiBankDirectoryHarness, SubmitKind};
+use rem6_coherence::{
+    CpuResponseRecord, HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
+    SubmitKind,
+};
 use rem6_directory::{DirectoryDataSource, DirectoryLineState};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -52,6 +55,75 @@ fn write(agent_id: u32, sequence: u64, address: u64, data: Vec<u8>) -> MemoryReq
 
 fn line_data(byte: u8) -> Vec<u8> {
     vec![byte; layout().bytes() as usize]
+}
+
+fn backing_line_addresses(snapshot: &MsiBankDirectoryHarnessSnapshot) -> Vec<u64> {
+    snapshot
+        .backing_lines()
+        .iter()
+        .map(|line| line.line_address().get())
+        .collect()
+}
+
+#[test]
+fn msi_bank_harness_reports_stable_live_indexes() {
+    let mut harness =
+        MsiBankDirectoryHarness::new(layout(), [agent(3), agent(1), agent(2)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+
+    assert_eq!(harness.cache_count(), 3);
+    assert_eq!(harness.cache_agents(), vec![agent(1), agent(2), agent(3)]);
+    assert_eq!(
+        harness.backing_line_addresses(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+}
+
+#[test]
+fn msi_bank_harness_snapshot_exposes_stable_indexes() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(2), agent(1)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    harness
+        .submit_cpu_request(agent(2), read(2, 90, 0x1018))
+        .unwrap();
+    harness
+        .submit_cpu_request(agent(1), read(1, 91, 0x1004))
+        .unwrap();
+
+    let snapshot = harness.snapshot();
+    assert_eq!(snapshot.cache_count(), 2);
+    assert_eq!(snapshot.directory_line_count(), 2);
+    assert_eq!(snapshot.backing_line_count(), 2);
+    assert_eq!(snapshot.cache_agents(), vec![agent(1), agent(2)]);
+    assert!(snapshot.cache_snapshot(agent(1)).is_some());
+    assert!(snapshot.cache_snapshot(agent(2)).is_some());
+    assert!(snapshot.cache_snapshot(agent(3)).is_none());
+    assert_eq!(
+        snapshot.directory_line_addresses(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+
+    let first_line = line_data(0x11);
+    let second_line = line_data(0x22);
+    assert_eq!(
+        snapshot.backing_line(Address::new(0x1004)),
+        Some(first_line.as_slice())
+    );
+    assert_eq!(
+        snapshot.backing_line(Address::new(0x1018)),
+        Some(second_line.as_slice())
+    );
+    assert_eq!(snapshot.backing_line(Address::new(0x2000)), None);
 }
 
 #[test]
@@ -174,5 +246,145 @@ fn msi_bank_harness_transfers_modified_owner_data_without_touching_other_lines()
     assert_eq!(
         harness.directory_state(Address::new(0x1010)),
         DirectoryLineState::new(line(0x1010))
+    );
+}
+
+#[test]
+fn msi_bank_harness_snapshot_restore_reinstates_multi_line_state() {
+    let mut source = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    source
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    source
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(1), write(1, 20, 0x1004, vec![0xaa; 8]))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(2), read(2, 30, 0x1004))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(1), read(1, 40, 0x1018))
+        .unwrap();
+
+    let snapshot = source.snapshot();
+    assert_eq!(snapshot.layout(), layout());
+    assert_eq!(snapshot.cache_snapshots().len(), 2);
+    assert_eq!(
+        snapshot.directory_states(),
+        &[
+            DirectoryLineState::new(line(0x1000))
+                .with_sharer(agent(1))
+                .with_sharer(agent(2)),
+            DirectoryLineState::new(line(0x1010)).with_sharer(agent(1)),
+        ]
+    );
+    assert_eq!(backing_line_addresses(&snapshot), vec![0x1000, 0x1010]);
+    assert_eq!(snapshot.backing_lines()[0].data(), line_data(0x11));
+    assert_eq!(snapshot.backing_lines()[1].data(), line_data(0x22));
+    assert_eq!(snapshot.cpu_responses().len(), 3);
+    assert_eq!(snapshot.directory_decisions().len(), 3);
+
+    let mut restored = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    restored
+        .insert_backing_line(Address::new(0x1000), line_data(0xee))
+        .unwrap();
+    restored
+        .submit_cpu_request(agent(2), read(2, 50, 0x1004))
+        .unwrap();
+    assert_ne!(restored.snapshot(), snapshot);
+
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(
+        restored.cache_line_addresses(agent(1)).unwrap(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+    assert_eq!(
+        restored.cache_line_addresses(agent(2)).unwrap(),
+        vec![Address::new(0x1000)]
+    );
+    assert_eq!(
+        restored
+            .cache_state(agent(1), Address::new(0x1000))
+            .unwrap(),
+        Some(MsiState::Shared)
+    );
+    assert_eq!(
+        restored
+            .cache_state(agent(2), Address::new(0x1000))
+            .unwrap(),
+        Some(MsiState::Shared)
+    );
+    assert_eq!(
+        restored.backing_line(Address::new(0x1000)).unwrap(),
+        line_data(0x11).as_slice()
+    );
+
+    let local_hit = restored
+        .submit_cpu_request(agent(2), read(2, 60, 0x1004))
+        .unwrap();
+    assert_eq!(local_hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(local_hit.directory_decision(), None);
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            0,
+            CacheControllerResultKind::Hit,
+            request_id(2, 60),
+            ResponseStatus::Completed,
+            Some(vec![0xaa; 8]),
+        ))
+    );
+
+    let other_line_hit = restored
+        .submit_cpu_request(agent(1), read(1, 61, 0x1018))
+        .unwrap();
+    assert_eq!(other_line_hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(
+        restored.cpu_responses().last().unwrap().data().unwrap(),
+        &[0x22; 8]
+    );
+}
+
+#[test]
+fn msi_bank_harness_restore_rejects_snapshot_layout_mismatch() {
+    let mut source = MsiBankDirectoryHarness::new(layout(), [agent(1)]).unwrap();
+    source
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(1), read(1, 70, 0x1004))
+        .unwrap();
+    let snapshot = source.snapshot();
+
+    let other_layout = CacheLineLayout::new(32).unwrap();
+    let mut restored = MsiBankDirectoryHarness::new(other_layout, [agent(1)]).unwrap();
+
+    assert_eq!(
+        restored.restore(&snapshot).unwrap_err(),
+        HarnessError::SnapshotResourceMismatch {
+            resource: "msi bank directory harness layout",
+        }
+    );
+}
+
+#[test]
+fn msi_bank_harness_restore_rejects_cache_set_mismatch() {
+    let mut source = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    source
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(1), read(1, 80, 0x1004))
+        .unwrap();
+    let snapshot = source.snapshot();
+
+    let mut restored = MsiBankDirectoryHarness::new(layout(), [agent(1)]).unwrap();
+
+    assert_eq!(
+        restored.restore(&snapshot).unwrap_err(),
+        HarnessError::UnknownCache { agent: agent(2) }
     );
 }

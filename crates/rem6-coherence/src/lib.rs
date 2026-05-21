@@ -43,7 +43,9 @@ use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 use snoop::{DirectorySnoopWork, SnoopRoute};
 
 pub use backing::LineBackingStore;
-pub use bank::MsiBankDirectoryHarness;
+pub use bank::{
+    MsiBankBackingLineSnapshot, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
+};
 pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{
     MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness,

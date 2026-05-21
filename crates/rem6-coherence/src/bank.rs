@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use rem6_cache::{CacheControllerError, CacheControllerResultKind, MsiCacheBank};
+use rem6_cache::{
+    CacheControllerError, CacheControllerResultKind, MsiCacheBank, MsiCacheBankSnapshot,
+};
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, MsiDirectory,
 };
@@ -17,6 +19,115 @@ pub struct MsiBankDirectoryHarness {
     backing: BTreeMap<Address, Vec<u8>>,
     cpu_responses: Vec<CpuResponseRecord>,
     directory_decisions: Vec<DirectoryDecision>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankBackingLineSnapshot {
+    line_address: Address,
+    data: Vec<u8>,
+}
+
+impl MsiBankBackingLineSnapshot {
+    pub fn new(line_address: Address, data: Vec<u8>) -> Self {
+        Self { line_address, data }
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankDirectoryHarnessSnapshot {
+    layout: CacheLineLayout,
+    cache_snapshots: BTreeMap<AgentId, MsiCacheBankSnapshot>,
+    directory_states: Vec<DirectoryLineState>,
+    backing_lines: Vec<MsiBankBackingLineSnapshot>,
+    cpu_responses: Vec<CpuResponseRecord>,
+    directory_decisions: Vec<DirectoryDecision>,
+}
+
+impl MsiBankDirectoryHarnessSnapshot {
+    pub fn new(
+        layout: CacheLineLayout,
+        cache_snapshots: BTreeMap<AgentId, MsiCacheBankSnapshot>,
+        directory_states: Vec<DirectoryLineState>,
+        backing_lines: Vec<MsiBankBackingLineSnapshot>,
+        cpu_responses: Vec<CpuResponseRecord>,
+        directory_decisions: Vec<DirectoryDecision>,
+    ) -> Self {
+        Self {
+            layout,
+            cache_snapshots,
+            directory_states,
+            backing_lines,
+            cpu_responses,
+            directory_decisions,
+        }
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub fn cache_snapshots(&self) -> &BTreeMap<AgentId, MsiCacheBankSnapshot> {
+        &self.cache_snapshots
+    }
+
+    pub fn cache_count(&self) -> usize {
+        self.cache_snapshots.len()
+    }
+
+    pub fn cache_agents(&self) -> Vec<AgentId> {
+        self.cache_snapshots.keys().copied().collect()
+    }
+
+    pub fn cache_snapshot(&self, agent: AgentId) -> Option<&MsiCacheBankSnapshot> {
+        self.cache_snapshots.get(&agent)
+    }
+
+    pub fn directory_states(&self) -> &[DirectoryLineState] {
+        &self.directory_states
+    }
+
+    pub fn directory_line_count(&self) -> usize {
+        self.directory_states.len()
+    }
+
+    pub fn directory_line_addresses(&self) -> Vec<Address> {
+        self.directory_states
+            .iter()
+            .map(|state| state.line().address())
+            .collect()
+    }
+
+    pub fn backing_lines(&self) -> &[MsiBankBackingLineSnapshot] {
+        &self.backing_lines
+    }
+
+    pub fn backing_line_count(&self) -> usize {
+        self.backing_lines.len()
+    }
+
+    pub fn backing_line(&self, address: Address) -> Option<&[u8]> {
+        let line_address = self.layout.line_address(address);
+        self.backing_lines
+            .iter()
+            .find(|line| line.line_address() == line_address)
+            .map(MsiBankBackingLineSnapshot::data)
+    }
+
+    pub fn cpu_responses(&self) -> &[CpuResponseRecord] {
+        &self.cpu_responses
+    }
+
+    pub fn directory_decisions(&self) -> &[DirectoryDecision] {
+        &self.directory_decisions
+    }
 }
 
 impl MsiBankDirectoryHarness {
@@ -59,6 +170,18 @@ impl MsiBankDirectoryHarness {
 
         self.backing.insert(line_address, data);
         Ok(())
+    }
+
+    pub fn cache_count(&self) -> usize {
+        self.caches.len()
+    }
+
+    pub fn cache_agents(&self) -> Vec<AgentId> {
+        self.caches.keys().copied().collect()
+    }
+
+    pub fn backing_line_addresses(&self) -> Vec<Address> {
+        self.backing.keys().copied().collect()
     }
 
     pub fn submit_cpu_request(
@@ -142,6 +265,85 @@ impl MsiBankDirectoryHarness {
         &self.directory_decisions
     }
 
+    pub fn snapshot(&self) -> MsiBankDirectoryHarnessSnapshot {
+        MsiBankDirectoryHarnessSnapshot::new(
+            self.layout,
+            self.caches
+                .iter()
+                .map(|(agent, cache)| (*agent, cache.snapshot()))
+                .collect(),
+            self.directory.line_states(),
+            self.backing
+                .iter()
+                .map(|(line_address, data)| {
+                    MsiBankBackingLineSnapshot::new(*line_address, data.clone())
+                })
+                .collect(),
+            self.cpu_responses.clone(),
+            self.directory_decisions.clone(),
+        )
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MsiBankDirectoryHarnessSnapshot,
+    ) -> Result<(), HarnessError> {
+        self.validate_snapshot_identity(snapshot)?;
+
+        let mut caches = self.caches.clone();
+        for (agent, cache_snapshot) in snapshot.cache_snapshots() {
+            caches
+                .get_mut(agent)
+                .ok_or(HarnessError::UnknownCache { agent: *agent })?
+                .restore(cache_snapshot)
+                .map_err(HarnessError::CacheBank)?;
+        }
+
+        let mut directory = MsiDirectory::new();
+        for state in snapshot.directory_states() {
+            let expected = self.layout.line_address(state.line().address());
+            if expected != state.line().address() {
+                return Err(HarnessError::WrongLine {
+                    expected,
+                    actual: state.line().address(),
+                });
+            }
+        }
+        directory.restore_line_states(snapshot.directory_states());
+
+        let mut backing = BTreeMap::new();
+        for line in snapshot.backing_lines() {
+            let expected = self.layout.line_address(line.line_address());
+            if expected != line.line_address() {
+                return Err(HarnessError::WrongLine {
+                    expected,
+                    actual: line.line_address(),
+                });
+            }
+            if line.data().len() as u64 != self.layout.bytes() {
+                return Err(HarnessError::LineDataSizeMismatch {
+                    expected: self.layout.bytes(),
+                    actual: line.data().len() as u64,
+                });
+            }
+            if backing
+                .insert(line.line_address(), line.data().to_vec())
+                .is_some()
+            {
+                return Err(HarnessError::SnapshotResourceMismatch {
+                    resource: "msi bank backing line",
+                });
+            }
+        }
+
+        self.directory = directory;
+        self.caches = caches;
+        self.backing = backing;
+        self.cpu_responses = snapshot.cpu_responses.clone();
+        self.directory_decisions = snapshot.directory_decisions.clone();
+        Ok(())
+    }
+
     fn directory_response(
         &mut self,
         request: &MemoryRequest,
@@ -216,6 +418,30 @@ impl MsiBankDirectoryHarness {
     ) {
         self.cpu_responses
             .push(response_record(tick, cache_result, response));
+    }
+
+    fn validate_snapshot_identity(
+        &self,
+        snapshot: &MsiBankDirectoryHarnessSnapshot,
+    ) -> Result<(), HarnessError> {
+        if self.layout != snapshot.layout() {
+            return Err(HarnessError::SnapshotResourceMismatch {
+                resource: "msi bank directory harness layout",
+            });
+        }
+
+        for agent in self.caches.keys() {
+            if !snapshot.cache_snapshots().contains_key(agent) {
+                return Err(HarnessError::UnknownCache { agent: *agent });
+            }
+        }
+        for agent in snapshot.cache_snapshots().keys() {
+            if !self.caches.contains_key(agent) {
+                return Err(HarnessError::UnknownCache { agent: *agent });
+            }
+        }
+
+        Ok(())
     }
 }
 

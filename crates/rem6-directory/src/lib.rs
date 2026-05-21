@@ -292,6 +292,13 @@ impl MsiDirectory {
         self.lines.keys().map(|line| line.address()).collect()
     }
 
+    pub fn line_states(&self) -> Vec<DirectoryLineState> {
+        self.lines
+            .iter()
+            .map(|(line, stored)| stored.snapshot(*line))
+            .collect()
+    }
+
     pub fn restore_line_state(&mut self, snapshot: &DirectoryLineState) {
         let line = snapshot.line();
         let stored = DirectoryLine::from_snapshot(snapshot);
@@ -299,6 +306,13 @@ impl MsiDirectory {
             self.lines.remove(&line);
         } else {
             self.lines.insert(line, stored);
+        }
+    }
+
+    pub fn restore_line_states(&mut self, snapshots: &[DirectoryLineState]) {
+        self.lines.clear();
+        for snapshot in snapshots {
+            self.restore_line_state(snapshot);
         }
     }
 

@@ -261,3 +261,52 @@ fn directory_restores_line_state_for_later_requests() {
         ))
     );
 }
+
+#[test]
+fn directory_line_states_are_stable_for_snapshotting() {
+    let mut directory = MsiDirectory::new();
+    directory.accept(read_unique(2, 0)).unwrap();
+    directory.accept(read_shared(1, 0)).unwrap();
+
+    let second_line = MsiLineId::new(Address::new(0x1080));
+    directory.restore_line_state(
+        &DirectoryLineState::new(second_line)
+            .with_sharer(AgentId::new(3))
+            .with_sharer(AgentId::new(1)),
+    );
+
+    assert_eq!(
+        directory.line_states(),
+        vec![
+            DirectoryLineState::new(line())
+                .with_sharer(AgentId::new(1))
+                .with_sharer(AgentId::new(2)),
+            DirectoryLineState::new(second_line)
+                .with_sharer(AgentId::new(1))
+                .with_sharer(AgentId::new(3)),
+        ]
+    );
+}
+
+#[test]
+fn directory_restores_complete_line_state_set() {
+    let mut directory = MsiDirectory::new();
+    directory.accept(read_shared(1, 0)).unwrap();
+    directory.restore_line_state(
+        &DirectoryLineState::new(MsiLineId::new(Address::new(0x2000))).with_owner(AgentId::new(4)),
+    );
+
+    let lower_line =
+        DirectoryLineState::new(MsiLineId::new(Address::new(0x1080))).with_sharer(AgentId::new(3));
+    let upper_line = DirectoryLineState::new(MsiLineId::new(Address::new(0x2000)))
+        .with_sharer(AgentId::new(1))
+        .with_sharer(AgentId::new(2));
+
+    directory.restore_line_states(&[upper_line.clone(), lower_line.clone()]);
+
+    assert_eq!(
+        directory.line_state(line()),
+        DirectoryLineState::new(line())
+    );
+    assert_eq!(directory.line_states(), vec![lower_line, upper_line]);
+}
