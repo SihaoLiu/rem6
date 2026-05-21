@@ -1,14 +1,16 @@
 use rem6_boot::BootImage;
 use rem6_cpu::CpuId;
 use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
+use rem6_gpu::GpuDeviceId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay, SystemActionOutcome};
 use rem6_workload::{
-    HostEventIntent, WorkloadDataCacheProtocol, WorkloadHostEvent, WorkloadHostPlacement,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore,
-    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadGpuDevice, WorkloadGpuKernelLaunch,
+    WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -190,6 +192,54 @@ fn replay_topology() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_gpu_kernel() -> WorkloadTopology {
+    WorkloadTopology::new(5, 2, 4, WorkloadHostPlacement::new(4, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 3, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap()
+        .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 2, 1).unwrap())
+        .unwrap()
+}
+
 fn replay_topology_with_data_route() -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
@@ -317,6 +367,22 @@ fn replay_topology_with_profiled_msi_data_cache() -> WorkloadTopology {
 fn replay_manifest() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay"), boot_image())
         .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_gpu_kernel() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-gpu-kernel"), boot_image())
+        .with_topology(replay_topology_with_gpu_kernel())
         .add_resource(kernel_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
@@ -567,6 +633,29 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     assert_eq!(outcome.run().scheduled_traps().len(), 2);
     assert!(outcome.run().active_partition_count() >= 2);
     assert!(outcome.run().max_parallel_scheduler_workers() >= 1);
+}
+
+#[test]
+fn workload_replay_runs_declared_gpu_kernel_on_parallel_scheduler() {
+    let manifest = replay_manifest_with_gpu_kernel();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let gpu = outcome.gpu_snapshot(GpuDeviceId::new(12)).unwrap();
+    assert_eq!(gpu.completions().len(), 2);
+    assert!(gpu.pending_dma_writes().is_empty());
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(summary.gpu_kernel_launch_count(), 1);
+    assert_eq!(summary.gpu_trace_event_count(), 6);
+    assert_eq!(summary.gpu_workgroup_completion_count(), 2);
+    assert_eq!(summary.active_gpu_device_count(), 1);
+    assert!(summary.has_gpu_compute_activity());
+    assert!(summary.has_full_system_parallel_scheduler_work());
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]

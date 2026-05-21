@@ -62,6 +62,10 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
     data_cache_wait_for_edge_count: usize,
     data_cache_deadlock_diagnostic_count: usize,
+    gpu_kernel_launch_count: usize,
+    gpu_trace_event_count: usize,
+    gpu_workgroup_completion_count: usize,
+    active_gpu_device_count: usize,
 }
 
 impl WorkloadParallelExecutionSummary {
@@ -139,6 +143,20 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.data_cache_wait_for_edge_count = wait_for_edge_count;
         self.data_cache_deadlock_diagnostic_count = deadlock_diagnostic_count;
+        self
+    }
+
+    pub const fn with_gpu_compute_counts(
+        mut self,
+        kernel_launch_count: usize,
+        trace_event_count: usize,
+        workgroup_completion_count: usize,
+        active_device_count: usize,
+    ) -> Self {
+        self.gpu_kernel_launch_count = kernel_launch_count;
+        self.gpu_trace_event_count = trace_event_count;
+        self.gpu_workgroup_completion_count = workgroup_completion_count;
+        self.active_gpu_device_count = active_device_count;
         self
     }
 
@@ -248,6 +266,28 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn has_data_cache_diagnostics(&self) -> bool {
         self.data_cache_wait_for_edge_count != 0 || self.data_cache_deadlock_diagnostic_count != 0
+    }
+
+    pub const fn gpu_kernel_launch_count(&self) -> usize {
+        self.gpu_kernel_launch_count
+    }
+
+    pub const fn gpu_trace_event_count(&self) -> usize {
+        self.gpu_trace_event_count
+    }
+
+    pub const fn gpu_workgroup_completion_count(&self) -> usize {
+        self.gpu_workgroup_completion_count
+    }
+
+    pub const fn active_gpu_device_count(&self) -> usize {
+        self.active_gpu_device_count
+    }
+
+    pub const fn has_gpu_compute_activity(&self) -> bool {
+        self.gpu_kernel_launch_count != 0
+            || self.gpu_trace_event_count != 0
+            || self.gpu_workgroup_completion_count != 0
     }
 
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {

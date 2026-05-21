@@ -7,10 +7,10 @@ use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
-    WorkloadError, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
+    WorkloadError, WorkloadGpuDevice, WorkloadGpuKernelLaunch, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -268,6 +268,87 @@ fn riscv_topology() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
+}
+
+#[test]
+fn workload_topology_records_gpu_devices_and_kernel_launches() {
+    let topology = riscv_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap()
+        .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 3, 5).unwrap())
+        .unwrap();
+
+    assert_eq!(topology.gpu_devices().len(), 1);
+    assert_eq!(topology.gpu_devices()[0].device(), 12);
+    assert_eq!(topology.gpu_devices()[0].partition(), 3);
+    assert_eq!(topology.gpu_devices()[0].compute_units(), 2);
+    assert_eq!(topology.gpu_devices()[0].wave_slots_per_compute_unit(), 1);
+    assert_eq!(
+        topology.gpu_devices()[0].command_route(),
+        &route_id("gpu0.command")
+    );
+    assert_eq!(topology.gpu_kernel_launches().len(), 1);
+    assert_eq!(topology.gpu_kernel_launches()[0].device(), 12);
+    assert_eq!(topology.gpu_kernel_launches()[0].kernel(), 90);
+    assert_eq!(topology.gpu_kernel_launches()[0].workgroups(), 3);
+    assert_eq!(topology.gpu_kernel_launches()[0].workgroup_latency(), 5);
+}
+
+#[test]
+fn workload_topology_rejects_invalid_gpu_declarations() {
+    let missing_route = riscv_topology()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap_err();
+    assert_eq!(
+        missing_route,
+        WorkloadError::MissingGpuCommandRoute {
+            device: 12,
+            route: route_id("gpu0.command"),
+        }
+    );
+
+    let topology = riscv_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap();
+    let duplicate = topology
+        .clone()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap_err();
+    assert_eq!(duplicate, WorkloadError::DuplicateGpuDevice { device: 12 });
+
+    let missing_device = topology
+        .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(99, 90, 3, 5).unwrap())
+        .unwrap_err();
+    assert_eq!(
+        missing_device,
+        WorkloadError::MissingGpuDevice { device: 99 }
+    );
 }
 
 #[test]

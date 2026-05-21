@@ -3,19 +3,18 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_boot::{BootError, BootImage};
-use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
+use rem6_dram::ExternalMemoryProfile;
 use rem6_kernel::Tick;
 use rem6_memory::{Address, AddressRange};
 use rem6_stats::StatSnapshot;
 
+mod identity;
 mod result;
 
+use identity::manifest_identity;
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadParallelExecutionSummary,
 };
-
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WorkloadId(String);
@@ -480,6 +479,107 @@ impl WorkloadRiscvDataCache {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadGpuDevice {
+    device: u32,
+    partition: u32,
+    compute_units: u32,
+    wave_slots_per_compute_unit: u32,
+    command_route: WorkloadRouteId,
+}
+
+impl WorkloadGpuDevice {
+    pub fn new(
+        device: u32,
+        partition: u32,
+        compute_units: u32,
+        wave_slots_per_compute_unit: u32,
+        command_route: WorkloadRouteId,
+    ) -> Result<Self, WorkloadError> {
+        if compute_units == 0 {
+            return Err(WorkloadError::ZeroGpuComputeUnits { device });
+        }
+        if wave_slots_per_compute_unit == 0 {
+            return Err(WorkloadError::ZeroGpuWaveSlots { device });
+        }
+
+        Ok(Self {
+            device,
+            partition,
+            compute_units,
+            wave_slots_per_compute_unit,
+            command_route,
+        })
+    }
+
+    pub const fn device(&self) -> u32 {
+        self.device
+    }
+
+    pub const fn partition(&self) -> u32 {
+        self.partition
+    }
+
+    pub const fn compute_units(&self) -> u32 {
+        self.compute_units
+    }
+
+    pub const fn wave_slots_per_compute_unit(&self) -> u32 {
+        self.wave_slots_per_compute_unit
+    }
+
+    pub const fn command_route(&self) -> &WorkloadRouteId {
+        &self.command_route
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadGpuKernelLaunch {
+    device: u32,
+    kernel: u64,
+    workgroups: u32,
+    workgroup_latency: Tick,
+}
+
+impl WorkloadGpuKernelLaunch {
+    pub const fn new(
+        device: u32,
+        kernel: u64,
+        workgroups: u32,
+        workgroup_latency: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if workgroups == 0 {
+            return Err(WorkloadError::ZeroGpuKernelWorkgroups { device, kernel });
+        }
+        if workgroup_latency == 0 {
+            return Err(WorkloadError::ZeroGpuKernelLatency { device, kernel });
+        }
+
+        Ok(Self {
+            device,
+            kernel,
+            workgroups,
+            workgroup_latency,
+        })
+    }
+
+    pub const fn device(&self) -> u32 {
+        self.device
+    }
+
+    pub const fn kernel(&self) -> u64 {
+        self.kernel
+    }
+
+    pub const fn workgroups(&self) -> u32 {
+        self.workgroups
+    }
+
+    pub const fn workgroup_latency(&self) -> Tick {
+        self.workgroup_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadTopology {
     partition_count: u32,
     min_remote_delay: Tick,
@@ -489,6 +589,8 @@ pub struct WorkloadTopology {
     memory_routes: Vec<WorkloadMemoryRoute>,
     riscv_cores: Vec<WorkloadRiscvCore>,
     riscv_data_cache: Option<WorkloadRiscvDataCache>,
+    gpu_devices: Vec<WorkloadGpuDevice>,
+    gpu_kernel_launches: Vec<WorkloadGpuKernelLaunch>,
 }
 
 impl WorkloadTopology {
@@ -523,6 +625,8 @@ impl WorkloadTopology {
             memory_routes: Vec::new(),
             riscv_cores: Vec::new(),
             riscv_data_cache: None,
+            gpu_devices: Vec::new(),
+            gpu_kernel_launches: Vec::new(),
         })
     }
 
@@ -602,6 +706,59 @@ impl WorkloadTopology {
         Ok(self)
     }
 
+    pub fn add_gpu_device(mut self, device: WorkloadGpuDevice) -> Result<Self, WorkloadError> {
+        self.validate_partition(device.partition())?;
+        if self
+            .gpu_devices
+            .iter()
+            .any(|existing| existing.device() == device.device())
+        {
+            return Err(WorkloadError::DuplicateGpuDevice {
+                device: device.device(),
+            });
+        }
+        let route = self
+            .memory_routes
+            .iter()
+            .find(|route| route.id() == device.command_route())
+            .ok_or_else(|| WorkloadError::MissingGpuCommandRoute {
+                device: device.device(),
+                route: device.command_route().clone(),
+            })?;
+        if route.target_partition() != device.partition() {
+            return Err(WorkloadError::GpuCommandRouteTargetMismatch {
+                device: device.device(),
+                route: device.command_route().clone(),
+                expected: device.partition(),
+                actual: route.target_partition(),
+            });
+        }
+
+        self.gpu_devices.push(device);
+        self.gpu_devices.sort_by_key(WorkloadGpuDevice::device);
+        Ok(self)
+    }
+
+    pub fn add_gpu_kernel_launch(
+        mut self,
+        launch: WorkloadGpuKernelLaunch,
+    ) -> Result<Self, WorkloadError> {
+        if !self
+            .gpu_devices
+            .iter()
+            .any(|device| device.device() == launch.device())
+        {
+            return Err(WorkloadError::MissingGpuDevice {
+                device: launch.device(),
+            });
+        }
+
+        self.gpu_kernel_launches.push(launch);
+        self.gpu_kernel_launches
+            .sort_by_key(|launch| (launch.device(), launch.kernel()));
+        Ok(self)
+    }
+
     pub fn with_riscv_data_cache(
         mut self,
         cache: WorkloadRiscvDataCache,
@@ -658,6 +815,14 @@ impl WorkloadTopology {
 
     pub fn riscv_data_cache(&self) -> Option<&WorkloadRiscvDataCache> {
         self.riscv_data_cache.as_ref()
+    }
+
+    pub fn gpu_devices(&self) -> &[WorkloadGpuDevice] {
+        &self.gpu_devices
+    }
+
+    pub fn gpu_kernel_launches(&self) -> &[WorkloadGpuKernelLaunch] {
+        &self.gpu_kernel_launches
     }
 
     fn validate_partition(&self, partition: u32) -> Result<(), WorkloadError> {
@@ -1266,6 +1431,36 @@ pub enum WorkloadError {
         cpu: u32,
         route: WorkloadRouteId,
     },
+    ZeroGpuComputeUnits {
+        device: u32,
+    },
+    ZeroGpuWaveSlots {
+        device: u32,
+    },
+    DuplicateGpuDevice {
+        device: u32,
+    },
+    MissingGpuCommandRoute {
+        device: u32,
+        route: WorkloadRouteId,
+    },
+    GpuCommandRouteTargetMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    MissingGpuDevice {
+        device: u32,
+    },
+    ZeroGpuKernelWorkgroups {
+        device: u32,
+        kernel: u64,
+    },
+    ZeroGpuKernelLatency {
+        device: u32,
+        kernel: u64,
+    },
     ManifestIdentityMismatch {
         expected: WorkloadManifestIdentity,
         actual: WorkloadManifestIdentity,
@@ -1394,6 +1589,42 @@ impl fmt::Display for WorkloadError {
                 "RISC-V core {cpu} data route {} is not defined",
                 route.as_str()
             ),
+            Self::ZeroGpuComputeUnits { device } => {
+                write!(formatter, "GPU device {device} needs at least one compute unit")
+            }
+            Self::ZeroGpuWaveSlots { device } => write!(
+                formatter,
+                "GPU device {device} needs at least one wave slot per compute unit"
+            ),
+            Self::DuplicateGpuDevice { device } => {
+                write!(formatter, "GPU device {device} is already defined")
+            }
+            Self::MissingGpuCommandRoute { device, route } => write!(
+                formatter,
+                "GPU device {device} command route {} is not defined",
+                route.as_str()
+            ),
+            Self::GpuCommandRouteTargetMismatch {
+                device,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "GPU device {device} command route {} targets partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::MissingGpuDevice { device } => {
+                write!(formatter, "GPU device {device} is not defined")
+            }
+            Self::ZeroGpuKernelWorkgroups { device, kernel } => write!(
+                formatter,
+                "GPU kernel {kernel} on device {device} needs at least one workgroup"
+            ),
+            Self::ZeroGpuKernelLatency { device, kernel } => write!(
+                formatter,
+                "GPU kernel {kernel} on device {device} needs positive workgroup latency"
+            ),
             Self::ManifestIdentityMismatch { expected, actual } => write!(
                 formatter,
                 "workload result belongs to manifest {}, expected {}",
@@ -1473,221 +1704,4 @@ fn planned_stop_reason(events: &[WorkloadHostEvent]) -> Option<String> {
         HostEventIntent::Stop { reason } => Some(reason.clone()),
         _ => None,
     })
-}
-
-fn manifest_identity(
-    id: &WorkloadId,
-    boot: &WorkloadBootImage,
-    topology: Option<&WorkloadTopology>,
-    resources: &[WorkloadResource],
-    required_resources: &[WorkloadResourceId],
-    host_events: &[WorkloadHostEvent],
-    checkpoint_lineage: Option<&CheckpointLineage>,
-) -> WorkloadManifestIdentity {
-    let mut hash = FNV_OFFSET;
-    hash_str(&mut hash, "rem6.workload.manifest.v1");
-    hash_str(&mut hash, id.as_str());
-    hash_u64(&mut hash, boot.entry().get());
-    hash_u64(&mut hash, boot.segments().len() as u64);
-    for segment in boot.segments() {
-        hash_u64(&mut hash, segment.range().start().get());
-        hash_u64(&mut hash, segment.range().size().bytes());
-        hash_bytes(&mut hash, segment.data());
-    }
-    hash_topology(&mut hash, topology);
-    hash_u64(&mut hash, resources.len() as u64);
-    for resource in resources {
-        hash_str(&mut hash, resource.id().as_str());
-        hash_u64(&mut hash, resource.kind() as u64);
-        hash_str(&mut hash, resource.digest());
-        hash_str(&mut hash, resource.locator());
-    }
-    hash_u64(&mut hash, required_resources.len() as u64);
-    for resource in required_resources {
-        hash_str(&mut hash, resource.as_str());
-    }
-    hash_u64(&mut hash, host_events.len() as u64);
-    for event in host_events {
-        hash_u64(&mut hash, event.tick());
-        hash_host_event(&mut hash, event.intent());
-    }
-    hash_checkpoint_lineage(&mut hash, checkpoint_lineage);
-    WorkloadManifestIdentity::new(hash)
-}
-
-fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
-    let Some(topology) = topology else {
-        hash_str(hash, "topology.none");
-        return;
-    };
-
-    hash_str(hash, "topology.riscv.v1");
-    hash_u64(hash, u64::from(topology.partition_count()));
-    hash_u64(hash, topology.min_remote_delay());
-    hash_u64(hash, topology.parallel_worker_limit() as u64);
-    hash_u64(hash, u64::from(topology.host().partition()));
-    hash_u64(hash, topology.host().latency());
-    hash_u64(hash, u64::from(topology.host().source()));
-    hash_u64(hash, topology.memory_targets().len() as u64);
-    for target in topology.memory_targets() {
-        hash_u64(hash, u64::from(target.target()));
-        hash_u64(hash, target.line_bytes());
-        hash_u64(hash, target.range().start().get());
-        hash_u64(hash, target.range().size().bytes());
-        hash_external_memory_profile(hash, target.external_memory_profile());
-    }
-    hash_u64(hash, topology.memory_routes().len() as u64);
-    for route in topology.memory_routes() {
-        hash_str(hash, route.id().as_str());
-        hash_str(hash, route.source_endpoint());
-        hash_u64(hash, u64::from(route.source_partition()));
-        hash_str(hash, route.target_endpoint());
-        hash_u64(hash, u64::from(route.target_partition()));
-        hash_u64(hash, route.request_latency());
-        hash_u64(hash, route.response_latency());
-    }
-    hash_u64(hash, topology.riscv_cores().len() as u64);
-    for core in topology.riscv_cores() {
-        hash_u64(hash, u64::from(core.cpu()));
-        hash_u64(hash, u64::from(core.partition()));
-        hash_u64(hash, u64::from(core.agent()));
-        hash_u64(hash, core.entry().get());
-        hash_str(hash, core.fetch_endpoint());
-        hash_str(hash, core.fetch_route().as_str());
-        match (core.data_endpoint(), core.data_route()) {
-            (Some(endpoint), Some(route)) => {
-                hash_str(hash, "data");
-                hash_str(hash, endpoint);
-                hash_str(hash, route.as_str());
-            }
-            (None, None) => hash_str(hash, "data.none"),
-            _ => hash_str(hash, "data.invalid"),
-        }
-    }
-    match topology.riscv_data_cache() {
-        Some(cache) => {
-            hash_str(hash, "riscv.data_cache");
-            hash_str(hash, cache.protocol().as_str());
-            hash_u64(hash, u64::from(cache.memory_target()));
-            for line_address in cache.line_addresses() {
-                hash_u64(hash, line_address.get());
-            }
-            hash_u64(hash, u64::from(cache.directory_partition()));
-            hash_str(hash, cache.directory_endpoint());
-        }
-        None => hash_str(hash, "riscv.data_cache.none"),
-    }
-}
-
-fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryProfile>) {
-    let Some(profile) = profile else {
-        hash_str(hash, "memory.profile.none");
-        return;
-    };
-
-    hash_str(hash, "memory.profile.v1");
-    hash_u64(hash, u64::from(profile.target().get()));
-    hash_u64(hash, profile.line_layout().bytes());
-    hash_u64(hash, u64::from(profile.geometry().bank_count()));
-    hash_u64(hash, profile.geometry().row_size());
-    hash_u64(hash, profile.geometry().line_size());
-    hash_u64(hash, profile.timing().activate_latency());
-    hash_u64(hash, profile.timing().read_latency());
-    hash_u64(hash, profile.timing().write_latency());
-    hash_u64(hash, profile.timing().precharge_latency());
-    hash_u64(hash, profile.timing().bus_turnaround());
-    match profile.technology() {
-        DramMemoryTechnology::Ddr => hash_str(hash, "ddr"),
-        DramMemoryTechnology::Hbm => hash_str(hash, "hbm"),
-        DramMemoryTechnology::Lpddr => hash_str(hash, "lpddr"),
-    }
-    match profile.topology() {
-        ExternalMemoryTopology::Ddr {
-            channels,
-            ranks_per_channel,
-        } => {
-            hash_str(hash, "ddr.topology");
-            hash_u64(hash, u64::from(channels));
-            hash_u64(hash, u64::from(ranks_per_channel));
-        }
-        ExternalMemoryTopology::Hbm {
-            stacks,
-            pseudo_channels_per_stack,
-        } => {
-            hash_str(hash, "hbm.topology");
-            hash_u64(hash, u64::from(stacks));
-            hash_u64(hash, u64::from(pseudo_channels_per_stack));
-        }
-        ExternalMemoryTopology::Lpddr {
-            channels,
-            dies_per_channel,
-        } => {
-            hash_str(hash, "lpddr.topology");
-            hash_u64(hash, u64::from(channels));
-            hash_u64(hash, u64::from(dies_per_channel));
-        }
-    }
-}
-
-fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
-    match intent {
-        HostEventIntent::RoiBegin { label } => {
-            hash_str(hash, "roi_begin");
-            hash_str(hash, label);
-        }
-        HostEventIntent::RoiEnd { label } => {
-            hash_str(hash, "roi_end");
-            hash_str(hash, label);
-        }
-        HostEventIntent::StatsReset { label } => {
-            hash_str(hash, "stats_reset");
-            hash_str(hash, label);
-        }
-        HostEventIntent::StatsDump { label } => {
-            hash_str(hash, "stats_dump");
-            hash_str(hash, label);
-        }
-        HostEventIntent::Checkpoint { label } => {
-            hash_str(hash, "checkpoint");
-            hash_str(hash, label);
-        }
-        HostEventIntent::Stop { reason } => {
-            hash_str(hash, "stop");
-            hash_str(hash, reason);
-        }
-    }
-}
-
-fn hash_checkpoint_lineage(hash: &mut u64, lineage: Option<&CheckpointLineage>) {
-    match lineage {
-        None => hash_str(hash, "lineage.none"),
-        Some(CheckpointLineage::CreatedByWorkload { label }) => {
-            hash_str(hash, "lineage.created");
-            hash_str(hash, label);
-        }
-        Some(CheckpointLineage::RestoredFrom {
-            label,
-            manifest_identity,
-        }) => {
-            hash_str(hash, "lineage.restored");
-            hash_str(hash, label);
-            hash_str(hash, manifest_identity);
-        }
-    }
-}
-
-fn hash_str(hash: &mut u64, value: &str) {
-    hash_u64(hash, value.len() as u64);
-    hash_bytes(hash, value.as_bytes());
-}
-
-fn hash_u64(hash: &mut u64, value: u64) {
-    hash_bytes(hash, &value.to_le_bytes());
-}
-
-fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
-    for byte in bytes {
-        *hash ^= u64::from(*byte);
-        *hash = hash.wrapping_mul(FNV_PRIME);
-    }
 }

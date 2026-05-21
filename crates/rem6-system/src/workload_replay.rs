@@ -17,6 +17,10 @@ use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
     DramTargetActivity, DramTiming,
 };
+use rem6_gpu::{
+    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuError, GpuKernelId,
+    GpuKernelLaunch,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
@@ -30,8 +34,9 @@ use rem6_transport::{
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
-    WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    WorkloadGpuDevice, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache,
+    WorkloadRouteId, WorkloadTopology,
 };
 
 use crate::{
@@ -122,6 +127,62 @@ impl WorkloadMemoryBackend {
                 .insert_line(target, line, data)
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
+    }
+}
+
+#[derive(Clone)]
+struct WorkloadGpuRuntime {
+    gpu: GpuDevice,
+    source_partition: PartitionId,
+    submission_latency: u64,
+}
+
+impl WorkloadGpuRuntime {
+    fn new(gpu: GpuDevice, source_partition: PartitionId, submission_latency: u64) -> Self {
+        Self {
+            gpu,
+            source_partition,
+            submission_latency,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct WorkloadGpuActivity {
+    kernel_launch_count: usize,
+    trace_event_count: usize,
+    workgroup_completion_count: usize,
+    active_device_count: usize,
+}
+
+impl WorkloadGpuActivity {
+    fn from_snapshots(
+        kernel_launch_count: usize,
+        before: &BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
+        after: &BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
+    ) -> Self {
+        let mut activity = Self {
+            kernel_launch_count,
+            ..Self::default()
+        };
+
+        for (device, after) in after {
+            let Some(before) = before.get(device) else {
+                continue;
+            };
+            let trace_event_count = after.trace().len().saturating_sub(before.trace().len());
+            let workgroup_completion_count = after
+                .completions()
+                .len()
+                .saturating_sub(before.completions().len());
+            if trace_event_count != 0 || workgroup_completion_count != 0 {
+                activity.active_device_count += 1;
+            }
+            activity.trace_event_count += trace_event_count;
+            activity.workgroup_completion_count += workgroup_completion_count;
+        }
+
+        activity
     }
 }
 
@@ -644,6 +705,8 @@ impl RiscvWorkloadReplay {
         let route_map = self.build_route_map()?;
         let memory = self.load_memory_backend()?;
         let data_cache = self.build_data_cache(&memory)?;
+        let gpu_devices = self.build_gpu_devices()?;
+        let gpu_before = gpu_snapshots(&gpu_devices);
         let cluster = self.build_cluster(&route_map)?;
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
@@ -672,6 +735,7 @@ impl RiscvWorkloadReplay {
             GuestSourceId::new(topology.host().source()),
         );
         let driver = RiscvSystemRunDriver::new(trap_port);
+        let gpu_launch_count = self.schedule_gpu_kernel_launches(&gpu_devices, &mut scheduler)?;
         let run_result = driver.drive_until_host_stop_parallel(
             &cluster,
             &mut scheduler,
@@ -727,7 +791,11 @@ impl RiscvWorkloadReplay {
         if !dram_target_activities.is_empty() {
             run = run.with_dram_activity(dram_target_activities);
         }
-        let (result, host_action_outcomes) = self.result_from_run(&run, &controller)?;
+        let gpu_snapshots = gpu_snapshots(&gpu_devices);
+        let gpu_activity =
+            WorkloadGpuActivity::from_snapshots(gpu_launch_count, &gpu_before, &gpu_snapshots);
+        let (result, host_action_outcomes) =
+            self.result_from_run(&run, &controller, &gpu_activity)?;
         self.plan
             .verify_result(&result)
             .map_err(RiscvWorkloadReplayError::Workload)?;
@@ -741,6 +809,7 @@ impl RiscvWorkloadReplay {
             host_action_outcomes,
             memory_snapshot,
             dram_snapshot,
+            gpu_snapshots,
         ))
     }
 
@@ -873,6 +942,75 @@ impl RiscvWorkloadReplay {
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 
         RiscvCluster::new(cores).map_err(RiscvWorkloadReplayError::RiscvCluster)
+    }
+
+    fn build_gpu_devices(
+        &self,
+    ) -> Result<BTreeMap<GpuDeviceId, WorkloadGpuRuntime>, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+        let mut devices = BTreeMap::new();
+        for device in topology.gpu_devices() {
+            let route = gpu_command_route(topology, device)?;
+            let gpu = GpuDevice::new(
+                GpuComputeConfig::new(
+                    GpuDeviceId::new(device.device()),
+                    PartitionId::new(device.partition()),
+                    device.compute_units(),
+                    device.wave_slots_per_compute_unit(),
+                )
+                .map_err(RiscvWorkloadReplayError::Gpu)?,
+            );
+            devices.insert(
+                GpuDeviceId::new(device.device()),
+                WorkloadGpuRuntime::new(
+                    gpu,
+                    PartitionId::new(route.source_partition()),
+                    route.request_latency(),
+                ),
+            );
+        }
+
+        Ok(devices)
+    }
+
+    fn schedule_gpu_kernel_launches(
+        &self,
+        devices: &BTreeMap<GpuDeviceId, WorkloadGpuRuntime>,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<usize, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+        let mut launch_count = 0;
+        for launch in topology.gpu_kernel_launches() {
+            let device = GpuDeviceId::new(launch.device());
+            let runtime = devices.get(&device).ok_or_else(|| {
+                RiscvWorkloadReplayError::Workload(WorkloadError::MissingGpuDevice {
+                    device: launch.device(),
+                })
+            })?;
+            runtime
+                .gpu
+                .submit_kernel_from_partition(
+                    scheduler,
+                    runtime.source_partition,
+                    runtime.submission_latency,
+                    GpuKernelLaunch::new(
+                        GpuKernelId::new(launch.kernel()),
+                        launch.workgroups(),
+                        launch.workgroup_latency(),
+                    )
+                    .map_err(RiscvWorkloadReplayError::Gpu)?,
+                )
+                .map_err(RiscvWorkloadReplayError::Gpu)?;
+            launch_count += 1;
+        }
+
+        Ok(launch_count)
     }
 
     fn build_data_cache(
@@ -1110,6 +1248,7 @@ impl RiscvWorkloadReplay {
         &self,
         run: &RiscvSystemRun,
         controller: &Arc<Mutex<SystemHostController>>,
+        gpu_activity: &WorkloadGpuActivity,
     ) -> Result<(WorkloadResult, Vec<SystemActionOutcome>), RiscvWorkloadReplayError> {
         let final_tick = run
             .final_tick()
@@ -1133,14 +1272,42 @@ impl RiscvWorkloadReplay {
         }
         Ok((
             result
-                .with_parallel_execution_summary(parallel_execution_summary(run))
+                .with_parallel_execution_summary(parallel_execution_summary(run, gpu_activity))
                 .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
             host_action_outcomes,
         ))
     }
 }
 
-fn parallel_execution_summary(run: &RiscvSystemRun) -> WorkloadParallelExecutionSummary {
+fn gpu_command_route<'a>(
+    topology: &'a WorkloadTopology,
+    device: &WorkloadGpuDevice,
+) -> Result<&'a WorkloadMemoryRoute, RiscvWorkloadReplayError> {
+    topology
+        .memory_routes()
+        .iter()
+        .find(|route| route.id() == device.command_route())
+        .ok_or_else(|| {
+            RiscvWorkloadReplayError::Workload(WorkloadError::MissingGpuCommandRoute {
+                device: device.device(),
+                route: device.command_route().clone(),
+            })
+        })
+}
+
+fn gpu_snapshots(
+    devices: &BTreeMap<GpuDeviceId, WorkloadGpuRuntime>,
+) -> BTreeMap<GpuDeviceId, GpuDeviceSnapshot> {
+    devices
+        .iter()
+        .map(|(device, runtime)| (*device, runtime.gpu.snapshot()))
+        .collect()
+}
+
+fn parallel_execution_summary(
+    run: &RiscvSystemRun,
+    gpu_activity: &WorkloadGpuActivity,
+) -> WorkloadParallelExecutionSummary {
     let scheduler = run.parallel_scheduler_profile();
     WorkloadParallelExecutionSummary::default()
         .with_scheduler_counts(
@@ -1175,6 +1342,12 @@ fn parallel_execution_summary(run: &RiscvSystemRun) -> WorkloadParallelExecution
         .with_data_cache_diagnostics(
             run.data_cache_wait_for_edge_count(),
             run.data_cache_deadlock_diagnostic_count(),
+        )
+        .with_gpu_compute_counts(
+            gpu_activity.kernel_launch_count,
+            gpu_activity.trace_event_count,
+            gpu_activity.workgroup_completion_count,
+            gpu_activity.active_device_count,
         )
 }
 
@@ -1216,16 +1389,18 @@ pub struct RiscvWorkloadReplayOutcome {
     host_action_outcomes: Vec<SystemActionOutcome>,
     memory_snapshot: PartitionedMemorySnapshot,
     dram_snapshot: Option<DramMemorySnapshot>,
+    gpu_snapshots: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
 }
 
 impl RiscvWorkloadReplayOutcome {
-    pub const fn new(
+    pub fn new(
         cluster: RiscvCluster,
         run: RiscvSystemRun,
         result: WorkloadResult,
         host_action_outcomes: Vec<SystemActionOutcome>,
         memory_snapshot: PartitionedMemorySnapshot,
         dram_snapshot: Option<DramMemorySnapshot>,
+        gpu_snapshots: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
     ) -> Self {
         Self {
             cluster,
@@ -1234,6 +1409,7 @@ impl RiscvWorkloadReplayOutcome {
             host_action_outcomes,
             memory_snapshot,
             dram_snapshot,
+            gpu_snapshots,
         }
     }
 
@@ -1260,6 +1436,14 @@ impl RiscvWorkloadReplayOutcome {
     pub const fn dram_snapshot(&self) -> Option<&DramMemorySnapshot> {
         self.dram_snapshot.as_ref()
     }
+
+    pub fn gpu_snapshots(&self) -> &BTreeMap<GpuDeviceId, GpuDeviceSnapshot> {
+        &self.gpu_snapshots
+    }
+
+    pub fn gpu_snapshot(&self, device: GpuDeviceId) -> Option<&GpuDeviceSnapshot> {
+        self.gpu_snapshots.get(&device)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1276,6 +1460,7 @@ pub enum RiscvWorkloadReplayError {
     Dram(DramMemoryError),
     DramModel(rem6_dram::DramError),
     Memory(MemoryError),
+    Gpu(GpuError),
     MsiDataCache(HarnessError),
     MesiDataCache(MesiHarnessError),
     MoesiDataCache(MoesiHarnessError),
@@ -1321,6 +1506,7 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::DramModel(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Gpu(error) => write!(formatter, "{error}"),
             Self::MsiDataCache(error) => write!(formatter, "{error}"),
             Self::MesiDataCache(error) => write!(formatter, "{error}"),
             Self::MoesiDataCache(error) => write!(formatter, "{error}"),
@@ -1341,6 +1527,7 @@ impl Error for RiscvWorkloadReplayError {
             Self::Dram(error) => Some(error),
             Self::DramModel(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::Gpu(error) => Some(error),
             Self::MsiDataCache(error) => Some(error),
             Self::MesiDataCache(error) => Some(error),
             Self::MoesiDataCache(error) => Some(error),
