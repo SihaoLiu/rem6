@@ -335,8 +335,25 @@ impl ExternalMemoryProfile {
         self.topology
     }
 
+    pub const fn parallel_port_count(self) -> u32 {
+        self.topology.parallel_port_count()
+    }
+
     pub const fn controller_config(self) -> DramControllerConfig {
         DramControllerConfig::new(self.target, self.line_layout, self.geometry, self.timing)
+            .with_profile_parallel_ports(self.parallel_port_count())
+    }
+}
+
+impl ExternalMemoryTopology {
+    pub const fn parallel_port_count(self) -> u32 {
+        match self {
+            Self::Ddr { channels, .. } | Self::Lpddr { channels, .. } => channels,
+            Self::Hbm {
+                stacks,
+                pseudo_channels_per_stack,
+            } => stacks * pseudo_channels_per_stack,
+        }
     }
 }
 
@@ -477,14 +494,24 @@ impl DramGeometry {
         self.lines_per_row
     }
 
-    fn decode_address(self, address: u64) -> DecodedDramAddress {
+    fn decode_address(self, parallel_port_count: u32, address: u64) -> DecodedDramAddress {
         let line = address / self.line_size;
-        let bank = (line % u64::from(self.bank_count)) as u32;
-        let row = line / (u64::from(self.bank_count) * self.lines_per_row);
-        DecodedDramAddress { bank, row }
+        let parallel_port = (line % u64::from(parallel_port_count)) as u32;
+        let port_line = line / u64::from(parallel_port_count);
+        let bank = (port_line % u64::from(self.bank_count)) as u32;
+        let row = port_line / (u64::from(self.bank_count) * self.lines_per_row);
+        DecodedDramAddress {
+            parallel_port,
+            bank,
+            row,
+        }
     }
 
-    fn decode_request(self, request: &MemoryRequest) -> Result<DecodedDramAddress, DramError> {
+    fn decode_request(
+        self,
+        parallel_port_count: u32,
+        request: &MemoryRequest,
+    ) -> Result<DecodedDramAddress, DramError> {
         if request.line_layout().bytes() != self.line_size {
             return Err(DramError::LineSizeMismatch {
                 request: request.id(),
@@ -493,8 +520,8 @@ impl DramGeometry {
             });
         }
 
-        let start = self.decode_address(request.range().start().get());
-        let end = self.decode_address(request.range().end().get() - 1);
+        let start = self.decode_address(parallel_port_count, request.range().start().get());
+        let end = self.decode_address(parallel_port_count, request.range().end().get() - 1);
         if start != end {
             return Err(DramError::RequestCrossesRow {
                 request: request.id(),
@@ -511,6 +538,7 @@ impl DramGeometry {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DecodedDramAddress {
+    parallel_port: u32,
     bank: u32,
     row: u64,
 }
@@ -559,15 +587,17 @@ pub enum DramCommandKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DramCommand {
     cycle: u64,
+    parallel_port: u32,
     bank: u32,
     row: u64,
     kind: DramCommandKind,
 }
 
 impl DramCommand {
-    fn new(cycle: u64, bank: u32, row: u64, kind: DramCommandKind) -> Self {
+    fn new(cycle: u64, parallel_port: u32, bank: u32, row: u64, kind: DramCommandKind) -> Self {
         Self {
             cycle,
+            parallel_port,
             bank,
             row,
             kind,
@@ -576,6 +606,10 @@ impl DramCommand {
 
     pub const fn cycle(&self) -> u64 {
         self.cycle
+    }
+
+    pub const fn parallel_port(&self) -> u32 {
+        self.parallel_port
     }
 
     pub const fn bank(&self) -> u32 {
@@ -595,6 +629,7 @@ impl DramCommand {
 pub struct DramAccess {
     request: MemoryRequestId,
     kind: DramAccessKind,
+    parallel_port: u32,
     bank: u32,
     row: u64,
     row_hit: bool,
@@ -611,6 +646,10 @@ impl DramAccess {
 
     pub const fn kind(&self) -> DramAccessKind {
         self.kind
+    }
+
+    pub const fn parallel_port(&self) -> u32 {
+        self.parallel_port
     }
 
     pub const fn bank(&self) -> u32 {
@@ -672,23 +711,76 @@ impl DramBankState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramPortState {
+    bus_available_cycle: u64,
+    last_access_kind: Option<DramAccessKind>,
+}
+
+impl DramPortState {
+    fn new() -> Self {
+        Self {
+            bus_available_cycle: 0,
+            last_access_kind: None,
+        }
+    }
+
+    pub const fn from_snapshot(
+        bus_available_cycle: u64,
+        last_access_kind: Option<DramAccessKind>,
+    ) -> Self {
+        Self {
+            bus_available_cycle,
+            last_access_kind,
+        }
+    }
+
+    pub const fn bus_available_cycle(self) -> u64 {
+        self.bus_available_cycle
+    }
+
+    pub const fn last_access_kind(self) -> Option<DramAccessKind> {
+        self.last_access_kind
+    }
+
+    fn ready_cycle(self, kind: DramAccessKind, timing: DramTiming) -> u64 {
+        if self
+            .last_access_kind
+            .is_some_and(|previous| previous != kind)
+        {
+            self.bus_available_cycle + timing.bus_turnaround()
+        } else {
+            self.bus_available_cycle
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DramController {
     geometry: DramGeometry,
     timing: DramTiming,
     banks: Vec<DramBankState>,
-    bus_available_cycle: u64,
-    last_access_kind: Option<DramAccessKind>,
+    ports: Vec<DramPortState>,
 }
 
 impl DramController {
     pub fn new(geometry: DramGeometry, timing: DramTiming) -> Self {
+        Self::with_parallel_port_count(geometry, timing, 1)
+    }
+
+    fn with_parallel_port_count(
+        geometry: DramGeometry,
+        timing: DramTiming,
+        parallel_port_count: u32,
+    ) -> Self {
         Self {
             geometry,
             timing,
-            banks: vec![DramBankState::new(); geometry.bank_count() as usize],
-            bus_available_cycle: 0,
-            last_access_kind: None,
+            banks: vec![
+                DramBankState::new();
+                geometry.bank_count() as usize * parallel_port_count as usize
+            ],
+            ports: vec![DramPortState::new(); parallel_port_count as usize],
         }
     }
 
@@ -704,13 +796,20 @@ impl DramController {
         self.banks.get(bank as usize).copied()
     }
 
+    pub fn port_state(&self, parallel_port: u32) -> Option<DramPortState> {
+        self.ports.get(parallel_port as usize).copied()
+    }
+
+    pub fn parallel_port_count(&self) -> u32 {
+        self.ports.len() as u32
+    }
+
     pub fn snapshot(&self) -> DramControllerSnapshot {
-        DramControllerSnapshot::new(
+        DramControllerSnapshot::with_ports(
             self.geometry,
             self.timing,
             self.banks.clone(),
-            self.bus_available_cycle,
-            self.last_access_kind,
+            self.ports.clone(),
         )
     }
 
@@ -723,8 +822,11 @@ impl DramController {
             geometry: snapshot.geometry(),
             timing: snapshot.timing(),
             banks: snapshot.banks().to_vec(),
-            bus_available_cycle: snapshot.bus_available_cycle(),
-            last_access_kind: snapshot.last_access_kind(),
+            ports: if snapshot.ports().is_empty() {
+                vec![DramPortState::new()]
+            } else {
+                snapshot.ports().to_vec()
+            },
         }
     }
 
@@ -734,9 +836,13 @@ impl DramController {
         request: &MemoryRequest,
     ) -> Result<DramAccess, DramError> {
         let kind = DramAccessKind::from_operation(request)?;
-        let decoded = self.geometry.decode_request(request)?;
-        let bus_ready_cycle = self.bus_ready_cycle(kind);
-        let bank = &mut self.banks[decoded.bank as usize];
+        let decoded = self
+            .geometry
+            .decode_request(self.parallel_port_count(), request)?;
+        let port_index = decoded.parallel_port as usize;
+        let bus_ready_cycle = self.ports[port_index].ready_cycle(kind, self.timing);
+        let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
+        let bank = &mut self.banks[bank_index];
         let mut commands = Vec::new();
         let mut next_cycle = arrival_cycle.max(bank.available_cycle);
         let row_hit = bank.open_row == Some(decoded.row);
@@ -745,6 +851,7 @@ impl DramController {
             if let Some(open_row) = bank.open_row {
                 commands.push(DramCommand::new(
                     next_cycle,
+                    decoded.parallel_port,
                     decoded.bank,
                     open_row,
                     DramCommandKind::Precharge,
@@ -753,6 +860,7 @@ impl DramController {
             }
             commands.push(DramCommand::new(
                 next_cycle,
+                decoded.parallel_port,
                 decoded.bank,
                 decoded.row,
                 DramCommandKind::Activate,
@@ -764,6 +872,7 @@ impl DramController {
         let command_cycle = next_cycle.max(bus_ready_cycle);
         commands.push(DramCommand::new(
             command_cycle,
+            decoded.parallel_port,
             decoded.bank,
             decoded.row,
             kind.command_kind(),
@@ -771,12 +880,12 @@ impl DramController {
         let ready_cycle = command_cycle + self.timing.data_latency(kind);
 
         bank.available_cycle = ready_cycle;
-        self.bus_available_cycle = command_cycle;
-        self.last_access_kind = Some(kind);
+        self.ports[port_index] = DramPortState::from_snapshot(command_cycle, Some(kind));
 
         Ok(DramAccess {
             request: request.id(),
             kind,
+            parallel_port: decoded.parallel_port,
             bank: decoded.bank,
             row: decoded.row,
             row_hit,
@@ -786,17 +895,6 @@ impl DramController {
             commands,
         })
     }
-
-    fn bus_ready_cycle(&self, kind: DramAccessKind) -> u64 {
-        if self
-            .last_access_kind
-            .is_some_and(|previous| previous != kind)
-        {
-            self.bus_available_cycle + self.timing.bus_turnaround()
-        } else {
-            self.bus_available_cycle
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -804,12 +902,11 @@ pub struct DramControllerSnapshot {
     geometry: DramGeometry,
     timing: DramTiming,
     banks: Vec<DramBankState>,
-    bus_available_cycle: u64,
-    last_access_kind: Option<DramAccessKind>,
+    ports: Vec<DramPortState>,
 }
 
 impl DramControllerSnapshot {
-    pub const fn new(
+    pub fn new(
         geometry: DramGeometry,
         timing: DramTiming,
         banks: Vec<DramBankState>,
@@ -820,8 +917,24 @@ impl DramControllerSnapshot {
             geometry,
             timing,
             banks,
-            bus_available_cycle,
-            last_access_kind,
+            ports: vec![DramPortState::from_snapshot(
+                bus_available_cycle,
+                last_access_kind,
+            )],
+        }
+    }
+
+    pub const fn with_ports(
+        geometry: DramGeometry,
+        timing: DramTiming,
+        banks: Vec<DramBankState>,
+        ports: Vec<DramPortState>,
+    ) -> Self {
+        Self {
+            geometry,
+            timing,
+            banks,
+            ports,
         }
     }
 
@@ -837,12 +950,22 @@ impl DramControllerSnapshot {
         &self.banks
     }
 
-    pub const fn bus_available_cycle(&self) -> u64 {
-        self.bus_available_cycle
+    pub fn bus_available_cycle(&self) -> u64 {
+        self.ports
+            .first()
+            .map_or(0, |port| port.bus_available_cycle())
     }
 
-    pub const fn last_access_kind(&self) -> Option<DramAccessKind> {
-        self.last_access_kind
+    pub fn last_access_kind(&self) -> Option<DramAccessKind> {
+        self.ports.first().and_then(|port| port.last_access_kind())
+    }
+
+    pub fn ports(&self) -> &[DramPortState] {
+        &self.ports
+    }
+
+    pub fn parallel_port_count(&self) -> u32 {
+        self.ports.len() as u32
     }
 }
 
@@ -852,6 +975,7 @@ pub struct DramControllerConfig {
     layout: CacheLineLayout,
     geometry: DramGeometry,
     timing: DramTiming,
+    parallel_port_count: u32,
 }
 
 impl DramControllerConfig {
@@ -866,7 +990,13 @@ impl DramControllerConfig {
             layout,
             geometry,
             timing,
+            parallel_port_count: 1,
         }
+    }
+
+    const fn with_profile_parallel_ports(mut self, parallel_port_count: u32) -> Self {
+        self.parallel_port_count = parallel_port_count;
+        self
     }
 
     pub const fn target(self) -> MemoryTargetId {
@@ -883,6 +1013,10 @@ impl DramControllerConfig {
 
     pub const fn timing(self) -> DramTiming {
         self.timing
+    }
+
+    pub const fn parallel_port_count(self) -> u32 {
+        self.parallel_port_count
     }
 }
 
@@ -1014,7 +1148,11 @@ impl DramMemoryController {
             .map_err(DramMemoryError::Memory)?;
         self.dram.insert(
             config.target(),
-            DramController::new(config.geometry(), config.timing()),
+            DramController::with_parallel_port_count(
+                config.geometry(),
+                config.timing(),
+                config.parallel_port_count(),
+            ),
         );
         Ok(())
     }

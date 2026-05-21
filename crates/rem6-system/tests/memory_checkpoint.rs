@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
-use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
+use rem6_dram::{
+    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryTechnology, DramTiming,
+    ExternalMemoryProfile,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
@@ -245,4 +248,76 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
     let row_hit = controller.accept(8, &read(0x1008, 4, 23)).unwrap();
     assert!(row_hit.dram_access().row_hit());
     assert_eq!(row_hit.ready_cycle(), 13);
+}
+
+#[test]
+fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
+    let target = MemoryTargetId::new(50);
+    let profile =
+        ExternalMemoryProfile::hbm(target, layout(), 1, 2, dram_geometry(), dram_timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0000), line_data(0x10))
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0040), line_data(0x20))
+        .unwrap();
+    let first = controller.accept(0, &read(0x0000, 8, 30)).unwrap();
+    let second = controller
+        .accept(0, &write(0x0040, &[0xaa, 0xbb, 0xcc, 0xdd], 31))
+        .unwrap();
+    assert_eq!(first.dram_access().parallel_port(), 0);
+    assert_eq!(second.dram_access().parallel_port(), 1);
+    assert_eq!(second.ready_cycle(), 10);
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram-profiled").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .accept(14, &write(0x0000, &[0x55, 0x66, 0x77, 0x88], 32))
+            .unwrap();
+        assert_eq!(
+            &controller.line_data(target, Address::new(0x0000)).unwrap()[..4],
+            &[0x55, 0x66, 0x77, 0x88]
+        );
+    }
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    let mut controller = controller.lock().unwrap();
+    assert_eq!(controller.memory_profile(target).unwrap(), &profile);
+    assert_eq!(
+        controller.memory_profile(target).unwrap().technology(),
+        DramMemoryTechnology::Hbm,
+    );
+    assert_eq!(
+        controller
+            .dram_controller(target)
+            .unwrap()
+            .parallel_port_count(),
+        2
+    );
+    assert_eq!(
+        &controller.line_data(target, Address::new(0x0000)).unwrap()[..4],
+        &[0x10, 0x11, 0x12, 0x13]
+    );
+    let row_hit = controller.accept(14, &read(0x0040, 4, 33)).unwrap();
+    assert_eq!(row_hit.dram_access().parallel_port(), 1);
+    assert!(row_hit.dram_access().row_hit());
+    assert_eq!(row_hit.ready_cycle(), 19);
 }

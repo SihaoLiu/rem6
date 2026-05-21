@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_dram::{
     DramAccessKind, DramBankState, DramControllerSnapshot, DramGeometry, DramMemoryController,
-    DramMemoryError, DramMemorySnapshot, DramMemoryTargetSnapshot, DramTiming,
+    DramMemoryError, DramMemorySnapshot, DramMemoryTargetSnapshot, DramPortState, DramTiming,
+    ExternalMemoryProfile, ExternalMemoryTopology,
 };
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot,
@@ -476,6 +477,8 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_u64(&mut payload, timing.write_latency());
         write_u64(&mut payload, timing.precharge_latency());
         write_u64(&mut payload, timing.bus_turnaround());
+        write_profile(&mut payload, target.profile());
+        write_u64(&mut payload, controller.parallel_port_count() as u64);
         write_u64(&mut payload, controller.banks().len() as u64);
         for bank in controller.banks() {
             match bank.open_row() {
@@ -487,18 +490,59 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
             }
             write_u64(&mut payload, bank.available_cycle());
         }
-        write_u64(&mut payload, controller.bus_available_cycle());
-        write_u64(
-            &mut payload,
-            match controller.last_access_kind() {
-                None => 0,
-                Some(DramAccessKind::Read) => 1,
-                Some(DramAccessKind::Write) => 2,
-            },
-        );
+        for port in controller.ports() {
+            write_u64(&mut payload, port.bus_available_cycle());
+            write_access_kind(&mut payload, port.last_access_kind());
+        }
     }
 
     payload
+}
+
+fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>) {
+    let Some(profile) = profile else {
+        write_u64(payload, 0);
+        return;
+    };
+
+    write_u64(payload, 1);
+    match profile.topology() {
+        ExternalMemoryTopology::Ddr {
+            channels,
+            ranks_per_channel,
+        } => {
+            write_u64(payload, 1);
+            write_u32(payload, channels);
+            write_u32(payload, ranks_per_channel);
+        }
+        ExternalMemoryTopology::Hbm {
+            stacks,
+            pseudo_channels_per_stack,
+        } => {
+            write_u64(payload, 2);
+            write_u32(payload, stacks);
+            write_u32(payload, pseudo_channels_per_stack);
+        }
+        ExternalMemoryTopology::Lpddr {
+            channels,
+            dies_per_channel,
+        } => {
+            write_u64(payload, 3);
+            write_u32(payload, channels);
+            write_u32(payload, dies_per_channel);
+        }
+    }
+}
+
+fn write_access_kind(payload: &mut Vec<u8>, kind: Option<DramAccessKind>) {
+    write_u64(
+        payload,
+        match kind {
+            None => 0,
+            Some(DramAccessKind::Read) => 1,
+            Some(DramAccessKind::Write) => 2,
+        },
+    );
 }
 
 fn decode_store(
@@ -590,13 +634,28 @@ fn decode_dram_memory(
                 target.get()
             ))
         })?;
-        let encoded_bank_count = cursor.read_count("DRAM bank state count")?;
-        if encoded_bank_count != geometry.bank_count() as usize {
+        let line_layout = CacheLineLayout::new(line_size).map_err(|error| {
+            cursor.invalid(format!(
+                "DRAM target {} has invalid profile line layout: {error}",
+                target.get()
+            ))
+        })?;
+        let profile = read_profile(&mut cursor, target, line_layout, geometry, timing)?;
+        let port_count = cursor.read_count("DRAM parallel port count")?;
+        if port_count == 0 {
             return Err(cursor.invalid(format!(
-                "DRAM target {} has {} bank states for {} banks",
+                "DRAM target {} has zero parallel ports",
+                target.get()
+            )));
+        }
+        let encoded_bank_count = cursor.read_count("DRAM bank state count")?;
+        let expected_bank_count = geometry.bank_count() as usize * port_count;
+        if encoded_bank_count != expected_bank_count {
+            return Err(cursor.invalid(format!(
+                "DRAM target {} has {} bank states, expected {}",
                 target.get(),
                 encoded_bank_count,
-                geometry.bank_count()
+                expected_bank_count
             )));
         }
 
@@ -616,28 +675,24 @@ fn decode_dram_memory(
             banks.push(DramBankState::from_snapshot(open_row, available_cycle));
         }
 
-        let bus_available_cycle = cursor.read_u64("DRAM bus available cycle")?;
-        let last_access_kind = match cursor.read_u64("DRAM last access kind")? {
-            0 => None,
-            1 => Some(DramAccessKind::Read),
-            2 => Some(DramAccessKind::Write),
-            value => {
-                return Err(cursor.invalid(format!(
-                    "DRAM target {} has invalid last access kind {value}",
-                    target.get()
-                )));
-            }
-        };
-        targets.push(DramMemoryTargetSnapshot::new(
-            target,
-            DramControllerSnapshot::new(
-                geometry,
-                timing,
-                banks,
+        let mut ports = Vec::with_capacity(port_count);
+        for port in 0..port_count {
+            let bus_available_cycle = cursor.read_u64("DRAM port bus available cycle")?;
+            let last_access_kind = read_access_kind(&mut cursor, target, format!("port {port}"))?;
+            ports.push(DramPortState::from_snapshot(
                 bus_available_cycle,
                 last_access_kind,
-            ),
-        ));
+            ));
+        }
+
+        let controller = DramControllerSnapshot::with_ports(geometry, timing, banks, ports);
+        if let Some(profile) = profile {
+            targets.push(DramMemoryTargetSnapshot::with_profile(
+                target, controller, profile,
+            ));
+        } else {
+            targets.push(DramMemoryTargetSnapshot::new(target, controller));
+        }
     }
 
     cursor.finish()?;
@@ -649,6 +704,64 @@ fn decode_dram_memory(
         }
     })?;
     Ok(snapshot)
+}
+
+fn read_profile(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+    line_layout: CacheLineLayout,
+    geometry: DramGeometry,
+    timing: DramTiming,
+) -> Result<Option<ExternalMemoryProfile>, DramMemoryCheckpointError> {
+    let present = cursor.read_u64("DRAM profile presence")?;
+    if present == 0 {
+        return Ok(None);
+    }
+    if present != 1 {
+        return Err(cursor.invalid(format!(
+            "DRAM target {} has invalid profile presence {present}",
+            target.get()
+        )));
+    }
+
+    let technology = cursor.read_u64("DRAM profile technology")?;
+    let first = cursor.read_u32("DRAM profile topology count")?;
+    let second = cursor.read_u32("DRAM profile topology peer count")?;
+    let profile = match technology {
+        1 => ExternalMemoryProfile::ddr(target, line_layout, first, second, geometry, timing),
+        2 => ExternalMemoryProfile::hbm(target, line_layout, first, second, geometry, timing),
+        3 => ExternalMemoryProfile::lpddr(target, line_layout, first, second, geometry, timing),
+        value => {
+            return Err(cursor.invalid(format!(
+                "DRAM target {} has invalid profile technology {value}",
+                target.get()
+            )));
+        }
+    }
+    .map_err(|error| {
+        cursor.invalid(format!(
+            "DRAM target {} has invalid profile: {error}",
+            target.get()
+        ))
+    })?;
+
+    Ok(Some(profile))
+}
+
+fn read_access_kind(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+    context: String,
+) -> Result<Option<DramAccessKind>, DramMemoryCheckpointError> {
+    match cursor.read_u64("DRAM last access kind")? {
+        0 => Ok(None),
+        1 => Ok(Some(DramAccessKind::Read)),
+        2 => Ok(Some(DramAccessKind::Write)),
+        value => Err(cursor.invalid(format!(
+            "DRAM target {} {context} has invalid last access kind {value}",
+            target.get()
+        ))),
+    }
 }
 
 fn map_store_decode_error(

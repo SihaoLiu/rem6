@@ -3,7 +3,8 @@ use rem6_dram::{
     DramProfileField, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    MemoryTargetId,
 };
 
 fn layout() -> CacheLineLayout {
@@ -31,6 +32,18 @@ fn read(address: u64, sequence: u64) -> MemoryRequest {
         request_id(sequence),
         Address::new(address),
         AccessSize::new(8).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn write(address: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::write(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(4).unwrap(),
+        vec![0xaa, 0xbb, 0xcc, 0xdd],
+        ByteMask::full(AccessSize::new(4).unwrap()).unwrap(),
         layout(),
     )
     .unwrap()
@@ -68,12 +81,23 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
         },
     );
 
+    let default_config = DramControllerConfig::new(target(1), layout(), geometry(), timing());
+    assert_eq!(default_config.parallel_port_count(), 1);
+    assert_eq!(ddr.controller_config().target(), default_config.target());
+    assert_eq!(ddr.controller_config().layout(), default_config.layout());
     assert_eq!(
-        ddr.controller_config(),
-        DramControllerConfig::new(target(1), layout(), geometry(), timing()),
+        ddr.controller_config().geometry(),
+        default_config.geometry()
     );
+    assert_eq!(ddr.controller_config().timing(), default_config.timing());
+    assert_eq!(ddr.parallel_port_count(), 2);
+    assert_eq!(ddr.controller_config().parallel_port_count(), 2);
     assert_eq!(hbm.target(), target(2));
+    assert_eq!(hbm.parallel_port_count(), 8);
+    assert_eq!(hbm.controller_config().parallel_port_count(), 8);
     assert_eq!(lpddr.line_layout(), layout());
+    assert_eq!(lpddr.parallel_port_count(), 2);
+    assert_eq!(lpddr.controller_config().parallel_port_count(), 2);
 }
 
 #[test]
@@ -147,4 +171,66 @@ fn dram_memory_controller_adds_profiled_targets_and_restores_profile_metadata() 
         restored.dram_controller(profile.target()).unwrap().timing(),
         timing(),
     );
+}
+
+#[test]
+fn profiled_hbm_target_uses_independent_parallel_ports_for_turnaround() {
+    let profile =
+        ExternalMemoryProfile::hbm(target(8), layout(), 1, 2, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+
+    let first = controller.accept(0, &read(0x0000, 50)).unwrap();
+    let second = controller.accept(0, &write(0x0040, 51)).unwrap();
+
+    assert_eq!(first.dram_access().parallel_port(), 0);
+    assert_eq!(first.dram_access().command_cycle(), 4);
+    assert_eq!(first.ready_cycle(), 12);
+    assert_eq!(second.dram_access().parallel_port(), 1);
+    assert_eq!(second.dram_access().command_cycle(), 4);
+    assert_eq!(second.ready_cycle(), 14);
+}
+
+#[test]
+fn profiled_single_channel_ddr_target_keeps_turnaround_on_shared_port() {
+    let profile =
+        ExternalMemoryProfile::ddr(target(9), layout(), 1, 2, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+
+    let first = controller.accept(0, &read(0x0000, 60)).unwrap();
+    let second = controller.accept(0, &write(0x0040, 61)).unwrap();
+
+    assert_eq!(first.dram_access().parallel_port(), 0);
+    assert_eq!(first.dram_access().command_cycle(), 4);
+    assert_eq!(first.ready_cycle(), 12);
+    assert_eq!(second.dram_access().parallel_port(), 0);
+    assert_eq!(second.dram_access().command_cycle(), 9);
+    assert_eq!(second.ready_cycle(), 19);
 }
