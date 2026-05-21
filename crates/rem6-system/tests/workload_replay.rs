@@ -5,9 +5,10 @@ use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay, SystemActionOutcome};
 use rem6_workload::{
-    HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadHostEvent, WorkloadHostPlacement,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -369,6 +370,50 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     );
     assert_eq!(outcome.result().stop_reason(), Some("host-stop"));
     assert_eq!(outcome.result().checkpoint_labels(), &[] as &[String]);
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(
+        summary.scheduler_epoch_count(),
+        outcome.run().parallel_scheduler_profile().epoch_count(),
+    );
+    assert_eq!(
+        summary.scheduler_dispatch_count(),
+        outcome.run().parallel_scheduler_profile().dispatch_count(),
+    );
+    assert_eq!(
+        summary.scheduler_batch_count(),
+        outcome.run().parallel_scheduler_profile().batch_count(),
+    );
+    assert_eq!(
+        summary.active_scheduler_partition_count(),
+        outcome.run().active_parallel_scheduler_partition_count(),
+    );
+    assert_eq!(
+        summary.max_parallel_scheduler_workers(),
+        outcome.run().max_parallel_scheduler_workers(),
+    );
+    assert_eq!(summary.data_cache_parallel_run_count(), 0);
+    assert_eq!(summary.attributed_data_cache_parallel_run_count(), 0);
+    assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 0);
+    assert!(summary.data_cache_protocol_counts().is_empty());
+    assert!(summary.data_cache_protocols().is_empty());
+    assert_eq!(summary.attributed_data_cache_protocol_run_count(), 0);
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Msi),
+        0,
+    );
+    assert!(!summary.has_data_cache_protocol(WorkloadDataCacheProtocol::Msi));
+    assert_eq!(summary.data_cache_wait_for_edge_count(), 0);
+    assert!(!summary.has_unattributed_data_cache_parallel_runs());
+    assert!(!summary.has_data_cache_diagnostics());
+    assert_eq!(
+        summary.full_system_parallel_scheduler_dispatch_count(),
+        outcome
+            .run()
+            .full_system_parallel_scheduler_dispatch_count(),
+    );
+    assert!(summary.has_full_system_parallel_scheduler_work());
+    assert!(summary.has_parallel_scheduler_work());
+    assert!(!summary.has_data_cache_parallel_work());
     plan.verify_result(outcome.result()).unwrap();
 
     assert!(matches!(

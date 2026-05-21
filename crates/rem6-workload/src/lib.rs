@@ -8,6 +8,12 @@ use rem6_kernel::Tick;
 use rem6_memory::{Address, AddressRange};
 use rem6_stats::StatSnapshot;
 
+mod result;
+
+pub use result::{
+    WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadParallelExecutionSummary,
+};
+
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -1012,6 +1018,7 @@ pub struct WorkloadResult {
     final_tick: Tick,
     stop_reason: Option<String>,
     stats_snapshot: Option<StatSnapshot>,
+    parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
     checkpoint_labels: Vec<String>,
 }
 
@@ -1022,6 +1029,7 @@ impl WorkloadResult {
             final_tick,
             stop_reason: None,
             stats_snapshot: None,
+            parallel_execution_summary: None,
             checkpoint_labels: Vec::new(),
         }
     }
@@ -1033,6 +1041,14 @@ impl WorkloadResult {
 
     pub fn with_stats_snapshot(mut self, snapshot: StatSnapshot) -> Self {
         self.stats_snapshot = Some(snapshot);
+        self
+    }
+
+    pub fn with_parallel_execution_summary(
+        mut self,
+        summary: WorkloadParallelExecutionSummary,
+    ) -> Self {
+        self.parallel_execution_summary = Some(summary);
         self
     }
 
@@ -1055,6 +1071,10 @@ impl WorkloadResult {
 
     pub const fn stats_snapshot(&self) -> Option<&StatSnapshot> {
         self.stats_snapshot.as_ref()
+    }
+
+    pub const fn parallel_execution_summary(&self) -> Option<&WorkloadParallelExecutionSummary> {
+        self.parallel_execution_summary.as_ref()
     }
 
     pub fn checkpoint_labels(&self) -> &[String] {

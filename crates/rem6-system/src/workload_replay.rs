@@ -22,14 +22,15 @@ use rem6_transport::{
     TransportEndpointId, TransportError,
 };
 use rem6_workload::{
-    HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadReplayPlan, WorkloadResult,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
+    WorkloadHostEvent, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult,
     WorkloadRouteId,
 };
 
 use crate::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
-    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
-    SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    RiscvDataCacheProtocol, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason,
+    RiscvTrapEventPort, SystemActionOutcome, SystemHostController, SystemHostEventPort,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -428,9 +429,57 @@ impl RiscvWorkloadReplay {
             }
         }
         Ok((
-            result.with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
+            result
+                .with_parallel_execution_summary(parallel_execution_summary(run))
+                .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
             host_action_outcomes,
         ))
+    }
+}
+
+fn parallel_execution_summary(run: &RiscvSystemRun) -> WorkloadParallelExecutionSummary {
+    let scheduler = run.parallel_scheduler_profile();
+    WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(
+            scheduler.epoch_count(),
+            scheduler.empty_epoch_count(),
+            scheduler.dispatch_count(),
+            scheduler.batch_count(),
+        )
+        .with_scheduler_partitions(
+            run.active_parallel_scheduler_partition_count(),
+            run.max_parallel_scheduler_workers(),
+        )
+        .with_data_cache_parallel_counts(
+            run.data_cache_run_count(),
+            run.data_cache_parallel_scheduler_epoch_count(),
+            run.data_cache_parallel_scheduler_dispatch_count(),
+            run.data_cache_parallel_scheduler_batch_count(),
+            run.data_cache_parallel_scheduler_max_workers(),
+        )
+        .with_data_cache_run_attribution(
+            run.attributed_data_cache_parallel_run_count(),
+            run.unattributed_data_cache_parallel_run_count(),
+        )
+        .with_data_cache_protocol_counts(run.data_cache_protocol_counts().into_iter().map(
+            |(protocol, run_count)| {
+                WorkloadDataCacheProtocolCount::new(
+                    workload_data_cache_protocol(protocol),
+                    run_count,
+                )
+            },
+        ))
+        .with_data_cache_diagnostics(
+            run.data_cache_wait_for_edge_count(),
+            run.data_cache_deadlock_diagnostic_count(),
+        )
+}
+
+fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
+    match protocol {
+        RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
+        RiscvDataCacheProtocol::Mesi => WorkloadDataCacheProtocol::Mesi,
+        RiscvDataCacheProtocol::Moesi => WorkloadDataCacheProtocol::Moesi,
     }
 }
 

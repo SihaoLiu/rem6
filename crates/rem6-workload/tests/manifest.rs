@@ -6,10 +6,11 @@ use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
-    CheckpointLineage, HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadHostPlacement,
-    WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
-    WorkloadRouteId, WorkloadTopology,
+    CheckpointLineage, HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
+    WorkloadError, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -405,6 +406,91 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
     assert_eq!(result.stop_reason(), Some("host-stop"));
     assert_eq!(result.stats_snapshot(), Some(&snapshot));
     assert_eq!(result.checkpoint_labels(), &["after-roi".to_string()]);
+}
+
+#[test]
+fn workload_result_records_parallel_execution_summary() {
+    let manifest = WorkloadManifest::builder(id("result-parallel-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(3, 1, 7, 5)
+        .with_scheduler_partitions(4, 2)
+        .with_data_cache_parallel_counts(6, 9, 11, 13, 3)
+        .with_data_cache_run_attribution(5, 1)
+        .with_data_cache_protocol_counts([
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
+        ])
+        .with_data_cache_diagnostics(17, 19);
+
+    let result = WorkloadResult::new(manifest.identity(), 96)
+        .with_parallel_execution_summary(summary.clone());
+
+    assert_eq!(result.parallel_execution_summary(), Some(&summary));
+    assert_eq!(summary.scheduler_epoch_count(), 3);
+    assert_eq!(summary.scheduler_empty_epoch_count(), 1);
+    assert_eq!(summary.scheduler_dispatch_count(), 7);
+    assert_eq!(summary.scheduler_batch_count(), 5);
+    assert_eq!(summary.active_scheduler_partition_count(), 4);
+    assert_eq!(summary.max_parallel_scheduler_workers(), 2);
+    assert_eq!(summary.data_cache_parallel_run_count(), 6);
+    assert_eq!(summary.data_cache_parallel_scheduler_epoch_count(), 9);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
+    assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 13);
+    assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
+    assert_eq!(summary.attributed_data_cache_parallel_run_count(), 5);
+    assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 1);
+    assert_eq!(
+        summary.data_cache_protocol_counts(),
+        &[
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
+        ]
+    );
+    assert_eq!(
+        summary.data_cache_protocols(),
+        vec![
+            WorkloadDataCacheProtocol::Msi,
+            WorkloadDataCacheProtocol::Moesi,
+        ],
+    );
+    assert_eq!(WorkloadDataCacheProtocol::Msi.as_str(), "msi");
+    assert_eq!(WorkloadDataCacheProtocol::Mesi.as_str(), "mesi");
+    assert_eq!(WorkloadDataCacheProtocol::Moesi.as_str(), "moesi");
+    assert!(!summary.data_cache_protocol_counts()[0].is_empty());
+    assert!(WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Mesi, 0).is_empty());
+    assert_eq!(summary.attributed_data_cache_protocol_run_count(), 5);
+    assert_eq!(
+        summary
+            .data_cache_protocol_count_map()
+            .get(&WorkloadDataCacheProtocol::Msi),
+        Some(&2),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Mesi),
+        0,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Moesi),
+        3,
+    );
+    assert!(summary.has_data_cache_protocol(WorkloadDataCacheProtocol::Msi));
+    assert!(!summary.has_data_cache_protocol(WorkloadDataCacheProtocol::Mesi));
+    assert_eq!(summary.data_cache_wait_for_edge_count(), 17);
+    assert_eq!(summary.data_cache_deadlock_diagnostic_count(), 19);
+    assert!(summary.has_unattributed_data_cache_parallel_runs());
+    assert!(summary.has_data_cache_diagnostics());
+    assert_eq!(summary.full_system_parallel_scheduler_epoch_count(), 12);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 18);
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 18);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);
+    assert!(summary.has_full_system_parallel_scheduler_work());
+    assert!(summary.has_parallel_scheduler_work());
+    assert!(summary.has_data_cache_parallel_work());
 }
 
 #[test]
