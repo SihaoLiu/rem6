@@ -18,6 +18,7 @@ use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
     DramMemoryWaitForMarker, DramTargetActivity, DramTiming,
 };
+use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, WaitForGraph};
 use rem6_memory::{
@@ -27,14 +28,14 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
-    TransportEndpointId, TransportError,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery,
+    TargetOutcome, TransportEndpointId, TransportError,
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
     WorkloadGpuDmaCopy, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache,
-    WorkloadRouteId, WorkloadTopology,
+    WorkloadRouteFabric, WorkloadRouteId, WorkloadTopology,
 };
 
 mod cache_response;
@@ -728,6 +729,7 @@ impl RiscvWorkloadReplay {
         let data_cache = self.build_data_cache(&memory)?;
         let gpu_devices = build_gpu_devices(topology)?;
         let transport = self.build_transport()?;
+        let fabric_activity_start = transport.mark_fabric_activity();
         let fabric_wait_for_start = transport.mark_fabric_wait_for();
         let dram_wait_for_start = memory.mark_dram_wait_for();
         let gpu_dma_activity = self.run_gpu_dma_copies(
@@ -830,6 +832,13 @@ impl RiscvWorkloadReplay {
         if !dram_target_activities.is_empty() {
             run = run.with_dram_activity(dram_target_activities);
         }
+        if let Some(fabric_activity) =
+            fabric_activity_start.and_then(|marker| transport.fabric_lane_activities_since(marker))
+        {
+            if !fabric_activity.is_empty() {
+                run = run.with_fabric_activity(fabric_activity);
+            }
+        }
         if let Some(fabric_wait_for) =
             fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
         {
@@ -914,19 +923,17 @@ impl RiscvWorkloadReplay {
             .plan
             .topology()
             .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
-        let mut transport = MemoryTransport::new();
+        let mut transport = if topology
+            .memory_routes()
+            .iter()
+            .any(|route| route.fabric().is_some())
+        {
+            MemoryTransport::with_fabric(FabricModel::new())
+        } else {
+            MemoryTransport::new()
+        };
         for route in topology.memory_routes() {
-            let route = MemoryRoute::new(
-                TransportEndpointId::new(route.source_endpoint())
-                    .map_err(RiscvWorkloadReplayError::Transport)?,
-                PartitionId::new(route.source_partition()),
-                TransportEndpointId::new(route.target_endpoint())
-                    .map_err(RiscvWorkloadReplayError::Transport)?,
-                PartitionId::new(route.target_partition()),
-                route.request_latency(),
-                route.response_latency(),
-            )
-            .map_err(RiscvWorkloadReplayError::Transport)?;
+            let route = workload_memory_route(route)?;
             transport
                 .add_route(route)
                 .map_err(RiscvWorkloadReplayError::Transport)?;
@@ -1562,6 +1569,73 @@ fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDat
         RiscvDataCacheProtocol::Mesi => WorkloadDataCacheProtocol::Mesi,
         RiscvDataCacheProtocol::Moesi => WorkloadDataCacheProtocol::Moesi,
     }
+}
+
+fn workload_memory_route(
+    route: &WorkloadMemoryRoute,
+) -> Result<MemoryRoute, RiscvWorkloadReplayError> {
+    let source = TransportEndpointId::new(route.source_endpoint())
+        .map_err(RiscvWorkloadReplayError::Transport)?;
+    let source_partition = PartitionId::new(route.source_partition());
+    let target = TransportEndpointId::new(route.target_endpoint())
+        .map_err(RiscvWorkloadReplayError::Transport)?;
+    let target_partition = PartitionId::new(route.target_partition());
+
+    let Some(fabric) = route.fabric() else {
+        return MemoryRoute::new(
+            source,
+            source_partition,
+            target,
+            target_partition,
+            route.request_latency(),
+            route.response_latency(),
+        )
+        .map_err(RiscvWorkloadReplayError::Transport);
+    };
+
+    let hop = MemoryRouteHop::new(
+        target,
+        target_partition,
+        route.request_latency(),
+        route.response_latency(),
+    )
+    .map_err(RiscvWorkloadReplayError::Transport)?
+    .with_request_fabric_path(workload_route_fabric_path(fabric, route.request_latency())?)
+    .with_response_fabric_path(workload_route_fabric_path(
+        fabric,
+        route.response_latency(),
+    )?);
+
+    MemoryRoute::new_path(source, source_partition, [hop])
+        .map_err(RiscvWorkloadReplayError::Transport)
+        .map(|route| {
+            route.with_virtual_networks(
+                VirtualNetworkId::new(fabric.request_virtual_network()),
+                VirtualNetworkId::new(fabric.response_virtual_network()),
+            )
+        })
+}
+
+fn workload_route_fabric_path(
+    fabric: &WorkloadRouteFabric,
+    latency: u64,
+) -> Result<FabricPath, RiscvWorkloadReplayError> {
+    let link = FabricLinkId::new(fabric.link())
+        .map_err(TransportError::Fabric)
+        .map_err(RiscvWorkloadReplayError::Transport)?;
+    let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
+        .map_err(TransportError::Fabric)
+        .map_err(RiscvWorkloadReplayError::Transport)?;
+    let hop = if let Some(credit_depth) = fabric.credit_depth() {
+        hop.with_credit_depth(credit_depth)
+            .map_err(TransportError::Fabric)
+            .map_err(RiscvWorkloadReplayError::Transport)?
+    } else {
+        hop
+    };
+    FabricPath::new([hop])
+        .map_err(TransportError::Fabric)
+        .map_err(RiscvWorkloadReplayError::Transport)
 }
 
 fn planned_host_guest_event(

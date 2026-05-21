@@ -247,6 +247,79 @@ pub enum WorkloadRouteLatency {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadRouteFabric {
+    link: String,
+    bandwidth_bytes_per_tick: u64,
+    request_virtual_network: u16,
+    response_virtual_network: u16,
+    credit_depth: Option<u32>,
+}
+
+impl WorkloadRouteFabric {
+    pub fn new(
+        link: impl Into<String>,
+        bandwidth_bytes_per_tick: u64,
+    ) -> Result<Self, WorkloadError> {
+        let link = link.into();
+        if link.is_empty() {
+            return Err(WorkloadError::EmptyFabricLink);
+        }
+        if bandwidth_bytes_per_tick == 0 {
+            return Err(WorkloadError::ZeroFabricBandwidth { link });
+        }
+
+        Ok(Self {
+            link,
+            bandwidth_bytes_per_tick,
+            request_virtual_network: 0,
+            response_virtual_network: 0,
+            credit_depth: None,
+        })
+    }
+
+    pub const fn with_virtual_networks(
+        mut self,
+        request_virtual_network: u16,
+        response_virtual_network: u16,
+    ) -> Self {
+        self.request_virtual_network = request_virtual_network;
+        self.response_virtual_network = response_virtual_network;
+        self
+    }
+
+    pub fn with_credit_depth(mut self, credit_depth: u32) -> Result<Self, WorkloadError> {
+        if credit_depth == 0 {
+            return Err(WorkloadError::ZeroFabricCreditDepth {
+                link: self.link.clone(),
+            });
+        }
+
+        self.credit_depth = Some(credit_depth);
+        Ok(self)
+    }
+
+    pub fn link(&self) -> &str {
+        &self.link
+    }
+
+    pub const fn bandwidth_bytes_per_tick(&self) -> u64 {
+        self.bandwidth_bytes_per_tick
+    }
+
+    pub const fn request_virtual_network(&self) -> u16 {
+        self.request_virtual_network
+    }
+
+    pub const fn response_virtual_network(&self) -> u16 {
+        self.response_virtual_network
+    }
+
+    pub const fn credit_depth(&self) -> Option<u32> {
+        self.credit_depth
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadMemoryRoute {
     id: WorkloadRouteId,
     source_endpoint: String,
@@ -255,6 +328,7 @@ pub struct WorkloadMemoryRoute {
     target_partition: u32,
     request_latency: Tick,
     response_latency: Tick,
+    fabric: Option<WorkloadRouteFabric>,
 }
 
 impl WorkloadMemoryRoute {
@@ -300,7 +374,13 @@ impl WorkloadMemoryRoute {
             target_partition,
             request_latency,
             response_latency,
+            fabric: None,
         })
+    }
+
+    pub fn with_fabric(mut self, fabric: WorkloadRouteFabric) -> Self {
+        self.fabric = Some(fabric);
+        self
     }
 
     pub fn id(&self) -> &WorkloadRouteId {
@@ -329,6 +409,10 @@ impl WorkloadMemoryRoute {
 
     pub const fn response_latency(&self) -> Tick {
         self.response_latency
+    }
+
+    pub fn fabric(&self) -> Option<&WorkloadRouteFabric> {
+        self.fabric.as_ref()
     }
 }
 
@@ -1452,6 +1536,13 @@ pub enum WorkloadError {
     ZeroRouteLatency {
         route: WorkloadRouteId,
         latency: WorkloadRouteLatency,
+    },
+    EmptyFabricLink,
+    ZeroFabricBandwidth {
+        link: String,
+    },
+    ZeroFabricCreditDepth {
+        link: String,
     },
     ZeroTopologyPartitions,
     ZeroMinRemoteDelay,

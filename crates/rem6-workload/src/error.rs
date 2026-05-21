@@ -68,6 +68,16 @@ impl fmt::Display for WorkloadError {
                 "route {} {latency:?} latency must be positive",
                 route.as_str()
             ),
+            Self::EmptyFabricLink => write!(formatter, "fabric link id must not be empty"),
+            Self::ZeroFabricBandwidth { link } => {
+                write!(
+                    formatter,
+                    "fabric link {link} bandwidth bytes per tick must be positive"
+                )
+            }
+            Self::ZeroFabricCreditDepth { link } => {
+                write!(formatter, "fabric link {link} credit depth must be positive")
+            }
             Self::ZeroTopologyPartitions => {
                 write!(formatter, "topology partition count must be positive")
             }

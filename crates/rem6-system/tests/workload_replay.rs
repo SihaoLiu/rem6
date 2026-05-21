@@ -14,7 +14,8 @@ use rem6_workload::{
     WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent,
     WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -284,6 +285,44 @@ fn replay_topology_with_profiled_contended_fetches() -> WorkloadTopology {
                 Address::new(0x8000),
                 "cpu1.ifetch",
                 route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_fabric_fetch() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap()
+                .with_fabric(
+                    WorkloadRouteFabric::new("cpu_mem", 4)
+                        .unwrap()
+                        .with_virtual_networks(1, 2)
+                        .with_credit_depth(2)
+                        .unwrap(),
+                ),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
             )
             .unwrap(),
         )
@@ -1005,6 +1044,22 @@ fn replay_manifest_with_profiled_contended_fetches() -> WorkloadManifest {
     .unwrap()
 }
 
+fn replay_manifest_with_fabric_fetch() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-fabric-fetch"), boot_image())
+        .with_topology(replay_topology_with_fabric_fetch())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_gpu_kernel() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay-gpu-kernel"), boot_image())
         .with_topology(replay_topology_with_gpu_kernel())
@@ -1485,6 +1540,38 @@ fn workload_replay_summary_reports_resource_wait_diagnostics() {
     assert!(summary.has_dram_diagnostics());
     assert!(summary.has_resource_diagnostics());
     assert!(summary.has_full_system_diagnostics());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_declared_fabric_path_and_reports_activity() {
+    let manifest = replay_manifest_with_fabric_fetch();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert!(outcome.run().has_fabric_activity());
+    assert_eq!(
+        summary.fabric_transfer_count(),
+        outcome.run().fabric_transfer_count(),
+    );
+    assert_eq!(
+        summary.active_fabric_lane_count(),
+        outcome.run().active_fabric_lane_count(),
+    );
+    assert_eq!(
+        summary.fabric_byte_count(),
+        outcome.run().fabric_profile().byte_count(),
+    );
+    assert!(summary.has_fabric_activity());
+    assert_eq!(
+        summary.resource_activity_count(),
+        outcome.run().resource_activity_count(),
+    );
     plan.verify_result(outcome.result()).unwrap();
 }
 

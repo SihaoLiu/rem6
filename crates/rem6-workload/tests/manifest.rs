@@ -12,7 +12,7 @@ use rem6_workload::{
     WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
     WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
+    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -270,6 +270,152 @@ fn riscv_topology() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
+}
+
+#[test]
+fn workload_memory_route_records_fabric_path_metadata() {
+    let fabric = WorkloadRouteFabric::new("mesh.cpu.mem", 16)
+        .unwrap()
+        .with_virtual_networks(1, 2)
+        .with_credit_depth(3)
+        .unwrap();
+    let route =
+        WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 1, 3, 5)
+            .unwrap()
+            .with_fabric(fabric.clone());
+
+    assert_eq!(route.fabric(), Some(&fabric));
+    assert_eq!(route.fabric().unwrap().link(), "mesh.cpu.mem");
+    assert_eq!(route.fabric().unwrap().bandwidth_bytes_per_tick(), 16);
+    assert_eq!(route.fabric().unwrap().request_virtual_network(), 1);
+    assert_eq!(route.fabric().unwrap().response_virtual_network(), 2);
+    assert_eq!(route.fabric().unwrap().credit_depth(), Some(3));
+
+    assert_eq!(
+        WorkloadRouteFabric::new("", 16).unwrap_err(),
+        WorkloadError::EmptyFabricLink,
+    );
+    assert_eq!(
+        WorkloadRouteFabric::new("mesh.cpu.mem", 0).unwrap_err(),
+        WorkloadError::ZeroFabricBandwidth {
+            link: "mesh.cpu.mem".to_string(),
+        },
+    );
+    assert_eq!(
+        WorkloadRouteFabric::new("mesh.cpu.mem", 16)
+            .unwrap()
+            .with_credit_depth(0)
+            .unwrap_err(),
+        WorkloadError::ZeroFabricCreditDepth {
+            link: "mesh.cpu.mem".to_string(),
+        },
+    );
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_route_fabric_metadata() {
+    let plain_topology = riscv_topology();
+    let fabric_topology =
+        WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+            .unwrap()
+            .add_memory_target(
+                WorkloadMemoryTarget::new(
+                    0,
+                    16,
+                    rem6_memory::AddressRange::new(
+                        Address::new(0x8000),
+                        AccessSize::new(0x2000).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .add_memory_route(
+                WorkloadMemoryRoute::new(
+                    route_id("cpu0.fetch"),
+                    "cpu0.ifetch",
+                    0,
+                    "memory",
+                    2,
+                    2,
+                    3,
+                )
+                .unwrap()
+                .with_fabric(
+                    WorkloadRouteFabric::new("mesh.cpu.mem", 8)
+                        .unwrap()
+                        .with_virtual_networks(1, 2),
+                ),
+            )
+            .unwrap()
+            .add_memory_route(
+                WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                    .unwrap(),
+            )
+            .unwrap()
+            .add_memory_route(
+                WorkloadMemoryRoute::new(
+                    route_id("cpu1.fetch"),
+                    "cpu1.ifetch",
+                    1,
+                    "memory",
+                    2,
+                    2,
+                    3,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .add_memory_route(
+                WorkloadMemoryRoute::new(route_id("cpu1.data"), "cpu1.dmem", 1, "memory", 2, 2, 3)
+                    .unwrap(),
+            )
+            .unwrap()
+            .add_riscv_core(
+                WorkloadRiscvCore::new(
+                    0,
+                    0,
+                    7,
+                    Address::new(0x8000),
+                    "cpu0.ifetch",
+                    route_id("cpu0.fetch"),
+                )
+                .unwrap()
+                .with_data("cpu0.dmem", route_id("cpu0.data"))
+                .unwrap(),
+            )
+            .unwrap()
+            .add_riscv_core(
+                WorkloadRiscvCore::new(
+                    1,
+                    1,
+                    8,
+                    Address::new(0x8010),
+                    "cpu1.ifetch",
+                    route_id("cpu1.fetch"),
+                )
+                .unwrap()
+                .with_data("cpu1.dmem", route_id("cpu1.data"))
+                .unwrap(),
+            )
+            .unwrap();
+    let plain = WorkloadManifest::builder(id("route-fabric-identity"), boot_image())
+        .with_topology(plain_topology)
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let with_fabric = WorkloadManifest::builder(id("route-fabric-identity"), boot_image())
+        .with_topology(fabric_topology)
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    assert_ne!(plain.identity(), with_fabric.identity());
 }
 
 #[test]

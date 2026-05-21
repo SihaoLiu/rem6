@@ -78,6 +78,7 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, u64::from(route.target_partition()));
         hash_u64(hash, route.request_latency());
         hash_u64(hash, route.response_latency());
+        hash_route_fabric(hash, route.fabric());
     }
     hash_u64(hash, topology.riscv_cores().len() as u64);
     for core in topology.riscv_cores() {
@@ -231,6 +232,26 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
             hash_u64(hash, u64::from(channels));
             hash_u64(hash, u64::from(dies_per_channel));
         }
+    }
+}
+
+fn hash_route_fabric(hash: &mut u64, fabric: Option<&crate::WorkloadRouteFabric>) {
+    let Some(fabric) = fabric else {
+        hash_str(hash, "route.fabric.none");
+        return;
+    };
+
+    hash_str(hash, "route.fabric.v1");
+    hash_str(hash, fabric.link());
+    hash_u64(hash, fabric.bandwidth_bytes_per_tick());
+    hash_u64(hash, u64::from(fabric.request_virtual_network()));
+    hash_u64(hash, u64::from(fabric.response_virtual_network()));
+    match fabric.credit_depth() {
+        Some(credit_depth) => {
+            hash_str(hash, "route.fabric.credit");
+            hash_u64(hash, u64::from(credit_depth));
+        }
+        None => hash_str(hash, "route.fabric.no_credit"),
     }
 }
 
