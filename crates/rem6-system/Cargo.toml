@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+rem6-accelerator = { path = "../rem6-accelerator" }
 rem6-boot = { path = "../rem6-boot" }
 rem6-checkpoint = { path = "../rem6-checkpoint" }
 rem6-cpu = { path = "../rem6-cpu" }

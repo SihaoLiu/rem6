@@ -1,7 +1,12 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use rem6_accelerator::{
+    AcceleratorDmaCopy, AcceleratorEngineId, AcceleratorError, AcceleratorTopologyConfig,
+    AcceleratorTopologyDevice,
+};
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
@@ -37,6 +42,7 @@ pub struct RiscvTopologySystem {
     scheduler: PartitionedScheduler,
     transport: MemoryTransport,
     cluster: RiscvCluster,
+    accelerators: BTreeMap<AcceleratorEngineId, AcceleratorTopologyDevice>,
     platform: Option<Platform>,
     memory: Option<RiscvTopologyMemoryBackend>,
     host: Option<RiscvTopologyHost>,
@@ -387,10 +393,27 @@ impl RiscvTopologySystem {
             scheduler,
             transport,
             cluster,
+            accelerators: BTreeMap::new(),
             platform: None,
             memory: None,
             host: None,
         })
+    }
+
+    pub fn with_accelerator(
+        mut self,
+        config: AcceleratorTopologyConfig,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        let engine = config.engine().id();
+        if self.accelerators.contains_key(&engine) {
+            return Err(RiscvTopologySystemError::DuplicateAccelerator { engine });
+        }
+
+        let device =
+            AcceleratorTopologyDevice::from_topology(&self.topology, &mut self.transport, config)
+                .map_err(RiscvTopologySystemError::Accelerator)?;
+        self.accelerators.insert(engine, device);
+        Ok(self)
     }
 
     pub fn with_platform(mut self, platform: Platform) -> Result<Self, RiscvTopologySystemError> {
@@ -521,6 +544,18 @@ impl RiscvTopologySystem {
         &self.cluster
     }
 
+    pub fn accelerator(&self, engine: AcceleratorEngineId) -> Option<&AcceleratorTopologyDevice> {
+        self.accelerators.get(&engine)
+    }
+
+    pub fn accelerators(
+        &self,
+    ) -> impl Iterator<Item = (AcceleratorEngineId, &AcceleratorTopologyDevice)> {
+        self.accelerators
+            .iter()
+            .map(|(engine, device)| (*engine, device))
+    }
+
     pub const fn platform(&self) -> Option<&Platform> {
         self.platform.as_ref()
     }
@@ -572,6 +607,70 @@ impl RiscvTopologySystem {
             &self.transport,
             platform.mmio_bus(),
         ))
+    }
+
+    pub fn run_accelerator_dma_copy_parallel(
+        &mut self,
+        engine: AcceleratorEngineId,
+        copy: AcceleratorDmaCopy,
+        trace: MemoryTrace,
+    ) -> Result<(), RiscvTopologySystemError> {
+        let accelerator = self
+            .accelerators
+            .get(&engine)
+            .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?
+            .engine()
+            .clone();
+        let memory = self
+            .memory
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
+            .clone();
+        let memory_error = Arc::new(Mutex::new(None));
+
+        let read_memory = memory.clone();
+        let read_error = Arc::clone(&memory_error);
+        accelerator
+            .submit_dma_copy_read(
+                &mut self.scheduler,
+                &self.transport,
+                copy,
+                trace.clone(),
+                move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
+                    topology_memory_response(&read_memory, &read_error, &delivery)
+                },
+            )
+            .map_err(RiscvTopologySystemError::Accelerator)?;
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        if let Some(error) = take_memory_error(&memory_error) {
+            return Err(error);
+        }
+
+        let write_memory = memory.clone();
+        let write_error = Arc::clone(&memory_error);
+        let Some(_event) = accelerator
+            .issue_next_dma_write(
+                &mut self.scheduler,
+                &self.transport,
+                trace,
+                move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
+                    topology_memory_response(&write_memory, &write_error, &delivery)
+                },
+            )
+            .map_err(RiscvTopologySystemError::Accelerator)?
+        else {
+            return Err(RiscvTopologySystemError::AcceleratorDmaWriteNotReady { engine });
+        };
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        if let Some(error) = take_memory_error(&memory_error) {
+            return Err(error);
+        }
+
+        Ok(())
     }
 
     pub fn drive_until_host_stop_parallel<E>(
@@ -799,10 +898,14 @@ impl RiscvTopologySystem {
 pub enum RiscvTopologySystemError {
     Scheduler(SchedulerError),
     CpuTopology(CpuTopologyError),
+    DuplicateAccelerator { engine: AcceleratorEngineId },
+    UnknownAccelerator { engine: AcceleratorEngineId },
+    AcceleratorDmaWriteNotReady { engine: AcceleratorEngineId },
     PlatformPartitionMismatch { topology: u32, platform: u32 },
     HostPartitionOutOfRange { host: PartitionId, partitions: u32 },
     MissingMemoryStore,
     MissingHostController,
+    Accelerator(AcceleratorError),
     Memory(MemoryError),
     Dram(DramMemoryError),
     Boot(BootError),
@@ -814,6 +917,17 @@ impl fmt::Display for RiscvTopologySystemError {
         match self {
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::CpuTopology(error) => write!(formatter, "{error}"),
+            Self::DuplicateAccelerator { engine } => {
+                write!(formatter, "accelerator engine {} is already attached", engine.get())
+            }
+            Self::UnknownAccelerator { engine } => {
+                write!(formatter, "accelerator engine {} is not attached", engine.get())
+            }
+            Self::AcceleratorDmaWriteNotReady { engine } => write!(
+                formatter,
+                "accelerator engine {} has no completed DMA read to write",
+                engine.get()
+            ),
             Self::PlatformPartitionMismatch { topology, platform } => write!(
                 formatter,
                 "platform partition count {platform} does not match topology partition count {topology}"
@@ -827,6 +941,7 @@ impl fmt::Display for RiscvTopologySystemError {
             Self::MissingHostController => {
                 write!(formatter, "topology system has no host controller")
             }
+            Self::Accelerator(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
@@ -840,10 +955,14 @@ impl Error for RiscvTopologySystemError {
         match self {
             Self::Scheduler(error) => Some(error),
             Self::CpuTopology(error) => Some(error),
+            Self::DuplicateAccelerator { .. } => None,
+            Self::UnknownAccelerator { .. } => None,
+            Self::AcceleratorDmaWriteNotReady { .. } => None,
             Self::PlatformPartitionMismatch { .. } => None,
             Self::HostPartitionOutOfRange { .. } => None,
             Self::MissingMemoryStore => None,
             Self::MissingHostController => None,
+            Self::Accelerator(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
             Self::Boot(error) => Some(error),
