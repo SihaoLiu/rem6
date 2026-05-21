@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
-    FabricPacket, FabricPacketId, FabricPath, VirtualNetworkId,
+    FabricPacket, FabricPacketId, FabricPath, FabricWaitForMarker, VirtualNetworkId,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -505,6 +505,12 @@ impl MemoryTransport {
             .map(|fabric| fabric.lock().expect("fabric lock").mark_activity())
     }
 
+    pub fn mark_fabric_wait_for(&self) -> Option<FabricWaitForMarker> {
+        self.fabric
+            .as_ref()
+            .map(|fabric| fabric.lock().expect("fabric lock").mark_wait_for())
+    }
+
     pub fn fabric_lane_activities(&self) -> Option<Vec<FabricLaneActivity>> {
         self.fabric
             .as_ref()
@@ -545,6 +551,15 @@ impl MemoryTransport {
         self.fabric
             .as_ref()
             .map(|fabric| fabric.lock().expect("fabric lock").wait_for_graph_at(tick))
+    }
+
+    pub fn fabric_wait_for_graph_since(&self, marker: FabricWaitForMarker) -> Option<WaitForGraph> {
+        self.fabric.as_ref().map(|fabric| {
+            fabric
+                .lock()
+                .expect("fabric lock")
+                .wait_for_graph_since(marker)
+        })
     }
 
     pub fn add_route(&mut self, route: MemoryRoute) -> Result<MemoryRouteId, TransportError> {

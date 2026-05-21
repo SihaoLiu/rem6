@@ -113,23 +113,107 @@ fn cpu_fabric_topology() -> Topology {
 }
 
 fn core_config(agent: u32) -> RiscvCoreTopologyConfig {
+    core_config_on(0, 0, agent, "cpu0")
+}
+
+fn core_config_on(
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    cpu_component: &str,
+) -> RiscvCoreTopologyConfig {
     RiscvCoreTopologyConfig::new(
         CpuResetState::new(
-            CpuId::new(0),
-            PartitionId::new(0),
+            CpuId::new(cpu),
+            PartitionId::new(partition),
             AgentId::new(agent),
             Address::new(0x8000),
         ),
-        endpoint("cpu0", "ifetch"),
+        endpoint(cpu_component, "ifetch"),
         endpoint("mem0", "requests"),
         layout(),
         AccessSize::new(4).unwrap(),
     )
     .with_data(
-        endpoint("cpu0", "dmem"),
+        endpoint(cpu_component, "dmem"),
         endpoint("mem0", "requests"),
         layout(),
     )
+}
+
+fn contended_cpu_fabric_topology() -> Topology {
+    TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("cpu1"),
+                kind("cpu"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("cpu0", "ifetch"),
+            endpoint("mem0", "requests"),
+            2,
+            3,
+            fabric("cpu_mem", 4),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("cpu0", "dmem"),
+            endpoint("mem0", "requests"),
+            2,
+            3,
+            fabric("cpu_mem", 4),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("cpu1", "ifetch"),
+            endpoint("mem0", "requests"),
+            2,
+            3,
+            fabric("cpu_mem", 4),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("cpu1", "dmem"),
+            endpoint("mem0", "requests"),
+            2,
+            3,
+            fabric("cpu_mem", 4),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
 }
 
 fn ecall_image() -> BootImage {
@@ -346,9 +430,71 @@ fn system_run_starts_without_resource_activity() {
     assert_eq!(run.data_cache_wait_for_edge_count(), 0);
     assert!(run.data_cache_wait_for_edges().is_empty());
     assert!(!run.has_data_cache_wait_for_edges());
+    assert_eq!(run.fabric_wait_for_edge_count(), 0);
+    assert!(run.fabric_wait_for_edges().is_empty());
+    assert!(!run.has_fabric_wait_for_edges());
     assert_eq!(run.initial_data_cache_deadlock_diagnostic_count(), 0);
     assert_eq!(run.remaining_data_cache_deadlock_diagnostic_count(), 0);
     assert_eq!(run.data_cache_deadlock_diagnostic_count(), 0);
+}
+
+#[test]
+fn system_run_aggregates_fabric_wait_for_diagnostics() {
+    let packet = wait_node("fabric.packet.7");
+    let credit = wait_resource("fabric.cpu_mem.vn.1.credit");
+    let lane = wait_resource("fabric.cpu_mem.vn.1.lane");
+    let mut graph = WaitForGraph::new();
+    graph
+        .record_wait(packet.clone(), credit.clone(), WaitForEdgeKind::Credit, 6)
+        .unwrap();
+    graph
+        .record_wait(packet.clone(), credit.clone(), WaitForEdgeKind::Credit, 8)
+        .unwrap();
+    graph
+        .record_wait(packet, lane, WaitForEdgeKind::Queue, 10)
+        .unwrap();
+
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 12 },
+    )
+    .with_fabric_wait_for(graph);
+
+    assert!(run.has_resource_activity());
+    assert!(run.has_fabric_wait_for_edges());
+    assert_eq!(run.fabric_wait_for_edge_count(), 2);
+    assert_eq!(run.fabric_wait_for_edges().len(), 2);
+    assert_eq!(run.fabric_wait_for_blocked_nodes().len(), 1);
+    assert_eq!(
+        run.fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Credit),
+        1,
+    );
+    assert_eq!(
+        run.fabric_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Queue)
+            .copied(),
+        Some(1),
+    );
+    assert_eq!(
+        run.fabric_oldest_wait_edge().unwrap().first_observed_tick(),
+        6,
+    );
+    assert_eq!(
+        run.fabric_newest_observed_wait_edge()
+            .unwrap()
+            .last_observed_tick(),
+        10,
+    );
+    assert_eq!(run.fabric_total_wait_observation_count(), 3);
+    assert_eq!(run.fabric_first_wait_tick(), Some(6));
+    assert_eq!(run.fabric_last_wait_tick(), Some(10));
+    assert_eq!(run.fabric_longest_observed_wait_span(), Some(2));
+    assert!(run.fabric_deadlock_diagnostics().is_empty());
+    assert_eq!(
+        run.resource_activity_count(),
+        run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+    );
 }
 
 #[test]
@@ -727,7 +873,47 @@ fn topology_run_reports_fabric_and_dram_activity_for_fetch_window() {
     assert!(run.has_resource_activity());
     assert_eq!(
         run.resource_activity_count(),
-        run.fabric_transfer_count() + run.dram_access_count(),
+        run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+    );
+}
+
+#[test]
+fn topology_run_reports_fabric_wait_for_for_contended_fetches() {
+    let source = GuestSourceId::new(94);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        contended_cpu_fabric_topology(),
+        RiscvClusterTopologyConfig::new([
+            core_config_on(0, 0, 94, "cpu0"),
+            core_config_on(1, 1, 95, "cpu1"),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(dram_config(), &ecall_image())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(3), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            30,
+            |cpu| GuestEventId::new(940 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert!(run.has_fabric_activity());
+    assert!(run.has_fabric_wait_for_edges());
+    assert!(run.fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue) >= 1);
+    assert!(!run.fabric_wait_for_blocked_nodes().is_empty());
+    assert!(run.fabric_first_wait_tick().unwrap() <= run.fabric_last_wait_tick().unwrap());
+    assert_eq!(
+        run.resource_activity_count(),
+        run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
     );
 }
 
@@ -825,7 +1011,10 @@ fn topology_run_reports_fabric_without_dram_for_store_memory() {
     assert!(run.fabric_transfer_count() > 0);
     assert_eq!(run.dram_access_count(), 0);
     assert_eq!(run.dram_target_activities().len(), 0);
-    assert_eq!(run.resource_activity_count(), run.fabric_transfer_count());
+    assert_eq!(
+        run.resource_activity_count(),
+        run.fabric_transfer_count() + run.fabric_wait_for_edge_count(),
+    );
     assert!(system.memory_store().is_some());
     assert!(system.dram_memory_controller().is_none());
 }

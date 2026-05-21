@@ -287,6 +287,17 @@ impl FabricActivityMarker {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FabricWaitForMarker {
+    offset: usize,
+}
+
+impl FabricWaitForMarker {
+    const fn new(offset: usize) -> Self {
+        Self { offset }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct FabricLaneKey {
     link: FabricLinkId,
@@ -795,6 +806,10 @@ impl FabricModel {
         FabricActivityMarker::new(self.activity_log.len())
     }
 
+    pub fn mark_wait_for(&self) -> FabricWaitForMarker {
+        FabricWaitForMarker::new(self.wait_log.len())
+    }
+
     pub fn lane_activities(&self) -> Vec<FabricLaneActivity> {
         collect_lane_activities(&self.activity_log)
     }
@@ -845,18 +860,23 @@ impl FabricModel {
     pub fn wait_for_graph_at(&self, tick: Tick) -> WaitForGraph {
         let mut graph = WaitForGraph::new();
         for wait in self.wait_log.iter().filter(|wait| wait.is_active_at(tick)) {
-            graph
-                .record_wait(
-                    fabric_packet_node(wait.packet),
-                    fabric_resource_node(
-                        &wait.link,
-                        wait.virtual_network,
-                        wait.kind.resource_suffix(),
-                    ),
-                    wait.kind.edge_kind(),
-                    tick,
-                )
-                .expect("fabric wait-for labels are generated from typed ids");
+            record_wait_interval(&mut graph, wait, tick, tick);
+        }
+        graph
+    }
+
+    pub fn wait_for_graph_since(&self, marker: FabricWaitForMarker) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        let Some(records) = self.wait_log.get(marker.offset..) else {
+            return graph;
+        };
+        for wait in records {
+            record_wait_interval(
+                &mut graph,
+                wait,
+                wait.first_blocked_tick,
+                wait.unblocked_tick.saturating_sub(1),
+            );
         }
         graph
     }
@@ -964,6 +984,33 @@ fn fabric_resource_node(
         suffix
     ))
     .expect("fabric resource wait-for label is sanitized")
+}
+
+fn record_wait_interval(
+    graph: &mut WaitForGraph,
+    wait: &FabricWaitRecord,
+    first_tick: Tick,
+    last_tick: Tick,
+) {
+    let source = fabric_packet_node(wait.packet);
+    let target = fabric_resource_node(
+        &wait.link,
+        wait.virtual_network,
+        wait.kind.resource_suffix(),
+    );
+    graph
+        .record_wait(
+            source.clone(),
+            target.clone(),
+            wait.kind.edge_kind(),
+            first_tick,
+        )
+        .expect("fabric wait-for labels are generated from typed ids");
+    if last_tick != first_tick {
+        graph
+            .record_wait(source, target, wait.kind.edge_kind(), last_tick)
+            .expect("fabric wait-for labels are generated from typed ids");
+    }
 }
 
 fn wait_for_label_segment(label: &str) -> String {

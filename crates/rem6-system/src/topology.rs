@@ -909,6 +909,7 @@ impl RiscvTopologySystem {
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
         let fabric_activity_start = self.transport.mark_fabric_activity();
+        let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
         let msi_data_cache = self.msi_data_cache.clone();
         let msi_data_run_start = msi_data_cache
@@ -1000,6 +1001,9 @@ impl RiscvTopologySystem {
         let fabric_activity = fabric_activity_start
             .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
             .unwrap_or_default();
+        let fabric_wait_for = fabric_wait_for_start
+            .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
+            .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
@@ -1032,6 +1036,7 @@ impl RiscvTopologySystem {
 
         Ok(run
             .with_fabric_activity(fabric_activity)
+            .with_fabric_wait_for(fabric_wait_for)
             .with_dram_activity(dram_activity)
             .with_data_cache_run_records(data_cache_run_records))
     }

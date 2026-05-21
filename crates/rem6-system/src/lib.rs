@@ -16,7 +16,7 @@ use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
     ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId, PartitionFrontier,
     PartitionId, PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord,
-    SchedulerError, Tick,
+    SchedulerError, Tick, WaitForGraph,
 };
 use rem6_memory::MemoryTargetId;
 use rem6_mmio::MmioBus;
@@ -26,6 +26,7 @@ use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcom
 mod coherence_checkpoint;
 mod data_cache_run;
 mod fabric_checkpoint;
+mod fabric_wait_run;
 mod heterogeneous_checkpoint;
 mod host;
 mod interrupt_checkpoint;
@@ -610,13 +611,14 @@ pub struct RiscvSystemRun {
     scheduled_traps: Vec<ScheduledRiscvTrap>,
     stop_reason: RiscvSystemRunStopReason,
     fabric_activity: Vec<FabricLaneActivity>,
+    pub(crate) fabric_wait_for: WaitForGraph,
     dram_activity: Vec<DramTargetActivity>,
     pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
     pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
 }
 
 impl RiscvSystemRun {
-    pub const fn new(
+    pub fn new(
         turns: Vec<RiscvClusterTurn>,
         scheduled_traps: Vec<ScheduledRiscvTrap>,
         stop_reason: RiscvSystemRunStopReason,
@@ -626,6 +628,7 @@ impl RiscvSystemRun {
             scheduled_traps,
             stop_reason,
             fabric_activity: Vec::new(),
+            fabric_wait_for: WaitForGraph::new(),
             dram_activity: Vec::new(),
             data_cache_runs: Vec::new(),
             data_cache_run_protocols: Vec::new(),
@@ -898,7 +901,7 @@ impl RiscvSystemRun {
     }
 
     pub fn resource_activity_count(&self) -> usize {
-        self.fabric_transfer_count() + self.dram_access_count()
+        self.fabric_transfer_count() + self.dram_access_count() + self.fabric_wait_for_edge_count()
     }
 
     pub fn has_resource_activity(&self) -> bool {
