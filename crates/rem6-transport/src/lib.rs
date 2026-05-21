@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,10 @@ use rem6_kernel::{
 };
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_topology::{Endpoint, Topology, TopologyError, TopologyPath};
+
+type ParallelRequestResponder =
+    Box<dyn FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send>;
+type ResponseSink = Box<dyn FnOnce(ResponseDelivery) + Send>;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TransportEndpointId(String);
@@ -408,6 +413,56 @@ struct StoredRoute {
     route: MemoryRoute,
 }
 
+pub struct ParallelMemoryTransaction {
+    route: MemoryRouteId,
+    request: MemoryRequest,
+    trace: MemoryTrace,
+    responder: ParallelRequestResponder,
+    response_sink: ResponseSink,
+}
+
+impl ParallelMemoryTransaction {
+    pub fn new<F, G>(
+        route: MemoryRouteId,
+        request: MemoryRequest,
+        trace: MemoryTrace,
+        responder: F,
+        response_sink: G,
+    ) -> Self
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        G: FnOnce(ResponseDelivery) + Send + 'static,
+    {
+        Self {
+            route,
+            request,
+            trace,
+            responder: Box::new(responder),
+            response_sink: Box::new(response_sink),
+        }
+    }
+
+    pub fn route(&self) -> MemoryRouteId {
+        self.route
+    }
+
+    pub fn request(&self) -> &MemoryRequest {
+        &self.request
+    }
+}
+
+struct PreparedParallelTransaction {
+    route_id: MemoryRouteId,
+    route: MemoryRoute,
+    request: MemoryRequest,
+    trace: MemoryTrace,
+    responder: ParallelRequestResponder,
+    response_sink: ResponseSink,
+    first_hop_delay: Tick,
+}
+
 pub struct MemoryTransport {
     next_route_id: u64,
     routes: Vec<StoredRoute>,
@@ -574,6 +629,181 @@ impl MemoryTransport {
             .map_err(TransportError::Scheduler)
     }
 
+    pub fn submit_parallel_batch<I>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transactions: I,
+    ) -> Result<Vec<PartitionEventId>, TransportError>
+    where
+        I: IntoIterator<Item = ParallelMemoryTransaction>,
+    {
+        let start_tick = scheduler.now();
+        let mut prepared = transactions
+            .into_iter()
+            .map(|transaction| {
+                self.prepare_parallel_transaction(scheduler, start_tick, transaction)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let first_hop_delays =
+            self.reserve_parallel_batch_first_hops(start_tick, prepared.iter())?;
+        for (transaction, delay) in prepared.iter_mut().zip(first_hop_delays) {
+            transaction.first_hop_delay = delay;
+        }
+
+        let mut events = Vec::with_capacity(prepared.len());
+        for transaction in prepared {
+            let PreparedParallelTransaction {
+                route_id,
+                route,
+                request,
+                trace,
+                responder,
+                response_sink,
+                first_hop_delay,
+            } = transaction;
+            let source_partition = route.source_partition();
+            let fabric = self.fabric.clone();
+            let request_id = request.id();
+            events.push(
+                scheduler
+                    .schedule_parallel_at(source_partition, start_tick, move |context| {
+                        trace.record(MemoryTraceEvent::request(
+                            context.now(),
+                            route_id,
+                            route.source().clone(),
+                            MemoryTraceKind::RequestSent,
+                            request_id,
+                        ));
+
+                        Self::schedule_parallel_request_hop_with_delay(
+                            context,
+                            route_id,
+                            route,
+                            0,
+                            request,
+                            trace,
+                            fabric,
+                            responder,
+                            response_sink,
+                            first_hop_delay,
+                        );
+                    })
+                    .map_err(TransportError::Scheduler)?,
+            );
+        }
+
+        Ok(events)
+    }
+
+    fn prepare_parallel_transaction(
+        &self,
+        scheduler: &PartitionedScheduler,
+        start_tick: Tick,
+        transaction: ParallelMemoryTransaction,
+    ) -> Result<PreparedParallelTransaction, TransportError> {
+        let route = self
+            .route(transaction.route)
+            .cloned()
+            .ok_or(TransportError::UnknownRoute {
+                route: transaction.route,
+            })?;
+        self.validate_scheduler_route(scheduler, transaction.route, &route)?;
+        let source_now = scheduler
+            .partition_now(route.source_partition())
+            .map_err(TransportError::Scheduler)?;
+        if start_tick < source_now {
+            return Err(TransportError::Scheduler(SchedulerError::InThePast {
+                partition: route.source_partition(),
+                now: source_now,
+                requested: start_tick,
+            }));
+        }
+
+        Ok(PreparedParallelTransaction {
+            route_id: transaction.route,
+            route,
+            request: transaction.request,
+            trace: transaction.trace,
+            responder: transaction.responder,
+            response_sink: transaction.response_sink,
+            first_hop_delay: 0,
+        })
+    }
+
+    fn reserve_parallel_batch_first_hops<'a, I>(
+        &self,
+        now: Tick,
+        transactions: I,
+    ) -> Result<Vec<Tick>, TransportError>
+    where
+        I: IntoIterator<Item = &'a PreparedParallelTransaction>,
+    {
+        let transactions = transactions.into_iter().collect::<Vec<_>>();
+        let mut delays = vec![0; transactions.len()];
+        let mut fabric_requests = Vec::new();
+
+        for (index, transaction) in transactions.iter().enumerate() {
+            let hop = &transaction.route.hops()[0];
+            let Some(path) = hop.request_fabric_path() else {
+                delays[index] = hop.request_latency();
+                continue;
+            };
+            if self.fabric.is_none() {
+                return Err(TransportError::MissingFabricModel {
+                    route: transaction.route_id,
+                });
+            }
+            let packet = FabricPacket::new(
+                fabric_packet_id(
+                    transaction.route_id,
+                    transaction.request.id(),
+                    TransportLatency::Request,
+                ),
+                transaction.request.size().bytes(),
+                transaction.route.request_virtual_network(),
+            )
+            .map_err(TransportError::Fabric)?;
+            fabric_requests.push((index, packet, path.clone()));
+        }
+
+        if fabric_requests.is_empty() {
+            return Ok(delays);
+        }
+
+        let fabric = self
+            .fabric
+            .as_ref()
+            .expect("fabric presence is checked before batch reservation");
+        let transfers = fabric
+            .lock()
+            .expect("fabric lock")
+            .transmit_batch(
+                now,
+                fabric_requests
+                    .iter()
+                    .map(|(_, packet, path)| (packet.clone(), path.clone())),
+            )
+            .map_err(TransportError::Fabric)?;
+        let mut arrivals = transfers
+            .into_iter()
+            .map(|transfer| {
+                let delay = transfer
+                    .arrival_tick()
+                    .checked_sub(now)
+                    .ok_or(TransportError::Fabric(FabricError::TickOverflow))?;
+                Ok((transfer.packet().id(), delay))
+            })
+            .collect::<Result<BTreeMap<_, _>, TransportError>>()?;
+
+        for (index, packet, _) in fabric_requests {
+            delays[index] = arrivals
+                .remove(&packet.id())
+                .expect("fabric batch returns every accepted packet");
+        }
+
+        Ok(delays)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn schedule_request_hop<F, G>(
         context: &mut SchedulerContext<'_>,
@@ -643,6 +873,91 @@ impl MemoryTransport {
                     }
                 } else {
                     Self::schedule_request_hop(
+                        context,
+                        route_id,
+                        route,
+                        hop_index + 1,
+                        request,
+                        trace,
+                        fabric,
+                        responder,
+                        response_sink,
+                    );
+                }
+            })
+            .expect("validated request transport latency");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn schedule_parallel_request_hop_with_delay<F, G>(
+        context: &mut ParallelSchedulerContext<'_>,
+        route_id: MemoryRouteId,
+        route: MemoryRoute,
+        hop_index: usize,
+        request: MemoryRequest,
+        trace: MemoryTrace,
+        fabric: Option<Arc<Mutex<FabricModel>>>,
+        responder: F,
+        response_sink: G,
+        delay: Tick,
+    ) where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        G: FnOnce(ResponseDelivery) + Send + 'static,
+    {
+        let hop = route.hops()[hop_index].clone();
+        context
+            .schedule_remote_after(hop.partition(), delay, move |context| {
+                trace.record(MemoryTraceEvent::request(
+                    context.now(),
+                    route_id,
+                    hop.endpoint().clone(),
+                    MemoryTraceKind::RequestArrived,
+                    request.id(),
+                ));
+
+                if hop_index + 1 == route.hops().len() {
+                    let delivery = RequestDelivery {
+                        tick: context.now(),
+                        route: route_id,
+                        endpoint: hop.endpoint().clone(),
+                        request,
+                    };
+
+                    match responder(delivery, context) {
+                        TargetOutcome::Respond(response) => {
+                            Self::schedule_parallel_response_hop(
+                                context,
+                                route_id,
+                                route,
+                                hop_index,
+                                response,
+                                trace,
+                                fabric,
+                                response_sink,
+                            );
+                        }
+                        TargetOutcome::RespondAfter { delay, response } => {
+                            context
+                                .schedule_local_after(delay, move |context| {
+                                    Self::schedule_parallel_response_hop(
+                                        context,
+                                        route_id,
+                                        route,
+                                        hop_index,
+                                        response,
+                                        trace,
+                                        fabric,
+                                        response_sink,
+                                    );
+                                })
+                                .expect("validated target response delay");
+                        }
+                        TargetOutcome::NoResponse => {}
+                    }
+                } else {
+                    Self::schedule_parallel_request_hop(
                         context,
                         route_id,
                         route,

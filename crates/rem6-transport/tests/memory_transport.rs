@@ -8,8 +8,8 @@ use rem6_memory::{
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
-    MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome, TransportEndpointId,
-    TransportError, TransportLatency,
+    MemoryTransport, ParallelMemoryTransaction, RequestDelivery, ResponseDelivery, TargetOutcome,
+    TransportEndpointId, TransportError, TransportLatency,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -892,6 +892,220 @@ fn transport_parallel_submit_routes_request_and_response_across_epochs() {
             MemoryTraceEvent::response(5, route, core, req.id(), ResponseStatus::Completed),
         ]
     );
+}
+
+#[test]
+fn transport_parallel_batch_reserves_shared_fabric_by_stable_packet_order() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let memory = endpoint("memory0");
+    let shared_path = fabric_path("mesh_shared", 2, 4);
+    let route_from_partition_one = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core1"),
+                PartitionId::new(1),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_from_partition_zero = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core0"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(2), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let first_by_packet = request(80, 0x8000, 8);
+    let second_by_packet = request(81, 0x9000, 8);
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+
+    let second_delivery = Arc::clone(&deliveries);
+    let first_delivery = Arc::clone(&deliveries);
+    let events = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route_from_partition_zero,
+                    second_by_packet.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        second_delivery.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+                ParallelMemoryTransaction::new(
+                    route_from_partition_one,
+                    first_by_packet.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        first_delivery.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.partition())
+            .collect::<Vec<_>>(),
+        vec![PartitionId::new(0), PartitionId::new(1)],
+    );
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 4);
+    assert_eq!(summary.final_tick(), 6);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![
+            (route_from_partition_one, 4, first_by_packet.id()),
+            (route_from_partition_zero, 6, second_by_packet.id()),
+        ],
+    );
+}
+
+#[test]
+fn transport_parallel_batch_routes_response_after_batched_request_arrival() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let trace = MemoryTrace::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let memory = endpoint("memory0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                core.clone(),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(fabric_path("mesh_request", 2, 4))
+                        .with_response_fabric_path(fabric_path("mesh_response", 2, 4)),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = request(83, 0xb000, 4);
+    let response_log = Arc::clone(&responses);
+
+    let events = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [ParallelMemoryTransaction::new(
+                route,
+                req.clone(),
+                trace.clone(),
+                move |delivery, context| {
+                    assert_eq!(delivery.tick(), 3);
+                    assert_eq!(context.partition(), PartitionId::new(1));
+                    TargetOutcome::Respond(
+                        MemoryResponse::completed(delivery.request(), Some(vec![9, 8, 7, 6]))
+                            .unwrap(),
+                    )
+                },
+                move |delivery| {
+                    response_log.lock().unwrap().push((
+                        delivery.tick(),
+                        delivery.endpoint().clone(),
+                        delivery.response().request_id(),
+                        delivery.response().data().unwrap().to_vec(),
+                    ));
+                },
+            )],
+        )
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].partition(), PartitionId::new(0));
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 3);
+    assert_eq!(summary.final_tick(), 6);
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(6, core.clone(), req.id(), vec![9, 8, 7, 6])]
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id(),
+            ),
+            MemoryTraceEvent::request(3, route, memory, MemoryTraceKind::RequestArrived, req.id()),
+            MemoryTraceEvent::response(6, route, core, req.id(), ResponseStatus::Completed),
+        ],
+    );
+}
+
+#[test]
+fn transport_parallel_batch_rejects_missing_fabric_before_scheduling() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core0"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(fabric_path("mesh_missing", 2, 4)),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let trace = MemoryTrace::new();
+    let transaction = ParallelMemoryTransaction::new(
+        route,
+        request(82, 0xa000, 8),
+        trace.clone(),
+        |_delivery, _context| TargetOutcome::NoResponse,
+        |_| panic!("request-only transfer must not deliver a response"),
+    );
+
+    let error = transport
+        .submit_parallel_batch(&mut scheduler, [transaction])
+        .unwrap_err();
+
+    assert_eq!(error, TransportError::MissingFabricModel { route });
+    assert!(scheduler.is_idle());
+    assert!(trace.is_empty());
 }
 
 #[test]
