@@ -9,6 +9,7 @@ use rem6_directory::{
     MoesiDirectoryGrant, MoesiDirectoryLineState,
 };
 use rem6_dram::{DramMemoryController, DramMemoryError};
+use rem6_fabric::{FabricError, FabricModel, FabricPacket, FabricPacketId};
 use rem6_kernel::{
     ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
     SchedulerError,
@@ -254,6 +255,7 @@ pub struct PartitionedMoesiDirectoryLineHarness {
     memory_route: Option<PartitionedMoesiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<MoesiDirectoryDecisionRecord>>>,
@@ -475,11 +477,20 @@ impl PartitionedMoesiDirectoryLineHarness {
             .index()
             .checked_add(1)
             .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?;
-        let mut transport = rem6_transport::MemoryTransport::new();
+        let agent_configs: Vec<_> = agents.into_iter().collect();
+        let uses_fabric = agent_configs
+            .iter()
+            .any(|config| moesi_route_hops_use_fabric(config.route_hops()));
+        let fabric = uses_fabric.then(|| Arc::new(Mutex::new(FabricModel::new())));
+        let mut transport = if let Some(fabric) = &fabric {
+            rem6_transport::MemoryTransport::with_shared_fabric(Arc::clone(fabric))
+        } else {
+            rem6_transport::MemoryTransport::new()
+        };
         let mut caches = BTreeMap::new();
         let mut routes = BTreeMap::new();
 
-        for config in agents {
+        for config in agent_configs {
             partition_count = partition_count.max(
                 config
                     .partition()
@@ -532,6 +543,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: None,
+            fabric,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -564,7 +576,17 @@ impl PartitionedMoesiDirectoryLineHarness {
                 .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
         );
         expand_partition_count_for_moesi_hops(&mut partition_count, memory.route_hops())?;
-        let mut transport = rem6_transport::MemoryTransport::new();
+        let agent_configs: Vec<_> = agents.into_iter().collect();
+        let uses_fabric = moesi_route_hops_use_fabric(memory.route_hops())
+            || agent_configs
+                .iter()
+                .any(|config| moesi_route_hops_use_fabric(config.route_hops()));
+        let fabric = uses_fabric.then(|| Arc::new(Mutex::new(FabricModel::new())));
+        let mut transport = if let Some(fabric) = &fabric {
+            rem6_transport::MemoryTransport::with_shared_fabric(Arc::clone(fabric))
+        } else {
+            rem6_transport::MemoryTransport::new()
+        };
         let memory_route = moesi_route_from_config(
             directory_endpoint.clone(),
             directory_partition,
@@ -582,7 +604,7 @@ impl PartitionedMoesiDirectoryLineHarness {
         let mut caches = BTreeMap::new();
         let mut routes = BTreeMap::new();
 
-        for config in agents {
+        for config in agent_configs {
             partition_count = partition_count.max(
                 config
                     .partition()
@@ -638,6 +660,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             memory_route: Some(PartitionedMoesiRoute::new(memory_route_id, memory_route)),
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
+            fabric,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -690,6 +713,7 @@ impl PartitionedMoesiDirectoryLineHarness {
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
         let dram_memory = self.dram_memory.clone();
+        let fabric = self.fabric.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
@@ -725,6 +749,7 @@ impl PartitionedMoesiDirectoryLineHarness {
                             &decision,
                             &cache_routes,
                             &caches,
+                            &fabric,
                         )
                         .expect("scheduled directory snoops");
                         schedule_partitioned_moesi_memory_response_parallel(
@@ -735,6 +760,7 @@ impl PartitionedMoesiDirectoryLineHarness {
                             memory_route,
                             backing,
                             dram_memory,
+                            fabric.clone(),
                             trace.clone(),
                             response_cache,
                             responses,
@@ -764,6 +790,7 @@ impl PartitionedMoesiDirectoryLineHarness {
                         &decision,
                         &cache_routes,
                         &caches,
+                        &fabric,
                     )
                     .expect("scheduled directory snoops");
                     let route_delay = requester_route.route.response_latency();
@@ -774,6 +801,7 @@ impl PartitionedMoesiDirectoryLineHarness {
                         requester_route,
                         response,
                         fill_event,
+                        fabric,
                         trace,
                         response_cache,
                         responses,
@@ -883,6 +911,11 @@ fn expand_partition_count_for_moesi_hops(
     }
 
     Ok(())
+}
+
+fn moesi_route_hops_use_fabric(hops: &[PartitionedRouteHopConfig]) -> bool {
+    hops.iter()
+        .any(|hop| hop.request_fabric_path().is_some() || hop.response_fabric_path().is_some())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1038,6 +1071,7 @@ fn schedule_partitioned_moesi_memory_response_parallel(
     memory_route: PartitionedMoesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MoesiCacheController>>,
     responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
@@ -1051,6 +1085,7 @@ fn schedule_partitioned_moesi_memory_response_parallel(
         memory_route,
         backing,
         dram_memory,
+        fabric,
         trace,
         response_cache,
         responses,
@@ -1067,6 +1102,7 @@ struct PartitionedMoesiMemoryResponseWork {
     memory_route: PartitionedMoesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MoesiCacheController>>,
     responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
@@ -1098,8 +1134,17 @@ impl PartitionedMoesiMemoryResponseWork {
     ) -> Result<(), MoesiHarnessError> {
         let hop = self.memory_route.route.hops()[hop_index].clone();
         let route_id = self.memory_route.id;
+        let delay = moesi_request_hop_delay(
+            &self.fabric,
+            context.now(),
+            route_id,
+            &self.memory_route.route,
+            &hop,
+            &request,
+        )
+        .expect("validated MOESI memory request fabric timing");
         context
-            .schedule_remote_after(hop.partition(), hop.request_latency(), move |context| {
+            .schedule_remote_after(hop.partition(), delay, move |context| {
                 self.trace.record(MemoryTraceEvent::request(
                     context.now(),
                     route_id,
@@ -1152,8 +1197,17 @@ impl PartitionedMoesiMemoryResponseWork {
         let (endpoint, partition) =
             moesi_route_response_destination(&self.memory_route.route, hop_index);
         let route_id = self.memory_route.id;
+        let delay = moesi_response_hop_delay(
+            &self.fabric,
+            context.now(),
+            route_id,
+            &self.memory_route.route,
+            &hop,
+            &response,
+        )
+        .expect("validated MOESI memory response fabric timing");
         context
-            .schedule_remote_after(partition, hop.response_latency(), move |context| {
+            .schedule_remote_after(partition, delay, move |context| {
                 self.trace.record(MemoryTraceEvent::response(
                     context.now(),
                     route_id,
@@ -1174,6 +1228,7 @@ impl PartitionedMoesiMemoryResponseWork {
                         self.requester_route,
                         response,
                         self.fill_event,
+                        self.fabric,
                         self.trace,
                         self.response_cache,
                         self.responses,
@@ -1234,11 +1289,141 @@ fn complete_partitioned_moesi_memory_request(
     Ok((outcome.ready_cycle(), response))
 }
 
+fn moesi_route_response_delay(
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+    now: u64,
+    route_id: MemoryRouteId,
+    route: &MemoryRoute,
+    request: MemoryRequestId,
+    packet_bytes: u64,
+) -> Result<u64, TransportError> {
+    let mut tick = now;
+    for hop in route.hops().iter().rev() {
+        let delay = moesi_response_packet_hop_delay(
+            fabric,
+            tick,
+            route_id,
+            route,
+            hop,
+            request,
+            packet_bytes,
+        )?;
+        tick = tick
+            .checked_add(delay)
+            .ok_or(TransportError::Fabric(FabricError::TickOverflow))?;
+    }
+
+    tick.checked_sub(now)
+        .ok_or(TransportError::Fabric(FabricError::TickOverflow))
+}
+
+fn moesi_request_hop_delay(
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+    now: u64,
+    route_id: MemoryRouteId,
+    route: &MemoryRoute,
+    hop: &MemoryRouteHop,
+    request: &MemoryRequest,
+) -> Result<u64, TransportError> {
+    let Some(path) = hop.request_fabric_path() else {
+        return Ok(hop.request_latency());
+    };
+    let Some(fabric) = fabric else {
+        return Err(TransportError::MissingFabricModel { route: route_id });
+    };
+    let packet = FabricPacket::new(
+        moesi_fabric_packet_id(route_id, request.id(), false),
+        request.size().bytes(),
+        route.request_virtual_network(),
+    )
+    .map_err(TransportError::Fabric)?;
+    let arrival = fabric
+        .lock()
+        .expect("fabric lock")
+        .transmit(now, packet, path.clone())
+        .map_err(TransportError::Fabric)?
+        .arrival_tick();
+    arrival
+        .checked_sub(now)
+        .ok_or(TransportError::Fabric(FabricError::TickOverflow))
+}
+
+fn moesi_response_hop_delay(
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+    now: u64,
+    route_id: MemoryRouteId,
+    route: &MemoryRoute,
+    hop: &MemoryRouteHop,
+    response: &MemoryResponse,
+) -> Result<u64, TransportError> {
+    moesi_response_packet_hop_delay(
+        fabric,
+        now,
+        route_id,
+        route,
+        hop,
+        response.request_id(),
+        moesi_response_packet_bytes(response),
+    )
+}
+
+fn moesi_response_packet_hop_delay(
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+    now: u64,
+    route_id: MemoryRouteId,
+    route: &MemoryRoute,
+    hop: &MemoryRouteHop,
+    request: MemoryRequestId,
+    packet_bytes: u64,
+) -> Result<u64, TransportError> {
+    let Some(path) = hop.response_fabric_path() else {
+        return Ok(hop.response_latency());
+    };
+    let Some(fabric) = fabric else {
+        return Err(TransportError::MissingFabricModel { route: route_id });
+    };
+    let packet = FabricPacket::new(
+        moesi_fabric_packet_id(route_id, request, true),
+        packet_bytes.max(1),
+        route.response_virtual_network(),
+    )
+    .map_err(TransportError::Fabric)?;
+    let arrival = fabric
+        .lock()
+        .expect("fabric lock")
+        .transmit(now, packet, path.clone())
+        .map_err(TransportError::Fabric)?
+        .arrival_tick();
+    arrival
+        .checked_sub(now)
+        .ok_or(TransportError::Fabric(FabricError::TickOverflow))
+}
+
+fn moesi_response_packet_bytes(response: &MemoryResponse) -> u64 {
+    response
+        .data()
+        .map_or(1, |bytes| (bytes.len() as u64).max(1))
+}
+
+fn moesi_fabric_packet_id(
+    route: MemoryRouteId,
+    request: MemoryRequestId,
+    response: bool,
+) -> FabricPacketId {
+    let direction = u64::from(response);
+    let value = (direction << 63)
+        | ((route.get() & 0x7fff) << 48)
+        | ((u64::from(request.agent().get()) & 0xffff) << 32)
+        | (request.sequence() & 0xffff_ffff);
+    FabricPacketId::new(value)
+}
+
 fn schedule_partitioned_moesi_snoops_parallel(
     context: &mut ParallelSchedulerContext<'_>,
     decision: &MoesiDirectoryDecision,
     cache_routes: &BTreeMap<AgentId, PartitionedMoesiRoute>,
     caches: &BTreeMap<AgentId, Arc<Mutex<MoesiCacheController>>>,
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
 ) -> Result<u64, MoesiHarnessError> {
     let mut max_delay = 0;
     for snoop in decision.snoops() {
@@ -1247,7 +1432,15 @@ fn schedule_partitioned_moesi_snoops_parallel(
             .ok_or(MoesiHarnessError::UnknownCache {
                 agent: snoop.target(),
             })?;
-        let delay = route.route.response_latency();
+        let delay = moesi_route_response_delay(
+            fabric,
+            context.now(),
+            route.id,
+            &route.route,
+            decision.request(),
+            1,
+        )
+        .map_err(MoesiHarnessError::Transport)?;
         max_delay = max_delay.max(delay);
         let cache =
             caches
@@ -1279,6 +1472,7 @@ fn schedule_partitioned_moesi_cache_response_parallel(
     requester_route: PartitionedMoesiRoute,
     response: MemoryResponse,
     fill_event: MoesiEvent,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MoesiCacheController>>,
     responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
@@ -1291,6 +1485,7 @@ fn schedule_partitioned_moesi_cache_response_parallel(
             last_hop,
             response,
             fill_event,
+            fabric,
             trace,
             response_cache,
             responses,
@@ -1306,6 +1501,7 @@ fn schedule_partitioned_moesi_cache_response_parallel(
                 last_hop,
                 response,
                 fill_event,
+                fabric,
                 trace,
                 response_cache,
                 responses,
@@ -1323,6 +1519,7 @@ fn schedule_partitioned_moesi_cache_response_hop_parallel(
     hop_index: usize,
     response: MemoryResponse,
     fill_event: MoesiEvent,
+    fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MoesiCacheController>>,
     responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
@@ -1330,8 +1527,17 @@ fn schedule_partitioned_moesi_cache_response_hop_parallel(
     let hop = requester_route.route.hops()[hop_index].clone();
     let (endpoint, partition) = moesi_route_response_destination(&requester_route.route, hop_index);
     let route_id = requester_route.id;
+    let delay = moesi_response_hop_delay(
+        &fabric,
+        context.now(),
+        route_id,
+        &requester_route.route,
+        &hop,
+        &response,
+    )
+    .expect("validated MOESI cache response fabric timing");
     context
-        .schedule_remote_after(partition, hop.response_latency(), move |context| {
+        .schedule_remote_after(partition, delay, move |context| {
             trace.record(MemoryTraceEvent::response(
                 context.now(),
                 route_id,
@@ -1363,6 +1569,7 @@ fn schedule_partitioned_moesi_cache_response_hop_parallel(
                     hop_index - 1,
                     response,
                     fill_event,
+                    fabric,
                     trace,
                     response_cache,
                     responses,
