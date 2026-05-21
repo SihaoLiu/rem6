@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
-use rem6_dram::{DramGeometry, DramTiming};
+use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
 use rem6_interrupt::{InterruptLineId, InterruptPriority, InterruptSourceId, InterruptTargetId};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -1311,4 +1311,64 @@ fn topology_system_dram_boot_image_loads_segments_into_addressed_targets() {
             .unwrap()[8..16],
         &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
     );
+}
+
+#[test]
+fn topology_system_dram_profiles_preserve_external_memory_metadata() {
+    let code_target = MemoryTargetId::new(0);
+    let data_target = MemoryTargetId::new(1);
+    let code_profile = ExternalMemoryProfile::ddr(
+        code_target,
+        layout(),
+        2,
+        1,
+        DramGeometry::new(2, 64, 16).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+    )
+    .unwrap();
+    let data_profile = ExternalMemoryProfile::hbm(
+        data_target,
+        layout(),
+        1,
+        4,
+        DramGeometry::new(4, 128, 16).unwrap(),
+        DramTiming::new(2, 4, 6, 2, 1).unwrap(),
+    )
+    .unwrap();
+    let image = BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0xa000), vec![0x5a; 8])
+        .unwrap();
+    let dram = RiscvTopologyDramConfig::from_profile(code_profile)
+        .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap())
+        .add_profile_target(data_profile)
+        .unwrap()
+        .add_region_for_target(
+            data_target,
+            Address::new(0xa000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(dram, &image)
+    .unwrap();
+    let controller = system.dram_memory_controller().unwrap().lock().unwrap();
+
+    assert_eq!(
+        controller.memory_profile(code_target).unwrap().technology(),
+        DramMemoryTechnology::Ddr,
+    );
+    assert_eq!(
+        controller.memory_profile(data_target).unwrap().technology(),
+        DramMemoryTechnology::Hbm,
+    );
+    assert_eq!(controller.line_count(code_target).unwrap(), 1);
+    assert_eq!(controller.line_count(data_target).unwrap(), 1);
 }

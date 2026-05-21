@@ -17,6 +17,22 @@ pub enum DramTimingField {
     PrechargeLatency,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DramMemoryTechnology {
+    Ddr,
+    Hbm,
+    Lpddr,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DramProfileField {
+    Channels,
+    RanksPerChannel,
+    Stacks,
+    PseudoChannelsPerStack,
+    DiesPerChannel,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DramError {
     ZeroBankCount,
@@ -28,6 +44,10 @@ pub enum DramError {
     },
     ZeroTimingLatency {
         field: DramTimingField,
+    },
+    ZeroProfileTopology {
+        technology: DramMemoryTechnology,
+        field: DramProfileField,
     },
     LineSizeMismatch {
         request: MemoryRequestId,
@@ -63,6 +83,10 @@ impl fmt::Display for DramError {
             Self::ZeroTimingLatency { field } => {
                 write!(formatter, "DRAM timing field {field:?} must be nonzero")
             }
+            Self::ZeroProfileTopology { technology, field } => write!(
+                formatter,
+                "DRAM profile {technology:?} topology field {field:?} must be nonzero"
+            ),
             Self::LineSizeMismatch {
                 request,
                 expected,
@@ -151,6 +175,181 @@ impl From<MemoryError> for DramMemoryError {
     fn from(error: MemoryError) -> Self {
         Self::Memory(error)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExternalMemoryTopology {
+    Ddr {
+        channels: u32,
+        ranks_per_channel: u32,
+    },
+    Hbm {
+        stacks: u32,
+        pseudo_channels_per_stack: u32,
+    },
+    Lpddr {
+        channels: u32,
+        dies_per_channel: u32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExternalMemoryProfile {
+    target: MemoryTargetId,
+    line_layout: CacheLineLayout,
+    geometry: DramGeometry,
+    timing: DramTiming,
+    technology: DramMemoryTechnology,
+    topology: ExternalMemoryTopology,
+}
+
+impl ExternalMemoryProfile {
+    pub fn ddr(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        channels: u32,
+        ranks_per_channel: u32,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Result<Self, DramError> {
+        validate_profile_count(
+            DramMemoryTechnology::Ddr,
+            DramProfileField::Channels,
+            channels,
+        )?;
+        validate_profile_count(
+            DramMemoryTechnology::Ddr,
+            DramProfileField::RanksPerChannel,
+            ranks_per_channel,
+        )?;
+        Ok(Self::new(
+            target,
+            line_layout,
+            geometry,
+            timing,
+            DramMemoryTechnology::Ddr,
+            ExternalMemoryTopology::Ddr {
+                channels,
+                ranks_per_channel,
+            },
+        ))
+    }
+
+    pub fn hbm(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        stacks: u32,
+        pseudo_channels_per_stack: u32,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Result<Self, DramError> {
+        validate_profile_count(DramMemoryTechnology::Hbm, DramProfileField::Stacks, stacks)?;
+        validate_profile_count(
+            DramMemoryTechnology::Hbm,
+            DramProfileField::PseudoChannelsPerStack,
+            pseudo_channels_per_stack,
+        )?;
+        Ok(Self::new(
+            target,
+            line_layout,
+            geometry,
+            timing,
+            DramMemoryTechnology::Hbm,
+            ExternalMemoryTopology::Hbm {
+                stacks,
+                pseudo_channels_per_stack,
+            },
+        ))
+    }
+
+    pub fn lpddr(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        channels: u32,
+        dies_per_channel: u32,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Result<Self, DramError> {
+        validate_profile_count(
+            DramMemoryTechnology::Lpddr,
+            DramProfileField::Channels,
+            channels,
+        )?;
+        validate_profile_count(
+            DramMemoryTechnology::Lpddr,
+            DramProfileField::DiesPerChannel,
+            dies_per_channel,
+        )?;
+        Ok(Self::new(
+            target,
+            line_layout,
+            geometry,
+            timing,
+            DramMemoryTechnology::Lpddr,
+            ExternalMemoryTopology::Lpddr {
+                channels,
+                dies_per_channel,
+            },
+        ))
+    }
+
+    const fn new(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        geometry: DramGeometry,
+        timing: DramTiming,
+        technology: DramMemoryTechnology,
+        topology: ExternalMemoryTopology,
+    ) -> Self {
+        Self {
+            target,
+            line_layout,
+            geometry,
+            timing,
+            technology,
+            topology,
+        }
+    }
+
+    pub const fn target(self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn line_layout(self) -> CacheLineLayout {
+        self.line_layout
+    }
+
+    pub const fn geometry(self) -> DramGeometry {
+        self.geometry
+    }
+
+    pub const fn timing(self) -> DramTiming {
+        self.timing
+    }
+
+    pub const fn technology(self) -> DramMemoryTechnology {
+        self.technology
+    }
+
+    pub const fn topology(self) -> ExternalMemoryTopology {
+        self.topology
+    }
+
+    pub const fn controller_config(self) -> DramControllerConfig {
+        DramControllerConfig::new(self.target, self.line_layout, self.geometry, self.timing)
+    }
+}
+
+fn validate_profile_count(
+    technology: DramMemoryTechnology,
+    field: DramProfileField,
+    value: u32,
+) -> Result<(), DramError> {
+    if value == 0 {
+        return Err(DramError::ZeroProfileTopology { technology, field });
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -732,6 +931,7 @@ impl DramMemoryOutcome {
 pub struct DramMemoryController {
     store: PartitionedMemoryStore,
     dram: BTreeMap<MemoryTargetId, DramController>,
+    profiles: BTreeMap<MemoryTargetId, ExternalMemoryProfile>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -758,11 +958,28 @@ impl DramMemorySnapshot {
 pub struct DramMemoryTargetSnapshot {
     target: MemoryTargetId,
     controller: DramControllerSnapshot,
+    profile: Option<ExternalMemoryProfile>,
 }
 
 impl DramMemoryTargetSnapshot {
     pub const fn new(target: MemoryTargetId, controller: DramControllerSnapshot) -> Self {
-        Self { target, controller }
+        Self {
+            target,
+            controller,
+            profile: None,
+        }
+    }
+
+    pub const fn with_profile(
+        target: MemoryTargetId,
+        controller: DramControllerSnapshot,
+        profile: ExternalMemoryProfile,
+    ) -> Self {
+        Self {
+            target,
+            controller,
+            profile: Some(profile),
+        }
     }
 
     pub const fn target(&self) -> MemoryTargetId {
@@ -771,6 +988,10 @@ impl DramMemoryTargetSnapshot {
 
     pub const fn controller(&self) -> &DramControllerSnapshot {
         &self.controller
+    }
+
+    pub const fn profile(&self) -> Option<&ExternalMemoryProfile> {
+        self.profile.as_ref()
     }
 }
 
@@ -795,6 +1016,12 @@ impl DramMemoryController {
             config.target(),
             DramController::new(config.geometry(), config.timing()),
         );
+        Ok(())
+    }
+
+    pub fn add_profile(&mut self, profile: ExternalMemoryProfile) -> Result<(), DramMemoryError> {
+        self.add_target(profile.controller_config())?;
+        self.profiles.insert(profile.target(), profile);
         Ok(())
     }
 
@@ -871,13 +1098,25 @@ impl DramMemoryController {
         self.dram.get(&target)
     }
 
+    pub fn memory_profile(&self, target: MemoryTargetId) -> Option<&ExternalMemoryProfile> {
+        self.profiles.get(&target)
+    }
+
     pub fn snapshot(&self) -> DramMemorySnapshot {
         DramMemorySnapshot::new(
             self.store.snapshot(),
             self.dram
                 .iter()
                 .map(|(target, controller)| {
-                    DramMemoryTargetSnapshot::new(*target, controller.snapshot())
+                    if let Some(profile) = self.profiles.get(target).copied() {
+                        DramMemoryTargetSnapshot::with_profile(
+                            *target,
+                            controller.snapshot(),
+                            profile,
+                        )
+                    } else {
+                        DramMemoryTargetSnapshot::new(*target, controller.snapshot())
+                    }
                 })
                 .collect(),
         )
@@ -892,6 +1131,7 @@ impl DramMemoryController {
         let store = PartitionedMemoryStore::from_snapshot(snapshot.store())
             .map_err(DramMemoryError::Memory)?;
         let mut dram = BTreeMap::new();
+        let mut profiles = BTreeMap::new();
         for target in snapshot.targets() {
             if !store.contains_partition(target.target()) {
                 return Err(DramMemoryError::Memory(MemoryError::UnknownMemoryTarget {
@@ -911,6 +1151,9 @@ impl DramMemoryController {
                     },
                 ));
             }
+            if let Some(profile) = target.profile().copied() {
+                profiles.insert(target.target(), profile);
+            }
         }
         for partition in store.snapshot().partitions() {
             if !dram.contains_key(&partition.target()) {
@@ -920,7 +1163,11 @@ impl DramMemoryController {
             }
         }
 
-        Ok(Self { store, dram })
+        Ok(Self {
+            store,
+            dram,
+            profiles,
+        })
     }
 
     fn preflight_storage(

@@ -12,6 +12,7 @@ use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
+    ExternalMemoryProfile,
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{GpuDeviceId, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice};
@@ -199,6 +200,7 @@ struct RiscvTopologyDramTargetConfig {
     memory: RiscvTopologyMemoryConfig,
     geometry: DramGeometry,
     timing: DramTiming,
+    profile: Option<ExternalMemoryProfile>,
 }
 
 impl RiscvTopologyDramTargetConfig {
@@ -212,6 +214,16 @@ impl RiscvTopologyDramTargetConfig {
             memory: RiscvTopologyMemoryConfig::new(target, line_layout),
             geometry,
             timing,
+            profile: None,
+        }
+    }
+
+    fn from_profile(profile: ExternalMemoryProfile) -> Self {
+        Self {
+            memory: RiscvTopologyMemoryConfig::new(profile.target(), profile.line_layout()),
+            geometry: profile.geometry(),
+            timing: profile.timing(),
+            profile: Some(profile),
         }
     }
 
@@ -229,6 +241,10 @@ impl RiscvTopologyDramTargetConfig {
 
     const fn timing(&self) -> DramTiming {
         self.timing
+    }
+
+    const fn profile(&self) -> Option<ExternalMemoryProfile> {
+        self.profile
     }
 
     fn regions(&self) -> &[RiscvTopologyMemoryRegion] {
@@ -251,6 +267,13 @@ impl RiscvTopologyDramConfig {
                 timing,
             )],
             checkpoint_component: default_dram_checkpoint_component(target),
+        }
+    }
+
+    pub fn from_profile(profile: ExternalMemoryProfile) -> Self {
+        Self {
+            targets: vec![RiscvTopologyDramTargetConfig::from_profile(profile)],
+            checkpoint_component: default_dram_checkpoint_component(profile.target()),
         }
     }
 
@@ -281,6 +304,25 @@ impl RiscvTopologyDramConfig {
             geometry,
             timing,
         ));
+        Ok(self)
+    }
+
+    pub fn add_profile_target(
+        mut self,
+        profile: ExternalMemoryProfile,
+    ) -> Result<Self, MemoryError> {
+        if self
+            .targets
+            .iter()
+            .any(|config| config.target() == profile.target())
+        {
+            return Err(MemoryError::DuplicateMemoryTarget {
+                target: profile.target(),
+            });
+        }
+
+        self.targets
+            .push(RiscvTopologyDramTargetConfig::from_profile(profile));
         Ok(self)
     }
 
@@ -341,12 +383,16 @@ impl RiscvTopologyDramConfig {
     fn build_controller(&self) -> Result<DramMemoryController, DramMemoryError> {
         let mut controller = DramMemoryController::new();
         for target in &self.targets {
-            controller.add_target(DramControllerConfig::new(
-                target.target(),
-                target.line_layout(),
-                target.geometry(),
-                target.timing(),
-            ))?;
+            if let Some(profile) = target.profile() {
+                controller.add_profile(profile)?;
+            } else {
+                controller.add_target(DramControllerConfig::new(
+                    target.target(),
+                    target.line_layout(),
+                    target.geometry(),
+                    target.timing(),
+                ))?;
+            }
         }
         for target in &self.targets {
             for region in target.regions() {
