@@ -10,7 +10,9 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
 };
 use rem6_mmio::{MmioRequest, MmioRequestId};
-use rem6_platform::{Platform, PlatformBuilder, PlatformTopologyRoute, PlatformUartConfig};
+use rem6_platform::{
+    Platform, PlatformBuilder, PlatformTimerConfig, PlatformTopologyRoute, PlatformUartConfig,
+};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
@@ -18,6 +20,7 @@ use rem6_system::{
     RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem, RiscvTrapEventPort,
     StopRequest, SystemActionOutcome, SystemHostController, SystemHostEventPort,
 };
+use rem6_timer::{TimerArm, TimerId, TimerSnapshot};
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
@@ -96,6 +99,26 @@ fn platform_with_uart(topology: &Topology, uart_id: UartId) -> Platform {
             interrupt_line: rem6_interrupt::InterruptLineId::new(40),
             interrupt_target: rem6_interrupt::InterruptTargetId::new(0),
             interrupt_source: rem6_interrupt::InterruptSourceId::new(50),
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap()
+}
+
+fn platform_with_timer(topology: &Topology, timer_id: TimerId) -> Platform {
+    let timer_route =
+        PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("timer0", "mmio"))
+            .resolve(topology)
+            .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_timer(PlatformTimerConfig {
+            id: timer_id,
+            base: Address::new(0xb000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: timer_route,
+            interrupt_line: rem6_interrupt::InterruptLineId::new(41),
+            interrupt_target: rem6_interrupt::InterruptTargetId::new(0),
+            interrupt_source: rem6_interrupt::InterruptSourceId::new(51),
             interrupt_latency: 2,
         })
         .build()
@@ -278,6 +301,82 @@ fn topology_with_uart() -> Topology {
         .connect_with_latencies(endpoint("cpu1", "dmem"), endpoint("mem0", "requests"), 2, 3)
         .unwrap()
         .connect_with_latencies(endpoint("cpu0", "mmio"), endpoint("uart0", "mmio"), 2, 2)
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn topology_with_timer() -> Topology {
+    TopologyBuilder::new(5)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("mmio"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("cpu1"),
+                kind("cpu"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("timer0"),
+                kind("timer"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("mmio"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "ifetch"),
+            endpoint("mem0", "requests"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mem0", "requests"), 2, 3)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu1", "ifetch"),
+            endpoint("mem0", "requests"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu1", "dmem"), endpoint("mem0", "requests"), 2, 3)
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "mmio"), endpoint("timer0", "mmio"), 2, 2)
         .unwrap()
         .build()
         .unwrap()
@@ -659,6 +758,120 @@ fn topology_host_controller_checkpoints_attached_uart() {
     );
     assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(10, b'O')]);
     assert_eq!(uart.snapshot().rx_pending(), b"AB");
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_timer() {
+    let topology = topology_with_timer();
+    let timer_id = TimerId::new(0);
+    let platform = platform_with_timer(&topology, timer_id);
+    let source = GuestSourceId::new(47);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let timer_component = CheckpointComponentId::new("timer0").unwrap();
+    let timer = system.platform().unwrap().timer(timer_id).unwrap().clone();
+    let captured = TimerSnapshot::new(
+        timer_id,
+        timer.partition(),
+        timer.source(),
+        Some(64),
+        vec![TimerArm::new(1, 12, 64)],
+        Vec::new(),
+        Vec::new(),
+    );
+    let empty = TimerSnapshot::new(
+        timer_id,
+        timer.partition(),
+        timer.source(),
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    timer.restore(&captured).unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .timer_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        25,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(192),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-timer".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &timer_component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&timer_component, "timer")
+            .unwrap()
+            .len()
+            > 48
+    );
+
+    timer.restore(&empty).unwrap();
+    assert_ne!(timer.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        37,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(193),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 37,
+            event: GuestEventId::new(193),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(timer.snapshot(), captured);
 }
 
 #[test]

@@ -18,6 +18,7 @@ use rem6_memory::{
 use rem6_mmio::MmioBus;
 use rem6_platform::Platform;
 use rem6_stats::StatsRegistry;
+use rem6_timer::TimerId;
 use rem6_topology::Topology;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 use rem6_uart::UartId;
@@ -26,7 +27,8 @@ use crate::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEventId, GuestSourceId,
     HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, RiscvSystemRun, RiscvSystemRunDriver, RiscvTrapEventPort, SystemError,
-    SystemHostController, SystemHostEventPort, UartCheckpointBank, UartCheckpointPort,
+    SystemHostController, SystemHostEventPort, TimerCheckpointBank, TimerCheckpointPort,
+    UartCheckpointBank, UartCheckpointPort,
 };
 
 pub struct RiscvTopologySystem {
@@ -91,6 +93,11 @@ fn default_dram_checkpoint_component(target: MemoryTargetId) -> CheckpointCompon
 fn default_riscv_checkpoint_component(cpu: CpuId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("cpu{}", cpu.get()))
         .expect("formatted CPU checkpoint component is nonempty")
+}
+
+fn default_timer_checkpoint_component(timer: TimerId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("timer{}", timer.get()))
+        .expect("formatted timer checkpoint component is nonempty")
 }
 
 fn default_uart_checkpoint_component(uart: UartId) -> CheckpointComponentId {
@@ -733,6 +740,21 @@ impl RiscvTopologySystem {
         let Some(platform) = self.platform.as_ref() else {
             return Ok(());
         };
+        let timer_bank = TimerCheckpointBank::new(platform.timers().map(|(timer, device)| {
+            TimerCheckpointPort::new(default_timer_checkpoint_component(timer), device.clone())
+        }))
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        if timer_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_timer_checkpoint_bank(timer_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
         let bank = UartCheckpointBank::new(platform.uarts().map(|(uart, device)| {
             UartCheckpointPort::new(default_uart_checkpoint_component(uart), device.clone())
         }))

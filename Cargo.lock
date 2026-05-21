@@ -157,6 +157,7 @@ dependencies = [
  "rem6-mmio",
  "rem6-platform",
  "rem6-stats",
+ "rem6-timer",
  "rem6-topology",
  "rem6-transport",
  "rem6-uart",

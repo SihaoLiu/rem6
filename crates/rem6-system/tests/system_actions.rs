@@ -5,9 +5,12 @@ use rem6_checkpoint::{
 };
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
+use rem6_interrupt::{
+    InterruptController, InterruptError, InterruptLineChannel, InterruptLineId, InterruptLinePort,
+    InterruptRoute, InterruptSourceId, InterruptTargetId,
+};
 use rem6_isa_riscv::Register;
-use rem6_kernel::PartitionId;
-use rem6_kernel::PartitionedScheduler;
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
@@ -18,8 +21,11 @@ use rem6_system::{
     GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort, SystemRunController, UartCheckpointBank,
-    UartCheckpointPort,
+    SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
+    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+};
+use rem6_timer::{
+    ProgrammableTimer, TimerArm, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 use rem6_uart::{
@@ -112,6 +118,26 @@ fn write_uart_byte(uart: &UartMmioDevice, tick: u64, byte: u8) {
         })
         .unwrap();
     scheduler.run_until_idle();
+}
+
+fn timer_with_interrupt(
+    id: TimerId,
+    timer_partition: PartitionId,
+    target_partition: PartitionId,
+    source: InterruptSourceId,
+) -> ProgrammableTimer {
+    let route = InterruptRoute::new(
+        InterruptLineId::new(70),
+        InterruptTargetId::new(0),
+        target_partition,
+    );
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    ProgrammableTimer::new(id, timer_partition, source, port)
 }
 
 fn read_uart_byte(uart: &UartMmioDevice, tick: u64) -> u8 {
@@ -712,6 +738,108 @@ fn system_action_executor_refreshes_and_restores_live_uart_checkpoint() {
     assert_eq!(uart.snapshot().rx_pending(), b"AB");
     assert_eq!(read_uart_byte(&uart, 129), b'A');
     assert_eq!(read_uart_byte(&uart, 130), b'B');
+}
+
+#[test]
+fn system_action_executor_refreshes_and_restores_live_timer_checkpoint() {
+    let host = PartitionId::new(1);
+    let timer_partition = PartitionId::new(2);
+    let target_partition = PartitionId::new(0);
+    let source = GuestSourceId::new(17);
+    let interrupt_source = InterruptSourceId::new(52);
+    let component = CheckpointComponentId::new("timer0").unwrap();
+    let timer = timer_with_interrupt(
+        TimerId::new(0),
+        timer_partition,
+        target_partition,
+        interrupt_source,
+    );
+    let captured = TimerSnapshot::new(
+        TimerId::new(0),
+        timer_partition,
+        interrupt_source,
+        Some(40),
+        vec![TimerArm::new(4, 12, 40)],
+        vec![TimerExpiry::new(3, 20)],
+        vec![TimerSignalError::new(
+            3,
+            21,
+            InterruptError::Scheduler(SchedulerError::RemoteDelayBelowLookahead {
+                source: timer_partition,
+                target: target_partition,
+                delay: 1,
+                minimum: 2,
+            }),
+        )],
+    );
+    let empty = TimerSnapshot::new(
+        TimerId::new(0),
+        timer_partition,
+        interrupt_source,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    timer.restore(&captured).unwrap();
+    let bank =
+        TimerCheckpointBank::new([TimerCheckpointPort::new(component.clone(), timer.clone())])
+            .unwrap();
+    let checkpoints = CheckpointRegistry::new();
+    let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), checkpoints);
+    executor.attach_timer_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        132,
+        host,
+        host,
+        GuestEventId::new(17),
+        source,
+        HostAction::Checkpoint {
+            label: "with-timer".to_string(),
+        },
+    );
+
+    let checkpoint_outcome = executor.apply(&checkpoint).unwrap();
+    let manifest = match checkpoint_outcome {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&component, "timer")
+            .unwrap()
+            .len()
+            > 72
+    );
+    timer.restore(&empty).unwrap();
+    assert_ne!(timer.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        136,
+        host,
+        host,
+        GuestEventId::new(18),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 136,
+            event: GuestEventId::new(18),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(timer.snapshot(), captured);
 }
 
 #[test]

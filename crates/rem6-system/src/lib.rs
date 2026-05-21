@@ -18,6 +18,7 @@ use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcom
 
 mod memory_checkpoint;
 mod riscv_checkpoint;
+mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
 
@@ -29,6 +30,9 @@ pub use memory_checkpoint::{
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
+};
+pub use timer_checkpoint::{
+    TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
 };
 pub use topology::{
     RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
@@ -406,6 +410,7 @@ pub struct SystemActionExecutor {
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
+    timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
 }
 
@@ -421,6 +426,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            timer_checkpoints: None,
             uart_checkpoints: None,
         }
     }
@@ -436,6 +442,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            timer_checkpoints: None,
             uart_checkpoints: None,
         }
     }
@@ -451,6 +458,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
+            timer_checkpoints: None,
             uart_checkpoints: None,
         }
     }
@@ -466,6 +474,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
+            timer_checkpoints: None,
             uart_checkpoints: None,
         }
     }
@@ -481,6 +490,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
+            timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
         }
     }
@@ -497,6 +507,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
+            timer_checkpoints: None,
             uart_checkpoints: None,
         }
     }
@@ -513,6 +524,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
+            timer_checkpoints: None,
             uart_checkpoints: None,
         }
     }
@@ -569,6 +581,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_timer_checkpoint_bank(
+        &mut self,
+        timer_checkpoints: TimerCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        timer_checkpoints.register_all(&mut self.checkpoints)?;
+        self.timer_checkpoints = Some(timer_checkpoints);
+        Ok(())
+    }
+
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
     }
@@ -579,6 +600,10 @@ impl SystemActionExecutor {
 
     pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
         self.dram_memory_checkpoints.as_ref()
+    }
+
+    pub const fn timer_checkpoint_bank(&self) -> Option<&TimerCheckpointBank> {
+        self.timer_checkpoints.as_ref()
     }
 
     pub const fn uart_checkpoint_bank(&self) -> Option<&UartCheckpointBank> {
@@ -617,6 +642,11 @@ impl SystemActionExecutor {
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
+                if let Some(timer_checkpoints) = &self.timer_checkpoints {
+                    timer_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
                 if let Some(uart_checkpoints) = &self.uart_checkpoints {
                     uart_checkpoints
                         .capture_all_into(&mut self.checkpoints)
@@ -650,6 +680,11 @@ impl SystemActionExecutor {
                     dram_memory_checkpoints
                         .restore_all_from(&self.checkpoints)
                         .map_err(SystemError::DramMemoryCheckpoint)?;
+                }
+                if let Some(timer_checkpoints) = &self.timer_checkpoints {
+                    timer_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::TimerCheckpoint)?;
                 }
                 if let Some(uart_checkpoints) = &self.uart_checkpoints {
                     uart_checkpoints
@@ -1715,6 +1750,7 @@ pub enum SystemError {
     RiscvCheckpoint(RiscvCoreCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
+    TimerCheckpoint(TimerCheckpointError),
     UartCheckpoint(UartCheckpointError),
 }
 
@@ -1731,6 +1767,7 @@ impl fmt::Display for SystemError {
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
+            Self::TimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
@@ -1746,6 +1783,7 @@ impl Error for SystemError {
             Self::RiscvCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
+            Self::TimerCheckpoint(error) => Some(error),
             Self::UartCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }

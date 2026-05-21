@@ -225,6 +225,10 @@ impl Platform {
         self.timers.get(&id)
     }
 
+    pub fn timers(&self) -> impl Iterator<Item = (TimerId, &ProgrammableTimer)> {
+        self.timers.iter().map(|(id, timer)| (*id, timer))
+    }
+
     pub fn uart(&self, id: UartId) -> Option<&UartMmioDevice> {
         self.uarts.get(&id)
     }
