@@ -84,7 +84,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/cpu/simple` | `rem6-cpu`, `rem6-system` | partial | rem6 has simple RISC-V core and cluster tests with fetch, data access, traps, and host stop. |
 | `src/cpu/minor` | future in-order pipeline crate or `rem6-cpu` module | planned | Needs cycle-visible pipeline state, stalls, branch effects, and checkpoints. |
 | `src/cpu/o3` | future out-of-order CPU crate | planned | Needs rename, issue, reorder, load/store queue, speculation, squash, and typed traces. |
-| `src/cpu/pred` | `rem6-cpu` branch predictor module | partial | A local two-bit predictor, branch target buffer, and return-address stack have independent typed prediction, lookup, update, target, replacement, speculative history, commit, repair, and snapshot state. Richer predictor families, indirect prediction, and pipeline integration remain open. |
+| `src/cpu/pred` | `rem6-cpu` branch predictor modules | partial | A local two-bit predictor, branch target buffer, indirect target predictor, and return-address stack have independent typed prediction, lookup, update, target, replacement, speculative history, commit, repair, and snapshot state. The indirect target predictor replaces opaque history pointers and random target replacement with typed records, per-CPU history, deterministic LRU, and restore validation. Richer predictor families and pipeline integration remain open. |
 | `src/cpu/checker` | `rem6-cpu` verification harness | planned | Checker behavior should compare architectural commits without hidden simulator state. |
 | `src/cpu/kvm` | host-controlled execution modes | partial | rem6 models execution modes and statistics scope; host-assisted native execution is not present yet. |
 | `src/cpu/testers`, `src/cpu/trace`, `src/cpu/probes` | tests, trace, stats crates | partial | Traffic generation, trace replay, and probes should feed typed events and summaries. |
@@ -154,9 +154,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   system paths already report data-cache protocol attribution.
 - GPU and accelerator paths route command and DMA work through typed topology,
   transport, scheduler activity, summaries, and checkpoint banks.
-- CPU branch prediction exposes typed prediction, branch-target lookup,
-  replacement, update, target, speculative history, return-stack operation,
-  commit, repair, and snapshot records with restore validation.
+- CPU branch prediction exposes typed direction prediction, branch-target
+  lookup, indirect-target lookup, deterministic replacement, update, target,
+  speculative history, return-stack operation, commit, repair, and snapshot
+  records with restore validation.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, result metadata, execution mode switches, host action
   summaries, checkpoint restore labels, and statistics snapshots.

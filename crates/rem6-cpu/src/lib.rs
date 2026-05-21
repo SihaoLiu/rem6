@@ -23,6 +23,7 @@ use rem6_transport::{
 
 mod branch_predictor;
 mod error;
+mod indirect_target_predictor;
 mod riscv_activity;
 mod riscv_cluster;
 mod topology;
@@ -37,6 +38,12 @@ pub use branch_predictor::{
     ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
+pub use indirect_target_predictor::{
+    IndirectTargetCommit, IndirectTargetEntry, IndirectTargetHistory, IndirectTargetPathEntry,
+    IndirectTargetPrediction, IndirectTargetPredictor, IndirectTargetPredictorConfig,
+    IndirectTargetPredictorError, IndirectTargetPredictorSnapshot, IndirectTargetSequence,
+    IndirectTargetSquash, IndirectTargetThreadSnapshot, IndirectTargetUpdate,
+};
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
