@@ -37,8 +37,10 @@ use rem6_workload::{
     WorkloadRouteId, WorkloadTopology,
 };
 
+mod cache_response;
 mod workload_replay_dma;
 
+use self::cache_response::{cached_memory_response, data_cache_agents};
 use self::workload_replay_dma::{run_accelerator_dma_copies, WorkloadAcceleratorDmaActivity};
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, build_accelerator_devices, build_gpu_devices, gpu_snapshots,
@@ -690,8 +692,14 @@ impl RiscvWorkloadReplay {
         let data_cache = self.build_data_cache(&memory)?;
         let gpu_devices = build_gpu_devices(topology)?;
         let transport = self.build_transport()?;
-        let gpu_dma_activity =
-            self.run_gpu_dma_copies(topology, &route_map, &gpu_devices, &transport, &memory)?;
+        let gpu_dma_activity = self.run_gpu_dma_copies(
+            topology,
+            &route_map,
+            &gpu_devices,
+            &transport,
+            &memory,
+            &data_cache,
+        )?;
         let gpu_before = gpu_snapshots(&gpu_devices);
         let accelerator_devices = build_accelerator_devices(topology)?;
         let accelerator_dma_activity = run_accelerator_dma_copies(
@@ -700,6 +708,7 @@ impl RiscvWorkloadReplay {
             &accelerator_devices,
             &transport,
             &memory,
+            &data_cache,
         )?;
         let accelerator_before = accelerator_snapshots(&accelerator_devices);
         let cluster = self.build_cluster(&route_map)?;
@@ -749,16 +758,7 @@ impl RiscvWorkloadReplay {
                 let memory = memory.clone();
                 let data_cache = data_cache.clone();
                 move |delivery, _context| {
-                    if let Some(data_cache) = data_cache.as_ref() {
-                        if let Some(outcome) = data_cache
-                            .lock()
-                            .expect("workload data cache lock")
-                            .respond(&delivery)
-                        {
-                            return outcome;
-                        }
-                    }
-                    memory_response(&memory, &delivery)
+                    cached_memory_response(data_cache.as_ref(), &memory, &delivery)
                 }
             },
             self.max_turns,
@@ -965,6 +965,7 @@ impl RiscvWorkloadReplay {
         devices: &BTreeMap<GpuDeviceId, WorkloadGpuRuntime>,
         transport: &MemoryTransport,
         memory: &WorkloadMemoryBackend,
+        data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     ) -> Result<WorkloadGpuDmaActivity, RiscvWorkloadReplayError> {
         if topology.gpu_dma_copies().is_empty() {
             return Ok(WorkloadGpuDmaActivity::default());
@@ -986,6 +987,7 @@ impl RiscvWorkloadReplay {
             })?;
             let dma = self.gpu_dma_copy(topology, route_map, copy)?;
             let read_memory = memory.clone();
+            let read_data_cache = data_cache.clone();
             runtime
                 .gpu
                 .submit_dma_copy_read(
@@ -993,7 +995,9 @@ impl RiscvWorkloadReplay {
                     transport,
                     dma,
                     MemoryTrace::new(),
-                    move |delivery, _context| memory_response(&read_memory, &delivery),
+                    move |delivery, _context| {
+                        cached_memory_response(read_data_cache.as_ref(), &read_memory, &delivery)
+                    },
                 )
                 .map_err(RiscvWorkloadReplayError::Gpu)?;
         }
@@ -1008,13 +1012,16 @@ impl RiscvWorkloadReplay {
                 })
             })?;
             let write_memory = memory.clone();
+            let write_data_cache = data_cache.clone();
             if runtime
                 .gpu
                 .issue_next_dma_write(
                     &mut scheduler,
                     transport,
                     MemoryTrace::new(),
-                    move |delivery, _context| memory_response(&write_memory, &delivery),
+                    move |delivery, _context| {
+                        cached_memory_response(write_data_cache.as_ref(), &write_memory, &delivery)
+                    },
                 )
                 .map_err(RiscvWorkloadReplayError::Gpu)?
                 .is_none()
@@ -1131,7 +1138,7 @@ impl RiscvWorkloadReplay {
             .ok_or(RiscvWorkloadReplayError::MissingMemoryTarget)?;
         let layout =
             CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)?;
-        let agents = self.data_cache_agents(topology)?;
+        let agents = data_cache_agents(topology)?;
         if agents.is_empty() {
             return Err(RiscvWorkloadReplayError::MissingDataCacheAgent);
         }
@@ -1210,38 +1217,6 @@ impl RiscvWorkloadReplay {
             .ok_or_else(|| RiscvWorkloadReplayError::MissingRoute {
                 route: data_route.clone(),
             })
-    }
-
-    fn data_cache_agents(
-        &self,
-        topology: &WorkloadTopology,
-    ) -> Result<Vec<PartitionedCacheAgentConfig>, RiscvWorkloadReplayError> {
-        topology
-            .riscv_cores()
-            .iter()
-            .filter_map(|core| {
-                let data_endpoint = core.data_endpoint()?;
-                let data_route = core.data_route()?;
-                Some((core, data_endpoint, data_route))
-            })
-            .map(|(core, data_endpoint, data_route)| {
-                let route = topology
-                    .memory_routes()
-                    .iter()
-                    .find(|route| route.id() == data_route)
-                    .ok_or_else(|| RiscvWorkloadReplayError::MissingRoute {
-                        route: data_route.clone(),
-                    })?;
-                Ok(PartitionedCacheAgentConfig::new(
-                    AgentId::new(core.agent()),
-                    PartitionId::new(route.source_partition()),
-                    TransportEndpointId::new(data_endpoint)
-                        .map_err(RiscvWorkloadReplayError::Transport)?,
-                    route.request_latency(),
-                    route.response_latency(),
-                ))
-            })
-            .collect()
     }
 
     fn instruction_layout(&self) -> Result<CacheLineLayout, RiscvWorkloadReplayError> {

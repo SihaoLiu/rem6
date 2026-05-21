@@ -458,6 +458,98 @@ fn replay_topology_with_accelerator_dma_copy() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_cached_accelerator_dma_copy() -> WorkloadTopology {
+    WorkloadTopology::new(5, 2, 4, WorkloadHostPlacement::new(4, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 3, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 3, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.dma"),
+                "accelerator0.dma",
+                3,
+                "memory",
+                2,
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9020),
+                2,
+                "dcache.dir",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_dma_copy(
+            WorkloadAcceleratorDmaCopy::new(
+                22,
+                300,
+                route_id("accelerator0.dma"),
+                88,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_data_route() -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
@@ -658,6 +750,25 @@ fn replay_manifest_with_accelerator_dma_copy() -> WorkloadManifest {
         boot_image_with_gpu_dma_data(),
     )
     .with_topology(replay_topology_with_accelerator_dma_copy())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_cached_accelerator_dma_copy() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-cached-accelerator-dma-copy"),
+        boot_image_with_gpu_dma_data(),
+    )
+    .with_topology(replay_topology_with_cached_accelerator_dma_copy())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -1099,6 +1210,47 @@ fn workload_replay_runs_declared_accelerator_dma_copy_on_parallel_memory_backend
     assert_eq!(summary.accelerator_dma_copy_count(), 1);
     assert_eq!(summary.accelerator_dma_completion_count(), 1);
     assert_eq!(summary.active_accelerator_dma_device_count(), 1);
+    assert!(summary.has_accelerator_dma_activity());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_accelerator_dma_read_through_declared_msi_cache() {
+    let manifest = replay_manifest_with_cached_accelerator_dma_copy();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let partition = outcome
+        .memory_snapshot()
+        .partitions()
+        .iter()
+        .find(|partition| partition.target() == MemoryTargetId::new(0))
+        .unwrap();
+    let destination = partition
+        .lines()
+        .iter()
+        .find(|line| line.line() == Address::new(0x9040))
+        .unwrap();
+    assert_eq!(&destination.data()[8..12], &[0x3a, 0x4b, 0x5c, 0x6d]);
+    assert_eq!(outcome.run().data_cache_run_count(), 1);
+    assert_eq!(
+        outcome
+            .run()
+            .data_cache_run_count_for_protocol(rem6_system::RiscvDataCacheProtocol::Msi),
+        1,
+    );
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Msi),
+        1,
+    );
+    assert_eq!(summary.accelerator_dma_copy_count(), 1);
+    assert_eq!(summary.accelerator_dma_completion_count(), 1);
+    assert!(summary.has_data_cache_parallel_work());
     assert!(summary.has_accelerator_dma_activity());
     plan.verify_result(outcome.result()).unwrap();
 }

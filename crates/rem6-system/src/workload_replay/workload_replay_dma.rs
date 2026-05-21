@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorCommandId, AcceleratorDmaCopy, AcceleratorEngineId};
 use rem6_kernel::PartitionedScheduler;
@@ -8,7 +9,10 @@ use rem6_memory::{
 use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport};
 use rem6_workload::{WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadRouteId, WorkloadTopology};
 
-use super::{memory_response, RiscvWorkloadReplayError, WorkloadMemoryBackend};
+use super::{
+    cached_memory_response, RiscvWorkloadReplayError, WorkloadDataCacheBackend,
+    WorkloadMemoryBackend,
+};
 use crate::workload_replay_heterogeneous::{accelerator_snapshots, WorkloadAcceleratorRuntime};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -24,6 +28,7 @@ pub(super) fn run_accelerator_dma_copies(
     devices: &BTreeMap<AcceleratorEngineId, WorkloadAcceleratorRuntime>,
     transport: &MemoryTransport,
     memory: &WorkloadMemoryBackend,
+    data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
 ) -> Result<WorkloadAcceleratorDmaActivity, RiscvWorkloadReplayError> {
     if topology.accelerator_dma_copies().is_empty() {
         return Ok(WorkloadAcceleratorDmaActivity::default());
@@ -46,6 +51,7 @@ pub(super) fn run_accelerator_dma_copies(
         })?;
         let dma = accelerator_dma_copy(topology, route_map, copy)?;
         let read_memory = memory.clone();
+        let read_data_cache = data_cache.clone();
         runtime
             .engine
             .submit_dma_copy_read(
@@ -53,7 +59,9 @@ pub(super) fn run_accelerator_dma_copies(
                 transport,
                 dma,
                 MemoryTrace::new(),
-                move |delivery, _context| memory_response(&read_memory, &delivery),
+                move |delivery, _context| {
+                    cached_memory_response(read_data_cache.as_ref(), &read_memory, &delivery)
+                },
             )
             .map_err(RiscvWorkloadReplayError::Accelerator)?;
     }
@@ -69,13 +77,16 @@ pub(super) fn run_accelerator_dma_copies(
             })
         })?;
         let write_memory = memory.clone();
+        let write_data_cache = data_cache.clone();
         if runtime
             .engine
             .issue_next_dma_write(
                 &mut scheduler,
                 transport,
                 MemoryTrace::new(),
-                move |delivery, _context| memory_response(&write_memory, &delivery),
+                move |delivery, _context| {
+                    cached_memory_response(write_data_cache.as_ref(), &write_memory, &delivery)
+                },
             )
             .map_err(RiscvWorkloadReplayError::Accelerator)?
             .is_none()
