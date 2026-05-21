@@ -1,0 +1,341 @@
+use std::collections::BTreeMap;
+
+use rem6_accelerator::{
+    AcceleratorCommand, AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError,
+    AcceleratorTopologyDevice,
+};
+use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuKernelLaunch, GpuTopologyDevice};
+use rem6_kernel::{ParallelRunProfile, PartitionEventId, RecordedConservativeRunSummary, Tick};
+
+use super::{RiscvTopologySystem, RiscvTopologySystemError};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvTopologyHeterogeneousWork {
+    Accelerator {
+        engine: AcceleratorEngineId,
+        command: AcceleratorCommand,
+    },
+    Gpu {
+        device: GpuDeviceId,
+        launch: GpuKernelLaunch,
+    },
+}
+
+impl RiscvTopologyHeterogeneousWork {
+    pub const fn accelerator(engine: AcceleratorEngineId, command: AcceleratorCommand) -> Self {
+        Self::Accelerator { engine, command }
+    }
+
+    pub const fn gpu(device: GpuDeviceId, launch: GpuKernelLaunch) -> Self {
+        Self::Gpu { device, launch }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvTopologyHeterogeneousRunSummary {
+    events: Vec<PartitionEventId>,
+    scheduler_run: RecordedConservativeRunSummary,
+    gpu_trace_event_count: usize,
+    gpu_workgroup_completion_count: usize,
+    accelerator_trace_event_count: usize,
+    accelerator_command_completion_count: usize,
+}
+
+impl RiscvTopologyHeterogeneousRunSummary {
+    pub fn new(
+        events: Vec<PartitionEventId>,
+        scheduler_run: RecordedConservativeRunSummary,
+        gpu_trace_event_count: usize,
+        gpu_workgroup_completion_count: usize,
+        accelerator_trace_event_count: usize,
+        accelerator_command_completion_count: usize,
+    ) -> Self {
+        Self {
+            events,
+            scheduler_run,
+            gpu_trace_event_count,
+            gpu_workgroup_completion_count,
+            accelerator_trace_event_count,
+            accelerator_command_completion_count,
+        }
+    }
+
+    pub fn events(&self) -> &[PartitionEventId] {
+        &self.events
+    }
+
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    pub const fn scheduler_run(&self) -> &RecordedConservativeRunSummary {
+        &self.scheduler_run
+    }
+
+    pub fn profile(&self) -> ParallelRunProfile {
+        self.scheduler_run.profile()
+    }
+
+    pub fn epoch_count(&self) -> usize {
+        self.scheduler_run.epoch_count()
+    }
+
+    pub fn empty_epoch_count(&self) -> usize {
+        self.scheduler_run.empty_epoch_count()
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.scheduler_run.dispatch_count()
+    }
+
+    pub fn batch_count(&self) -> usize {
+        self.scheduler_run.batch_count()
+    }
+
+    pub fn total_parallel_workers(&self) -> usize {
+        self.scheduler_run.total_parallel_workers()
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.scheduler_run.max_parallel_workers()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.scheduler_run.has_parallel_work()
+    }
+
+    pub fn executed_events(&self) -> usize {
+        self.scheduler_run.summary().executed_events()
+    }
+
+    pub fn final_tick(&self) -> Tick {
+        self.scheduler_run.summary().final_tick()
+    }
+
+    pub const fn gpu_trace_event_count(&self) -> usize {
+        self.gpu_trace_event_count
+    }
+
+    pub const fn gpu_workgroup_completion_count(&self) -> usize {
+        self.gpu_workgroup_completion_count
+    }
+
+    pub const fn accelerator_trace_event_count(&self) -> usize {
+        self.accelerator_trace_event_count
+    }
+
+    pub const fn accelerator_command_completion_count(&self) -> usize {
+        self.accelerator_command_completion_count
+    }
+
+    pub const fn trace_event_count(&self) -> usize {
+        self.gpu_trace_event_count + self.accelerator_trace_event_count
+    }
+
+    pub const fn compute_completion_count(&self) -> usize {
+        self.gpu_workgroup_completion_count + self.accelerator_command_completion_count
+    }
+
+    pub const fn has_gpu_activity(&self) -> bool {
+        self.gpu_trace_event_count != 0 || self.gpu_workgroup_completion_count != 0
+    }
+
+    pub const fn has_accelerator_activity(&self) -> bool {
+        self.accelerator_trace_event_count != 0 || self.accelerator_command_completion_count != 0
+    }
+
+    pub const fn has_compute_activity(&self) -> bool {
+        self.compute_completion_count() != 0
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ResolvedHeterogeneousWork {
+    Accelerator {
+        engine: AcceleratorEngineId,
+        device: AcceleratorTopologyDevice,
+        command: AcceleratorCommand,
+    },
+    Gpu {
+        device_id: GpuDeviceId,
+        device: GpuTopologyDevice,
+        launch: GpuKernelLaunch,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct HeterogeneousDeviceSnapshots {
+    accelerators: BTreeMap<AcceleratorEngineId, AcceleratorEngineSnapshot>,
+    gpus: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct HeterogeneousActivityCounts {
+    gpu_trace_event_count: usize,
+    gpu_workgroup_completion_count: usize,
+    accelerator_trace_event_count: usize,
+    accelerator_command_completion_count: usize,
+}
+
+impl RiscvTopologySystem {
+    pub fn run_heterogeneous_work_parallel_recorded<I>(
+        &mut self,
+        work: I,
+    ) -> Result<RiscvTopologyHeterogeneousRunSummary, RiscvTopologySystemError>
+    where
+        I: IntoIterator<Item = RiscvTopologyHeterogeneousWork>,
+    {
+        let work: Vec<_> = work.into_iter().collect();
+        if work.is_empty() {
+            return Ok(self.empty_heterogeneous_run_summary());
+        }
+
+        let work = self.resolve_heterogeneous_work(work)?;
+        let before = self.heterogeneous_device_snapshots(&work);
+        let mut scheduler = self.scheduler_mut();
+        let mut events = Vec::with_capacity(work.len());
+
+        for item in work {
+            let event = match item {
+                ResolvedHeterogeneousWork::Accelerator {
+                    device, command, ..
+                } => device
+                    .submit_command(&mut scheduler, command)
+                    .map_err(RiscvTopologySystemError::Accelerator)?,
+                ResolvedHeterogeneousWork::Gpu { device, launch, .. } => device
+                    .submit_kernel(&mut scheduler, launch)
+                    .map_err(RiscvTopologySystemError::Gpu)?,
+            };
+            events.push(event);
+        }
+
+        let scheduler_run = scheduler
+            .run_until_idle_parallel_recorded()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        drop(scheduler);
+
+        let activity = self.heterogeneous_activity_since(&before);
+        Ok(RiscvTopologyHeterogeneousRunSummary::new(
+            events,
+            scheduler_run,
+            activity.gpu_trace_event_count,
+            activity.gpu_workgroup_completion_count,
+            activity.accelerator_trace_event_count,
+            activity.accelerator_command_completion_count,
+        ))
+    }
+
+    fn resolve_heterogeneous_work(
+        &self,
+        work: Vec<RiscvTopologyHeterogeneousWork>,
+    ) -> Result<Vec<ResolvedHeterogeneousWork>, RiscvTopologySystemError> {
+        work.into_iter()
+            .map(|item| match item {
+                RiscvTopologyHeterogeneousWork::Accelerator { engine, command } => {
+                    let device = self
+                        .accelerators
+                        .get(&engine)
+                        .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?;
+                    if device.command_path().is_none() {
+                        return Err(RiscvTopologySystemError::Accelerator(
+                            AcceleratorError::MissingCommandSubmission { engine },
+                        ));
+                    }
+                    Ok(ResolvedHeterogeneousWork::Accelerator {
+                        engine,
+                        device: device.clone(),
+                        command,
+                    })
+                }
+                RiscvTopologyHeterogeneousWork::Gpu { device, launch } => {
+                    let topology_device = self
+                        .gpus
+                        .get(&device)
+                        .ok_or(RiscvTopologySystemError::UnknownGpu { device })?;
+                    Ok(ResolvedHeterogeneousWork::Gpu {
+                        device_id: device,
+                        device: topology_device.clone(),
+                        launch,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn heterogeneous_device_snapshots(
+        &self,
+        work: &[ResolvedHeterogeneousWork],
+    ) -> HeterogeneousDeviceSnapshots {
+        let mut accelerators = BTreeMap::new();
+        let mut gpus = BTreeMap::new();
+
+        for item in work {
+            match item {
+                ResolvedHeterogeneousWork::Accelerator { engine, device, .. } => {
+                    accelerators
+                        .entry(*engine)
+                        .or_insert_with(|| device.engine().snapshot());
+                }
+                ResolvedHeterogeneousWork::Gpu {
+                    device_id, device, ..
+                } => {
+                    gpus.entry(*device_id)
+                        .or_insert_with(|| device.gpu().snapshot());
+                }
+            }
+        }
+
+        HeterogeneousDeviceSnapshots { accelerators, gpus }
+    }
+
+    fn empty_heterogeneous_run_summary(&self) -> RiscvTopologyHeterogeneousRunSummary {
+        let final_tick = self.scheduler().now();
+        RiscvTopologyHeterogeneousRunSummary::new(
+            Vec::new(),
+            RecordedConservativeRunSummary::empty(final_tick),
+            0,
+            0,
+            0,
+            0,
+        )
+    }
+
+    fn heterogeneous_activity_since(
+        &self,
+        before: &HeterogeneousDeviceSnapshots,
+    ) -> HeterogeneousActivityCounts {
+        let mut activity = HeterogeneousActivityCounts::default();
+
+        for (engine, before) in &before.accelerators {
+            let after = self
+                .accelerators
+                .get(engine)
+                .expect("resolved accelerator remains attached")
+                .engine()
+                .snapshot();
+            activity.accelerator_trace_event_count +=
+                after.trace().len().saturating_sub(before.trace().len());
+            activity.accelerator_command_completion_count += after
+                .completed()
+                .len()
+                .saturating_sub(before.completed().len());
+        }
+
+        for (device, before) in &before.gpus {
+            let after = self
+                .gpus
+                .get(device)
+                .expect("resolved GPU remains attached")
+                .gpu()
+                .snapshot();
+            activity.gpu_trace_event_count +=
+                after.trace().len().saturating_sub(before.trace().len());
+            activity.gpu_workgroup_completion_count += after
+                .completions()
+                .len()
+                .saturating_sub(before.completions().len());
+        }
+
+        activity
+    }
+}

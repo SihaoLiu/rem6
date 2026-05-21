@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{
-    AcceleratorCommandId, AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig,
-    AcceleratorEngineId, AcceleratorPendingDmaWrite, AcceleratorTopologyConfig,
+    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
+    AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig, AcceleratorEngineId,
+    AcceleratorPendingDmaWrite, AcceleratorTopologyConfig,
 };
 use rem6_boot::BootImage;
 use rem6_checkpoint::CheckpointComponentId;
@@ -12,8 +13,8 @@ use rem6_fabric::{
     FabricLinkId, FabricPacket, FabricPacketId, FabricPath, FabricPathHop, VirtualNetworkId,
 };
 use rem6_gpu::{
-    GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuPendingDmaWrite,
-    GpuTopologyConfig,
+    GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuKernelId,
+    GpuKernelLaunch, GpuPendingDmaWrite, GpuTopologyConfig, GpuWorkgroupCompletion, GpuWorkgroupId,
 };
 use rem6_kernel::{ClockDomain, ParallelRunProfile, PartitionId};
 use rem6_memory::{
@@ -23,8 +24,9 @@ use rem6_memory::{
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvSystemRunStopReason,
-    RiscvTopologyDmaCopy, RiscvTopologyDramConfig, RiscvTopologyHostConfig,
-    RiscvTopologyMemoryConfig, RiscvTopologySystem, SystemActionOutcome,
+    RiscvTopologyDmaCopy, RiscvTopologyDramConfig, RiscvTopologyHeterogeneousWork,
+    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem,
+    RiscvTopologySystemError, SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, FabricConnectionConfig, PortDirection,
@@ -245,6 +247,8 @@ fn heterogeneous_fabric_topology() -> Topology {
             .unwrap()
             .add_port(port("dmem"), PortDirection::Initiator)
             .unwrap()
+            .add_port(port("accel"), PortDirection::Initiator)
+            .unwrap()
             .add_port(port("gpu"), PortDirection::Initiator)
             .unwrap(),
         )
@@ -257,6 +261,8 @@ fn heterogeneous_fabric_topology() -> Topology {
                 clock(1),
             )
             .add_port(port("dma"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("control"), PortDirection::Target)
             .unwrap(),
         )
         .unwrap()
@@ -292,6 +298,13 @@ fn heterogeneous_fabric_topology() -> Topology {
         )
         .unwrap()
         .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mem0", "requests"), 2, 2)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "accel"),
+            endpoint("accelerator0", "control"),
+            4,
+            1,
+        )
         .unwrap()
         .connect_with_latencies(endpoint("cpu0", "gpu"), endpoint("gpu0", "control"), 4, 1)
         .unwrap()
@@ -358,6 +371,13 @@ fn accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig 
         AcceleratorEngineConfig::new(engine, PartitionId::new(1), 2).unwrap(),
         endpoint("accelerator0", "dma"),
         endpoint("mem0", "requests"),
+    )
+}
+
+fn accelerator_config_with_command(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig {
+    accelerator_config(engine).with_command_submission(
+        endpoint("cpu0", "accel"),
+        endpoint("accelerator0", "control"),
     )
 }
 
@@ -1248,6 +1268,82 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
 }
 
 #[test]
+fn topology_system_records_gpu_and_accelerator_compute_batch_activity() {
+    let accelerator_id = AcceleratorEngineId::new(85);
+    let gpu_id = GpuDeviceId::new(86);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 85, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config_with_command(accelerator_id))
+    .unwrap()
+    .with_gpu(gpu_config(gpu_id))
+    .unwrap();
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(510), 3, 5).unwrap();
+    let command = AcceleratorCommand::new(
+        AcceleratorCommandId::new(520),
+        AcceleratorCommandKind::NpuInference { tiles: 4 },
+        6,
+    )
+    .unwrap();
+
+    let summary = system
+        .run_heterogeneous_work_parallel_recorded([
+            RiscvTopologyHeterogeneousWork::gpu(gpu_id, launch.clone()),
+            RiscvTopologyHeterogeneousWork::accelerator(accelerator_id, command.clone()),
+        ])
+        .unwrap();
+
+    assert_eq!(summary.event_count(), 2);
+    assert_eq!(summary.gpu_trace_event_count(), 8);
+    assert_eq!(summary.gpu_workgroup_completion_count(), 3);
+    assert_eq!(summary.accelerator_trace_event_count(), 3);
+    assert_eq!(summary.accelerator_command_completion_count(), 1);
+    assert_eq!(summary.trace_event_count(), 11);
+    assert_eq!(summary.compute_completion_count(), 4);
+    assert_eq!(summary.final_tick(), 14);
+    assert_eq!(
+        summary.profile(),
+        ParallelRunProfile::new(
+            summary.epoch_count(),
+            summary.empty_epoch_count(),
+            summary.batch_count(),
+            summary.dispatch_count(),
+            summary.total_parallel_workers(),
+            summary.max_parallel_workers(),
+        )
+    );
+    assert!(summary.has_parallel_work());
+    assert!(summary.has_compute_activity());
+    assert!(summary.has_gpu_activity());
+    assert!(summary.has_accelerator_activity());
+    assert_eq!(
+        system.gpu(gpu_id).unwrap().gpu().completions(),
+        vec![
+            GpuWorkgroupCompletion::new(GpuKernelId::new(510), GpuWorkgroupId::new(0), 0, 0, 4, 9,),
+            GpuWorkgroupCompletion::new(GpuKernelId::new(510), GpuWorkgroupId::new(1), 1, 0, 4, 9,),
+            GpuWorkgroupCompletion::new(GpuKernelId::new(510), GpuWorkgroupId::new(2), 0, 0, 9, 14,),
+        ],
+    );
+    assert_eq!(
+        system
+            .accelerator(accelerator_id)
+            .unwrap()
+            .engine()
+            .completed(),
+        vec![AcceleratorCompletion::new(
+            AcceleratorCommandId::new(520),
+            command.kind().clone(),
+            0,
+            4,
+            10,
+        )],
+    );
+}
+
+#[test]
 fn topology_system_treats_empty_dma_read_batch_as_noop_without_memory_backend() {
     let mut system = RiscvTopologySystem::with_min_remote_delay(
         heterogeneous_fabric_topology(),
@@ -1279,6 +1375,76 @@ fn topology_system_treats_empty_dma_read_batch_as_noop_without_memory_backend() 
         .gpu(GpuDeviceId::new(78))
         .unwrap()
         .gpu()
+        .trace()
+        .is_empty());
+}
+
+#[test]
+fn topology_system_empty_heterogeneous_work_batch_does_not_drive_pending_scheduler_work() {
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 87, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config_with_command(AcceleratorEngineId::new(
+        87,
+    )))
+    .unwrap()
+    .with_gpu(gpu_config(GpuDeviceId::new(88)))
+    .unwrap();
+    system
+        .scheduler_mut()
+        .schedule_parallel_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+
+    let summary = system
+        .run_heterogeneous_work_parallel_recorded(
+            std::iter::empty::<RiscvTopologyHeterogeneousWork>(),
+        )
+        .unwrap();
+
+    assert_eq!(summary.event_count(), 0);
+    assert_eq!(summary.trace_event_count(), 0);
+    assert_eq!(summary.compute_completion_count(), 0);
+    assert_eq!(summary.final_tick(), 0);
+    assert!(!summary.has_parallel_work());
+    assert!(!summary.has_compute_activity());
+    assert_eq!(system.scheduler().now(), 0);
+    assert!(!system.scheduler().is_idle());
+}
+
+#[test]
+fn topology_system_rejects_unknown_heterogeneous_work_without_running_scheduler() {
+    let accelerator_id = AcceleratorEngineId::new(89);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 89, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config_with_command(accelerator_id))
+    .unwrap();
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(530), 1, 5).unwrap();
+
+    let error = system
+        .run_heterogeneous_work_parallel_recorded([RiscvTopologyHeterogeneousWork::gpu(
+            GpuDeviceId::new(404),
+            launch,
+        )])
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        RiscvTopologySystemError::UnknownGpu {
+            device: GpuDeviceId::new(404),
+        },
+    );
+    assert_eq!(system.scheduler().now(), 0);
+    assert!(system
+        .accelerator(accelerator_id)
+        .unwrap()
+        .engine()
         .trace()
         .is_empty());
 }

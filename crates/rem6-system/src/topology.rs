@@ -1,4 +1,7 @@
+mod heterogeneous_run;
 mod host_checkpoint;
+
+pub use heterogeneous_run::{RiscvTopologyHeterogeneousRunSummary, RiscvTopologyHeterogeneousWork};
 
 use std::collections::BTreeMap;
 use std::error::Error;
