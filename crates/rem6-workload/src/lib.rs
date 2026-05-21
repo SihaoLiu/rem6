@@ -419,7 +419,7 @@ impl WorkloadRiscvCore {
 pub struct WorkloadRiscvDataCache {
     protocol: WorkloadDataCacheProtocol,
     memory_target: u32,
-    line_address: Address,
+    line_addresses: Vec<Address>,
     directory_partition: u32,
     directory_endpoint: String,
 }
@@ -440,10 +440,18 @@ impl WorkloadRiscvDataCache {
         Ok(Self {
             protocol,
             memory_target,
-            line_address,
+            line_addresses: vec![line_address],
             directory_partition,
             directory_endpoint,
         })
+    }
+
+    pub fn with_line_address(mut self, line_address: Address) -> Self {
+        if !self.line_addresses.contains(&line_address) {
+            self.line_addresses.push(line_address);
+            self.line_addresses.sort_by_key(|address| address.get());
+        }
+        self
     }
 
     pub const fn protocol(&self) -> WorkloadDataCacheProtocol {
@@ -454,8 +462,12 @@ impl WorkloadRiscvDataCache {
         self.memory_target
     }
 
-    pub const fn line_address(&self) -> Address {
-        self.line_address
+    pub fn line_address(&self) -> Address {
+        self.line_addresses[0]
+    }
+
+    pub fn line_addresses(&self) -> &[Address] {
+        &self.line_addresses
     }
 
     pub const fn directory_partition(&self) -> u32 {
@@ -1557,7 +1569,9 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
             hash_str(hash, "riscv.data_cache");
             hash_str(hash, cache.protocol().as_str());
             hash_u64(hash, u64::from(cache.memory_target()));
-            hash_u64(hash, cache.line_address().get());
+            for line_address in cache.line_addresses() {
+                hash_u64(hash, line_address.get());
+            }
             hash_u64(hash, u64::from(cache.directory_partition()));
             hash_str(hash, cache.directory_endpoint());
         }

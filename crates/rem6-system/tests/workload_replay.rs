@@ -76,6 +76,28 @@ fn boot_image_with_data_load() -> BootImage {
         .unwrap()
 }
 
+fn boot_image_with_two_data_loads() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(u_type(0x9000, 2, 0x37)))
+        .unwrap()
+        .add_segment(Address::new(0x8004), word(i_type(8, 2, 0x3, 5, 0x03)))
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(i_type(24, 2, 0x3, 6, 0x03)))
+        .unwrap()
+        .add_segment(Address::new(0x800c), word(0x0000_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0x9008),
+            0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
+        )
+        .unwrap()
+        .add_segment(
+            Address::new(0x9018),
+            0x0123_4567_89ab_cdef_u64.to_le_bytes().to_vec(),
+        )
+        .unwrap()
+}
+
 fn boot_image_with_data_store() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(u_type(0x9000, 2, 0x37)))
@@ -221,6 +243,22 @@ fn replay_topology_with_msi_data_cache() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_msi_data_cache_lines() -> WorkloadTopology {
+    replay_topology_with_data_route()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+            )
+            .unwrap()
+            .with_line_address(Address::new(0x9010)),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_profiled_data_route() -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
@@ -321,6 +359,25 @@ fn replay_manifest_with_msi_data_cache_load() -> WorkloadManifest {
         boot_image_with_data_load(),
     )
     .with_topology(replay_topology_with_msi_data_cache())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_msi_data_cache_loads() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-msi-data-cache-loads"),
+        boot_image_with_two_data_loads(),
+    )
+    .with_topology(replay_topology_with_msi_data_cache_lines())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -575,6 +632,40 @@ fn workload_replay_routes_data_load_through_declared_msi_cache() {
         1,
     );
     assert!(summary.has_data_cache_parallel_work());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_data_loads_through_declared_msi_cache_lines() {
+    let manifest = replay_manifest_with_msi_data_cache_loads();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(48)
+        .run_parallel()
+        .unwrap();
+
+    let core = outcome.cluster().core(CpuId::new(0)).unwrap();
+    assert_eq!(
+        core.read_register(Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        core.read_register(Register::new(6).unwrap()),
+        0x0123_4567_89ab_cdef
+    );
+    assert_eq!(outcome.run().data_cache_run_count(), 2);
+    assert_eq!(
+        outcome
+            .run()
+            .data_cache_run_count_for_protocol(rem6_system::RiscvDataCacheProtocol::Msi),
+        2,
+    );
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Msi),
+        2,
+    );
     plan.verify_result(outcome.result()).unwrap();
 }
 

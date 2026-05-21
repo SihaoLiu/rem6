@@ -131,7 +131,7 @@ enum WorkloadDataCacheHarness {
     Moesi(PartitionedMoesiDirectoryLineHarness),
 }
 
-struct WorkloadDataCacheBackend {
+struct WorkloadDataCacheLineBackend {
     protocol: RiscvDataCacheProtocol,
     target: MemoryTargetId,
     line: Address,
@@ -140,15 +140,16 @@ struct WorkloadDataCacheBackend {
     error: Option<RiscvWorkloadReplayError>,
 }
 
-impl WorkloadDataCacheBackend {
+impl WorkloadDataCacheLineBackend {
     fn new(
         config: &WorkloadRiscvDataCache,
         layout: CacheLineLayout,
+        line_address: Address,
         line_data: Vec<u8>,
         agents: Vec<PartitionedCacheAgentConfig>,
     ) -> Result<Self, RiscvWorkloadReplayError> {
         let target = MemoryTargetId::new(config.memory_target());
-        let line = layout.line_address(config.line_address());
+        let line = layout.line_address(line_address);
         let backing = LineBackingStore::new(layout, line, line_data)
             .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
         let directory_partition = PartitionId::new(config.directory_partition());
@@ -297,6 +298,49 @@ impl WorkloadDataCacheBackend {
                 TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
             }
         })
+    }
+}
+
+struct WorkloadDataCacheBackend {
+    lines: BTreeMap<Address, WorkloadDataCacheLineBackend>,
+}
+
+impl WorkloadDataCacheBackend {
+    fn new<I>(lines: I) -> Self
+    where
+        I: IntoIterator<Item = WorkloadDataCacheLineBackend>,
+    {
+        Self {
+            lines: lines.into_iter().map(|line| (line.line(), line)).collect(),
+        }
+    }
+
+    fn records(&self) -> Vec<RiscvDataCacheRunRecord> {
+        self.lines
+            .values()
+            .flat_map(WorkloadDataCacheLineBackend::records)
+            .collect()
+    }
+
+    fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
+        self.lines
+            .values_mut()
+            .find_map(WorkloadDataCacheLineBackend::take_error)
+    }
+
+    fn final_lines(
+        &self,
+    ) -> Result<Vec<(MemoryTargetId, Address, Vec<u8>)>, RiscvWorkloadReplayError> {
+        self.lines
+            .values()
+            .map(|line| Ok((line.target(), line.line(), line.final_line_data()?)))
+            .collect()
+    }
+
+    fn respond(&mut self, delivery: &RequestDelivery) -> Option<TargetOutcome> {
+        self.lines
+            .get_mut(&delivery.request().line_address())
+            .and_then(|line| line.respond(delivery))
     }
 }
 
@@ -590,16 +634,13 @@ impl RiscvWorkloadReplay {
         }
         let mut run = run_result.map_err(RiscvWorkloadReplayError::System)?;
         if let Some(data_cache) = data_cache.as_ref() {
-            let (target, line, line_data, records) = {
+            let (final_lines, records) = {
                 let data_cache = data_cache.lock().expect("workload data cache lock");
-                (
-                    data_cache.target(),
-                    data_cache.line(),
-                    data_cache.final_line_data()?,
-                    data_cache.records(),
-                )
+                (data_cache.final_lines()?, data_cache.records())
             };
-            memory.insert_line(target, line, line_data)?;
+            for (target, line, line_data) in final_lines {
+                memory.insert_line(target, line, line_data)?;
+            }
             if !records.is_empty() {
                 run = run.with_data_cache_run_records(records);
             }
@@ -774,16 +815,30 @@ impl RiscvWorkloadReplay {
             .ok_or(RiscvWorkloadReplayError::MissingMemoryTarget)?;
         let layout =
             CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)?;
-        let line = layout.line_address(config.line_address());
-        let line_data = memory.line_data(MemoryTargetId::new(config.memory_target()), line)?;
         let agents = self.data_cache_agents(topology)?;
         if agents.is_empty() {
             return Err(RiscvWorkloadReplayError::MissingDataCacheAgent);
         }
+        let target_id = MemoryTargetId::new(config.memory_target());
+        let lines = config
+            .line_addresses()
+            .iter()
+            .map(|line_address| {
+                let line = layout.line_address(*line_address);
+                let line_data = memory.line_data(target_id, line)?;
+                WorkloadDataCacheLineBackend::new(
+                    config,
+                    layout,
+                    *line_address,
+                    line_data,
+                    agents.clone(),
+                )
+            })
+            .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 
         Ok(Some(Arc::new(Mutex::new(WorkloadDataCacheBackend::new(
-            config, layout, line_data, agents,
-        )?))))
+            lines,
+        )))))
     }
 
     fn data_cache_agents(
