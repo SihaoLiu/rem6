@@ -385,6 +385,111 @@ fn topology_system_routes_dirty_owner_peer_read_through_moesi_data_cache() {
     assert_eq!(cache_runs.len(), 2);
     assert_eq!(run.data_cache_runs(), cache_runs.as_slice());
     assert_eq!(run.data_cache_run_count(), 2);
+    assert_eq!(
+        run.data_cache_parallel_scheduler_epoch_count(),
+        cache_runs
+            .iter()
+            .map(rem6_coherence::ParallelCoherenceRunSummary::epoch_count)
+            .sum::<usize>(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_dispatch_count(),
+        cache_runs
+            .iter()
+            .map(rem6_coherence::ParallelCoherenceRunSummary::dispatch_count)
+            .sum::<usize>(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_count(),
+        cache_runs
+            .iter()
+            .map(rem6_coherence::ParallelCoherenceRunSummary::batch_count)
+            .sum::<usize>(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_profile().dispatch_count(),
+        run.data_cache_parallel_scheduler_dispatch_count(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_max_workers(),
+        cache_runs
+            .iter()
+            .map(rem6_coherence::ParallelCoherenceRunSummary::max_parallel_workers)
+            .max()
+            .unwrap_or(0),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_dispatches().len(),
+        run.data_cache_parallel_scheduler_dispatch_count(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batches().len(),
+        run.data_cache_parallel_scheduler_batch_count(),
+    );
+    assert!(!run
+        .data_cache_parallel_scheduler_worker_partitions()
+        .is_empty());
+    assert!(run
+        .data_cache_parallel_scheduler_profile()
+        .has_parallel_work());
+    let partition_activities = run.data_cache_parallel_scheduler_partition_activities();
+    assert_eq!(
+        run.active_data_cache_parallel_scheduler_partition_count(),
+        partition_activities.len(),
+    );
+    let partition = *partition_activities.keys().next().unwrap();
+    assert_eq!(
+        run.data_cache_parallel_scheduler_partition_activity(partition),
+        Some(partition_activities[&partition]),
+    );
+    assert!(run.has_data_cache_parallel_scheduler_partition_activity(partition));
+    assert_eq!(
+        run.data_cache_parallel_scheduler_dispatches_for_partition(partition)
+            .len(),
+        partition_activities[&partition].dispatch_count(),
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_profile()
+            .dispatch_count(),
+        run.parallel_scheduler_profile().dispatch_count()
+            + run.data_cache_parallel_scheduler_dispatch_count(),
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_max_workers(),
+        run.parallel_scheduler_profile()
+            .max_parallel_workers()
+            .max(run.data_cache_parallel_scheduler_max_workers()),
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_dispatches().len(),
+        run.parallel_scheduler_dispatches().len()
+            + run.data_cache_parallel_scheduler_dispatches().len(),
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batches().len(),
+        run.parallel_scheduler_batches().len() + run.data_cache_parallel_scheduler_batches().len(),
+    );
+    assert!(
+        run.full_system_parallel_scheduler_worker_partitions().len()
+            >= run.data_cache_parallel_scheduler_worker_partitions().len()
+    );
+    let full_partition_activities = run.full_system_parallel_scheduler_partition_activities();
+    assert!(full_partition_activities.len() >= partition_activities.len());
+    assert_eq!(
+        run.full_system_parallel_scheduler_partition_activity(partition),
+        Some(full_partition_activities[&partition]),
+    );
+    assert!(run.has_full_system_parallel_scheduler_partition_activity(partition));
+    assert_eq!(
+        run.full_system_parallel_scheduler_dispatches_for_partition(partition)
+            .len(),
+        run.parallel_scheduler_dispatches_for_partition(partition)
+            .len()
+            + run
+                .data_cache_parallel_scheduler_dispatches_for_partition(partition)
+                .len(),
+    );
+    assert!(run.has_full_system_parallel_scheduler_work());
     assert_eq!(run.data_cache_wait_for_edge_count(), 0);
     assert!(run
         .remaining_data_cache_wait_for_edge_kind_counts()

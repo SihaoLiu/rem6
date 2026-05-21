@@ -4,8 +4,8 @@ use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopolo
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_isa_riscv::Register;
 use rem6_kernel::{
-    ClockDomain, PartitionId, RecordedConservativeRunSummary, WaitForEdgeKind, WaitForGraph,
-    WaitForNode,
+    ClockDomain, ParallelRunProfile, PartitionId, RecordedConservativeRunSummary, WaitForEdgeKind,
+    WaitForGraph, WaitForNode,
 };
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
@@ -236,6 +236,47 @@ fn system_run_starts_without_resource_activity() {
     assert_eq!(run.dram_target_activities().len(), 0);
     assert_eq!(run.data_cache_run_count(), 0);
     assert!(run.data_cache_runs().is_empty());
+    assert!(run.data_cache_parallel_scheduler_epochs().is_empty());
+    assert!(run.data_cache_parallel_scheduler_dispatches().is_empty());
+    assert!(run.data_cache_parallel_scheduler_batches().is_empty());
+    assert!(run
+        .data_cache_parallel_scheduler_worker_partitions()
+        .is_empty());
+    assert!(run
+        .data_cache_parallel_scheduler_partition_activities()
+        .is_empty());
+    assert_eq!(
+        run.active_data_cache_parallel_scheduler_partition_count(),
+        0
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_profile(),
+        ParallelRunProfile::default()
+    );
+    assert_eq!(run.data_cache_parallel_scheduler_epoch_count(), 0);
+    assert_eq!(run.data_cache_parallel_scheduler_dispatch_count(), 0);
+    assert_eq!(run.data_cache_parallel_scheduler_batch_count(), 0);
+    assert_eq!(run.data_cache_parallel_scheduler_max_workers(), 0);
+    assert_eq!(
+        run.full_system_parallel_scheduler_profile(),
+        ParallelRunProfile::default()
+    );
+    assert_eq!(run.full_system_parallel_scheduler_dispatch_count(), 0);
+    assert_eq!(run.full_system_parallel_scheduler_batch_count(), 0);
+    assert_eq!(run.full_system_parallel_scheduler_max_workers(), 0);
+    assert!(run.full_system_parallel_scheduler_dispatches().is_empty());
+    assert!(run.full_system_parallel_scheduler_batches().is_empty());
+    assert!(run
+        .full_system_parallel_scheduler_worker_partitions()
+        .is_empty());
+    assert!(run
+        .full_system_parallel_scheduler_partition_activities()
+        .is_empty());
+    assert_eq!(
+        run.active_full_system_parallel_scheduler_partition_count(),
+        0
+    );
+    assert!(!run.has_full_system_parallel_scheduler_work());
     assert_eq!(run.initial_data_cache_wait_for_edge_count(), 0);
     assert_eq!(run.remaining_data_cache_wait_for_edge_count(), 0);
     assert!(run.initial_data_cache_wait_for_edges().is_empty());
@@ -260,6 +301,14 @@ fn system_run_aggregates_data_cache_wait_for_diagnostics() {
 
     assert_eq!(run.data_cache_runs(), &[cache_run]);
     assert_eq!(run.data_cache_run_count(), 1);
+    assert_eq!(
+        run.data_cache_parallel_scheduler_profile(),
+        ParallelRunProfile::default()
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_profile(),
+        run.parallel_scheduler_profile()
+    );
     assert_eq!(run.initial_data_cache_wait_for_edge_count(), 1);
     assert_eq!(run.remaining_data_cache_wait_for_edge_count(), 2);
     assert_eq!(run.data_cache_wait_for_edge_count(), 2);

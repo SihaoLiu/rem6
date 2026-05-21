@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_coherence::ParallelCoherenceRunSummary;
-use rem6_kernel::{DeadlockDiagnostic, Tick, WaitForEdge, WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{
+    DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
+    PartitionId, RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind,
+    WaitForNode,
+};
 
 use crate::RiscvSystemRun;
 
@@ -12,6 +16,217 @@ impl RiscvSystemRun {
 
     pub fn data_cache_run_count(&self) -> usize {
         self.data_cache_runs.len()
+    }
+
+    pub fn data_cache_parallel_scheduler_epochs(&self) -> Vec<RecordedRunSummary> {
+        self.data_cache_runs
+            .iter()
+            .flat_map(|run| run.scheduler_epochs().iter().cloned())
+            .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.data_cache_runs
+            .iter()
+            .flat_map(ParallelCoherenceRunSummary::dispatches)
+            .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_batches(&self) -> Vec<ParallelEpochBatchRecord> {
+        self.data_cache_runs
+            .iter()
+            .flat_map(ParallelCoherenceRunSummary::batches)
+            .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_worker_partitions(&self) -> Vec<PartitionId> {
+        self.data_cache_runs
+            .iter()
+            .flat_map(ParallelCoherenceRunSummary::parallel_worker_partitions)
+            .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_profile(&self) -> ParallelRunProfile {
+        self.data_cache_runs
+            .iter()
+            .fold(ParallelRunProfile::default(), |profile, run| {
+                profile.merge(run.profile())
+            })
+    }
+
+    pub fn data_cache_parallel_scheduler_epoch_count(&self) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(ParallelCoherenceRunSummary::epoch_count)
+            .sum()
+    }
+
+    pub fn data_cache_parallel_scheduler_empty_epoch_count(&self) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(ParallelCoherenceRunSummary::empty_epoch_count)
+            .sum()
+    }
+
+    pub fn data_cache_parallel_scheduler_dispatch_count(&self) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(ParallelCoherenceRunSummary::dispatch_count)
+            .sum()
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_count(&self) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(ParallelCoherenceRunSummary::batch_count)
+            .sum()
+    }
+
+    pub fn data_cache_parallel_scheduler_max_workers(&self) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(ParallelCoherenceRunSummary::max_parallel_workers)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn data_cache_parallel_scheduler_total_workers(&self) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(ParallelCoherenceRunSummary::total_parallel_workers)
+            .sum()
+    }
+
+    pub fn has_data_cache_parallel_scheduler_work(&self) -> bool {
+        self.data_cache_parallel_scheduler_profile()
+            .has_parallel_work()
+    }
+
+    pub fn data_cache_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.data_cache_parallel_scheduler_partition_activities()
+            .remove(&partition)
+    }
+
+    pub fn has_data_cache_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> bool {
+        self.data_cache_parallel_scheduler_partition_activity(partition)
+            .is_some_and(ParallelPartitionActivity::has_activity)
+    }
+
+    pub fn active_data_cache_parallel_scheduler_partition_count(&self) -> usize {
+        self.data_cache_parallel_scheduler_partition_activities()
+            .len()
+    }
+
+    pub fn data_cache_parallel_scheduler_partition_activities(
+        &self,
+    ) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        let mut activities = BTreeMap::new();
+        for epoch in self.data_cache_parallel_scheduler_epochs() {
+            for (partition, activity) in epoch.partition_activities() {
+                merge_partition_activity(&mut activities, partition, activity);
+            }
+        }
+        activities
+    }
+
+    pub fn data_cache_parallel_scheduler_dispatches_for_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Vec<SchedulerDispatchRecord> {
+        self.data_cache_parallel_scheduler_dispatches()
+            .into_iter()
+            .filter(|dispatch| dispatch.partition() == partition)
+            .collect()
+    }
+
+    pub fn full_system_parallel_scheduler_profile(&self) -> ParallelRunProfile {
+        self.parallel_scheduler_profile()
+            .merge(self.data_cache_parallel_scheduler_profile())
+    }
+
+    pub fn full_system_parallel_scheduler_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        let mut dispatches = self.parallel_scheduler_dispatches();
+        dispatches.extend(self.data_cache_parallel_scheduler_dispatches());
+        dispatches
+    }
+
+    pub fn full_system_parallel_scheduler_batches(&self) -> Vec<ParallelEpochBatchRecord> {
+        let mut batches = self.parallel_scheduler_batches();
+        batches.extend(self.data_cache_parallel_scheduler_batches());
+        batches
+    }
+
+    pub fn full_system_parallel_scheduler_worker_partitions(&self) -> Vec<PartitionId> {
+        let mut partitions = self.parallel_scheduler_worker_partitions();
+        partitions.extend(self.data_cache_parallel_scheduler_worker_partitions());
+        partitions
+    }
+
+    pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
+        self.parallel_scheduler_profile().dispatch_count()
+            + self.data_cache_parallel_scheduler_dispatch_count()
+    }
+
+    pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {
+        self.parallel_scheduler_profile().batch_count()
+            + self.data_cache_parallel_scheduler_batch_count()
+    }
+
+    pub fn full_system_parallel_scheduler_max_workers(&self) -> usize {
+        self.parallel_scheduler_profile()
+            .max_parallel_workers()
+            .max(self.data_cache_parallel_scheduler_max_workers())
+    }
+
+    pub fn has_full_system_parallel_scheduler_work(&self) -> bool {
+        self.full_system_parallel_scheduler_profile()
+            .has_parallel_work()
+    }
+
+    pub fn full_system_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.full_system_parallel_scheduler_partition_activities()
+            .remove(&partition)
+    }
+
+    pub fn has_full_system_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> bool {
+        self.full_system_parallel_scheduler_partition_activity(partition)
+            .is_some_and(ParallelPartitionActivity::has_activity)
+    }
+
+    pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
+        self.full_system_parallel_scheduler_partition_activities()
+            .len()
+    }
+
+    pub fn full_system_parallel_scheduler_partition_activities(
+        &self,
+    ) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
+        let mut activities = self.parallel_scheduler_partition_activities();
+        for (partition, activity) in self.data_cache_parallel_scheduler_partition_activities() {
+            merge_partition_activity(&mut activities, partition, activity);
+        }
+        activities
+    }
+
+    pub fn full_system_parallel_scheduler_dispatches_for_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Vec<SchedulerDispatchRecord> {
+        let mut dispatches = self.parallel_scheduler_dispatches_for_partition(partition);
+        dispatches.extend(self.data_cache_parallel_scheduler_dispatches_for_partition(partition));
+        dispatches
     }
 
     pub fn initial_data_cache_wait_for_edges(&self) -> Vec<WaitForEdge> {
@@ -246,6 +461,24 @@ fn merge_counts(
     for (kind, count) in run_counts {
         *counts.entry(kind).or_insert(0) += count;
     }
+}
+
+fn merge_partition_activity(
+    activities: &mut BTreeMap<PartitionId, ParallelPartitionActivity>,
+    partition: PartitionId,
+    activity: ParallelPartitionActivity,
+) {
+    let previous = activities.remove(&partition).unwrap_or_default();
+    activities.insert(
+        partition,
+        ParallelPartitionActivity::new(
+            previous.worker_count() + activity.worker_count(),
+            previous.dispatch_count() + activity.dispatch_count(),
+            previous
+                .max_pending_events()
+                .max(activity.max_pending_events()),
+        ),
+    );
 }
 
 fn oldest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {
