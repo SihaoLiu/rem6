@@ -13,7 +13,10 @@ use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
     TransportError,
 };
-pub use topology::{AcceleratorTopologyConfig, AcceleratorTopologyDevice};
+pub use topology::{
+    AcceleratorCommandPath, AcceleratorCommandSubmissionConfig, AcceleratorTopologyConfig,
+    AcceleratorTopologyDevice,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AcceleratorEngineId(u32);
@@ -134,7 +137,15 @@ pub enum AcceleratorError {
         command: AcceleratorCommandId,
         request: MemoryRequestId,
     },
+    MissingCommandSubmission {
+        engine: AcceleratorEngineId,
+    },
     SourcePartitionMismatch {
+        endpoint: rem6_topology::Endpoint,
+        expected: PartitionId,
+        actual: PartitionId,
+    },
+    CommandTargetPartitionMismatch {
         endpoint: rem6_topology::Endpoint,
         expected: PartitionId,
         actual: PartitionId,
@@ -172,6 +183,11 @@ impl fmt::Display for AcceleratorError {
                 request.sequence(),
                 request.agent().get(),
             ),
+            Self::MissingCommandSubmission { engine } => write!(
+                formatter,
+                "accelerator engine {} has no topology command submission path",
+                engine.get()
+            ),
             Self::SourcePartitionMismatch {
                 endpoint,
                 expected,
@@ -179,6 +195,18 @@ impl fmt::Display for AcceleratorError {
             } => write!(
                 formatter,
                 "endpoint {}.{} is on partition {} but accelerator partition is {}",
+                endpoint.component().as_str(),
+                endpoint.port().as_str(),
+                actual.index(),
+                expected.index(),
+            ),
+            Self::CommandTargetPartitionMismatch {
+                endpoint,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "command endpoint {}.{} is on partition {} but accelerator partition is {}",
                 endpoint.component().as_str(),
                 endpoint.port().as_str(),
                 actual.index(),

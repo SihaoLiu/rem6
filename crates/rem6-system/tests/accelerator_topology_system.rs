@@ -1,6 +1,7 @@
 use rem6_accelerator::{
-    AcceleratorCommandId, AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig,
-    AcceleratorEngineId, AcceleratorTopologyConfig,
+    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
+    AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig, AcceleratorEngineId,
+    AcceleratorError, AcceleratorTopologyConfig, AcceleratorTraceEvent, AcceleratorTraceKind,
 };
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_kernel::{ClockDomain, PartitionId};
@@ -59,6 +60,8 @@ fn topology_with_accelerator() -> Topology {
             .add_port(port("ifetch"), PortDirection::Initiator)
             .unwrap()
             .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("accel"), PortDirection::Initiator)
             .unwrap(),
         )
         .unwrap()
@@ -70,6 +73,8 @@ fn topology_with_accelerator() -> Topology {
                 clock(1),
             )
             .add_port(port("dma"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("control"), PortDirection::Target)
             .unwrap(),
         )
         .unwrap()
@@ -92,6 +97,13 @@ fn topology_with_accelerator() -> Topology {
         )
         .unwrap()
         .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mem0", "requests"), 2, 2)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "accel"),
+            endpoint("accelerator0", "control"),
+            4,
+            1,
+        )
         .unwrap()
         .connect_with_latencies(
             endpoint("accelerator0", "dma"),
@@ -152,6 +164,13 @@ fn accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig 
         AcceleratorEngineConfig::new(engine, PartitionId::new(1), 2).unwrap(),
         endpoint("accelerator0", "dma"),
         endpoint("mem0", "requests"),
+    )
+}
+
+fn accelerator_config_with_command(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig {
+    accelerator_config(engine).with_command_submission(
+        endpoint("cpu0", "accel"),
+        endpoint("accelerator0", "control"),
     )
 }
 
@@ -330,6 +349,145 @@ fn topology_system_exposes_attached_accelerators_by_engine_id() {
     assert_eq!(attached, vec![(accelerator_id, PartitionId::new(1), route)],);
     assert_eq!(system.transport().route_count(), 3);
     assert!(system.accelerator(AcceleratorEngineId::new(404)).is_none());
+}
+
+#[test]
+fn topology_system_submits_accelerator_commands_through_declared_control_path() {
+    let accelerator_id = AcceleratorEngineId::new(44);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology_with_accelerator(),
+        RiscvClusterTopologyConfig::new([core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config_with_command(accelerator_id))
+    .unwrap();
+    let gpu = AcceleratorCommand::new(
+        AcceleratorCommandId::new(200),
+        AcceleratorCommandKind::GpuKernel { workgroups: 8 },
+        6,
+    )
+    .unwrap();
+    let npu = AcceleratorCommand::new(
+        AcceleratorCommandId::new(201),
+        AcceleratorCommandKind::NpuInference { tiles: 5 },
+        3,
+    )
+    .unwrap();
+
+    assert_eq!(
+        system
+            .accelerator(accelerator_id)
+            .unwrap()
+            .command_path()
+            .unwrap()
+            .latency(),
+        4,
+    );
+    system
+        .submit_accelerator_command_parallel(accelerator_id, gpu.clone())
+        .unwrap();
+    system
+        .submit_accelerator_command_parallel(accelerator_id, npu.clone())
+        .unwrap();
+    system.scheduler_mut().run_until_idle_parallel().unwrap();
+
+    let engine = system.accelerator(accelerator_id).unwrap().engine();
+    assert_eq!(
+        engine.completed(),
+        vec![
+            AcceleratorCompletion::new(AcceleratorCommandId::new(201), npu.kind().clone(), 1, 4, 7,),
+            AcceleratorCompletion::new(
+                AcceleratorCommandId::new(200),
+                gpu.kind().clone(),
+                0,
+                4,
+                10,
+            ),
+        ],
+    );
+    assert_eq!(
+        engine.trace(),
+        vec![
+            AcceleratorTraceEvent::new(
+                0,
+                AcceleratorTraceKind::Submitted {
+                    command: AcceleratorCommandId::new(200),
+                    source: PartitionId::new(0),
+                    target: PartitionId::new(1),
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                0,
+                AcceleratorTraceKind::Submitted {
+                    command: AcceleratorCommandId::new(201),
+                    source: PartitionId::new(0),
+                    target: PartitionId::new(1),
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                4,
+                AcceleratorTraceKind::Started {
+                    command: AcceleratorCommandId::new(200),
+                    lane: 0,
+                    complete_at: 10,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                4,
+                AcceleratorTraceKind::Started {
+                    command: AcceleratorCommandId::new(201),
+                    lane: 1,
+                    complete_at: 7,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                7,
+                AcceleratorTraceKind::Completed {
+                    command: AcceleratorCommandId::new(201),
+                    lane: 1,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                10,
+                AcceleratorTraceKind::Completed {
+                    command: AcceleratorCommandId::new(200),
+                    lane: 0,
+                },
+            ),
+        ],
+    );
+}
+
+#[test]
+fn topology_system_rejects_accelerator_command_without_control_path() {
+    let accelerator_id = AcceleratorEngineId::new(45);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology_with_accelerator(),
+        RiscvClusterTopologyConfig::new([core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config(accelerator_id))
+    .unwrap();
+    let command = AcceleratorCommand::new(
+        AcceleratorCommandId::new(202),
+        AcceleratorCommandKind::GpuKernel { workgroups: 1 },
+        2,
+    )
+    .unwrap();
+
+    let error = system
+        .submit_accelerator_command_parallel(accelerator_id, command)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        RiscvTopologySystemError::Accelerator(AcceleratorError::MissingCommandSubmission {
+            engine: accelerator_id,
+        }),
+    );
+    assert_eq!(system.scheduler().now(), 0);
 }
 
 #[test]

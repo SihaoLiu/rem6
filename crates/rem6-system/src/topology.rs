@@ -4,8 +4,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{
-    AcceleratorDmaCopy, AcceleratorEngineId, AcceleratorError, AcceleratorTopologyConfig,
-    AcceleratorTopologyDevice,
+    AcceleratorCommand, AcceleratorDmaCopy, AcceleratorEngineId, AcceleratorError,
+    AcceleratorTopologyConfig, AcceleratorTopologyDevice,
 };
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
@@ -14,7 +14,8 @@ use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
 };
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionId, PartitionedScheduler, SchedulerError, Tick,
+    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
+    Tick,
 };
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryResponse, MemoryTargetId,
@@ -671,6 +672,20 @@ impl RiscvTopologySystem {
         }
 
         Ok(())
+    }
+
+    pub fn submit_accelerator_command_parallel(
+        &mut self,
+        engine: AcceleratorEngineId,
+        command: AcceleratorCommand,
+    ) -> Result<PartitionEventId, RiscvTopologySystemError> {
+        let device = self
+            .accelerators
+            .get(&engine)
+            .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?;
+        device
+            .submit_command(&mut self.scheduler, command)
+            .map_err(RiscvTopologySystemError::Accelerator)
     }
 
     pub fn drive_until_host_stop_parallel<E>(

@@ -1,8 +1,10 @@
 use rem6_accelerator::{
-    AcceleratorCommandId, AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig,
-    AcceleratorEngineId, AcceleratorError, AcceleratorTopologyConfig, AcceleratorTopologyDevice,
+    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
+    AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig, AcceleratorEngineId,
+    AcceleratorError, AcceleratorTopologyConfig, AcceleratorTopologyDevice, AcceleratorTraceEvent,
+    AcceleratorTraceKind,
 };
-use rem6_kernel::{ClockDomain, PartitionId};
+use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, LineMemoryStore, MemoryRequest, MemoryRequestId,
     ResponseStatus,
@@ -50,6 +52,19 @@ fn accelerator_topology() -> Topology {
                 clock(1),
             )
             .add_port(port("dma"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("control"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("host0"),
+                kind("host"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("accel"), PortDirection::Initiator)
             .unwrap(),
         )
         .unwrap()
@@ -75,6 +90,13 @@ fn accelerator_topology() -> Topology {
             )
             .add_port(port("requests"), PortDirection::Target)
             .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("host0", "accel"),
+            endpoint("accelerator0", "control"),
+            2,
+            2,
         )
         .unwrap()
         .connect_with_latencies(
@@ -106,6 +128,136 @@ fn memory_store() -> Arc<Mutex<LineMemoryStore>> {
         .insert_line(Address::new(0x3000), vec![0; 64])
         .unwrap();
     Arc::new(Mutex::new(store))
+}
+
+#[test]
+fn accelerator_topology_device_submits_commands_through_declared_control_path() {
+    let topology = accelerator_topology();
+    let mut transport = MemoryTransport::new();
+    let device = AcceleratorTopologyDevice::from_topology(
+        &topology,
+        &mut transport,
+        AcceleratorTopologyConfig::new(
+            AcceleratorEngineConfig::new(AcceleratorEngineId::new(16), PartitionId::new(0), 2)
+                .unwrap(),
+            endpoint("accelerator0", "dma"),
+            endpoint("mem0", "requests"),
+        )
+        .with_command_submission(
+            endpoint("host0", "accel"),
+            endpoint("accelerator0", "control"),
+        ),
+    )
+    .unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let kernel = AcceleratorCommand::new(
+        AcceleratorCommandId::new(40),
+        AcceleratorCommandKind::GpuKernel { workgroups: 2 },
+        5,
+    )
+    .unwrap();
+    let inference = AcceleratorCommand::new(
+        AcceleratorCommandId::new(41),
+        AcceleratorCommandKind::NpuInference { tiles: 3 },
+        3,
+    )
+    .unwrap();
+
+    assert_eq!(
+        device.command_path().unwrap().source(),
+        &endpoint("host0", "accel")
+    );
+    assert_eq!(
+        device.command_path().unwrap().target(),
+        &endpoint("accelerator0", "control"),
+    );
+    assert_eq!(
+        device.command_path().unwrap().source_partition(),
+        PartitionId::new(1)
+    );
+    assert_eq!(
+        device.command_path().unwrap().target_partition(),
+        PartitionId::new(0)
+    );
+    assert_eq!(device.command_path().unwrap().latency(), 2);
+    device
+        .submit_command(&mut scheduler, kernel.clone())
+        .unwrap();
+    device
+        .submit_command(&mut scheduler, inference.clone())
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        device.engine().completed(),
+        vec![
+            AcceleratorCompletion::new(
+                AcceleratorCommandId::new(41),
+                inference.kind().clone(),
+                1,
+                2,
+                5,
+            ),
+            AcceleratorCompletion::new(
+                AcceleratorCommandId::new(40),
+                kernel.kind().clone(),
+                0,
+                2,
+                7,
+            ),
+        ],
+    );
+    assert_eq!(
+        device.engine().trace(),
+        vec![
+            AcceleratorTraceEvent::new(
+                0,
+                AcceleratorTraceKind::Submitted {
+                    command: AcceleratorCommandId::new(40),
+                    source: PartitionId::new(1),
+                    target: PartitionId::new(0),
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                0,
+                AcceleratorTraceKind::Submitted {
+                    command: AcceleratorCommandId::new(41),
+                    source: PartitionId::new(1),
+                    target: PartitionId::new(0),
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                2,
+                AcceleratorTraceKind::Started {
+                    command: AcceleratorCommandId::new(40),
+                    lane: 0,
+                    complete_at: 7,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                2,
+                AcceleratorTraceKind::Started {
+                    command: AcceleratorCommandId::new(41),
+                    lane: 1,
+                    complete_at: 5,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                5,
+                AcceleratorTraceKind::Completed {
+                    command: AcceleratorCommandId::new(41),
+                    lane: 1,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                7,
+                AcceleratorTraceKind::Completed {
+                    command: AcceleratorCommandId::new(40),
+                    lane: 0,
+                },
+            ),
+        ],
+    );
 }
 
 #[test]
@@ -308,6 +460,31 @@ fn accelerator_topology_device_uses_declared_route_for_dma_copy() {
             ),
         ],
     );
+}
+
+#[test]
+fn accelerator_topology_rejects_command_target_partition_mismatch_without_route_mutation() {
+    let topology = accelerator_topology();
+    let mut transport = MemoryTransport::new();
+    let config = AcceleratorTopologyConfig::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(17), PartitionId::new(0), 2).unwrap(),
+        endpoint("accelerator0", "dma"),
+        endpoint("mem0", "requests"),
+    )
+    .with_command_submission(endpoint("host0", "accel"), endpoint("mem0", "requests"));
+
+    let error =
+        AcceleratorTopologyDevice::from_topology(&topology, &mut transport, config).unwrap_err();
+
+    assert_eq!(
+        error,
+        AcceleratorError::CommandTargetPartitionMismatch {
+            endpoint: endpoint("mem0", "requests"),
+            expected: PartitionId::new(0),
+            actual: PartitionId::new(2),
+        },
+    );
+    assert_eq!(transport.route_count(), 0);
 }
 
 #[test]
