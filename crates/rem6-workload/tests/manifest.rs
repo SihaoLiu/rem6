@@ -10,10 +10,11 @@ use rem6_workload::{
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
     WorkloadDataCacheProtocolCount, WorkloadError, WorkloadExecutionMode,
     WorkloadExecutionModeSwitch, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
-    WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
-    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope,
+    WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1113,6 +1114,34 @@ fn workload_result_records_execution_mode_stats_scope() {
         result.execution_mode_switches()[0].stats_scope(),
         Some(&WorkloadStatsScope::new(3, 40))
     );
+}
+
+#[test]
+fn workload_result_records_host_action_summary() {
+    let manifest = WorkloadManifest::builder(id("host-summary-result"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let mut summary = WorkloadHostActionSummary::default();
+    summary.record_stats_reset();
+    summary.record_stats_snapshot();
+    summary.record_checkpoint();
+    summary.record_execution_mode_switch();
+    summary.record_stop();
+
+    let result =
+        WorkloadResult::new(manifest.identity(), 96).with_host_action_summary(summary.clone());
+
+    assert_eq!(result.host_action_summary(), Some(&summary));
+    assert_eq!(summary.total_action_count(), 5);
+    assert_eq!(summary.stats_reset_count(), 1);
+    assert_eq!(summary.stats_snapshot_count(), 1);
+    assert_eq!(summary.checkpoint_count(), 1);
+    assert_eq!(summary.execution_mode_switch_count(), 1);
+    assert_eq!(summary.stop_count(), 1);
+    assert!(summary.has_host_actions());
 }
 
 #[test]

@@ -1222,6 +1222,91 @@ impl WorkloadStatsScope {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkloadHostActionSummary {
+    total_action_count: usize,
+    injected_command_count: usize,
+    stats_reset_count: usize,
+    stats_snapshot_count: usize,
+    checkpoint_count: usize,
+    checkpoint_restore_count: usize,
+    execution_mode_switch_count: usize,
+    stop_count: usize,
+}
+
+impl WorkloadHostActionSummary {
+    pub fn record_injected_command(&mut self) {
+        self.total_action_count += 1;
+        self.injected_command_count += 1;
+    }
+
+    pub fn record_stats_reset(&mut self) {
+        self.total_action_count += 1;
+        self.stats_reset_count += 1;
+    }
+
+    pub fn record_stats_snapshot(&mut self) {
+        self.total_action_count += 1;
+        self.stats_snapshot_count += 1;
+    }
+
+    pub fn record_checkpoint(&mut self) {
+        self.total_action_count += 1;
+        self.checkpoint_count += 1;
+    }
+
+    pub fn record_checkpoint_restore(&mut self) {
+        self.total_action_count += 1;
+        self.checkpoint_restore_count += 1;
+    }
+
+    pub fn record_execution_mode_switch(&mut self) {
+        self.total_action_count += 1;
+        self.execution_mode_switch_count += 1;
+    }
+
+    pub fn record_stop(&mut self) {
+        self.total_action_count += 1;
+        self.stop_count += 1;
+    }
+
+    pub const fn total_action_count(&self) -> usize {
+        self.total_action_count
+    }
+
+    pub const fn injected_command_count(&self) -> usize {
+        self.injected_command_count
+    }
+
+    pub const fn stats_reset_count(&self) -> usize {
+        self.stats_reset_count
+    }
+
+    pub const fn stats_snapshot_count(&self) -> usize {
+        self.stats_snapshot_count
+    }
+
+    pub const fn checkpoint_count(&self) -> usize {
+        self.checkpoint_count
+    }
+
+    pub const fn checkpoint_restore_count(&self) -> usize {
+        self.checkpoint_restore_count
+    }
+
+    pub const fn execution_mode_switch_count(&self) -> usize {
+        self.execution_mode_switch_count
+    }
+
+    pub const fn stop_count(&self) -> usize {
+        self.stop_count
+    }
+
+    pub const fn has_host_actions(&self) -> bool {
+        self.total_action_count != 0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostEventIntent {
     RoiBegin {
@@ -1656,6 +1741,7 @@ pub struct WorkloadResult {
     stop_reason: Option<String>,
     stats_snapshot: Option<StatSnapshot>,
     parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
+    host_action_summary: Option<WorkloadHostActionSummary>,
     checkpoint_labels: Vec<String>,
     execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
 }
@@ -1668,6 +1754,7 @@ impl WorkloadResult {
             stop_reason: None,
             stats_snapshot: None,
             parallel_execution_summary: None,
+            host_action_summary: None,
             checkpoint_labels: Vec::new(),
             execution_mode_switches: Vec::new(),
         }
@@ -1688,6 +1775,11 @@ impl WorkloadResult {
         summary: WorkloadParallelExecutionSummary,
     ) -> Self {
         self.parallel_execution_summary = Some(summary);
+        self
+    }
+
+    pub fn with_host_action_summary(mut self, summary: WorkloadHostActionSummary) -> Self {
+        self.host_action_summary = Some(summary);
         self
     }
 
@@ -1740,6 +1832,10 @@ impl WorkloadResult {
 
     pub const fn parallel_execution_summary(&self) -> Option<&WorkloadParallelExecutionSummary> {
         self.parallel_execution_summary.as_ref()
+    }
+
+    pub const fn host_action_summary(&self) -> Option<&WorkloadHostActionSummary> {
+        self.host_action_summary.as_ref()
     }
 
     pub fn checkpoint_labels(&self) -> &[String] {

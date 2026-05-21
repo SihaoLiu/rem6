@@ -31,9 +31,10 @@ use rem6_transport::{
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
-    WorkloadGpuDmaCopy, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadHostEvent, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult,
+    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 mod cache_response;
@@ -1218,10 +1219,24 @@ impl RiscvWorkloadReplay {
 
         let controller = controller.lock().expect("system host controller lock");
         let host_action_outcomes = controller.run().action_outcomes().to_vec();
+        let mut host_action_summary = WorkloadHostActionSummary::default();
         for outcome in &host_action_outcomes {
             match outcome {
+                SystemActionOutcome::InjectedCommand { .. } => {
+                    host_action_summary.record_injected_command();
+                }
+                SystemActionOutcome::StatsReset(_) => {
+                    host_action_summary.record_stats_reset();
+                }
+                SystemActionOutcome::StatsSnapshot(_) => {
+                    host_action_summary.record_stats_snapshot();
+                }
                 SystemActionOutcome::Checkpoint { manifest, .. } => {
+                    host_action_summary.record_checkpoint();
                     result = result.with_checkpoint_label(manifest.label());
+                }
+                SystemActionOutcome::CheckpointRestored { .. } => {
+                    host_action_summary.record_checkpoint_restore();
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
                     tick,
@@ -1238,8 +1253,11 @@ impl RiscvWorkloadReplay {
                         *stats_epoch,
                         *stats_reset_tick,
                     );
+                    host_action_summary.record_execution_mode_switch();
                 }
-                _ => {}
+                SystemActionOutcome::Stop(_) => {
+                    host_action_summary.record_stop();
+                }
             }
         }
         Ok((
@@ -1247,6 +1265,7 @@ impl RiscvWorkloadReplay {
                 .with_parallel_execution_summary(parallel_execution_summary(
                     run, topology, activities,
                 ))
+                .with_host_action_summary(host_action_summary)
                 .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
             host_action_outcomes,
         ))

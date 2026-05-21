@@ -13,10 +13,11 @@ use rem6_workload::{
     HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
     WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadGpuDevice, WorkloadGpuDmaCopy,
-    WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadGpuKernelLaunch, WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore,
+    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
+    WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -2008,6 +2009,15 @@ fn workload_replay_executes_planned_host_actions() {
         outcome.result().execution_mode_switches()[0].stats_scope(),
         Some(&WorkloadStatsScope::new(1, 1))
     );
+    let mut host_summary = WorkloadHostActionSummary::default();
+    host_summary.record_stop();
+    host_summary.record_stats_reset();
+    host_summary.record_checkpoint();
+    host_summary.record_stats_snapshot();
+    host_summary.record_execution_mode_switch();
+    host_summary.record_stop();
+    assert_eq!(outcome.result().host_action_summary(), Some(&host_summary));
+
     let stats = outcome.result().stats_snapshot().unwrap();
     assert_eq!(stats.reset_tick(), 1);
     assert_eq!(stats.epoch(), 1);
