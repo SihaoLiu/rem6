@@ -6,9 +6,8 @@ use std::sync::{Arc, Mutex};
 use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError};
 use rem6_boot::BootError;
 use rem6_coherence::{
-    CpuResponseRecord, HarnessError, LineBackingStore, MesiCpuResponseRecord, MesiHarnessError,
-    MoesiCpuResponseRecord, MoesiHarnessError, PartitionedCacheAgentConfig,
-    PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
+    HarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
+    PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
     PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_cpu::{
@@ -24,7 +23,6 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, WaitForGrap
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
     MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
-    ResponseStatus,
 };
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
@@ -41,7 +39,7 @@ use rem6_workload::{
 mod cache_response;
 mod workload_replay_dma;
 
-use self::cache_response::{cached_memory_response, data_cache_agents};
+use self::cache_response::{cached_memory_response, data_cache_agents, data_cache_response_result};
 use self::workload_replay_dma::{run_accelerator_dma_copies, WorkloadAcceleratorDmaActivity};
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, accelerator_wait_for_graph_since, accelerator_wait_for_markers,
@@ -395,23 +393,26 @@ impl WorkloadDataCacheLineBackend {
             return None;
         }
         let outcome = match &mut self.harness {
-            WorkloadDataCacheHarness::Msi(harness) => workload_msi_data_cache_response_result(
+            WorkloadDataCacheHarness::Msi(harness) => data_cache_response_result(
                 self.protocol,
                 &mut self.records,
                 harness,
                 delivery,
+                RiscvWorkloadReplayError::MsiDataCache,
             ),
-            WorkloadDataCacheHarness::Mesi(harness) => workload_mesi_data_cache_response_result(
+            WorkloadDataCacheHarness::Mesi(harness) => data_cache_response_result(
                 self.protocol,
                 &mut self.records,
                 harness,
                 delivery,
+                RiscvWorkloadReplayError::MesiDataCache,
             ),
-            WorkloadDataCacheHarness::Moesi(harness) => workload_moesi_data_cache_response_result(
+            WorkloadDataCacheHarness::Moesi(harness) => data_cache_response_result(
                 self.protocol,
                 &mut self.records,
                 harness,
                 delivery,
+                RiscvWorkloadReplayError::MoesiDataCache,
             ),
         };
         Some(match outcome {
@@ -464,201 +465,6 @@ impl WorkloadDataCacheBackend {
         self.lines
             .get_mut(&delivery.request().line_address())
             .and_then(|line| line.respond(delivery))
-    }
-}
-
-trait WorkloadDataCacheResponseRecord {
-    fn status(&self) -> ResponseStatus;
-    fn data(&self) -> Option<&[u8]>;
-    fn tick(&self) -> u64;
-    fn request(&self) -> MemoryRequestId;
-}
-
-impl WorkloadDataCacheResponseRecord for CpuResponseRecord {
-    fn status(&self) -> ResponseStatus {
-        self.status()
-    }
-
-    fn data(&self) -> Option<&[u8]> {
-        self.data()
-    }
-
-    fn tick(&self) -> u64 {
-        self.tick()
-    }
-
-    fn request(&self) -> MemoryRequestId {
-        self.request()
-    }
-}
-
-impl WorkloadDataCacheResponseRecord for MesiCpuResponseRecord {
-    fn status(&self) -> ResponseStatus {
-        self.status()
-    }
-
-    fn data(&self) -> Option<&[u8]> {
-        self.data()
-    }
-
-    fn tick(&self) -> u64 {
-        self.tick()
-    }
-
-    fn request(&self) -> MemoryRequestId {
-        self.request()
-    }
-}
-
-impl WorkloadDataCacheResponseRecord for MoesiCpuResponseRecord {
-    fn status(&self) -> ResponseStatus {
-        self.status()
-    }
-
-    fn data(&self) -> Option<&[u8]> {
-        self.data()
-    }
-
-    fn tick(&self) -> u64 {
-        self.tick()
-    }
-
-    fn request(&self) -> MemoryRequestId {
-        self.request()
-    }
-}
-
-fn workload_msi_data_cache_response_result(
-    protocol: RiscvDataCacheProtocol,
-    records: &mut Vec<RiscvDataCacheRunRecord>,
-    harness: &mut PartitionedDirectoryLineHarness,
-    delivery: &RequestDelivery,
-) -> Result<TargetOutcome, RiscvWorkloadReplayError> {
-    let start_tick = harness.now();
-    let responses_before = harness.cpu_responses().len();
-    harness
-        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
-        .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
-    let run = harness
-        .run_until_idle_parallel_recorded()
-        .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
-    let response_record = workload_data_cache_response_record(
-        &harness.cpu_responses(),
-        responses_before,
-        delivery.request().id(),
-    )?;
-    records.push(RiscvDataCacheRunRecord::new(protocol, run));
-
-    workload_data_cache_response_record_to_target_outcome(
-        delivery.request(),
-        start_tick,
-        &response_record,
-    )
-}
-
-fn workload_mesi_data_cache_response_result(
-    protocol: RiscvDataCacheProtocol,
-    records: &mut Vec<RiscvDataCacheRunRecord>,
-    harness: &mut PartitionedMesiDirectoryLineHarness,
-    delivery: &RequestDelivery,
-) -> Result<TargetOutcome, RiscvWorkloadReplayError> {
-    let start_tick = harness.now();
-    let responses_before = harness.cpu_responses().len();
-    harness
-        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
-        .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
-    let run = harness
-        .run_until_idle_parallel_recorded()
-        .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
-    let response_record = workload_data_cache_response_record(
-        &harness.cpu_responses(),
-        responses_before,
-        delivery.request().id(),
-    )?;
-    records.push(RiscvDataCacheRunRecord::new(protocol, run));
-
-    workload_data_cache_response_record_to_target_outcome(
-        delivery.request(),
-        start_tick,
-        &response_record,
-    )
-}
-
-fn workload_moesi_data_cache_response_result(
-    protocol: RiscvDataCacheProtocol,
-    records: &mut Vec<RiscvDataCacheRunRecord>,
-    harness: &mut PartitionedMoesiDirectoryLineHarness,
-    delivery: &RequestDelivery,
-) -> Result<TargetOutcome, RiscvWorkloadReplayError> {
-    let start_tick = harness.now();
-    let responses_before = harness.cpu_responses().len();
-    harness
-        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
-        .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
-    let run = harness
-        .run_until_idle_parallel_recorded()
-        .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
-    let response_record = workload_data_cache_response_record(
-        &harness.cpu_responses(),
-        responses_before,
-        delivery.request().id(),
-    )?;
-    records.push(RiscvDataCacheRunRecord::new(protocol, run));
-
-    workload_data_cache_response_record_to_target_outcome(
-        delivery.request(),
-        start_tick,
-        &response_record,
-    )
-}
-
-fn workload_data_cache_response_record<R>(
-    responses: &[R],
-    responses_before: usize,
-    request: MemoryRequestId,
-) -> Result<R, RiscvWorkloadReplayError>
-where
-    R: Clone + WorkloadDataCacheResponseRecord,
-{
-    responses
-        .get(responses_before..)
-        .unwrap_or_default()
-        .iter()
-        .find(|record| record.request() == request)
-        .cloned()
-        .ok_or(RiscvWorkloadReplayError::MissingDataCacheResponse { request })
-}
-
-fn workload_data_cache_response_record_to_target_outcome<R>(
-    request: &MemoryRequest,
-    start_tick: u64,
-    record: &R,
-) -> Result<TargetOutcome, RiscvWorkloadReplayError>
-where
-    R: WorkloadDataCacheResponseRecord,
-{
-    let response = workload_data_cache_response_record_to_memory_response(request, record)?;
-    let delay = record.tick().saturating_sub(start_tick);
-    if delay == 0 {
-        Ok(TargetOutcome::Respond(response))
-    } else {
-        Ok(TargetOutcome::RespondAfter { delay, response })
-    }
-}
-
-fn workload_data_cache_response_record_to_memory_response<R>(
-    request: &MemoryRequest,
-    record: &R,
-) -> Result<MemoryResponse, RiscvWorkloadReplayError>
-where
-    R: WorkloadDataCacheResponseRecord,
-{
-    match record.status() {
-        ResponseStatus::Completed => {
-            MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
-                .map_err(RiscvWorkloadReplayError::Memory)
-        }
-        ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
     }
 }
 
@@ -1953,5 +1759,19 @@ fn memory_response(memory: &WorkloadMemoryBackend, delivery: &RequestDelivery) -
                 TargetOutcome::RespondAfter { delay, response }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_response_harness<H: cache_response::WorkloadDataCacheResponseHarness>() {}
+
+    #[test]
+    fn all_data_cache_protocol_harnesses_share_response_adapter() {
+        assert_response_harness::<PartitionedDirectoryLineHarness>();
+        assert_response_harness::<PartitionedMesiDirectoryLineHarness>();
+        assert_response_harness::<PartitionedMoesiDirectoryLineHarness>();
     }
 }

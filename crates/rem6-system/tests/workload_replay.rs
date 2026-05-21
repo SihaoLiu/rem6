@@ -977,19 +977,17 @@ fn replay_topology_with_data_route() -> WorkloadTopology {
         .unwrap()
 }
 
-fn replay_topology_with_msi_data_cache() -> WorkloadTopology {
+fn replay_topology_with_data_cache(protocol: WorkloadDataCacheProtocol) -> WorkloadTopology {
     replay_topology_with_data_route()
         .with_riscv_data_cache(
-            WorkloadRiscvDataCache::new(
-                WorkloadDataCacheProtocol::Msi,
-                0,
-                Address::new(0x9000),
-                2,
-                "dcache.dir",
-            )
-            .unwrap(),
+            WorkloadRiscvDataCache::new(protocol, 0, Address::new(0x9000), 2, "dcache.dir")
+                .unwrap(),
         )
         .unwrap()
+}
+
+fn replay_topology_with_msi_data_cache() -> WorkloadTopology {
+    replay_topology_with_data_cache(WorkloadDataCacheProtocol::Msi)
 }
 
 fn replay_topology_with_msi_data_cache_lines() -> WorkloadTopology {
@@ -1315,22 +1313,29 @@ fn replay_manifest_with_data_load() -> WorkloadManifest {
 }
 
 fn replay_manifest_with_msi_data_cache_load() -> WorkloadManifest {
-    WorkloadManifest::builder(
-        workload_id("riscv-replay-msi-data-cache-load"),
-        boot_image_with_data_load(),
+    replay_manifest_with_data_cache_load(
+        WorkloadDataCacheProtocol::Msi,
+        "riscv-replay-msi-data-cache-load",
     )
-    .with_topology(replay_topology_with_msi_data_cache())
-    .add_resource(kernel_resource())
-    .unwrap()
-    .add_required_resource(resource_id("kernel"))
-    .add_host_event(WorkloadHostEvent::new(
-        0,
-        HostEventIntent::Stop {
-            reason: "host-stop".to_string(),
-        },
-    ))
-    .build()
-    .unwrap()
+}
+
+fn replay_manifest_with_data_cache_load(
+    protocol: WorkloadDataCacheProtocol,
+    workload: &str,
+) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(workload), boot_image_with_data_load())
+        .with_topology(replay_topology_with_data_cache(protocol))
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
 }
 
 fn replay_manifest_with_msi_data_cache_loads() -> WorkloadManifest {
@@ -2068,6 +2073,60 @@ fn workload_replay_routes_data_load_through_declared_msi_cache() {
     );
     assert!(summary.has_data_cache_parallel_work());
     plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_data_load_through_declared_cache_protocols() {
+    let protocols = [
+        (
+            WorkloadDataCacheProtocol::Msi,
+            rem6_system::RiscvDataCacheProtocol::Msi,
+            "riscv-replay-protocol-msi-data-cache-load",
+        ),
+        (
+            WorkloadDataCacheProtocol::Mesi,
+            rem6_system::RiscvDataCacheProtocol::Mesi,
+            "riscv-replay-protocol-mesi-data-cache-load",
+        ),
+        (
+            WorkloadDataCacheProtocol::Moesi,
+            rem6_system::RiscvDataCacheProtocol::Moesi,
+            "riscv-replay-protocol-moesi-data-cache-load",
+        ),
+    ];
+
+    for (workload_protocol, run_protocol, workload) in protocols {
+        let manifest = replay_manifest_with_data_cache_load(workload_protocol, workload);
+        let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+        let outcome = RiscvWorkloadReplay::new(plan.clone())
+            .with_max_turns(32)
+            .run_parallel()
+            .unwrap();
+
+        assert_eq!(
+            outcome
+                .cluster()
+                .core(CpuId::new(0))
+                .unwrap()
+                .read_register(Register::new(5).unwrap()),
+            0xfedc_ba98_7654_3210
+        );
+        assert_eq!(outcome.run().data_cache_run_count(), 1);
+        assert_eq!(
+            outcome
+                .run()
+                .data_cache_run_count_for_protocol(run_protocol),
+            1,
+        );
+        let summary = outcome.result().parallel_execution_summary().unwrap();
+        assert_eq!(
+            summary.data_cache_parallel_run_count_for_protocol(workload_protocol),
+            1,
+        );
+        assert!(summary.has_data_cache_parallel_work());
+        plan.verify_result(outcome.result()).unwrap();
+    }
 }
 
 #[test]
