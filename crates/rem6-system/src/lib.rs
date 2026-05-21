@@ -61,10 +61,11 @@ pub use timer_checkpoint::{
     TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
 };
 pub use topology::{
-    RiscvTopologyDmaCopy, RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary,
-    RiscvTopologyDramConfig, RiscvTopologyHeterogeneousRunSummary, RiscvTopologyHeterogeneousWork,
-    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologyMemoryRegion,
-    RiscvTopologySystem, RiscvTopologySystemError,
+    RiscvTopologyAcceleratorComputeActivity, RiscvTopologyDmaCopy, RiscvTopologyDmaDeviceActivity,
+    RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary, RiscvTopologyDramConfig,
+    RiscvTopologyGpuComputeActivity, RiscvTopologyHeterogeneousRunSummary,
+    RiscvTopologyHeterogeneousWork, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
+    RiscvTopologyMemoryRegion, RiscvTopologySystem, RiscvTopologySystemError,
 };
 pub use uart_checkpoint::{
     UartCheckpointBank, UartCheckpointError, UartCheckpointPort, UartCheckpointRecord,

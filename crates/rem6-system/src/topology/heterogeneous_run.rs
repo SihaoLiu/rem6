@@ -39,6 +39,8 @@ pub struct RiscvTopologyHeterogeneousRunSummary {
     gpu_workgroup_completion_count: usize,
     accelerator_trace_event_count: usize,
     accelerator_command_completion_count: usize,
+    gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyGpuComputeActivity>,
+    accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyAcceleratorComputeActivity>,
 }
 
 impl RiscvTopologyHeterogeneousRunSummary {
@@ -57,7 +59,22 @@ impl RiscvTopologyHeterogeneousRunSummary {
             gpu_workgroup_completion_count,
             accelerator_trace_event_count,
             accelerator_command_completion_count,
+            gpu_activity: BTreeMap::new(),
+            accelerator_activity: BTreeMap::new(),
         }
+    }
+
+    pub fn with_device_activity(
+        mut self,
+        gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyGpuComputeActivity>,
+        accelerator_activity: BTreeMap<
+            AcceleratorEngineId,
+            RiscvTopologyAcceleratorComputeActivity,
+        >,
+    ) -> Self {
+        self.gpu_activity = gpu_activity;
+        self.accelerator_activity = accelerator_activity;
+        self
     }
 
     pub fn events(&self) -> &[PartitionEventId] {
@@ -128,6 +145,27 @@ impl RiscvTopologyHeterogeneousRunSummary {
         self.accelerator_command_completion_count
     }
 
+    pub fn gpu_activity(&self, device: GpuDeviceId) -> Option<RiscvTopologyGpuComputeActivity> {
+        self.gpu_activity.get(&device).copied()
+    }
+
+    pub fn gpu_activities(&self) -> &BTreeMap<GpuDeviceId, RiscvTopologyGpuComputeActivity> {
+        &self.gpu_activity
+    }
+
+    pub fn accelerator_activity(
+        &self,
+        engine: AcceleratorEngineId,
+    ) -> Option<RiscvTopologyAcceleratorComputeActivity> {
+        self.accelerator_activity.get(&engine).copied()
+    }
+
+    pub fn accelerator_activities(
+        &self,
+    ) -> &BTreeMap<AcceleratorEngineId, RiscvTopologyAcceleratorComputeActivity> {
+        &self.accelerator_activity
+    }
+
     pub const fn trace_event_count(&self) -> usize {
         self.gpu_trace_event_count + self.accelerator_trace_event_count
     }
@@ -146,6 +184,60 @@ impl RiscvTopologyHeterogeneousRunSummary {
 
     pub const fn has_compute_activity(&self) -> bool {
         self.compute_completion_count() != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RiscvTopologyGpuComputeActivity {
+    trace_event_count: usize,
+    workgroup_completion_count: usize,
+}
+
+impl RiscvTopologyGpuComputeActivity {
+    pub const fn new(trace_event_count: usize, workgroup_completion_count: usize) -> Self {
+        Self {
+            trace_event_count,
+            workgroup_completion_count,
+        }
+    }
+
+    pub const fn trace_event_count(self) -> usize {
+        self.trace_event_count
+    }
+
+    pub const fn workgroup_completion_count(self) -> usize {
+        self.workgroup_completion_count
+    }
+
+    pub const fn has_compute_activity(self) -> bool {
+        self.workgroup_completion_count != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RiscvTopologyAcceleratorComputeActivity {
+    trace_event_count: usize,
+    command_completion_count: usize,
+}
+
+impl RiscvTopologyAcceleratorComputeActivity {
+    pub const fn new(trace_event_count: usize, command_completion_count: usize) -> Self {
+        Self {
+            trace_event_count,
+            command_completion_count,
+        }
+    }
+
+    pub const fn trace_event_count(self) -> usize {
+        self.trace_event_count
+    }
+
+    pub const fn command_completion_count(self) -> usize {
+        self.command_completion_count
+    }
+
+    pub const fn has_compute_activity(self) -> bool {
+        self.command_completion_count != 0
     }
 }
 
@@ -169,12 +261,14 @@ struct HeterogeneousDeviceSnapshots {
     gpus: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct HeterogeneousActivityCounts {
     gpu_trace_event_count: usize,
     gpu_workgroup_completion_count: usize,
     accelerator_trace_event_count: usize,
     accelerator_command_completion_count: usize,
+    gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyGpuComputeActivity>,
+    accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyAcceleratorComputeActivity>,
 }
 
 impl RiscvTopologySystem {
@@ -222,7 +316,8 @@ impl RiscvTopologySystem {
             activity.gpu_workgroup_completion_count,
             activity.accelerator_trace_event_count,
             activity.accelerator_command_completion_count,
-        ))
+        )
+        .with_device_activity(activity.gpu_activity, activity.accelerator_activity))
     }
 
     fn resolve_heterogeneous_work(
@@ -313,12 +408,19 @@ impl RiscvTopologySystem {
                 .expect("resolved accelerator remains attached")
                 .engine()
                 .snapshot();
-            activity.accelerator_trace_event_count +=
-                after.trace().len().saturating_sub(before.trace().len());
-            activity.accelerator_command_completion_count += after
-                .completed()
-                .len()
-                .saturating_sub(before.completed().len());
+            let device_activity = RiscvTopologyAcceleratorComputeActivity::new(
+                after.trace().len().saturating_sub(before.trace().len()),
+                after
+                    .completed()
+                    .len()
+                    .saturating_sub(before.completed().len()),
+            );
+            activity.accelerator_trace_event_count += device_activity.trace_event_count();
+            activity.accelerator_command_completion_count +=
+                device_activity.command_completion_count();
+            activity
+                .accelerator_activity
+                .insert(*engine, device_activity);
         }
 
         for (device, before) in &before.gpus {
@@ -328,12 +430,16 @@ impl RiscvTopologySystem {
                 .expect("resolved GPU remains attached")
                 .gpu()
                 .snapshot();
-            activity.gpu_trace_event_count +=
-                after.trace().len().saturating_sub(before.trace().len());
-            activity.gpu_workgroup_completion_count += after
-                .completions()
-                .len()
-                .saturating_sub(before.completions().len());
+            let device_activity = RiscvTopologyGpuComputeActivity::new(
+                after.trace().len().saturating_sub(before.trace().len()),
+                after
+                    .completions()
+                    .len()
+                    .saturating_sub(before.completions().len()),
+            );
+            activity.gpu_trace_event_count += device_activity.trace_event_count();
+            activity.gpu_workgroup_completion_count += device_activity.workgroup_completion_count();
+            activity.gpu_activity.insert(*device, device_activity);
         }
 
         activity

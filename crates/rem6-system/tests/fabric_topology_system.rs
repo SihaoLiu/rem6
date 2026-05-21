@@ -1120,6 +1120,35 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
     assert_eq!(summary.final_tick(), 24);
     assert!(summary.has_parallel_work());
     assert!(summary.has_dma_activity());
+    let read_gpu = summary.read().gpu_activity(gpu_id).unwrap();
+    assert_eq!(read_gpu.trace_event_count(), 2);
+    assert_eq!(read_gpu.pending_dma_write_count(), 1);
+    assert_eq!(read_gpu.dma_completion_count(), 0);
+    let read_accelerator = summary.read().accelerator_activity(accelerator_id).unwrap();
+    assert_eq!(read_accelerator.trace_event_count(), 2);
+    assert_eq!(read_accelerator.pending_dma_write_count(), 1);
+    assert_eq!(read_accelerator.dma_completion_count(), 0);
+    let write_gpu = summary.write().gpu_activity(gpu_id).unwrap();
+    assert_eq!(write_gpu.trace_event_count(), 2);
+    assert_eq!(write_gpu.pending_dma_write_count(), 0);
+    assert_eq!(write_gpu.dma_completion_count(), 1);
+    let write_accelerator = summary
+        .write()
+        .accelerator_activity(accelerator_id)
+        .unwrap();
+    assert_eq!(write_accelerator.trace_event_count(), 2);
+    assert_eq!(write_accelerator.pending_dma_write_count(), 0);
+    assert_eq!(write_accelerator.dma_completion_count(), 1);
+    let full_gpu = summary.gpu_activity(gpu_id).unwrap();
+    assert_eq!(full_gpu.trace_event_count(), 4);
+    assert_eq!(full_gpu.pending_dma_write_count(), 0);
+    assert_eq!(full_gpu.dma_completion_count(), 1);
+    let full_accelerator = summary.accelerator_activity(accelerator_id).unwrap();
+    assert_eq!(full_accelerator.trace_event_count(), 4);
+    assert_eq!(full_accelerator.pending_dma_write_count(), 0);
+    assert_eq!(full_accelerator.dma_completion_count(), 1);
+    assert_eq!(summary.gpu_activities().len(), 1);
+    assert_eq!(summary.accelerator_activities().len(), 1);
 
     let destination = system
         .memory_store()
@@ -1319,6 +1348,12 @@ fn topology_system_records_gpu_and_accelerator_compute_batch_activity() {
     assert!(summary.has_compute_activity());
     assert!(summary.has_gpu_activity());
     assert!(summary.has_accelerator_activity());
+    let gpu_activity = summary.gpu_activity(gpu_id).unwrap();
+    assert_eq!(gpu_activity.trace_event_count(), 8);
+    assert_eq!(gpu_activity.workgroup_completion_count(), 3);
+    let accelerator_activity = summary.accelerator_activity(accelerator_id).unwrap();
+    assert_eq!(accelerator_activity.trace_event_count(), 3);
+    assert_eq!(accelerator_activity.command_completion_count(), 1);
     assert_eq!(
         system.gpu(gpu_id).unwrap().gpu().completions(),
         vec![
