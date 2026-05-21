@@ -1235,8 +1235,9 @@ impl RiscvWorkloadReplay {
                     host_action_summary.record_checkpoint();
                     result = result.with_checkpoint_label(manifest.label());
                 }
-                SystemActionOutcome::CheckpointRestored { .. } => {
+                SystemActionOutcome::CheckpointRestored { manifest, .. } => {
                     host_action_summary.record_checkpoint_restore();
+                    result = result.with_restored_checkpoint_label(manifest.label());
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
                     tick,
@@ -1510,6 +1511,9 @@ fn planned_host_guest_event(
             }
         }
         HostEventIntent::Checkpoint { label } => GuestEventKind::Checkpoint {
+            label: label.clone(),
+        },
+        HostEventIntent::RestoreCheckpoint { label } => GuestEventKind::RestoreCheckpoint {
             label: label.clone(),
         },
         HostEventIntent::Stop { .. } => return None,

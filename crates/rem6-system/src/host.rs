@@ -114,6 +114,7 @@ impl Error for ExecutionModeCheckpointError {}
 pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
+    captured_manifests: BTreeMap<String, CheckpointManifest>,
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
     msi_bank_checkpoints: Option<MsiBankCheckpointBank>,
     fabric_checkpoints: Option<FabricCheckpointBank>,
@@ -138,6 +139,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -162,6 +164,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -186,6 +189,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -210,6 +214,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: Some(msi_bank_checkpoints),
             fabric_checkpoints: None,
@@ -234,6 +239,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -258,6 +264,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -283,6 +290,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -308,6 +316,7 @@ impl SystemActionExecutor {
         Self {
             stats,
             checkpoints,
+            captured_manifests: BTreeMap::new(),
             accelerator_checkpoints: None,
             msi_bank_checkpoints: None,
             fabric_checkpoints: None,
@@ -566,6 +575,73 @@ impl SystemActionExecutor {
         self.uart_checkpoints.as_ref()
     }
 
+    fn restore_checkpoint_manifest(
+        &mut self,
+        manifest: &CheckpointManifest,
+    ) -> Result<(), SystemError> {
+        self.prepare_execution_mode_checkpoint_restore(manifest)?;
+        self.checkpoints
+            .restore(manifest)
+            .map_err(SystemError::Checkpoint)?;
+        self.restore_execution_modes_from_checkpoint(manifest)?;
+        if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
+            accelerator_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::AcceleratorCheckpoint)?;
+        }
+        if let Some(msi_bank_checkpoints) = &self.msi_bank_checkpoints {
+            msi_bank_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::MsiBankCheckpoint)?;
+        }
+        if let Some(fabric_checkpoints) = &self.fabric_checkpoints {
+            fabric_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::FabricCheckpoint)?;
+        }
+        if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
+            gpu_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::GpuCheckpoint)?;
+        }
+        if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+            riscv_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::RiscvCheckpoint)?;
+        }
+        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+            scheduler_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if let Some(memory_checkpoints) = &self.memory_checkpoints {
+            memory_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::MemoryCheckpoint)?;
+        }
+        if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
+            dram_memory_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::DramMemoryCheckpoint)?;
+        }
+        if let Some(interrupt_controller_checkpoints) = &self.interrupt_controller_checkpoints {
+            interrupt_controller_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::InterruptControllerCheckpoint)?;
+        }
+        if let Some(timer_checkpoints) = &self.timer_checkpoints {
+            timer_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::TimerCheckpoint)?;
+        }
+        if let Some(uart_checkpoints) = &self.uart_checkpoints {
+            uart_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::UartCheckpoint)?;
+        }
+        Ok(())
+    }
+
     pub fn apply(&mut self, record: &HostActionRecord) -> Result<SystemActionOutcome, SystemError> {
         match record.action() {
             HostAction::InjectCommand { command } => Ok(SystemActionOutcome::InjectedCommand {
@@ -654,79 +730,35 @@ impl SystemActionExecutor {
                         .map_err(SystemError::Checkpoint)?;
                 }
                 self.capture_execution_modes_into_checkpoint()?;
-                self.checkpoints
+                let manifest = self
+                    .checkpoints
                     .capture(label.clone(), record.tick())
-                    .map(|manifest| SystemActionOutcome::Checkpoint {
-                        tick: record.tick(),
-                        event: record.event(),
-                        source: record.source(),
-                        manifest,
-                    })
-                    .map_err(SystemError::Checkpoint)
+                    .map_err(SystemError::Checkpoint)?;
+                self.captured_manifests
+                    .insert(manifest.label().to_string(), manifest.clone());
+                Ok(SystemActionOutcome::Checkpoint {
+                    tick: record.tick(),
+                    event: record.event(),
+                    source: record.source(),
+                    manifest,
+                })
+            }
+            HostAction::RestoreCheckpointByLabel { label } => {
+                let manifest = self.captured_manifests.get(label).cloned().ok_or_else(|| {
+                    SystemError::MissingCheckpointManifest {
+                        label: label.clone(),
+                    }
+                })?;
+                self.restore_checkpoint_manifest(&manifest)?;
+                Ok(SystemActionOutcome::CheckpointRestored {
+                    tick: record.tick(),
+                    event: record.event(),
+                    source: record.source(),
+                    manifest,
+                })
             }
             HostAction::RestoreCheckpoint { manifest } => {
-                self.prepare_execution_mode_checkpoint_restore(manifest)?;
-                self.checkpoints
-                    .restore(manifest)
-                    .map_err(SystemError::Checkpoint)?;
-                self.restore_execution_modes_from_checkpoint(manifest)?;
-                if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
-                    accelerator_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::AcceleratorCheckpoint)?;
-                }
-                if let Some(msi_bank_checkpoints) = &self.msi_bank_checkpoints {
-                    msi_bank_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::MsiBankCheckpoint)?;
-                }
-                if let Some(fabric_checkpoints) = &self.fabric_checkpoints {
-                    fabric_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::FabricCheckpoint)?;
-                }
-                if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
-                    gpu_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::GpuCheckpoint)?;
-                }
-                if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
-                    riscv_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::RiscvCheckpoint)?;
-                }
-                if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
-                    scheduler_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::SchedulerCheckpoint)?;
-                }
-                if let Some(memory_checkpoints) = &self.memory_checkpoints {
-                    memory_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::MemoryCheckpoint)?;
-                }
-                if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
-                    dram_memory_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::DramMemoryCheckpoint)?;
-                }
-                if let Some(interrupt_controller_checkpoints) =
-                    &self.interrupt_controller_checkpoints
-                {
-                    interrupt_controller_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::InterruptControllerCheckpoint)?;
-                }
-                if let Some(timer_checkpoints) = &self.timer_checkpoints {
-                    timer_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::TimerCheckpoint)?;
-                }
-                if let Some(uart_checkpoints) = &self.uart_checkpoints {
-                    uart_checkpoints
-                        .restore_all_from(&self.checkpoints)
-                        .map_err(SystemError::UartCheckpoint)?;
-                }
+                self.restore_checkpoint_manifest(manifest)?;
                 Ok(SystemActionOutcome::CheckpointRestored {
                     tick: record.tick(),
                     event: record.event(),

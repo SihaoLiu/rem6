@@ -1137,6 +1137,73 @@ fn system_run_controller_records_and_executes_checkpoint_restore_action() {
 }
 
 #[test]
+fn system_run_controller_executes_delivered_checkpoint_restore_by_label() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(11);
+    let cpu = CheckpointComponentId::new("cpu0").unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    checkpoints.register(cpu.clone()).unwrap();
+    checkpoints.write_chunk(&cpu, "pc", vec![0x10]).unwrap();
+    let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), checkpoints);
+    let mut controller = SystemRunController::new(HostEventPolicy);
+
+    let checkpoint = controller
+        .execute_delivery(
+            GuestEventDelivery::new(
+                40,
+                host,
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(7),
+                    source,
+                    GuestEventKind::Checkpoint {
+                        label: "resume".to_string(),
+                    },
+                ),
+            ),
+            &mut executor,
+        )
+        .unwrap();
+    let manifest = match &checkpoint[0] {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest.clone(),
+        outcome => panic!("unexpected checkpoint outcome: {outcome:?}"),
+    };
+    executor
+        .checkpoints_mut()
+        .write_chunk(&cpu, "pc", vec![0x44])
+        .unwrap();
+
+    let restored = controller
+        .execute_delivery(
+            GuestEventDelivery::new(
+                64,
+                host,
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(8),
+                    source,
+                    GuestEventKind::RestoreCheckpoint {
+                        label: "resume".to_string(),
+                    },
+                ),
+            ),
+            &mut executor,
+        )
+        .unwrap();
+
+    assert_eq!(
+        restored,
+        vec![SystemActionOutcome::CheckpointRestored {
+            tick: 64,
+            event: GuestEventId::new(8),
+            source,
+            manifest,
+        }]
+    );
+    assert_eq!(executor.checkpoints().chunk(&cpu, "pc"), Some(&[0x10][..]));
+}
+
+#[test]
 fn system_run_controller_executes_delivered_stats_events() {
     let guest = PartitionId::new(0);
     let host = PartitionId::new(1);

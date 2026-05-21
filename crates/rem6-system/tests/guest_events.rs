@@ -292,6 +292,18 @@ fn host_event_policy_maps_structured_events_to_actions() {
     );
     assert_eq!(
         policy.actions_for(&GuestEvent::new(
+            GuestEventId::new(33),
+            GuestSourceId::new(3),
+            GuestEventKind::RestoreCheckpoint {
+                label: "warm-boot".to_string(),
+            },
+        )),
+        vec![HostAction::RestoreCheckpointByLabel {
+            label: "warm-boot".to_string(),
+        }]
+    );
+    assert_eq!(
+        policy.actions_for(&GuestEvent::new(
             GuestEventId::new(4),
             GuestSourceId::new(3),
             GuestEventKind::Terminate { code: 12 },

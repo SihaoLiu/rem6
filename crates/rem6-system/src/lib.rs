@@ -163,6 +163,9 @@ pub enum GuestEventKind {
     Checkpoint {
         label: String,
     },
+    RestoreCheckpoint {
+        label: String,
+    },
     Trap {
         trap: GuestTrap,
     },
@@ -353,6 +356,9 @@ pub enum HostAction {
     Checkpoint {
         label: String,
     },
+    RestoreCheckpointByLabel {
+        label: String,
+    },
     RestoreCheckpoint {
         manifest: CheckpointManifest,
     },
@@ -438,6 +444,11 @@ impl HostEventPolicy {
             GuestEventKind::Checkpoint { label } => vec![HostAction::Checkpoint {
                 label: label.clone(),
             }],
+            GuestEventKind::RestoreCheckpoint { label } => {
+                vec![HostAction::RestoreCheckpointByLabel {
+                    label: label.clone(),
+                }]
+            }
             GuestEventKind::Trap { trap } => vec![HostAction::Stop {
                 code: trap.kind().default_stop_code(),
             }],
@@ -1693,6 +1704,7 @@ pub enum SystemError {
     RiscvCluster(RiscvClusterError),
     Stats(StatsError),
     Checkpoint(CheckpointError),
+    MissingCheckpointManifest { label: String },
     ExecutionModeCheckpoint(ExecutionModeCheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
     MsiBankCheckpoint(MsiBankCheckpointError),
@@ -1717,6 +1729,9 @@ impl fmt::Display for SystemError {
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
+            Self::MissingCheckpointManifest { label } => {
+                write!(formatter, "checkpoint manifest {label} is not available")
+            }
             Self::ExecutionModeCheckpoint(error) => write!(formatter, "{error}"),
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
             Self::MsiBankCheckpoint(error) => write!(formatter, "{error}"),
@@ -1740,6 +1755,7 @@ impl Error for SystemError {
             Self::RiscvCluster(error) => Some(error),
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
+            Self::MissingCheckpointManifest { .. } => None,
             Self::ExecutionModeCheckpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),
             Self::MsiBankCheckpoint(error) => Some(error),

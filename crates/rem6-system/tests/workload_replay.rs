@@ -1416,6 +1416,12 @@ fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
             },
         ))
         .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::RestoreCheckpoint {
+                label: "after-boot".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
             2,
             HostEventIntent::SwitchExecutionMode {
                 target: "cpu0".to_string(),
@@ -1999,6 +2005,10 @@ fn workload_replay_executes_planned_host_actions() {
         &["after-boot".to_string()]
     );
     assert_eq!(
+        outcome.result().restored_checkpoint_labels(),
+        &["after-boot".to_string()]
+    );
+    assert_eq!(
         outcome.result().execution_mode_switches(),
         &[
             WorkloadExecutionModeSwitch::new(2, "cpu0", WorkloadExecutionMode::Functional,)
@@ -2013,6 +2023,7 @@ fn workload_replay_executes_planned_host_actions() {
     host_summary.record_stop();
     host_summary.record_stats_reset();
     host_summary.record_checkpoint();
+    host_summary.record_checkpoint_restore();
     host_summary.record_stats_snapshot();
     host_summary.record_execution_mode_switch();
     host_summary.record_stop();
@@ -2042,6 +2053,14 @@ fn workload_replay_executes_planned_host_actions() {
     )));
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,
+        SystemActionOutcome::CheckpointRestored { tick, event, source, manifest }
+            if *tick == 1
+                && event.get() == 10_003
+                && source.get() == 51
+                && manifest.label() == "after-boot"
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
         SystemActionOutcome::ExecutionModeSwitched {
             tick,
             event,
@@ -2052,7 +2071,7 @@ fn workload_replay_executes_planned_host_actions() {
             stats_epoch,
             stats_reset_tick,
         } if *tick == 2
-            && event.get() == 10_004
+            && event.get() == 10_005
             && source.get() == 51
             && target == &ExecutionModeTarget::new("cpu0")
             && previous_mode.is_none()

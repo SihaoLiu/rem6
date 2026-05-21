@@ -271,6 +271,18 @@ impl fmt::Display for WorkloadError {
             Self::UnexpectedCheckpointLabel { label } => {
                 write!(formatter, "checkpoint label {label} was not planned")
             }
+            Self::MissingCheckpointRestoreLabel { label } => {
+                write!(
+                    formatter,
+                    "planned checkpoint restore label {label} was not recorded"
+                )
+            }
+            Self::UnexpectedCheckpointRestoreLabel { label } => {
+                write!(
+                    formatter,
+                    "checkpoint restore label {label} was not planned"
+                )
+            }
             Self::MissingExecutionModeSwitch { tick, target, mode } => write!(
                 formatter,
                 "planned execution mode switch for {target} to {} at tick {tick} was not recorded",

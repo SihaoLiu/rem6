@@ -1074,6 +1074,7 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
         .with_stop_reason("host-stop")
         .with_stats_snapshot(snapshot.clone())
         .with_checkpoint_label("after-roi")
+        .with_restored_checkpoint_label("after-roi")
         .with_execution_mode_switch(40, "cpu0", WorkloadExecutionMode::Functional);
 
     assert_eq!(result.manifest_identity(), manifest.identity());
@@ -1081,6 +1082,10 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
     assert_eq!(result.stop_reason(), Some("host-stop"));
     assert_eq!(result.stats_snapshot(), Some(&snapshot));
     assert_eq!(result.checkpoint_labels(), &["after-roi".to_string()]);
+    assert_eq!(
+        result.restored_checkpoint_labels(),
+        &["after-roi".to_string()]
+    );
     assert_eq!(
         result.execution_mode_switches(),
         &[WorkloadExecutionModeSwitch::new(
@@ -1612,6 +1617,61 @@ fn workload_replay_plan_rejects_missing_planned_checkpoint() {
             label: "warm".to_string(),
         }
     );
+}
+
+#[test]
+fn workload_replay_plan_validates_planned_checkpoint_restores() {
+    let manifest = WorkloadManifest::builder(id("checkpoint-restore-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            40,
+            HostEventIntent::RestoreCheckpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    assert_eq!(plan.planned_checkpoint_labels(), &["warm".to_string()]);
+    assert_eq!(
+        plan.planned_checkpoint_restore_labels(),
+        &["warm".to_string()]
+    );
+
+    let missing_restore =
+        WorkloadResult::new(plan.manifest_identity(), 40).with_checkpoint_label("warm");
+    let error = plan.verify_result(&missing_restore).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::MissingCheckpointRestoreLabel {
+            label: "warm".to_string(),
+        }
+    );
+
+    let unexpected_restore = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_label("warm")
+        .with_restored_checkpoint_label("cold");
+    let error = plan.verify_result(&unexpected_restore).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::UnexpectedCheckpointRestoreLabel {
+            label: "cold".to_string(),
+        }
+    );
+
+    let matched = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_label("warm")
+        .with_restored_checkpoint_label("warm");
+    plan.verify_result(&matched).unwrap();
 }
 
 #[test]

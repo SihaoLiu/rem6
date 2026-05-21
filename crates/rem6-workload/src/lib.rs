@@ -1328,6 +1328,9 @@ pub enum HostEventIntent {
     Checkpoint {
         label: String,
     },
+    RestoreCheckpoint {
+        label: String,
+    },
     Stop {
         reason: String,
     },
@@ -1561,6 +1564,7 @@ pub struct WorkloadReplayPlan {
     required_resources: Vec<WorkloadResource>,
     host_events: Vec<WorkloadHostEvent>,
     planned_checkpoint_labels: Vec<String>,
+    planned_checkpoint_restore_labels: Vec<String>,
     planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -1575,6 +1579,7 @@ impl WorkloadReplayPlan {
             topology: manifest.topology().cloned(),
             required_resources: manifest.required_resource_details()?,
             planned_checkpoint_labels: planned_checkpoint_labels(&host_events),
+            planned_checkpoint_restore_labels: planned_checkpoint_restore_labels(&host_events),
             planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
             host_events,
@@ -1610,6 +1615,10 @@ impl WorkloadReplayPlan {
         &self.planned_checkpoint_labels
     }
 
+    pub fn planned_checkpoint_restore_labels(&self) -> &[String] {
+        &self.planned_checkpoint_restore_labels
+    }
+
     pub fn planned_execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
         &self.planned_execution_mode_switches
     }
@@ -1633,6 +1642,7 @@ impl WorkloadReplayPlan {
         result.verify_stats_timing()?;
         self.verify_all_planned_events_reached(result.final_tick())?;
         self.verify_checkpoint_labels(result)?;
+        self.verify_checkpoint_restore_labels(result)?;
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         Ok(())
@@ -1673,6 +1683,37 @@ impl WorkloadReplayPlan {
                 .any(|actual| actual == label)
             {
                 return Err(WorkloadError::MissingCheckpointLabel {
+                    label: label.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_checkpoint_restore_labels(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        for label in result.restored_checkpoint_labels() {
+            if !self
+                .planned_checkpoint_restore_labels
+                .iter()
+                .any(|planned| planned == label)
+            {
+                return Err(WorkloadError::UnexpectedCheckpointRestoreLabel {
+                    label: label.clone(),
+                });
+            }
+        }
+
+        for label in &self.planned_checkpoint_restore_labels {
+            if !result
+                .restored_checkpoint_labels()
+                .iter()
+                .any(|actual| actual == label)
+            {
+                return Err(WorkloadError::MissingCheckpointRestoreLabel {
                     label: label.clone(),
                 });
             }
@@ -1743,6 +1784,7 @@ pub struct WorkloadResult {
     parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
     host_action_summary: Option<WorkloadHostActionSummary>,
     checkpoint_labels: Vec<String>,
+    restored_checkpoint_labels: Vec<String>,
     execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
 }
 
@@ -1756,6 +1798,7 @@ impl WorkloadResult {
             parallel_execution_summary: None,
             host_action_summary: None,
             checkpoint_labels: Vec::new(),
+            restored_checkpoint_labels: Vec::new(),
             execution_mode_switches: Vec::new(),
         }
     }
@@ -1785,6 +1828,11 @@ impl WorkloadResult {
 
     pub fn with_checkpoint_label(mut self, label: impl Into<String>) -> Self {
         self.checkpoint_labels.push(label.into());
+        self
+    }
+
+    pub fn with_restored_checkpoint_label(mut self, label: impl Into<String>) -> Self {
+        self.restored_checkpoint_labels.push(label.into());
         self
     }
 
@@ -1840,6 +1888,10 @@ impl WorkloadResult {
 
     pub fn checkpoint_labels(&self) -> &[String] {
         &self.checkpoint_labels
+    }
+
+    pub fn restored_checkpoint_labels(&self) -> &[String] {
+        &self.restored_checkpoint_labels
     }
 
     pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
@@ -2067,6 +2119,12 @@ pub enum WorkloadError {
     UnexpectedCheckpointLabel {
         label: String,
     },
+    MissingCheckpointRestoreLabel {
+        label: String,
+    },
+    UnexpectedCheckpointRestoreLabel {
+        label: String,
+    },
     MissingExecutionModeSwitch {
         tick: Tick,
         target: String,
@@ -2094,7 +2152,8 @@ fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
         HostEventIntent::StatsDump { label } => (3, label.as_str()),
         HostEventIntent::SwitchExecutionMode { target, .. } => (4, target.as_str()),
         HostEventIntent::Checkpoint { label } => (5, label.as_str()),
-        HostEventIntent::Stop { reason } => (6, reason.as_str()),
+        HostEventIntent::RestoreCheckpoint { label } => (6, label.as_str()),
+        HostEventIntent::Stop { reason } => (7, reason.as_str()),
     };
     (event.tick(), rank, label.to_string())
 }
@@ -2104,6 +2163,16 @@ fn planned_checkpoint_labels(events: &[WorkloadHostEvent]) -> Vec<String> {
         .iter()
         .filter_map(|event| match event.intent() {
             HostEventIntent::Checkpoint { label } => Some(label.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn planned_checkpoint_restore_labels(events: &[WorkloadHostEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event.intent() {
+            HostEventIntent::RestoreCheckpoint { label } => Some(label.clone()),
             _ => None,
         })
         .collect()

@@ -128,7 +128,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, run summaries, future power crate | partial | Counters and snapshots exist. Probe and power modeling need typed ownership and checkpoints. |
-| guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, stop, and execution mode actions are typed. Broader guest ABI support remains open. |
+| guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, and execution mode actions are typed. Broader guest ABI support remains open. |
 
 ### External Integration and Tooling
 
@@ -156,7 +156,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   transport, scheduler activity, summaries, and checkpoint banks.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, result metadata, execution mode switches, host action
-  summaries, and statistics snapshots.
+  summaries, checkpoint restore labels, and statistics snapshots.
 
 ## Open Alignment Work
 

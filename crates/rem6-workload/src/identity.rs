@@ -290,6 +290,10 @@ fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
             hash_str(hash, "checkpoint");
             hash_str(hash, label);
         }
+        HostEventIntent::RestoreCheckpoint { label } => {
+            hash_str(hash, "restore_checkpoint");
+            hash_str(hash, label);
+        }
         HostEventIntent::Stop { reason } => {
             hash_str(hash, "stop");
             hash_str(hash, reason);
