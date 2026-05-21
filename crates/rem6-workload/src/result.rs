@@ -66,6 +66,10 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_trace_event_count: usize,
     gpu_workgroup_completion_count: usize,
     active_gpu_device_count: usize,
+    accelerator_command_count: usize,
+    accelerator_trace_event_count: usize,
+    accelerator_completion_count: usize,
+    active_accelerator_device_count: usize,
 }
 
 impl WorkloadParallelExecutionSummary {
@@ -157,6 +161,20 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_trace_event_count = trace_event_count;
         self.gpu_workgroup_completion_count = workgroup_completion_count;
         self.active_gpu_device_count = active_device_count;
+        self
+    }
+
+    pub const fn with_accelerator_compute_counts(
+        mut self,
+        command_count: usize,
+        trace_event_count: usize,
+        completion_count: usize,
+        active_device_count: usize,
+    ) -> Self {
+        self.accelerator_command_count = command_count;
+        self.accelerator_trace_event_count = trace_event_count;
+        self.accelerator_completion_count = completion_count;
+        self.active_accelerator_device_count = active_device_count;
         self
     }
 
@@ -288,6 +306,28 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_kernel_launch_count != 0
             || self.gpu_trace_event_count != 0
             || self.gpu_workgroup_completion_count != 0
+    }
+
+    pub const fn accelerator_command_count(&self) -> usize {
+        self.accelerator_command_count
+    }
+
+    pub const fn accelerator_trace_event_count(&self) -> usize {
+        self.accelerator_trace_event_count
+    }
+
+    pub const fn accelerator_completion_count(&self) -> usize {
+        self.accelerator_completion_count
+    }
+
+    pub const fn active_accelerator_device_count(&self) -> usize {
+        self.active_accelerator_device_count
+    }
+
+    pub const fn has_accelerator_compute_activity(&self) -> bool {
+        self.accelerator_command_count != 0
+            || self.accelerator_trace_event_count != 0
+            || self.accelerator_completion_count != 0
     }
 
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {

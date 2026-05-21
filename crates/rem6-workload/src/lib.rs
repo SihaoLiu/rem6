@@ -8,9 +8,14 @@ use rem6_kernel::Tick;
 use rem6_memory::{Address, AddressRange};
 use rem6_stats::StatSnapshot;
 
+mod heterogeneous;
 mod identity;
 mod result;
 
+pub use heterogeneous::{
+    WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
+    WorkloadGpuDevice, WorkloadGpuKernelLaunch,
+};
 use identity::manifest_identity;
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadParallelExecutionSummary,
@@ -479,107 +484,6 @@ impl WorkloadRiscvDataCache {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadGpuDevice {
-    device: u32,
-    partition: u32,
-    compute_units: u32,
-    wave_slots_per_compute_unit: u32,
-    command_route: WorkloadRouteId,
-}
-
-impl WorkloadGpuDevice {
-    pub fn new(
-        device: u32,
-        partition: u32,
-        compute_units: u32,
-        wave_slots_per_compute_unit: u32,
-        command_route: WorkloadRouteId,
-    ) -> Result<Self, WorkloadError> {
-        if compute_units == 0 {
-            return Err(WorkloadError::ZeroGpuComputeUnits { device });
-        }
-        if wave_slots_per_compute_unit == 0 {
-            return Err(WorkloadError::ZeroGpuWaveSlots { device });
-        }
-
-        Ok(Self {
-            device,
-            partition,
-            compute_units,
-            wave_slots_per_compute_unit,
-            command_route,
-        })
-    }
-
-    pub const fn device(&self) -> u32 {
-        self.device
-    }
-
-    pub const fn partition(&self) -> u32 {
-        self.partition
-    }
-
-    pub const fn compute_units(&self) -> u32 {
-        self.compute_units
-    }
-
-    pub const fn wave_slots_per_compute_unit(&self) -> u32 {
-        self.wave_slots_per_compute_unit
-    }
-
-    pub const fn command_route(&self) -> &WorkloadRouteId {
-        &self.command_route
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadGpuKernelLaunch {
-    device: u32,
-    kernel: u64,
-    workgroups: u32,
-    workgroup_latency: Tick,
-}
-
-impl WorkloadGpuKernelLaunch {
-    pub const fn new(
-        device: u32,
-        kernel: u64,
-        workgroups: u32,
-        workgroup_latency: Tick,
-    ) -> Result<Self, WorkloadError> {
-        if workgroups == 0 {
-            return Err(WorkloadError::ZeroGpuKernelWorkgroups { device, kernel });
-        }
-        if workgroup_latency == 0 {
-            return Err(WorkloadError::ZeroGpuKernelLatency { device, kernel });
-        }
-
-        Ok(Self {
-            device,
-            kernel,
-            workgroups,
-            workgroup_latency,
-        })
-    }
-
-    pub const fn device(&self) -> u32 {
-        self.device
-    }
-
-    pub const fn kernel(&self) -> u64 {
-        self.kernel
-    }
-
-    pub const fn workgroups(&self) -> u32 {
-        self.workgroups
-    }
-
-    pub const fn workgroup_latency(&self) -> Tick {
-        self.workgroup_latency
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadTopology {
     partition_count: u32,
     min_remote_delay: Tick,
@@ -591,6 +495,8 @@ pub struct WorkloadTopology {
     riscv_data_cache: Option<WorkloadRiscvDataCache>,
     gpu_devices: Vec<WorkloadGpuDevice>,
     gpu_kernel_launches: Vec<WorkloadGpuKernelLaunch>,
+    accelerator_devices: Vec<WorkloadAcceleratorDevice>,
+    accelerator_commands: Vec<WorkloadAcceleratorCommand>,
 }
 
 impl WorkloadTopology {
@@ -627,6 +533,8 @@ impl WorkloadTopology {
             riscv_data_cache: None,
             gpu_devices: Vec::new(),
             gpu_kernel_launches: Vec::new(),
+            accelerator_devices: Vec::new(),
+            accelerator_commands: Vec::new(),
         })
     }
 
@@ -759,6 +667,63 @@ impl WorkloadTopology {
         Ok(self)
     }
 
+    pub fn add_accelerator_device(
+        mut self,
+        device: WorkloadAcceleratorDevice,
+    ) -> Result<Self, WorkloadError> {
+        self.validate_partition(device.partition())?;
+        if self
+            .accelerator_devices
+            .iter()
+            .any(|existing| existing.engine() == device.engine())
+        {
+            return Err(WorkloadError::DuplicateAcceleratorDevice {
+                engine: device.engine(),
+            });
+        }
+        let route = self
+            .memory_routes
+            .iter()
+            .find(|route| route.id() == device.command_route())
+            .ok_or_else(|| WorkloadError::MissingAcceleratorCommandRoute {
+                engine: device.engine(),
+                route: device.command_route().clone(),
+            })?;
+        if route.target_partition() != device.partition() {
+            return Err(WorkloadError::AcceleratorCommandRouteTargetMismatch {
+                engine: device.engine(),
+                route: device.command_route().clone(),
+                expected: device.partition(),
+                actual: route.target_partition(),
+            });
+        }
+
+        self.accelerator_devices.push(device);
+        self.accelerator_devices
+            .sort_by_key(WorkloadAcceleratorDevice::engine);
+        Ok(self)
+    }
+
+    pub fn add_accelerator_command(
+        mut self,
+        command: WorkloadAcceleratorCommand,
+    ) -> Result<Self, WorkloadError> {
+        if !self
+            .accelerator_devices
+            .iter()
+            .any(|device| device.engine() == command.engine())
+        {
+            return Err(WorkloadError::MissingAcceleratorDevice {
+                engine: command.engine(),
+            });
+        }
+
+        self.accelerator_commands.push(command);
+        self.accelerator_commands
+            .sort_by_key(|command| (command.engine(), command.command()));
+        Ok(self)
+    }
+
     pub fn with_riscv_data_cache(
         mut self,
         cache: WorkloadRiscvDataCache,
@@ -823,6 +788,14 @@ impl WorkloadTopology {
 
     pub fn gpu_kernel_launches(&self) -> &[WorkloadGpuKernelLaunch] {
         &self.gpu_kernel_launches
+    }
+
+    pub fn accelerator_devices(&self) -> &[WorkloadAcceleratorDevice] {
+        &self.accelerator_devices
+    }
+
+    pub fn accelerator_commands(&self) -> &[WorkloadAcceleratorCommand] {
+        &self.accelerator_commands
     }
 
     fn validate_partition(&self, partition: u32) -> Result<(), WorkloadError> {
@@ -1461,6 +1434,41 @@ pub enum WorkloadError {
         device: u32,
         kernel: u64,
     },
+    ZeroAcceleratorLanes {
+        engine: u32,
+    },
+    DuplicateAcceleratorDevice {
+        engine: u32,
+    },
+    MissingAcceleratorCommandRoute {
+        engine: u32,
+        route: WorkloadRouteId,
+    },
+    AcceleratorCommandRouteTargetMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    MissingAcceleratorDevice {
+        engine: u32,
+    },
+    ZeroAcceleratorExecutionLatency {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorGpuWorkgroups {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorNpuTiles {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorDmaBytes {
+        engine: u32,
+        command: u64,
+    },
     ManifestIdentityMismatch {
         expected: WorkloadManifestIdentity,
         actual: WorkloadManifestIdentity,
@@ -1624,6 +1632,49 @@ impl fmt::Display for WorkloadError {
             Self::ZeroGpuKernelLatency { device, kernel } => write!(
                 formatter,
                 "GPU kernel {kernel} on device {device} needs positive workgroup latency"
+            ),
+            Self::ZeroAcceleratorLanes { engine } => {
+                write!(
+                    formatter,
+                    "accelerator engine {engine} needs at least one lane"
+                )
+            }
+            Self::DuplicateAcceleratorDevice { engine } => {
+                write!(formatter, "accelerator engine {engine} is already defined")
+            }
+            Self::MissingAcceleratorCommandRoute { engine, route } => write!(
+                formatter,
+                "accelerator engine {engine} command route {} is not defined",
+                route.as_str()
+            ),
+            Self::AcceleratorCommandRouteTargetMismatch {
+                engine,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "accelerator engine {engine} command route {} targets partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::MissingAcceleratorDevice { engine } => {
+                write!(formatter, "accelerator engine {engine} is not defined")
+            }
+            Self::ZeroAcceleratorExecutionLatency { engine, command } => write!(
+                formatter,
+                "accelerator command {command} on engine {engine} needs positive execution latency"
+            ),
+            Self::ZeroAcceleratorGpuWorkgroups { engine, command } => write!(
+                formatter,
+                "accelerator command {command} on engine {engine} needs at least one GPU workgroup"
+            ),
+            Self::ZeroAcceleratorNpuTiles { engine, command } => write!(
+                formatter,
+                "accelerator command {command} on engine {engine} needs at least one NPU tile"
+            ),
+            Self::ZeroAcceleratorDmaBytes { engine, command } => write!(
+                formatter,
+                "accelerator command {command} on engine {engine} needs at least one DMA byte"
             ),
             Self::ManifestIdentityMismatch { expected, actual } => write!(
                 formatter,

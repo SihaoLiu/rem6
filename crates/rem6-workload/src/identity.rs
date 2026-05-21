@@ -127,6 +127,39 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, u64::from(launch.workgroups()));
         hash_u64(hash, launch.workgroup_latency());
     }
+    hash_u64(hash, topology.accelerator_devices().len() as u64);
+    for device in topology.accelerator_devices() {
+        hash_str(hash, "accelerator.device");
+        hash_u64(hash, u64::from(device.engine()));
+        hash_u64(hash, u64::from(device.partition()));
+        hash_u64(hash, u64::from(device.lanes()));
+        hash_str(hash, device.command_route().as_str());
+    }
+    hash_u64(hash, topology.accelerator_commands().len() as u64);
+    for command in topology.accelerator_commands() {
+        hash_str(hash, "accelerator.command");
+        hash_u64(hash, u64::from(command.engine()));
+        hash_u64(hash, command.command());
+        hash_accelerator_command_kind(hash, command.kind());
+        hash_u64(hash, command.execution_latency());
+    }
+}
+
+fn hash_accelerator_command_kind(hash: &mut u64, kind: &crate::WorkloadAcceleratorCommandKind) {
+    match kind {
+        crate::WorkloadAcceleratorCommandKind::GpuKernel { workgroups } => {
+            hash_str(hash, "gpu_kernel");
+            hash_u64(hash, u64::from(*workgroups));
+        }
+        crate::WorkloadAcceleratorCommandKind::NpuInference { tiles } => {
+            hash_str(hash, "npu_inference");
+            hash_u64(hash, u64::from(*tiles));
+        }
+        crate::WorkloadAcceleratorCommandKind::DmaCopy { bytes } => {
+            hash_str(hash, "dma_copy");
+            hash_u64(hash, *bytes);
+        }
+    }
 }
 
 fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryProfile>) {

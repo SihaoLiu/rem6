@@ -6,7 +6,8 @@ use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
-    CheckpointLineage, HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
+    CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
+    WorkloadAcceleratorDevice, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
     WorkloadError, WorkloadGpuDevice, WorkloadGpuKernelLaunch, WorkloadHostEvent,
     WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
@@ -348,6 +349,116 @@ fn workload_topology_rejects_invalid_gpu_declarations() {
     assert_eq!(
         missing_device,
         WorkloadError::MissingGpuDevice { device: 99 }
+    );
+}
+
+#[test]
+fn workload_topology_records_accelerator_devices_and_commands() {
+    let topology = riscv_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                3,
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_command(
+            WorkloadAcceleratorCommand::new(
+                22,
+                80,
+                WorkloadAcceleratorCommandKind::NpuInference { tiles: 4 },
+                7,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(topology.accelerator_devices().len(), 1);
+    assert_eq!(topology.accelerator_devices()[0].engine(), 22);
+    assert_eq!(topology.accelerator_devices()[0].partition(), 3);
+    assert_eq!(topology.accelerator_devices()[0].lanes(), 2);
+    assert_eq!(
+        topology.accelerator_devices()[0].command_route(),
+        &route_id("accelerator0.command")
+    );
+    assert_eq!(topology.accelerator_commands().len(), 1);
+    assert_eq!(topology.accelerator_commands()[0].engine(), 22);
+    assert_eq!(topology.accelerator_commands()[0].command(), 80);
+    assert_eq!(
+        topology.accelerator_commands()[0].kind(),
+        &WorkloadAcceleratorCommandKind::NpuInference { tiles: 4 }
+    );
+    assert_eq!(topology.accelerator_commands()[0].execution_latency(), 7);
+}
+
+#[test]
+fn workload_topology_rejects_invalid_accelerator_declarations() {
+    let missing_route = riscv_topology()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        missing_route,
+        WorkloadError::MissingAcceleratorCommandRoute {
+            engine: 22,
+            route: route_id("accelerator0.command"),
+        }
+    );
+
+    let topology = riscv_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                3,
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap();
+    let duplicate = topology
+        .clone()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateAcceleratorDevice { engine: 22 }
+    );
+
+    let missing_device = topology
+        .add_accelerator_command(
+            WorkloadAcceleratorCommand::new(
+                99,
+                80,
+                WorkloadAcceleratorCommandKind::GpuKernel { workgroups: 4 },
+                7,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        missing_device,
+        WorkloadError::MissingAcceleratorDevice { engine: 99 }
     );
 }
 

@@ -37,6 +37,7 @@ mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
 mod workload_replay;
+mod workload_replay_heterogeneous;
 
 pub use coherence_checkpoint::{
     MsiBankCheckpointBank, MsiBankCheckpointError, MsiBankCheckpointPort, MsiBankCheckpointRecord,
