@@ -8,6 +8,9 @@ use rem6_boot::BootImage;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_fabric::{FabricLinkId, VirtualNetworkId};
+use rem6_gpu::{
+    GpuComputeConfig, GpuDeviceId, GpuDmaCopy, GpuDmaId, GpuPendingDmaWrite, GpuTopologyConfig,
+};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
@@ -15,8 +18,9 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, RiscvSystemRunStopReason, RiscvTopologyDramConfig,
-    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem,
+    GuestEventId, GuestSourceId, RiscvSystemRunStopReason, RiscvTopologyDmaCopy,
+    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
+    RiscvTopologySystem,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, FabricConnectionConfig, PortDirection,
@@ -207,6 +211,89 @@ fn accelerator_fabric_topology() -> Topology {
         .unwrap()
 }
 
+fn heterogeneous_fabric_topology() -> Topology {
+    TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("gpu"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("accelerator0"),
+                kind("accelerator"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("dma"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("gpu0"),
+                kind("gpu"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("control"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("dma"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "ifetch"),
+            endpoint("mem0", "requests"),
+            2,
+            2,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mem0", "requests"), 2, 2)
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "gpu"), endpoint("gpu0", "control"), 4, 1)
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("accelerator0", "dma"),
+            endpoint("mem0", "requests"),
+            3,
+            5,
+            fabric("hetero_mem", 4),
+        )
+        .unwrap()
+        .connect_with_fabric_config(
+            endpoint("gpu0", "dma"),
+            endpoint("mem0", "requests"),
+            3,
+            5,
+            fabric("hetero_mem", 4),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn memory_request(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(44), sequence)
 }
@@ -253,6 +340,15 @@ fn accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig 
     )
 }
 
+fn gpu_config(device: GpuDeviceId) -> GpuTopologyConfig {
+    GpuTopologyConfig::new(
+        GpuComputeConfig::new(device, PartitionId::new(2), 2, 1).unwrap(),
+        endpoint("cpu0", "gpu"),
+        endpoint("gpu0", "control"),
+    )
+    .with_memory(endpoint("gpu0", "dma"), endpoint("mem0", "requests"))
+}
+
 fn dma_copy(route: rem6_transport::MemoryRouteId, command: u64, source: u64) -> AcceleratorDmaCopy {
     AcceleratorDmaCopy::new(
         AcceleratorCommandId::new(command),
@@ -261,6 +357,18 @@ fn dma_copy(route: rem6_transport::MemoryRouteId, command: u64, source: u64) -> 
         route,
         memory_request(command * 2 + 1),
         Address::new(0x3008),
+    )
+    .unwrap()
+}
+
+fn gpu_dma_copy(route: rem6_transport::MemoryRouteId, transfer: u64, source: u64) -> GpuDmaCopy {
+    GpuDmaCopy::new(
+        GpuDmaId::new(transfer),
+        route,
+        memory_read(transfer * 2, source),
+        route,
+        memory_request(transfer * 2 + 1),
+        Address::new(0x300c),
     )
     .unwrap()
 }
@@ -620,6 +728,153 @@ fn topology_system_reserves_shared_fabric_for_concurrent_accelerator_dma_reads()
             ),
         ],
     );
+}
+
+#[test]
+fn topology_system_batches_gpu_and_accelerator_dma_reads_on_shared_fabric() {
+    let accelerator_id = AcceleratorEngineId::new(75);
+    let gpu_id = GpuDeviceId::new(76);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 75, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(memory_store())
+    .unwrap()
+    .with_accelerator(accelerator_config(accelerator_id))
+    .unwrap()
+    .with_gpu(gpu_config(gpu_id))
+    .unwrap();
+    let accelerator_route = system.accelerator(accelerator_id).unwrap().dma_route();
+    let gpu_route = system.gpu(gpu_id).unwrap().memory_route().unwrap();
+    let trace = MemoryTrace::new();
+
+    system
+        .run_dma_copy_reads_parallel(
+            [
+                RiscvTopologyDmaCopy::gpu(gpu_id, gpu_dma_copy(gpu_route, 400, 0x100c)),
+                RiscvTopologyDmaCopy::accelerator(
+                    accelerator_id,
+                    dma_copy(accelerator_route, 330, 0x1004),
+                ),
+            ],
+            trace.clone(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        system
+            .accelerator(accelerator_id)
+            .unwrap()
+            .engine()
+            .pending_dma_writes(),
+        vec![AcceleratorPendingDmaWrite::new(
+            dma_copy(accelerator_route, 330, 0x1004),
+            vec![0x21, 0x32, 0x43, 0x54],
+            10,
+        )],
+    );
+    assert_eq!(
+        system.gpu(gpu_id).unwrap().gpu().pending_dma_writes(),
+        vec![GpuPendingDmaWrite::new(
+            gpu_dma_copy(gpu_route, 400, 0x100c),
+            vec![0x65, 0x76, 0x87, 0x98],
+            11,
+        )],
+    );
+    let events = trace.snapshot();
+    assert_eq!(events.len(), 6);
+    let mut source_events = events[..2].to_vec();
+    source_events.sort_by_key(|event| (event.route().get(), event.request_id().sequence()));
+    assert_eq!(
+        source_events,
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                accelerator_route,
+                transport_endpoint("accelerator0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(660),
+            ),
+            MemoryTraceEvent::request(
+                0,
+                gpu_route,
+                transport_endpoint("gpu0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(800),
+            ),
+        ],
+    );
+    assert_eq!(
+        &events[2..],
+        &[
+            MemoryTraceEvent::request(
+                4,
+                accelerator_route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(660),
+            ),
+            MemoryTraceEvent::request(
+                5,
+                gpu_route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(800),
+            ),
+            MemoryTraceEvent::response(
+                10,
+                accelerator_route,
+                transport_endpoint("accelerator0", "dma"),
+                memory_request(660),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                11,
+                gpu_route,
+                transport_endpoint("gpu0", "dma"),
+                memory_request(800),
+                ResponseStatus::Completed,
+            ),
+        ],
+    );
+}
+
+#[test]
+fn topology_system_treats_empty_dma_read_batch_as_noop_without_memory_backend() {
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 77, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config(AcceleratorEngineId::new(77)))
+    .unwrap()
+    .with_gpu(gpu_config(GpuDeviceId::new(78)))
+    .unwrap();
+    let trace = MemoryTrace::new();
+
+    let events = system
+        .run_dma_copy_reads_parallel(std::iter::empty::<RiscvTopologyDmaCopy>(), trace.clone())
+        .unwrap();
+
+    assert!(events.is_empty());
+    assert!(trace.is_empty());
+    assert_eq!(system.scheduler().now(), 0);
+    assert!(system.scheduler().is_idle());
+    assert!(system
+        .accelerator(AcceleratorEngineId::new(77))
+        .unwrap()
+        .engine()
+        .trace()
+        .is_empty());
+    assert!(system
+        .gpu(GpuDeviceId::new(78))
+        .unwrap()
+        .gpu()
+        .trace()
+        .is_empty());
 }
 
 #[test]

@@ -4,8 +4,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{
-    AcceleratorCommand, AcceleratorDmaCopy, AcceleratorEngineId, AcceleratorError,
-    AcceleratorTopologyConfig, AcceleratorTopologyDevice,
+    AcceleratorCommand, AcceleratorDmaCopy, AcceleratorDmaIssueRecord, AcceleratorEngineId,
+    AcceleratorError, AcceleratorTopologyConfig, AcceleratorTopologyDevice,
 };
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
@@ -16,7 +16,8 @@ use rem6_dram::{
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{
-    GpuDeviceId, GpuDmaCopy, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice,
+    GpuDeviceId, GpuDmaCopy, GpuDmaIssueRecord, GpuError, GpuKernelLaunch, GpuTopologyConfig,
+    GpuTopologyDevice,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
@@ -31,7 +32,10 @@ use rem6_platform::Platform;
 use rem6_stats::StatsRegistry;
 use rem6_timer::TimerId;
 use rem6_topology::Topology;
-use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
+use rem6_transport::{
+    MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
+    TransportError,
+};
 use rem6_uart::UartId;
 
 use crate::{
@@ -53,6 +57,42 @@ pub struct RiscvTopologySystem {
     platform: Option<Platform>,
     memory: Option<RiscvTopologyMemoryBackend>,
     host: Option<RiscvTopologyHost>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvTopologyDmaCopy {
+    Accelerator {
+        engine: AcceleratorEngineId,
+        copy: AcceleratorDmaCopy,
+    },
+    Gpu {
+        device: GpuDeviceId,
+        copy: GpuDmaCopy,
+    },
+}
+
+impl RiscvTopologyDmaCopy {
+    pub const fn accelerator(engine: AcceleratorEngineId, copy: AcceleratorDmaCopy) -> Self {
+        Self::Accelerator { engine, copy }
+    }
+
+    pub const fn gpu(device: GpuDeviceId, copy: GpuDmaCopy) -> Self {
+        Self::Gpu { device, copy }
+    }
+}
+
+enum RiscvTopologyDmaIssueRecord {
+    Accelerator(AcceleratorDmaIssueRecord),
+    Gpu(GpuDmaIssueRecord),
+}
+
+impl RiscvTopologyDmaIssueRecord {
+    fn record(self) {
+        match self {
+            Self::Accelerator(record) => record.record(),
+            Self::Gpu(record) => record.record(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -836,6 +876,93 @@ impl RiscvTopologySystem {
         Ok(())
     }
 
+    pub fn run_dma_copy_reads_parallel<I>(
+        &mut self,
+        copies: I,
+        trace: MemoryTrace,
+    ) -> Result<Vec<PartitionEventId>, RiscvTopologySystemError>
+    where
+        I: IntoIterator<Item = RiscvTopologyDmaCopy>,
+    {
+        let copies: Vec<_> = copies.into_iter().collect();
+        if copies.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let memory = self
+            .memory
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
+            .clone();
+        let memory_error = Arc::new(Mutex::new(None));
+        let issued_at = self.scheduler.now();
+        let mut issue_records = Vec::new();
+        let mut transactions = Vec::<ParallelMemoryTransaction>::new();
+
+        for copy in copies {
+            match copy {
+                RiscvTopologyDmaCopy::Accelerator { engine, copy } => {
+                    let accelerator = self
+                        .accelerators
+                        .get(&engine)
+                        .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?
+                        .engine()
+                        .clone();
+                    let read_memory = memory.clone();
+                    let read_error = Arc::clone(&memory_error);
+                    let prepared = accelerator.prepare_dma_copy_read(
+                        issued_at,
+                        copy,
+                        trace.clone(),
+                        move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
+                            topology_memory_response(&read_memory, &read_error, &delivery)
+                        },
+                    );
+                    let (issue, transaction) = prepared.into_parts();
+                    issue_records.push(RiscvTopologyDmaIssueRecord::Accelerator(issue));
+                    transactions.push(transaction);
+                }
+                RiscvTopologyDmaCopy::Gpu { device, copy } => {
+                    let gpu = self
+                        .gpus
+                        .get(&device)
+                        .ok_or(RiscvTopologySystemError::UnknownGpu { device })?
+                        .gpu()
+                        .clone();
+                    let read_memory = memory.clone();
+                    let read_error = Arc::clone(&memory_error);
+                    let prepared = gpu.prepare_dma_copy_read(
+                        issued_at,
+                        copy,
+                        trace.clone(),
+                        move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
+                            topology_memory_response(&read_memory, &read_error, &delivery)
+                        },
+                    );
+                    let (issue, transaction) = prepared.into_parts();
+                    issue_records.push(RiscvTopologyDmaIssueRecord::Gpu(issue));
+                    transactions.push(transaction);
+                }
+            }
+        }
+
+        let events = self
+            .transport
+            .submit_parallel_batch(&mut self.scheduler, transactions)
+            .map_err(RiscvTopologySystemError::Transport)?;
+        for issue in issue_records {
+            issue.record();
+        }
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        if let Some(error) = take_memory_error(&memory_error) {
+            return Err(error);
+        }
+
+        Ok(events)
+    }
+
     pub fn drive_until_host_stop_parallel<E>(
         &mut self,
         driver: &RiscvSystemRunDriver,
@@ -1073,6 +1200,7 @@ pub enum RiscvTopologySystemError {
     MissingHostController,
     Accelerator(AcceleratorError),
     Gpu(GpuError),
+    Transport(TransportError),
     Memory(MemoryError),
     Dram(DramMemoryError),
     Boot(BootError),
@@ -1123,6 +1251,7 @@ impl fmt::Display for RiscvTopologySystemError {
             }
             Self::Accelerator(error) => write!(formatter, "{error}"),
             Self::Gpu(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
@@ -1148,6 +1277,7 @@ impl Error for RiscvTopologySystemError {
             Self::MissingHostController => None,
             Self::Accelerator(error) => Some(error),
             Self::Gpu(error) => Some(error),
+            Self::Transport(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
             Self::Boot(error) => Some(error),

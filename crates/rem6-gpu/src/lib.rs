@@ -10,8 +10,8 @@ use rem6_kernel::{
 use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::{
-    MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
-    TopologyRouteError, TransportError,
+    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    ResponseDelivery, TargetOutcome, TopologyRouteError, TransportError,
 };
 
 mod topology;
@@ -549,6 +549,28 @@ impl GpuDmaCompletion {
     }
 }
 
+pub struct GpuPreparedDmaRead {
+    issue: GpuDmaIssueRecord,
+    transaction: ParallelMemoryTransaction,
+}
+
+impl GpuPreparedDmaRead {
+    pub fn into_parts(self) -> (GpuDmaIssueRecord, ParallelMemoryTransaction) {
+        (self.issue, self.transaction)
+    }
+}
+
+pub struct GpuDmaIssueRecord {
+    gpu: GpuDevice,
+    event: GpuTraceEvent,
+}
+
+impl GpuDmaIssueRecord {
+    pub fn record(self) {
+        self.gpu.record(self.event);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GpuDevice {
     config: GpuComputeConfig,
@@ -658,26 +680,52 @@ impl GpuDevice {
             + Send
             + 'static,
     {
+        let prepared = self.prepare_dma_copy_read(scheduler.now(), copy, trace, responder);
+        let (issue, transaction) = prepared.into_parts();
+        let event = transport
+            .submit_parallel_batch(scheduler, [transaction])
+            .map_err(GpuError::Transport)?
+            .into_iter()
+            .next()
+            .expect("one GPU DMA read transaction was submitted");
+        issue.record();
+        Ok(event)
+    }
+
+    pub fn prepare_dma_copy_read<F>(
+        &self,
+        issued_at: Tick,
+        copy: GpuDmaCopy,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> GpuPreparedDmaRead
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
         let transfer = copy.transfer();
         let request = copy.read_request().id();
         let read_request = copy.read_request().clone();
         let sink_gpu = self.clone();
         let sink_copy = copy.clone();
-        let event = transport
-            .submit_parallel(
-                scheduler,
-                copy.read_route(),
-                read_request,
-                trace,
-                responder,
-                move |delivery| sink_gpu.accept_dma_read_response(sink_copy, delivery),
-            )
-            .map_err(GpuError::Transport)?;
-        self.record(GpuTraceEvent::new(
-            scheduler.now(),
-            GpuTraceKind::DmaReadIssued { transfer, request },
-        ));
-        Ok(event)
+        let transaction = ParallelMemoryTransaction::new(
+            copy.read_route(),
+            read_request,
+            trace,
+            responder,
+            move |delivery| sink_gpu.accept_dma_read_response(sink_copy, delivery),
+        );
+        GpuPreparedDmaRead {
+            issue: GpuDmaIssueRecord {
+                gpu: self.clone(),
+                event: GpuTraceEvent::new(
+                    issued_at,
+                    GpuTraceKind::DmaReadIssued { transfer, request },
+                ),
+            },
+            transaction,
+        }
     }
 
     pub fn issue_next_dma_write<F>(

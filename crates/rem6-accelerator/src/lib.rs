@@ -10,8 +10,8 @@ use rem6_kernel::{
 };
 use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_transport::{
-    MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
-    TransportError,
+    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    ResponseDelivery, TargetOutcome, TransportError,
 };
 pub use topology::{
     AcceleratorCommandPath, AcceleratorCommandSubmissionConfig, AcceleratorTopologyConfig,
@@ -488,6 +488,28 @@ impl AcceleratorDmaCompletion {
     }
 }
 
+pub struct AcceleratorPreparedDmaRead {
+    issue: AcceleratorDmaIssueRecord,
+    transaction: ParallelMemoryTransaction,
+}
+
+impl AcceleratorPreparedDmaRead {
+    pub fn into_parts(self) -> (AcceleratorDmaIssueRecord, ParallelMemoryTransaction) {
+        (self.issue, self.transaction)
+    }
+}
+
+pub struct AcceleratorDmaIssueRecord {
+    engine: AcceleratorEngine,
+    event: AcceleratorTraceEvent,
+}
+
+impl AcceleratorDmaIssueRecord {
+    pub fn record(self) {
+        self.engine.record(self.event);
+    }
+}
+
 #[derive(Clone)]
 pub struct AcceleratorEngine {
     config: AcceleratorEngineConfig,
@@ -597,26 +619,52 @@ impl AcceleratorEngine {
             + Send
             + 'static,
     {
+        let prepared = self.prepare_dma_copy_read(scheduler.now(), copy, trace, responder);
+        let (issue, transaction) = prepared.into_parts();
+        let event = transport
+            .submit_parallel_batch(scheduler, [transaction])
+            .map_err(AcceleratorError::Transport)?
+            .into_iter()
+            .next()
+            .expect("one DMA read transaction was submitted");
+        issue.record();
+        Ok(event)
+    }
+
+    pub fn prepare_dma_copy_read<F>(
+        &self,
+        issued_at: Tick,
+        copy: AcceleratorDmaCopy,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> AcceleratorPreparedDmaRead
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
         let command = copy.command();
         let request = copy.read_request().id();
         let read_request = copy.read_request().clone();
         let sink_engine = self.clone();
         let sink_copy = copy.clone();
-        let event = transport
-            .submit_parallel(
-                scheduler,
-                copy.read_route(),
-                read_request,
-                trace,
-                responder,
-                move |delivery| sink_engine.accept_dma_read_response(sink_copy, delivery),
-            )
-            .map_err(AcceleratorError::Transport)?;
-        self.record(AcceleratorTraceEvent::new(
-            scheduler.now(),
-            AcceleratorTraceKind::DmaReadIssued { command, request },
-        ));
-        Ok(event)
+        let transaction = ParallelMemoryTransaction::new(
+            copy.read_route(),
+            read_request,
+            trace,
+            responder,
+            move |delivery| sink_engine.accept_dma_read_response(sink_copy, delivery),
+        );
+        AcceleratorPreparedDmaRead {
+            issue: AcceleratorDmaIssueRecord {
+                engine: self.clone(),
+                event: AcceleratorTraceEvent::new(
+                    issued_at,
+                    AcceleratorTraceKind::DmaReadIssued { command, request },
+                ),
+            },
+            transaction,
+        }
     }
 
     pub fn issue_next_dma_write<F>(
