@@ -383,6 +383,14 @@ fn topology_system_routes_dirty_owner_peer_read_through_moesi_data_cache() {
 
     let cache_runs = system.moesi_data_cache_runs();
     assert_eq!(cache_runs.len(), 2);
+    assert_eq!(run.data_cache_runs(), cache_runs.as_slice());
+    assert_eq!(run.data_cache_run_count(), 2);
+    assert_eq!(run.data_cache_wait_for_edge_count(), 0);
+    assert!(run
+        .remaining_data_cache_wait_for_edge_kind_counts()
+        .is_empty());
+    assert_eq!(run.data_cache_deadlock_diagnostic_count(), 0);
+    assert!(!run.has_data_cache_wait_for_edges());
     assert_eq!(cache_runs[0].dram_access_count(), 1);
     assert_eq!(cache_runs[1].dram_access_count(), 0);
     assert!(cache_runs[1].has_directory_activity());

@@ -344,6 +344,16 @@ pub(super) fn merge_msi_data_cache_activity(
     (fabric_activity, dram_activity)
 }
 
+pub(super) fn msi_data_cache_runs_since(
+    cache: Option<&RiscvTopologyMsiDataCache>,
+    marker: Option<usize>,
+) -> Vec<ParallelCoherenceRunSummary> {
+    let (Some(cache), Some(marker)) = (cache, marker) else {
+        return Vec::new();
+    };
+    cache.runs_since(marker)
+}
+
 pub(super) fn merge_mesi_data_cache_activity(
     mut fabric_activity: Vec<rem6_fabric::FabricLaneActivity>,
     mut dram_activity: Vec<DramTargetActivity>,
@@ -365,6 +375,16 @@ pub(super) fn merge_mesi_data_cache_activity(
     (fabric_activity, dram_activity)
 }
 
+pub(super) fn mesi_data_cache_runs_since(
+    cache: Option<&RiscvTopologyMesiDataCache>,
+    marker: Option<usize>,
+) -> Vec<ParallelCoherenceRunSummary> {
+    let (Some(cache), Some(marker)) = (cache, marker) else {
+        return Vec::new();
+    };
+    cache.runs_since(marker)
+}
+
 pub(super) fn merge_moesi_data_cache_activity(
     mut fabric_activity: Vec<rem6_fabric::FabricLaneActivity>,
     mut dram_activity: Vec<DramTargetActivity>,
@@ -384,6 +404,16 @@ pub(super) fn merge_moesi_data_cache_activity(
     }
 
     (fabric_activity, dram_activity)
+}
+
+pub(super) fn moesi_data_cache_runs_since(
+    cache: Option<&RiscvTopologyMoesiDataCache>,
+    marker: Option<usize>,
+) -> Vec<ParallelCoherenceRunSummary> {
+    let (Some(cache), Some(marker)) = (cache, marker) else {
+        return Vec::new();
+    };
+    cache.runs_since(marker)
 }
 
 fn record_coherence_error(

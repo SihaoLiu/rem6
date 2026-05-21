@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointError, CheckpointManifest};
+use rem6_coherence::ParallelCoherenceRunSummary;
 use rem6_cpu::{
     CpuId, RiscvCluster, RiscvClusterError, RiscvClusterSchedulerEpoch, RiscvClusterTurn,
     RiscvCore, RiscvCoreDriveAction,
@@ -22,6 +23,7 @@ use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod data_cache_run;
 mod fabric_checkpoint;
 mod heterogeneous_checkpoint;
 mod host;
@@ -597,6 +599,7 @@ pub struct RiscvSystemRun {
     stop_reason: RiscvSystemRunStopReason,
     fabric_activity: Vec<FabricLaneActivity>,
     dram_activity: Vec<DramTargetActivity>,
+    pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
 }
 
 impl RiscvSystemRun {
@@ -611,6 +614,7 @@ impl RiscvSystemRun {
             stop_reason,
             fabric_activity: Vec::new(),
             dram_activity: Vec::new(),
+            data_cache_runs: Vec::new(),
         }
     }
 
@@ -621,6 +625,14 @@ impl RiscvSystemRun {
 
     pub fn with_dram_activity(mut self, dram_activity: Vec<DramTargetActivity>) -> Self {
         self.dram_activity = dram_activity;
+        self
+    }
+
+    pub fn with_data_cache_runs(
+        mut self,
+        data_cache_runs: Vec<ParallelCoherenceRunSummary>,
+    ) -> Self {
+        self.data_cache_runs = data_cache_runs;
         self
     }
 

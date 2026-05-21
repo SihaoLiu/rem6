@@ -1,8 +1,12 @@
 use rem6_boot::BootImage;
+use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_isa_riscv::Register;
-use rem6_kernel::{ClockDomain, PartitionId};
+use rem6_kernel::{
+    ClockDomain, PartitionId, RecordedConservativeRunSummary, WaitForEdgeKind, WaitForGraph,
+    WaitForNode,
+};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -159,6 +163,44 @@ fn memory_config() -> RiscvTopologyMemoryConfig {
         .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap())
 }
 
+fn wait_node(name: &str) -> WaitForNode {
+    WaitForNode::transaction(name).unwrap()
+}
+
+fn wait_resource(name: &str) -> WaitForNode {
+    WaitForNode::resource(name).unwrap()
+}
+
+fn coherence_run_with_waits() -> ParallelCoherenceRunSummary {
+    let request = wait_node("data.load.0");
+    let line = wait_resource("cache.0.line.3000");
+    let mut initial = WaitForGraph::new();
+    initial
+        .record_wait(request.clone(), line.clone(), WaitForEdgeKind::Queue, 4)
+        .unwrap();
+
+    let mut remaining = WaitForGraph::new();
+    remaining
+        .record_wait(request.clone(), line.clone(), WaitForEdgeKind::Queue, 4)
+        .unwrap();
+    remaining
+        .record_wait(request.clone(), line.clone(), WaitForEdgeKind::Queue, 6)
+        .unwrap();
+    remaining
+        .record_wait(line, request, WaitForEdgeKind::Protocol, 9)
+        .unwrap();
+
+    ParallelCoherenceRunSummary::new(
+        RecordedConservativeRunSummary::empty(12),
+        0,
+        0,
+        0,
+        Vec::new(),
+        Vec::new(),
+        ParallelCoherenceWaitForGraphs::new(initial, remaining),
+    )
+}
+
 fn split_dram_config() -> RiscvTopologyDramConfig {
     dram_config()
         .add_target(
@@ -192,6 +234,132 @@ fn system_run_starts_without_resource_activity() {
     assert_eq!(run.dram_access_count(), 0);
     assert_eq!(run.fabric_activities().len(), 0);
     assert_eq!(run.dram_target_activities().len(), 0);
+    assert_eq!(run.data_cache_run_count(), 0);
+    assert!(run.data_cache_runs().is_empty());
+    assert_eq!(run.initial_data_cache_wait_for_edge_count(), 0);
+    assert_eq!(run.remaining_data_cache_wait_for_edge_count(), 0);
+    assert!(run.initial_data_cache_wait_for_edges().is_empty());
+    assert!(run.remaining_data_cache_wait_for_edges().is_empty());
+    assert_eq!(run.data_cache_wait_for_edge_count(), 0);
+    assert!(run.data_cache_wait_for_edges().is_empty());
+    assert!(!run.has_data_cache_wait_for_edges());
+    assert_eq!(run.initial_data_cache_deadlock_diagnostic_count(), 0);
+    assert_eq!(run.remaining_data_cache_deadlock_diagnostic_count(), 0);
+    assert_eq!(run.data_cache_deadlock_diagnostic_count(), 0);
+}
+
+#[test]
+fn system_run_aggregates_data_cache_wait_for_diagnostics() {
+    let cache_run = coherence_run_with_waits();
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 12 },
+    )
+    .with_data_cache_runs(vec![cache_run.clone()]);
+
+    assert_eq!(run.data_cache_runs(), &[cache_run]);
+    assert_eq!(run.data_cache_run_count(), 1);
+    assert_eq!(run.initial_data_cache_wait_for_edge_count(), 1);
+    assert_eq!(run.remaining_data_cache_wait_for_edge_count(), 2);
+    assert_eq!(run.data_cache_wait_for_edge_count(), 2);
+    assert_eq!(run.initial_data_cache_wait_for_edges().len(), 1);
+    assert_eq!(run.remaining_data_cache_wait_for_edges().len(), 2);
+    assert_eq!(run.data_cache_wait_for_edges().len(), 2);
+    assert_eq!(run.initial_data_cache_wait_for_blocked_nodes().len(), 1);
+    assert_eq!(run.remaining_data_cache_wait_for_blocked_nodes().len(), 2);
+    assert_eq!(
+        run.initial_data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
+    assert_eq!(
+        run.initial_data_cache_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Queue)
+            .copied(),
+        Some(1),
+    );
+    assert_eq!(
+        run.remaining_data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
+    assert_eq!(
+        run.remaining_data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+        1,
+    );
+    assert_eq!(
+        run.remaining_data_cache_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Protocol)
+            .copied(),
+        Some(1),
+    );
+    assert_eq!(
+        run.data_cache_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Protocol)
+            .copied(),
+        Some(1),
+    );
+    assert_eq!(run.data_cache_wait_for_blocked_nodes().len(), 2);
+    assert_eq!(
+        run.remaining_data_cache_oldest_wait_edge()
+            .unwrap()
+            .first_observed_tick(),
+        4,
+    );
+    assert_eq!(
+        run.data_cache_oldest_wait_edge()
+            .unwrap()
+            .first_observed_tick(),
+        4,
+    );
+    assert_eq!(
+        run.initial_data_cache_oldest_wait_edge()
+            .unwrap()
+            .first_observed_tick(),
+        4,
+    );
+    assert_eq!(
+        run.remaining_data_cache_newest_observed_wait_edge()
+            .unwrap()
+            .last_observed_tick(),
+        9,
+    );
+    assert_eq!(
+        run.data_cache_newest_observed_wait_edge()
+            .unwrap()
+            .last_observed_tick(),
+        9,
+    );
+    assert_eq!(
+        run.initial_data_cache_newest_observed_wait_edge()
+            .unwrap()
+            .last_observed_tick(),
+        4,
+    );
+    assert_eq!(run.initial_data_cache_total_wait_observation_count(), 1);
+    assert_eq!(run.remaining_data_cache_total_wait_observation_count(), 3);
+    assert_eq!(run.data_cache_total_wait_observation_count(), 3);
+    assert_eq!(run.initial_data_cache_first_wait_tick(), Some(4));
+    assert_eq!(run.remaining_data_cache_first_wait_tick(), Some(4));
+    assert_eq!(run.data_cache_first_wait_tick(), Some(4));
+    assert_eq!(run.initial_data_cache_last_wait_tick(), Some(4));
+    assert_eq!(run.remaining_data_cache_last_wait_tick(), Some(9));
+    assert_eq!(run.data_cache_last_wait_tick(), Some(9));
+    assert_eq!(run.initial_data_cache_longest_observed_wait_span(), Some(0));
+    assert_eq!(
+        run.remaining_data_cache_longest_observed_wait_span(),
+        Some(2)
+    );
+    assert_eq!(run.data_cache_longest_observed_wait_span(), Some(2));
+    assert!(run.initial_data_cache_deadlock_diagnostics().is_empty());
+    assert_eq!(run.initial_data_cache_deadlock_diagnostic_count(), 0);
+    assert_eq!(
+        run.remaining_data_cache_deadlock_diagnostics()[0].edge_count(),
+        2,
+    );
+    assert_eq!(run.data_cache_deadlock_diagnostics()[0].edge_count(), 2);
+    assert_eq!(run.remaining_data_cache_deadlock_diagnostic_count(), 1);
+    assert_eq!(run.data_cache_deadlock_diagnostic_count(), 1);
+    assert!(run.has_data_cache_wait_for_edges());
 }
 
 #[test]

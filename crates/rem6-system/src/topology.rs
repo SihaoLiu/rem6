@@ -65,6 +65,7 @@ use crate::{
 
 use coherence_data::{
     merge_mesi_data_cache_activity, merge_moesi_data_cache_activity, merge_msi_data_cache_activity,
+    mesi_data_cache_runs_since, moesi_data_cache_runs_since, msi_data_cache_runs_since,
     topology_mesi_data_response, topology_moesi_data_response, topology_msi_data_response,
     RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
 };
@@ -1486,10 +1487,21 @@ impl RiscvTopologySystem {
             moesi_data_cache.as_ref(),
             moesi_data_run_start,
         );
+        let mut data_cache_runs =
+            msi_data_cache_runs_since(msi_data_cache.as_ref(), msi_data_run_start);
+        data_cache_runs.extend(mesi_data_cache_runs_since(
+            mesi_data_cache.as_ref(),
+            mesi_data_run_start,
+        ));
+        data_cache_runs.extend(moesi_data_cache_runs_since(
+            moesi_data_cache.as_ref(),
+            moesi_data_run_start,
+        ));
 
         Ok(run
             .with_fabric_activity(fabric_activity)
-            .with_dram_activity(dram_activity))
+            .with_dram_activity(dram_activity)
+            .with_data_cache_runs(data_cache_runs))
     }
 
     pub fn drive_attached_until_host_stop_parallel<E>(
