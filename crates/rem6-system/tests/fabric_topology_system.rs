@@ -392,7 +392,7 @@ fn memory_response(
 #[test]
 fn topology_system_drives_cpu_fetch_over_declared_fabric_path() {
     let source = GuestSourceId::new(70);
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         cpu_fabric_topology(),
         RiscvClusterTopologyConfig::new([core_config(0, 0, 70, 0x8000)]),
         2,
@@ -462,7 +462,7 @@ fn topology_system_drives_cpu_fetch_over_declared_fabric_path() {
 #[test]
 fn topology_system_composes_declared_fabric_path_with_dram_timing() {
     let source = GuestSourceId::new(71);
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         cpu_fabric_topology(),
         RiscvClusterTopologyConfig::new([core_config(0, 0, 71, 0x8000)]),
         2,
@@ -627,7 +627,7 @@ fn topology_system_runs_accelerator_dma_copy_over_declared_fabric_path() {
 #[test]
 fn topology_system_reserves_shared_fabric_for_concurrent_accelerator_dma_reads() {
     let accelerator_id = AcceleratorEngineId::new(73);
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         accelerator_fabric_topology(),
         RiscvClusterTopologyConfig::new([core_config(0, 0, 73, 0x8000)]),
         2,
@@ -643,11 +643,11 @@ fn topology_system_reserves_shared_fabric_for_concurrent_accelerator_dma_reads()
     let trace = MemoryTrace::new();
 
     {
-        let (_cluster, scheduler, transport) = system.execution_parts_mut();
+        let (_cluster, mut scheduler, transport) = system.execution_parts_mut();
         let first_memory = Arc::clone(&memory);
         accelerator
             .submit_dma_copy_read(
-                scheduler,
+                &mut scheduler,
                 transport,
                 dma_copy(route, 310, 0x1004),
                 trace.clone(),
@@ -657,7 +657,7 @@ fn topology_system_reserves_shared_fabric_for_concurrent_accelerator_dma_reads()
         let second_memory = Arc::clone(&memory);
         accelerator
             .submit_dma_copy_read(
-                scheduler,
+                &mut scheduler,
                 transport,
                 dma_copy(route, 311, 0x100c),
                 trace.clone(),

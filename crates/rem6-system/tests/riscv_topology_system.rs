@@ -460,7 +460,7 @@ fn memory_response(
 
 #[test]
 fn topology_system_builds_cluster_and_drives_parallel_host_stop() {
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         topology(),
         RiscvClusterTopologyConfig::new([
             core_config(0, 0, 7, 0x8000),
@@ -508,12 +508,12 @@ fn topology_system_builds_cluster_and_drives_parallel_host_stop() {
         source,
     );
     let driver = RiscvSystemRunDriver::new(trap_port);
-    let (cluster, scheduler, transport) = system.execution_parts_mut();
+    let (cluster, mut scheduler, transport) = system.execution_parts_mut();
 
     let run = driver
         .drive_until_host_stop_parallel(
             cluster,
-            scheduler,
+            &mut scheduler,
             transport,
             Default::default(),
             Default::default(),
@@ -584,7 +584,7 @@ fn topology_system_with_platform_drives_parallel_mmio_and_memory_accesses() {
         .unwrap();
     let memory = RiscvTopologyMemoryConfig::new(MemoryTargetId::new(0), layout())
         .add_region(Address::new(0x8000), AccessSize::new(0x3000).unwrap());
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         topology,
         RiscvClusterTopologyConfig::new([
             core_config(0, 0, 7, 0x8000),
@@ -759,6 +759,137 @@ fn topology_host_controller_checkpoints_attached_uart() {
     );
     assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(10, b'O')]);
     assert_eq!(uart.snapshot().rx_pending(), b"AB");
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_scheduler() {
+    let source = GuestSourceId::new(47);
+    let scheduler_component = CheckpointComponentId::new("sched-custom").unwrap();
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology(),
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(3), 2, source)
+            .with_scheduler_checkpoint_component(scheduler_component.clone()),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+
+    {
+        let mut scheduler = system.scheduler_mut();
+        let first_id = scheduler
+            .schedule_parallel_at(PartitionId::new(0), 5, |context| {
+                context.schedule_local_after(2, |_| {}).unwrap();
+            })
+            .unwrap();
+        assert_eq!(
+            first_id,
+            rem6_kernel::PartitionEventId::new(PartitionId::new(0), 0)
+        );
+        assert_eq!(scheduler.run_until_idle_parallel().unwrap().final_tick(), 8);
+    }
+    let scheduler_snapshot = system.scheduler().quiescent_snapshot().unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .scheduler_checkpoint_bank()
+        .is_some());
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .scheduler_checkpoint_bank()
+            .unwrap()
+            .components(),
+        vec![scheduler_component.clone()]
+    );
+
+    let checkpoint = HostActionRecord::new(
+        30,
+        PartitionId::new(3),
+        PartitionId::new(3),
+        GuestEventId::new(194),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-scheduler".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &scheduler_component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&scheduler_component, "scheduler")
+            .unwrap()
+            .len()
+            > 64
+    );
+
+    {
+        let mut scheduler = system.scheduler_mut();
+        scheduler
+            .schedule_parallel_at(PartitionId::new(1), 12, |_| {})
+            .unwrap();
+        assert_eq!(
+            scheduler.run_until_idle_parallel().unwrap().final_tick(),
+            12
+        );
+    }
+    assert_ne!(system.scheduler().snapshot(), scheduler_snapshot);
+
+    let restore = HostActionRecord::new(
+        38,
+        PartitionId::new(3),
+        PartitionId::new(3),
+        GuestEventId::new(195),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 38,
+            event: GuestEventId::new(195),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(system.scheduler().snapshot(), scheduler_snapshot);
+    let restored_id = system
+        .scheduler_mut()
+        .schedule_parallel_at(PartitionId::new(0), 8, |_| {})
+        .unwrap();
+    assert_eq!(
+        restored_id,
+        rem6_kernel::PartitionEventId::new(PartitionId::new(0), 2)
+    );
 }
 
 #[test]
@@ -1005,7 +1136,7 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
     )
     .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap());
     let source = GuestSourceId::new(43);
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         topology(),
         RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
         2,
@@ -1150,7 +1281,11 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
             .iter()
             .map(|state| state.component().clone())
             .collect::<Vec<_>>(),
-        vec![cpu_component.clone(), dram_component.clone()]
+        vec![
+            cpu_component.clone(),
+            dram_component.clone(),
+            CheckpointComponentId::new("scheduler0").unwrap(),
+        ]
     );
     assert_eq!(
         host.lock()
@@ -1262,7 +1397,7 @@ fn topology_system_dram_boot_image_loads_segments_into_addressed_targets() {
     )
     .unwrap();
     let source = GuestSourceId::new(44);
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         topology(),
         RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
         2,

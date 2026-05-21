@@ -332,7 +332,7 @@ fn topology_host_controller_checkpoints_attached_heterogeneous_devices() {
     let accelerator_id = AcceleratorEngineId::new(9);
     let gpu_id = GpuDeviceId::new(10);
     let source = GuestSourceId::new(71);
-    let mut system = RiscvTopologySystem::with_min_remote_delay(
+    let system = RiscvTopologySystem::with_min_remote_delay(
         heterogeneous_topology(),
         RiscvClusterTopologyConfig::new([core_config()]),
         2,
@@ -363,18 +363,21 @@ fn topology_host_controller_checkpoints_attached_heterogeneous_devices() {
 
     let accelerator = system.accelerator(accelerator_id).unwrap().clone();
     let gpu = system.gpu(gpu_id).unwrap().clone();
-    accelerator
-        .submit_command(
-            system.scheduler_mut(),
-            AcceleratorCommand::new(
-                AcceleratorCommandId::new(52),
-                AcceleratorCommandKind::NpuInference { tiles: 2 },
-                3,
+    {
+        let mut scheduler = system.scheduler_mut();
+        accelerator
+            .submit_command(
+                &mut scheduler,
+                AcceleratorCommand::new(
+                    AcceleratorCommandId::new(52),
+                    AcceleratorCommandKind::NpuInference { tiles: 2 },
+                    3,
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        )
-        .unwrap();
-    system.scheduler_mut().run_until_idle_parallel().unwrap();
+            .unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
     let accelerator_snapshot = system
         .accelerator(accelerator_id)
         .unwrap()
@@ -402,26 +405,30 @@ fn topology_host_controller_checkpoints_attached_heterogeneous_devices() {
             CheckpointComponentId::new("accelerator9").unwrap(),
             CheckpointComponentId::new("cpu0").unwrap(),
             CheckpointComponentId::new("gpu10").unwrap(),
+            CheckpointComponentId::new("scheduler0").unwrap(),
         ],
     );
 
-    accelerator
-        .submit_command(
-            system.scheduler_mut(),
-            AcceleratorCommand::new(
-                AcceleratorCommandId::new(53),
-                AcceleratorCommandKind::GpuKernel { workgroups: 1 },
-                2,
+    {
+        let mut scheduler = system.scheduler_mut();
+        accelerator
+            .submit_command(
+                &mut scheduler,
+                AcceleratorCommand::new(
+                    AcceleratorCommandId::new(53),
+                    AcceleratorCommandKind::GpuKernel { workgroups: 1 },
+                    2,
+                )
+                .unwrap(),
             )
-            .unwrap(),
+            .unwrap();
+        gpu.submit_kernel(
+            &mut scheduler,
+            GpuKernelLaunch::new(GpuKernelId::new(62), 1, 3).unwrap(),
         )
         .unwrap();
-    gpu.submit_kernel(
-        system.scheduler_mut(),
-        GpuKernelLaunch::new(GpuKernelId::new(62), 1, 3).unwrap(),
-    )
-    .unwrap();
-    system.scheduler_mut().run_until_idle_parallel().unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
     assert_ne!(
         system
             .accelerator(accelerator_id)

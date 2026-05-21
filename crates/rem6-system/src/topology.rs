@@ -1,7 +1,9 @@
+mod host_checkpoint;
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorDmaCopy, AcceleratorDmaIssueRecord, AcceleratorDmaWriteRollback,
@@ -39,18 +41,13 @@ use rem6_transport::{
 use rem6_uart::UartId;
 
 use crate::{
-    AcceleratorCheckpointBank, AcceleratorCheckpointPort, DramMemoryCheckpointBank,
-    DramMemoryCheckpointPort, GpuCheckpointBank, GpuCheckpointPort, GuestEventId, GuestSourceId,
-    HostEventPolicy, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
-    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
-    RiscvCoreCheckpointPort, RiscvSystemRun, RiscvSystemRunDriver, RiscvTrapEventPort, SystemError,
-    SystemHostController, SystemHostEventPort, TimerCheckpointBank, TimerCheckpointPort,
-    UartCheckpointBank, UartCheckpointPort,
+    GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvTrapEventPort, SystemError, SystemHostController, SystemHostEventPort,
 };
 
 pub struct RiscvTopologySystem {
     topology: Topology,
-    scheduler: PartitionedScheduler,
+    scheduler: Arc<Mutex<PartitionedScheduler>>,
     transport: MemoryTransport,
     cluster: RiscvCluster,
     accelerators: BTreeMap<AcceleratorEngineId, AcceleratorTopologyDevice>,
@@ -110,36 +107,43 @@ impl RiscvTopologyDmaWriteRollback {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvTopologyHostConfig {
     host_partition: PartitionId,
     host_latency: Tick,
     source: GuestSourceId,
+    scheduler_checkpoint_component: CheckpointComponentId,
 }
 
 impl RiscvTopologyHostConfig {
-    pub const fn new(
-        host_partition: PartitionId,
-        host_latency: Tick,
-        source: GuestSourceId,
-    ) -> Self {
+    pub fn new(host_partition: PartitionId, host_latency: Tick, source: GuestSourceId) -> Self {
         Self {
             host_partition,
             host_latency,
             source,
+            scheduler_checkpoint_component: default_scheduler_checkpoint_component(),
         }
     }
 
-    pub const fn host_partition(self) -> PartitionId {
+    pub fn with_scheduler_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
+        self.scheduler_checkpoint_component = component;
+        self
+    }
+
+    pub const fn host_partition(&self) -> PartitionId {
         self.host_partition
     }
 
-    pub const fn host_latency(self) -> Tick {
+    pub const fn host_latency(&self) -> Tick {
         self.host_latency
     }
 
-    pub const fn source(self) -> GuestSourceId {
+    pub const fn source(&self) -> GuestSourceId {
         self.source
+    }
+
+    pub fn scheduler_checkpoint_component(&self) -> &CheckpointComponentId {
+        &self.scheduler_checkpoint_component
     }
 }
 
@@ -147,6 +151,7 @@ impl RiscvTopologyHostConfig {
 struct RiscvTopologyHost {
     controller: Arc<Mutex<SystemHostController>>,
     driver: RiscvSystemRunDriver,
+    scheduler_checkpoint_component: CheckpointComponentId,
 }
 
 fn default_memory_checkpoint_component(target: MemoryTargetId) -> CheckpointComponentId {
@@ -187,6 +192,11 @@ fn default_uart_checkpoint_component(uart: UartId) -> CheckpointComponentId {
 fn default_interrupt_checkpoint_component() -> CheckpointComponentId {
     CheckpointComponentId::new("interrupt0")
         .expect("static interrupt checkpoint component is nonempty")
+}
+
+fn default_scheduler_checkpoint_component() -> CheckpointComponentId {
+    CheckpointComponentId::new("scheduler0")
+        .expect("static scheduler checkpoint component is nonempty")
 }
 
 #[derive(Clone, Debug)]
@@ -501,6 +511,7 @@ impl RiscvTopologySystem {
             min_remote_delay,
         )
         .map_err(RiscvTopologySystemError::Scheduler)?;
+        let scheduler = Arc::new(Mutex::new(scheduler));
         let mut transport = MemoryTransport::with_fabric(FabricModel::new());
         let cluster = RiscvCluster::from_topology(&topology, &mut transport, cluster_config)
             .map_err(RiscvTopologySystemError::CpuTopology)?;
@@ -587,7 +598,9 @@ impl RiscvTopologySystem {
         self.host = Some(RiscvTopologyHost {
             controller,
             driver: RiscvSystemRunDriver::new(trap_port),
+            scheduler_checkpoint_component: config.scheduler_checkpoint_component().clone(),
         });
+        self.attach_scheduler_checkpoint_to_host()?;
         self.attach_riscv_checkpoint_to_host()?;
         self.attach_heterogeneous_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
@@ -661,12 +674,16 @@ impl RiscvTopologySystem {
         &self.topology
     }
 
-    pub const fn scheduler(&self) -> &PartitionedScheduler {
-        &self.scheduler
+    pub fn scheduler(&self) -> MutexGuard<'_, PartitionedScheduler> {
+        self.lock_scheduler()
     }
 
-    pub fn scheduler_mut(&mut self) -> &mut PartitionedScheduler {
-        &mut self.scheduler
+    pub fn scheduler_mut(&self) -> MutexGuard<'_, PartitionedScheduler> {
+        self.lock_scheduler()
+    }
+
+    pub fn scheduler_handle(&self) -> Arc<Mutex<PartitionedScheduler>> {
+        Arc::clone(&self.scheduler)
     }
 
     pub const fn transport(&self) -> &MemoryTransport {
@@ -727,24 +744,32 @@ impl RiscvTopologySystem {
         self.host.as_ref().map(|host| &host.driver)
     }
 
+    fn lock_scheduler(&self) -> MutexGuard<'_, PartitionedScheduler> {
+        self.scheduler.lock().expect("topology scheduler lock")
+    }
+
     pub fn execution_parts_mut(
-        &mut self,
-    ) -> (&RiscvCluster, &mut PartitionedScheduler, &MemoryTransport) {
-        (&self.cluster, &mut self.scheduler, &self.transport)
+        &self,
+    ) -> (
+        &RiscvCluster,
+        MutexGuard<'_, PartitionedScheduler>,
+        &MemoryTransport,
+    ) {
+        (&self.cluster, self.lock_scheduler(), &self.transport)
     }
 
     pub fn execution_parts_with_mmio_mut(
-        &mut self,
+        &self,
     ) -> Option<(
         &RiscvCluster,
-        &mut PartitionedScheduler,
+        MutexGuard<'_, PartitionedScheduler>,
         &MemoryTransport,
         &MmioBus,
     )> {
         let platform = self.platform.as_ref()?;
         Some((
             &self.cluster,
-            &mut self.scheduler,
+            self.lock_scheduler(),
             &self.transport,
             platform.mmio_bus(),
         ))
@@ -771,9 +796,10 @@ impl RiscvTopologySystem {
 
         let read_memory = memory.clone();
         let read_error = Arc::clone(&memory_error);
+        let mut scheduler = self.lock_scheduler();
         accelerator
             .submit_dma_copy_read(
-                &mut self.scheduler,
+                &mut scheduler,
                 &self.transport,
                 copy,
                 trace.clone(),
@@ -782,7 +808,7 @@ impl RiscvTopologySystem {
                 },
             )
             .map_err(RiscvTopologySystemError::Accelerator)?;
-        self.scheduler
+        scheduler
             .run_until_idle_parallel()
             .map_err(RiscvTopologySystemError::Scheduler)?;
         if let Some(error) = take_memory_error(&memory_error) {
@@ -793,7 +819,7 @@ impl RiscvTopologySystem {
         let write_error = Arc::clone(&memory_error);
         let Some(_event) = accelerator
             .issue_next_dma_write(
-                &mut self.scheduler,
+                &mut scheduler,
                 &self.transport,
                 trace,
                 move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
@@ -804,7 +830,7 @@ impl RiscvTopologySystem {
         else {
             return Err(RiscvTopologySystemError::AcceleratorDmaWriteNotReady { engine });
         };
-        self.scheduler
+        scheduler
             .run_until_idle_parallel()
             .map_err(RiscvTopologySystemError::Scheduler)?;
         if let Some(error) = take_memory_error(&memory_error) {
@@ -823,8 +849,9 @@ impl RiscvTopologySystem {
             .accelerators
             .get(&engine)
             .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?;
+        let mut scheduler = self.lock_scheduler();
         device
-            .submit_command(&mut self.scheduler, command)
+            .submit_command(&mut scheduler, command)
             .map_err(RiscvTopologySystemError::Accelerator)
     }
 
@@ -837,7 +864,8 @@ impl RiscvTopologySystem {
             .gpus
             .get(&device)
             .ok_or(RiscvTopologySystemError::UnknownGpu { device })?;
-        gpu.submit_kernel(&mut self.scheduler, launch)
+        let mut scheduler = self.lock_scheduler();
+        gpu.submit_kernel(&mut scheduler, launch)
             .map_err(RiscvTopologySystemError::Gpu)
     }
 
@@ -862,8 +890,9 @@ impl RiscvTopologySystem {
 
         let read_memory = memory.clone();
         let read_error = Arc::clone(&memory_error);
+        let mut scheduler = self.lock_scheduler();
         gpu.submit_dma_copy_read(
-            &mut self.scheduler,
+            &mut scheduler,
             &self.transport,
             copy,
             trace.clone(),
@@ -872,7 +901,7 @@ impl RiscvTopologySystem {
             },
         )
         .map_err(RiscvTopologySystemError::Gpu)?;
-        self.scheduler
+        scheduler
             .run_until_idle_parallel()
             .map_err(RiscvTopologySystemError::Scheduler)?;
         if let Some(error) = take_memory_error(&memory_error) {
@@ -883,7 +912,7 @@ impl RiscvTopologySystem {
         let write_error = Arc::clone(&memory_error);
         let Some(_event) = gpu
             .issue_next_dma_write(
-                &mut self.scheduler,
+                &mut scheduler,
                 &self.transport,
                 trace,
                 move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
@@ -894,7 +923,7 @@ impl RiscvTopologySystem {
         else {
             return Err(RiscvTopologySystemError::GpuDmaWriteNotReady { device });
         };
-        self.scheduler
+        scheduler
             .run_until_idle_parallel()
             .map_err(RiscvTopologySystemError::Scheduler)?;
         if let Some(error) = take_memory_error(&memory_error) {
@@ -923,7 +952,8 @@ impl RiscvTopologySystem {
             .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
-        let issued_at = self.scheduler.now();
+        let mut scheduler = self.lock_scheduler();
+        let issued_at = scheduler.now();
         let mut issue_records = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
 
@@ -976,12 +1006,12 @@ impl RiscvTopologySystem {
 
         let events = self
             .transport
-            .submit_parallel_batch(&mut self.scheduler, transactions)
+            .submit_parallel_batch(&mut scheduler, transactions)
             .map_err(RiscvTopologySystemError::Transport)?;
         for issue in issue_records {
             issue.record();
         }
-        self.scheduler
+        scheduler
             .run_until_idle_parallel()
             .map_err(RiscvTopologySystemError::Scheduler)?;
         if let Some(error) = take_memory_error(&memory_error) {
@@ -1020,7 +1050,8 @@ impl RiscvTopologySystem {
             .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
-        let issued_at = self.scheduler.now();
+        let mut scheduler = self.lock_scheduler();
+        let issued_at = scheduler.now();
         let mut issue_records = Vec::new();
         let mut rollbacks = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
@@ -1086,7 +1117,7 @@ impl RiscvTopologySystem {
 
         let events = match self
             .transport
-            .submit_parallel_batch(&mut self.scheduler, transactions)
+            .submit_parallel_batch(&mut scheduler, transactions)
         {
             Ok(events) => events,
             Err(error) => {
@@ -1099,7 +1130,7 @@ impl RiscvTopologySystem {
         for issue in issue_records {
             issue.record();
         }
-        self.scheduler
+        scheduler
             .run_until_idle_parallel()
             .map_err(RiscvTopologySystemError::Scheduler)?;
         if let Some(error) = take_memory_error(&memory_error) {
@@ -1110,7 +1141,7 @@ impl RiscvTopologySystem {
     }
 
     pub fn drive_until_host_stop_parallel<E>(
-        &mut self,
+        &self,
         driver: &RiscvSystemRunDriver,
         fetch_trace: MemoryTrace,
         data_trace: MemoryTrace,
@@ -1147,10 +1178,11 @@ impl RiscvTopologySystem {
             }
         };
 
+        let mut scheduler = self.lock_scheduler();
         let result = if let Some(platform) = self.platform.as_ref() {
             driver.drive_until_host_stop_parallel_with_mmio(
                 &self.cluster,
-                &mut self.scheduler,
+                &mut scheduler,
                 &self.transport,
                 platform.mmio_bus(),
                 fetch_trace,
@@ -1163,7 +1195,7 @@ impl RiscvTopologySystem {
         } else {
             driver.drive_until_host_stop_parallel(
                 &self.cluster,
-                &mut self.scheduler,
+                &mut scheduler,
                 &self.transport,
                 fetch_trace,
                 data_trace,
@@ -1191,7 +1223,7 @@ impl RiscvTopologySystem {
     }
 
     pub fn drive_attached_until_host_stop_parallel<E>(
-        &mut self,
+        &self,
         fetch_trace: MemoryTrace,
         data_trace: MemoryTrace,
         max_turns: usize,
@@ -1207,169 +1239,6 @@ impl RiscvTopologySystem {
             .driver
             .clone();
         self.drive_until_host_stop_parallel(&driver, fetch_trace, data_trace, max_turns, event_for)
-    }
-
-    fn attach_memory_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
-        let Some(host) = self.host.as_ref() else {
-            return Ok(());
-        };
-        let Some(memory) = self.memory.as_ref() else {
-            return Ok(());
-        };
-        let mut host = host
-            .controller
-            .lock()
-            .expect("topology host controller lock");
-        match memory {
-            RiscvTopologyMemoryBackend::Store { component, memory } => {
-                let bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
-                    component.clone(),
-                    Arc::clone(memory),
-                )])
-                .map_err(SystemError::Checkpoint)
-                .map_err(RiscvTopologySystemError::System)?;
-                host.executor_mut()
-                    .attach_memory_checkpoint_bank(bank)
-                    .map_err(SystemError::Checkpoint)
-                    .map_err(RiscvTopologySystemError::System)?;
-            }
-            RiscvTopologyMemoryBackend::Dram { component, memory } => {
-                let bank = DramMemoryCheckpointBank::new([DramMemoryCheckpointPort::new(
-                    component.clone(),
-                    Arc::clone(memory),
-                )])
-                .map_err(SystemError::Checkpoint)
-                .map_err(RiscvTopologySystemError::System)?;
-                host.executor_mut()
-                    .attach_dram_memory_checkpoint_bank(bank)
-                    .map_err(SystemError::Checkpoint)
-                    .map_err(RiscvTopologySystemError::System)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn attach_heterogeneous_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
-        let Some(host) = self.host.as_ref() else {
-            return Ok(());
-        };
-        let accelerator_bank =
-            AcceleratorCheckpointBank::new(self.accelerators.iter().map(|(engine, device)| {
-                AcceleratorCheckpointPort::new(
-                    default_accelerator_checkpoint_component(*engine),
-                    device.engine().clone(),
-                )
-            }))
-            .map_err(SystemError::Checkpoint)
-            .map_err(RiscvTopologySystemError::System)?;
-        if accelerator_bank.component_count() != 0 {
-            host.controller
-                .lock()
-                .expect("topology host controller lock")
-                .executor_mut()
-                .attach_accelerator_checkpoint_bank(accelerator_bank)
-                .map_err(SystemError::Checkpoint)
-                .map_err(RiscvTopologySystemError::System)?;
-        }
-
-        let gpu_bank = GpuCheckpointBank::new(self.gpus.iter().map(|(device_id, device)| {
-            GpuCheckpointPort::new(
-                default_gpu_checkpoint_component(*device_id),
-                device.gpu().clone(),
-            )
-        }))
-        .map_err(SystemError::Checkpoint)
-        .map_err(RiscvTopologySystemError::System)?;
-        if gpu_bank.component_count() != 0 {
-            host.controller
-                .lock()
-                .expect("topology host controller lock")
-                .executor_mut()
-                .attach_gpu_checkpoint_bank(gpu_bank)
-                .map_err(SystemError::Checkpoint)
-                .map_err(RiscvTopologySystemError::System)?;
-        }
-        Ok(())
-    }
-
-    fn attach_riscv_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
-        let Some(host) = self.host.as_ref() else {
-            return Ok(());
-        };
-        let ports = self.cluster.core_ids().into_iter().map(|cpu| {
-            RiscvCoreCheckpointPort::new(
-                default_riscv_checkpoint_component(cpu),
-                self.cluster
-                    .core(cpu)
-                    .expect("cluster core ids resolve to cores"),
-            )
-        });
-        let bank = RiscvCoreCheckpointBank::new(ports)
-            .map_err(SystemError::Checkpoint)
-            .map_err(RiscvTopologySystemError::System)?;
-        host.controller
-            .lock()
-            .expect("topology host controller lock")
-            .executor_mut()
-            .attach_riscv_checkpoint_bank(bank)
-            .map_err(SystemError::Checkpoint)
-            .map_err(RiscvTopologySystemError::System)?;
-        Ok(())
-    }
-
-    fn attach_platform_checkpoint_to_host(&mut self) -> Result<(), RiscvTopologySystemError> {
-        let Some(host) = self.host.as_ref() else {
-            return Ok(());
-        };
-        let Some(platform) = self.platform.as_ref() else {
-            return Ok(());
-        };
-        let interrupt_bank =
-            InterruptControllerCheckpointBank::new([InterruptControllerCheckpointPort::new(
-                default_interrupt_checkpoint_component(),
-                platform.interrupt_controller(),
-            )])
-            .map_err(SystemError::Checkpoint)
-            .map_err(RiscvTopologySystemError::System)?;
-        host.controller
-            .lock()
-            .expect("topology host controller lock")
-            .executor_mut()
-            .attach_interrupt_controller_checkpoint_bank(interrupt_bank)
-            .map_err(SystemError::Checkpoint)
-            .map_err(RiscvTopologySystemError::System)?;
-
-        let timer_bank = TimerCheckpointBank::new(platform.timers().map(|(timer, device)| {
-            TimerCheckpointPort::new(default_timer_checkpoint_component(timer), device.clone())
-        }))
-        .map_err(SystemError::Checkpoint)
-        .map_err(RiscvTopologySystemError::System)?;
-        if timer_bank.component_count() != 0 {
-            host.controller
-                .lock()
-                .expect("topology host controller lock")
-                .executor_mut()
-                .attach_timer_checkpoint_bank(timer_bank)
-                .map_err(SystemError::Checkpoint)
-                .map_err(RiscvTopologySystemError::System)?;
-        }
-
-        let bank = UartCheckpointBank::new(platform.uarts().map(|(uart, device)| {
-            UartCheckpointPort::new(default_uart_checkpoint_component(uart), device.clone())
-        }))
-        .map_err(SystemError::Checkpoint)
-        .map_err(RiscvTopologySystemError::System)?;
-        if bank.component_count() == 0 {
-            return Ok(());
-        }
-        host.controller
-            .lock()
-            .expect("topology host controller lock")
-            .executor_mut()
-            .attach_uart_checkpoint_bank(bank)
-            .map_err(SystemError::Checkpoint)
-            .map_err(RiscvTopologySystemError::System)?;
-        Ok(())
     }
 }
 
