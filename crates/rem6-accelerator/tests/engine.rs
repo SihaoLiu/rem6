@@ -4,7 +4,7 @@ use rem6_accelerator::{
     AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError, AcceleratorPendingDmaWrite,
     AcceleratorTraceEvent, AcceleratorTraceKind,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryRequest,
     MemoryRequestId,
@@ -52,10 +52,32 @@ fn accelerator_engine_dispatches_remote_commands_on_parallel_scheduler_partition
         .submit_from_partition(&mut scheduler, cpu_partition, 2, inference)
         .unwrap();
 
-    let summary = scheduler.run_until_idle_parallel().unwrap();
+    let summary = engine
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
 
     assert_eq!(summary.executed_events(), 6);
     assert_eq!(summary.final_tick(), 8);
+    assert_eq!(summary.command_completion_count(), 2);
+    assert_eq!(summary.dma_completion_count(), 0);
+    assert_eq!(summary.pending_dma_write_count(), 0);
+    assert_eq!(summary.trace_event_count(), 6);
+    assert_eq!(summary.scheduler_run().profile(), summary.profile());
+    assert_eq!(summary.profile().dispatch_count(), summary.dispatch_count());
+    assert_eq!(
+        summary.profile(),
+        ParallelRunProfile::new(
+            summary.epoch_count(),
+            summary.empty_epoch_count(),
+            summary.batch_count(),
+            summary.dispatch_count(),
+            summary.total_parallel_workers(),
+            summary.max_parallel_workers(),
+        )
+    );
+    assert!(summary.has_device_activity());
+    assert!(summary.has_command_activity());
+    assert!(!summary.has_dma_activity());
     assert_eq!(
         engine.trace(),
         vec![
@@ -199,7 +221,14 @@ fn accelerator_dma_copy_uses_parallel_memory_transport() {
             },
         )
         .unwrap();
-    scheduler.run_until_idle_parallel().unwrap();
+    let read_run = engine
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+    assert_eq!(read_run.dma_completion_count(), 0);
+    assert_eq!(read_run.pending_dma_write_count(), 1);
+    assert_eq!(read_run.trace_event_count(), 1);
+    assert!(read_run.has_dma_activity());
+    assert!(!read_run.has_command_activity());
 
     assert_eq!(
         engine.pending_dma_writes(),
@@ -228,7 +257,14 @@ fn accelerator_dma_copy_uses_parallel_memory_transport() {
         )
         .unwrap()
         .is_some());
-    scheduler.run_until_idle_parallel().unwrap();
+    let write_run = engine
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+    assert_eq!(write_run.dma_completion_count(), 1);
+    assert_eq!(write_run.pending_dma_write_count(), 0);
+    assert_eq!(write_run.trace_event_count(), 1);
+    assert!(write_run.has_dma_activity());
+    assert!(!write_run.has_command_activity());
 
     let destination = store
         .lock()

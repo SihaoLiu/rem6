@@ -5,8 +5,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
-    Tick,
+    ConservativeRunSummary, ParallelEpochBatchRecord, ParallelRunProfile, ParallelSchedulerContext,
+    PartitionEventId, PartitionId, PartitionedScheduler, RecordedConservativeRunSummary,
+    RecordedRunSummary, SchedulerDispatchRecord, SchedulerError, Tick,
 };
 use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_transport::{
@@ -548,6 +549,128 @@ pub struct AcceleratorEngineSnapshot {
     dma_completions: Vec<AcceleratorDmaCompletion>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParallelAcceleratorRunSummary {
+    scheduler_run: RecordedConservativeRunSummary,
+    trace_event_count: usize,
+    command_completion_count: usize,
+    pending_dma_write_count: usize,
+    dma_completion_count: usize,
+}
+
+impl ParallelAcceleratorRunSummary {
+    pub const fn new(
+        scheduler_run: RecordedConservativeRunSummary,
+        trace_event_count: usize,
+        command_completion_count: usize,
+        pending_dma_write_count: usize,
+        dma_completion_count: usize,
+    ) -> Self {
+        Self {
+            scheduler_run,
+            trace_event_count,
+            command_completion_count,
+            pending_dma_write_count,
+            dma_completion_count,
+        }
+    }
+
+    pub const fn scheduler_run(&self) -> &RecordedConservativeRunSummary {
+        &self.scheduler_run
+    }
+
+    pub fn scheduler_epochs(&self) -> &[RecordedRunSummary] {
+        self.scheduler_run.epochs()
+    }
+
+    pub fn summary(&self) -> ConservativeRunSummary {
+        self.scheduler_run.summary()
+    }
+
+    pub fn profile(&self) -> ParallelRunProfile {
+        self.scheduler_run.profile()
+    }
+
+    pub fn epoch_count(&self) -> usize {
+        self.scheduler_run.epoch_count()
+    }
+
+    pub fn empty_epoch_count(&self) -> usize {
+        self.scheduler_run.empty_epoch_count()
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.scheduler_run.dispatch_count()
+    }
+
+    pub fn batch_count(&self) -> usize {
+        self.scheduler_run.batch_count()
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.scheduler_run.max_parallel_workers()
+    }
+
+    pub fn total_parallel_workers(&self) -> usize {
+        self.scheduler_run.total_parallel_workers()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.scheduler_run.has_parallel_work()
+    }
+
+    pub fn dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.scheduler_run.dispatches()
+    }
+
+    pub fn batches(&self) -> Vec<ParallelEpochBatchRecord> {
+        self.scheduler_run.batches()
+    }
+
+    pub fn executed_events(&self) -> usize {
+        self.summary().executed_events()
+    }
+
+    pub fn final_tick(&self) -> Tick {
+        self.summary().final_tick()
+    }
+
+    pub const fn trace_event_count(&self) -> usize {
+        self.trace_event_count
+    }
+
+    pub const fn command_completion_count(&self) -> usize {
+        self.command_completion_count
+    }
+
+    pub const fn pending_dma_write_count(&self) -> usize {
+        self.pending_dma_write_count
+    }
+
+    pub const fn dma_completion_count(&self) -> usize {
+        self.dma_completion_count
+    }
+
+    pub const fn device_activity_count(&self) -> usize {
+        self.trace_event_count
+            + self.command_completion_count
+            + self.pending_dma_write_count
+            + self.dma_completion_count
+    }
+
+    pub const fn has_device_activity(&self) -> bool {
+        self.device_activity_count() != 0
+    }
+
+    pub const fn has_command_activity(&self) -> bool {
+        self.command_completion_count != 0
+    }
+
+    pub const fn has_dma_activity(&self) -> bool {
+        self.pending_dma_write_count != 0 || self.dma_completion_count != 0
+    }
+}
+
 impl AcceleratorEngineSnapshot {
     pub fn new(
         lane_busy_until: Vec<Tick>,
@@ -700,6 +823,31 @@ impl AcceleratorEngine {
     pub fn restore(&self, snapshot: &AcceleratorEngineSnapshot) {
         *self.state.lock().expect("accelerator state lock") =
             AcceleratorEngineState::from_snapshot(snapshot);
+    }
+
+    pub fn run_until_idle_parallel_recorded(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<ParallelAcceleratorRunSummary, AcceleratorError> {
+        let before = self.snapshot();
+        let scheduler_run = scheduler
+            .run_until_idle_parallel_recorded()
+            .map_err(AcceleratorError::Scheduler)?;
+        let after = self.snapshot();
+
+        Ok(ParallelAcceleratorRunSummary::new(
+            scheduler_run,
+            after.trace().len().saturating_sub(before.trace().len()),
+            after
+                .completed()
+                .len()
+                .saturating_sub(before.completed().len()),
+            after.pending_dma_writes().len(),
+            after
+                .dma_completions()
+                .len()
+                .saturating_sub(before.dma_completions().len()),
+        ))
     }
 
     pub fn submit_dma_copy_read<F>(

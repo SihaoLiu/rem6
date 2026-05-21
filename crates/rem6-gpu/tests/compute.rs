@@ -1,9 +1,25 @@
 use rem6_gpu::{
-    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuError, GpuKernelId,
-    GpuKernelLaunch, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind,
+    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuDmaCompletion, GpuDmaCopy,
+    GpuDmaId, GpuError, GpuKernelId, GpuKernelLaunch, GpuPendingDmaWrite,
+    GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind,
     GpuWorkgroupCompletion, GpuWorkgroupId,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, LineMemoryStore, MemoryRequest, MemoryRequestId,
+};
+use rem6_transport::{
+    MemoryRoute, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportEndpointId,
+};
+use std::sync::{Arc, Mutex};
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
+}
+
+fn line_layout() -> CacheLineLayout {
+    CacheLineLayout::new(64).unwrap()
+}
 
 #[test]
 fn gpu_launch_runs_workgroups_on_compute_units_deterministically() {
@@ -16,9 +32,31 @@ fn gpu_launch_runs_workgroups_on_compute_units_deterministically() {
 
     gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 3, launch.clone())
         .unwrap();
-    let summary = scheduler.run_until_idle_parallel().unwrap();
+    let summary = gpu
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
 
     assert_eq!(summary.final_tick(), 16);
+    assert_eq!(summary.workgroup_completion_count(), 5);
+    assert_eq!(summary.dma_completion_count(), 0);
+    assert_eq!(summary.pending_dma_write_count(), 0);
+    assert_eq!(summary.trace_event_count(), 12);
+    assert_eq!(summary.scheduler_run().profile(), summary.profile());
+    assert_eq!(summary.profile().dispatch_count(), summary.dispatch_count());
+    assert_eq!(
+        summary.profile(),
+        ParallelRunProfile::new(
+            summary.epoch_count(),
+            summary.empty_epoch_count(),
+            summary.batch_count(),
+            summary.dispatch_count(),
+            summary.total_parallel_workers(),
+            summary.max_parallel_workers(),
+        )
+    );
+    assert!(summary.has_device_activity());
+    assert!(summary.has_compute_activity());
+    assert!(!summary.has_dma_activity());
     assert_eq!(
         gpu.completions(),
         vec![
@@ -281,5 +319,137 @@ fn gpu_device_restores_snapshot_state_and_slot_reservations() {
             GpuWorkgroupCompletion::new(GpuKernelId::new(30), GpuWorkgroupId::new(2), 0, 0, 6, 10,),
             GpuWorkgroupCompletion::new(GpuKernelId::new(32), GpuWorkgroupId::new(0), 1, 0, 6, 11,),
         ],
+    );
+}
+
+#[test]
+fn gpu_dma_copy_reports_recorded_parallel_activity() {
+    let gpu_partition = PartitionId::new(0);
+    let memory_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let gpu_endpoint = endpoint("gpu0.dma");
+    let memory_endpoint = endpoint("memory0.port");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                gpu_endpoint,
+                gpu_partition,
+                memory_endpoint,
+                memory_partition,
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(8), gpu_partition, 1, 1).unwrap());
+    let mut store = LineMemoryStore::new(line_layout());
+    let mut source_line = vec![0; 64];
+    source_line[8..12].copy_from_slice(&[0x10, 0x20, 0x30, 0x40]);
+    store
+        .insert_line(Address::new(0x1000), source_line)
+        .unwrap();
+    store
+        .insert_line(Address::new(0x2000), vec![0; 64])
+        .unwrap();
+    let store = Arc::new(Mutex::new(store));
+    let read_request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(8), 1),
+        Address::new(0x1008),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let copy = GpuDmaCopy::new(
+        GpuDmaId::new(30),
+        route,
+        read_request.clone(),
+        route,
+        MemoryRequestId::new(AgentId::new(8), 2),
+        Address::new(0x2004),
+    )
+    .unwrap();
+
+    let read_store = Arc::clone(&store);
+    gpu.submit_dma_copy_read(
+        &mut scheduler,
+        &transport,
+        copy.clone(),
+        trace.clone(),
+        move |delivery: RequestDelivery, _context| {
+            let response = read_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap();
+    let read_run = gpu
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    assert_eq!(read_run.dma_completion_count(), 0);
+    assert_eq!(read_run.pending_dma_write_count(), 1);
+    assert_eq!(read_run.trace_event_count(), 1);
+    assert!(read_run.has_dma_activity());
+    assert!(!read_run.has_compute_activity());
+    assert_eq!(
+        gpu.pending_dma_writes(),
+        vec![GpuPendingDmaWrite::new(
+            copy.clone(),
+            vec![0x10, 0x20, 0x30, 0x40],
+            4,
+        )]
+    );
+
+    let write_store = Arc::clone(&store);
+    assert!(gpu
+        .issue_next_dma_write(
+            &mut scheduler,
+            &transport,
+            trace.clone(),
+            move |delivery: RequestDelivery, _context| {
+                let response = write_store
+                    .lock()
+                    .unwrap()
+                    .respond(delivery.request())
+                    .unwrap()
+                    .unwrap();
+                TargetOutcome::Respond(response)
+            },
+        )
+        .unwrap()
+        .is_some());
+    let write_run = gpu
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    let destination = store
+        .lock()
+        .unwrap()
+        .line_data(Address::new(0x2000))
+        .unwrap();
+    assert_eq!(&destination[4..8], &[0x10, 0x20, 0x30, 0x40]);
+    assert!(gpu.pending_dma_writes().is_empty());
+    assert_eq!(write_run.dma_completion_count(), 1);
+    assert_eq!(write_run.pending_dma_write_count(), 0);
+    assert_eq!(write_run.trace_event_count(), 1);
+    assert!(write_run.has_dma_activity());
+    assert!(!write_run.has_compute_activity());
+    assert_eq!(
+        gpu.dma_completions(),
+        vec![GpuDmaCompletion::new(
+            GpuDmaId::new(30),
+            read_request.id(),
+            MemoryRequestId::new(AgentId::new(8), 2),
+            4,
+            8,
+        )]
     );
 }
