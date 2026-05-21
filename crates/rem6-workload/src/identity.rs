@@ -154,6 +154,17 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_accelerator_command_kind(hash, command.kind());
         hash_u64(hash, command.execution_latency());
     }
+    hash_u64(hash, topology.accelerator_dma_copies().len() as u64);
+    for copy in topology.accelerator_dma_copies() {
+        hash_str(hash, "accelerator.dma_copy");
+        hash_u64(hash, u64::from(copy.engine()));
+        hash_u64(hash, copy.transfer());
+        hash_str(hash, copy.route().as_str());
+        hash_u64(hash, u64::from(copy.agent()));
+        hash_u64(hash, copy.source().get());
+        hash_u64(hash, copy.destination().get());
+        hash_u64(hash, copy.bytes());
+    }
 }
 
 fn hash_accelerator_command_kind(hash: &mut u64, kind: &crate::WorkloadAcceleratorCommandKind) {

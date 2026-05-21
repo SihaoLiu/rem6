@@ -73,9 +73,9 @@ impl WorkloadGpuActivity {
 
 #[derive(Clone)]
 pub(crate) struct WorkloadAcceleratorRuntime {
-    engine: AcceleratorEngine,
-    source_partition: PartitionId,
-    submission_latency: u64,
+    pub(crate) engine: AcceleratorEngine,
+    pub(crate) source_partition: PartitionId,
+    pub(crate) submission_latency: u64,
 }
 
 impl WorkloadAcceleratorRuntime {

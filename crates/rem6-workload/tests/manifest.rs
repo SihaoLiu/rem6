@@ -7,12 +7,12 @@ use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
-    WorkloadAcceleratorDevice, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
-    WorkloadError, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
-    WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
-    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteId,
-    WorkloadTopology,
+    WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
+    WorkloadDataCacheProtocolCount, WorkloadError, WorkloadGpuDevice, WorkloadGpuDmaCopy,
+    WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -517,6 +517,171 @@ fn workload_topology_records_accelerator_devices_and_commands() {
         &WorkloadAcceleratorCommandKind::NpuInference { tiles: 4 }
     );
     assert_eq!(topology.accelerator_commands()[0].execution_latency(), 7);
+}
+
+#[test]
+fn workload_topology_records_accelerator_dma_copies() {
+    let topology = WorkloadTopology::new(5, 2, 2, WorkloadHostPlacement::new(4, 2, 11).unwrap())
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.dma"),
+                "accelerator0.dma",
+                3,
+                "memory",
+                2,
+                2,
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_dma_copy(
+            WorkloadAcceleratorDmaCopy::new(
+                22,
+                300,
+                route_id("accelerator0.dma"),
+                88,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(topology.accelerator_dma_copies().len(), 1);
+    assert_eq!(topology.accelerator_dma_copies()[0].engine(), 22);
+    assert_eq!(topology.accelerator_dma_copies()[0].transfer(), 300);
+    assert_eq!(
+        topology.accelerator_dma_copies()[0].route(),
+        &route_id("accelerator0.dma")
+    );
+    assert_eq!(topology.accelerator_dma_copies()[0].agent(), 88);
+    assert_eq!(
+        topology.accelerator_dma_copies()[0].source(),
+        Address::new(0x9024)
+    );
+    assert_eq!(
+        topology.accelerator_dma_copies()[0].destination(),
+        Address::new(0x9048)
+    );
+    assert_eq!(topology.accelerator_dma_copies()[0].bytes(), 4);
+}
+
+#[test]
+fn workload_topology_rejects_invalid_accelerator_dma_copies() {
+    assert_eq!(
+        WorkloadAcceleratorDmaCopy::new(
+            22,
+            300,
+            route_id("accelerator0.dma"),
+            88,
+            Address::new(0x9024),
+            Address::new(0x9048),
+            0,
+        )
+        .unwrap_err(),
+        WorkloadError::ZeroAcceleratorDmaCopyBytes {
+            engine: 22,
+            transfer: 300
+        }
+    );
+
+    let topology = WorkloadTopology::new(5, 2, 2, WorkloadHostPlacement::new(4, 2, 11).unwrap())
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.dma"),
+                "accelerator0.dma",
+                1,
+                "memory",
+                2,
+                2,
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        topology
+            .clone()
+            .add_accelerator_dma_copy(
+                WorkloadAcceleratorDmaCopy::new(
+                    22,
+                    300,
+                    route_id("missing.dma"),
+                    88,
+                    Address::new(0x9024),
+                    Address::new(0x9048),
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap_err(),
+        WorkloadError::MissingAcceleratorDmaRoute {
+            engine: 22,
+            route: route_id("missing.dma"),
+        }
+    );
+
+    assert_eq!(
+        topology
+            .add_accelerator_dma_copy(
+                WorkloadAcceleratorDmaCopy::new(
+                    22,
+                    300,
+                    route_id("accelerator0.dma"),
+                    88,
+                    Address::new(0x9024),
+                    Address::new(0x9048),
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap_err(),
+        WorkloadError::AcceleratorDmaRouteSourceMismatch {
+            engine: 22,
+            route: route_id("accelerator0.dma"),
+            expected: 3,
+            actual: 1,
+        }
+    );
 }
 
 #[test]

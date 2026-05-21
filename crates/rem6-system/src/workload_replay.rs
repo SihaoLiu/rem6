@@ -37,6 +37,9 @@ use rem6_workload::{
     WorkloadRouteId, WorkloadTopology,
 };
 
+mod workload_replay_dma;
+
+use self::workload_replay_dma::{run_accelerator_dma_copies, WorkloadAcceleratorDmaActivity};
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, build_accelerator_devices, build_gpu_devices, gpu_snapshots,
     schedule_accelerator_commands, schedule_gpu_kernel_launches, WorkloadAcceleratorActivity,
@@ -138,6 +141,13 @@ struct WorkloadGpuDmaActivity {
     copy_count: usize,
     completion_count: usize,
     active_device_count: usize,
+}
+
+struct WorkloadReplayActivityRefs<'a> {
+    gpu: &'a WorkloadGpuActivity,
+    gpu_dma: &'a WorkloadGpuDmaActivity,
+    accelerator: &'a WorkloadAcceleratorActivity,
+    accelerator_dma: &'a WorkloadAcceleratorDmaActivity,
 }
 
 enum WorkloadDataCacheHarness {
@@ -684,6 +694,13 @@ impl RiscvWorkloadReplay {
             self.run_gpu_dma_copies(topology, &route_map, &gpu_devices, &transport, &memory)?;
         let gpu_before = gpu_snapshots(&gpu_devices);
         let accelerator_devices = build_accelerator_devices(topology)?;
+        let accelerator_dma_activity = run_accelerator_dma_copies(
+            topology,
+            &route_map,
+            &accelerator_devices,
+            &transport,
+            &memory,
+        )?;
         let accelerator_before = accelerator_snapshots(&accelerator_devices);
         let cluster = self.build_cluster(&route_map)?;
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
@@ -786,9 +803,12 @@ impl RiscvWorkloadReplay {
             &run,
             &controller,
             topology,
-            &gpu_activity,
-            &gpu_dma_activity,
-            &accelerator_activity,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu_activity,
+                gpu_dma: &gpu_dma_activity,
+                accelerator: &accelerator_activity,
+                accelerator_dma: &accelerator_dma_activity,
+            },
         )?;
         self.plan
             .verify_result(&result)
@@ -1329,9 +1349,7 @@ impl RiscvWorkloadReplay {
         run: &RiscvSystemRun,
         controller: &Arc<Mutex<SystemHostController>>,
         topology: &WorkloadTopology,
-        gpu_activity: &WorkloadGpuActivity,
-        gpu_dma_activity: &WorkloadGpuDmaActivity,
-        accelerator_activity: &WorkloadAcceleratorActivity,
+        activities: WorkloadReplayActivityRefs<'_>,
     ) -> Result<(WorkloadResult, Vec<SystemActionOutcome>), RiscvWorkloadReplayError> {
         let final_tick = run
             .final_tick()
@@ -1356,11 +1374,7 @@ impl RiscvWorkloadReplay {
         Ok((
             result
                 .with_parallel_execution_summary(parallel_execution_summary(
-                    run,
-                    topology,
-                    gpu_activity,
-                    gpu_dma_activity,
-                    accelerator_activity,
+                    run, topology, activities,
                 ))
                 .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
             host_action_outcomes,
@@ -1371,9 +1385,7 @@ impl RiscvWorkloadReplay {
 fn parallel_execution_summary(
     run: &RiscvSystemRun,
     topology: &WorkloadTopology,
-    gpu_activity: &WorkloadGpuActivity,
-    gpu_dma_activity: &WorkloadGpuDmaActivity,
-    accelerator_activity: &WorkloadAcceleratorActivity,
+    activities: WorkloadReplayActivityRefs<'_>,
 ) -> WorkloadParallelExecutionSummary {
     let scheduler = run.parallel_scheduler_profile();
     let cpu_activities = run.cpu_activities();
@@ -1436,21 +1448,26 @@ fn parallel_execution_summary(
             run.data_cache_deadlock_diagnostic_count(),
         )
         .with_gpu_compute_counts(
-            gpu_activity.kernel_launch_count,
-            gpu_activity.trace_event_count,
-            gpu_activity.workgroup_completion_count,
-            gpu_activity.active_device_count,
+            activities.gpu.kernel_launch_count,
+            activities.gpu.trace_event_count,
+            activities.gpu.workgroup_completion_count,
+            activities.gpu.active_device_count,
         )
         .with_gpu_dma_counts(
-            gpu_dma_activity.copy_count,
-            gpu_dma_activity.completion_count,
-            gpu_dma_activity.active_device_count,
+            activities.gpu_dma.copy_count,
+            activities.gpu_dma.completion_count,
+            activities.gpu_dma.active_device_count,
         )
         .with_accelerator_compute_counts(
-            accelerator_activity.command_count,
-            accelerator_activity.trace_event_count,
-            accelerator_activity.completion_count,
-            accelerator_activity.active_device_count,
+            activities.accelerator.command_count,
+            activities.accelerator.trace_event_count,
+            activities.accelerator.completion_count,
+            activities.accelerator.active_device_count,
+        )
+        .with_accelerator_dma_counts(
+            activities.accelerator_dma.copy_count,
+            activities.accelerator_dma.completion_count,
+            activities.accelerator_dma.active_device_count,
         )
 }
 
@@ -1614,6 +1631,8 @@ pub enum RiscvWorkloadReplayError {
     MissingDataCacheResponse { request: MemoryRequestId },
     GpuDmaRequestSequenceOverflow { transfer: u64 },
     MissingGpuDmaWrite { device: GpuDeviceId },
+    AcceleratorDmaRequestSequenceOverflow { transfer: u64 },
+    MissingAcceleratorDmaWrite { engine: AcceleratorEngineId },
     MissingRoute { route: WorkloadRouteId },
     MissingFinalTick,
     Workload(WorkloadError),
@@ -1663,6 +1682,15 @@ impl fmt::Display for RiscvWorkloadReplayError {
                 formatter,
                 "workload replay GPU device {} has no pending DMA write",
                 device.get()
+            ),
+            Self::AcceleratorDmaRequestSequenceOverflow { transfer } => write!(
+                formatter,
+                "workload replay accelerator DMA transfer {transfer} cannot be mapped to request sequences"
+            ),
+            Self::MissingAcceleratorDmaWrite { engine } => write!(
+                formatter,
+                "workload replay accelerator engine {} has no pending DMA write",
+                engine.get()
             ),
             Self::MissingRoute { route } => {
                 write!(
@@ -1716,6 +1744,8 @@ impl Error for RiscvWorkloadReplayError {
             | Self::MissingDataCacheResponse { .. }
             | Self::GpuDmaRequestSequenceOverflow { .. }
             | Self::MissingGpuDmaWrite { .. }
+            | Self::AcceleratorDmaRequestSequenceOverflow { .. }
+            | Self::MissingAcceleratorDmaWrite { .. }
             | Self::MissingRoute { .. }
             | Self::MissingFinalTick => None,
         }

@@ -79,6 +79,9 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_trace_event_count: usize,
     accelerator_completion_count: usize,
     active_accelerator_device_count: usize,
+    accelerator_dma_copy_count: usize,
+    accelerator_dma_completion_count: usize,
+    active_accelerator_dma_device_count: usize,
 }
 
 impl WorkloadParallelExecutionSummary {
@@ -214,6 +217,18 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_trace_event_count = trace_event_count;
         self.accelerator_completion_count = completion_count;
         self.active_accelerator_device_count = active_device_count;
+        self
+    }
+
+    pub const fn with_accelerator_dma_counts(
+        mut self,
+        copy_count: usize,
+        completion_count: usize,
+        active_device_count: usize,
+    ) -> Self {
+        self.accelerator_dma_copy_count = copy_count;
+        self.accelerator_dma_completion_count = completion_count;
+        self.active_accelerator_dma_device_count = active_device_count;
         self
     }
 
@@ -414,6 +429,22 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_command_count != 0
             || self.accelerator_trace_event_count != 0
             || self.accelerator_completion_count != 0
+    }
+
+    pub const fn accelerator_dma_copy_count(&self) -> usize {
+        self.accelerator_dma_copy_count
+    }
+
+    pub const fn accelerator_dma_completion_count(&self) -> usize {
+        self.accelerator_dma_completion_count
+    }
+
+    pub const fn active_accelerator_dma_device_count(&self) -> usize {
+        self.active_accelerator_dma_device_count
+    }
+
+    pub const fn has_accelerator_dma_activity(&self) -> bool {
+        self.accelerator_dma_copy_count != 0 || self.accelerator_dma_completion_count != 0
     }
 
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {

@@ -170,6 +170,71 @@ impl WorkloadGpuDmaCopy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadAcceleratorDmaCopy {
+    engine: u32,
+    transfer: u64,
+    route: WorkloadRouteId,
+    agent: u32,
+    source: Address,
+    destination: Address,
+    bytes: u64,
+}
+
+impl WorkloadAcceleratorDmaCopy {
+    pub fn new(
+        engine: u32,
+        transfer: u64,
+        route: WorkloadRouteId,
+        agent: u32,
+        source: Address,
+        destination: Address,
+        bytes: u64,
+    ) -> Result<Self, WorkloadError> {
+        if bytes == 0 {
+            return Err(WorkloadError::ZeroAcceleratorDmaCopyBytes { engine, transfer });
+        }
+
+        Ok(Self {
+            engine,
+            transfer,
+            route,
+            agent,
+            source,
+            destination,
+            bytes,
+        })
+    }
+
+    pub const fn engine(&self) -> u32 {
+        self.engine
+    }
+
+    pub const fn transfer(&self) -> u64 {
+        self.transfer
+    }
+
+    pub const fn route(&self) -> &WorkloadRouteId {
+        &self.route
+    }
+
+    pub const fn agent(&self) -> u32 {
+        self.agent
+    }
+
+    pub const fn source(&self) -> Address {
+        self.source
+    }
+
+    pub const fn destination(&self) -> Address {
+        self.destination
+    }
+
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadAcceleratorDevice {
     engine: u32,
     partition: u32,

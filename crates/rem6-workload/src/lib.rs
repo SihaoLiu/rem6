@@ -13,7 +13,7 @@ mod result;
 
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
-    WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
+    WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
 };
 use identity::manifest_identity;
 pub use result::{
@@ -497,6 +497,7 @@ pub struct WorkloadTopology {
     gpu_dma_copies: Vec<WorkloadGpuDmaCopy>,
     accelerator_devices: Vec<WorkloadAcceleratorDevice>,
     accelerator_commands: Vec<WorkloadAcceleratorCommand>,
+    accelerator_dma_copies: Vec<WorkloadAcceleratorDmaCopy>,
 }
 
 impl WorkloadTopology {
@@ -536,6 +537,7 @@ impl WorkloadTopology {
             gpu_dma_copies: Vec::new(),
             accelerator_devices: Vec::new(),
             accelerator_commands: Vec::new(),
+            accelerator_dma_copies: Vec::new(),
         })
     }
 
@@ -756,6 +758,40 @@ impl WorkloadTopology {
         Ok(self)
     }
 
+    pub fn add_accelerator_dma_copy(
+        mut self,
+        copy: WorkloadAcceleratorDmaCopy,
+    ) -> Result<Self, WorkloadError> {
+        let device = self
+            .accelerator_devices
+            .iter()
+            .find(|device| device.engine() == copy.engine())
+            .ok_or_else(|| WorkloadError::MissingAcceleratorDevice {
+                engine: copy.engine(),
+            })?;
+        let route = self
+            .memory_routes
+            .iter()
+            .find(|route| route.id() == copy.route())
+            .ok_or_else(|| WorkloadError::MissingAcceleratorDmaRoute {
+                engine: copy.engine(),
+                route: copy.route().clone(),
+            })?;
+        if route.source_partition() != device.partition() {
+            return Err(WorkloadError::AcceleratorDmaRouteSourceMismatch {
+                engine: copy.engine(),
+                route: copy.route().clone(),
+                expected: device.partition(),
+                actual: route.source_partition(),
+            });
+        }
+
+        self.accelerator_dma_copies.push(copy);
+        self.accelerator_dma_copies
+            .sort_by_key(|copy| (copy.engine(), copy.transfer()));
+        Ok(self)
+    }
+
     pub fn with_riscv_data_cache(
         mut self,
         cache: WorkloadRiscvDataCache,
@@ -832,6 +868,10 @@ impl WorkloadTopology {
 
     pub fn accelerator_commands(&self) -> &[WorkloadAcceleratorCommand] {
         &self.accelerator_commands
+    }
+
+    pub fn accelerator_dma_copies(&self) -> &[WorkloadAcceleratorDmaCopy] {
+        &self.accelerator_dma_copies
     }
 
     fn validate_partition(&self, partition: u32) -> Result<(), WorkloadError> {
@@ -1518,6 +1558,20 @@ pub enum WorkloadError {
     ZeroAcceleratorDmaBytes {
         engine: u32,
         command: u64,
+    },
+    ZeroAcceleratorDmaCopyBytes {
+        engine: u32,
+        transfer: u64,
+    },
+    MissingAcceleratorDmaRoute {
+        engine: u32,
+        route: WorkloadRouteId,
+    },
+    AcceleratorDmaRouteSourceMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
     },
     ManifestIdentityMismatch {
         expected: WorkloadManifestIdentity,

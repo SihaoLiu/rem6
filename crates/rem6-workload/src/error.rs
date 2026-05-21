@@ -202,6 +202,25 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "accelerator command {command} on engine {engine} needs at least one DMA byte"
             ),
+            Self::ZeroAcceleratorDmaCopyBytes { engine, transfer } => write!(
+                formatter,
+                "accelerator DMA transfer {transfer} on engine {engine} needs at least one byte"
+            ),
+            Self::MissingAcceleratorDmaRoute { engine, route } => write!(
+                formatter,
+                "accelerator engine {engine} DMA route {} is not defined",
+                route.as_str()
+            ),
+            Self::AcceleratorDmaRouteSourceMismatch {
+                engine,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "accelerator engine {engine} DMA route {} starts on partition {actual}, expected {expected}",
+                route.as_str()
+            ),
             Self::ManifestIdentityMismatch { expected, actual } => write!(
                 formatter,
                 "workload result belongs to manifest {}, expected {}",
