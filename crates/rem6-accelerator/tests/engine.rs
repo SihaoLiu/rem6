@@ -1,9 +1,27 @@
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
-    AcceleratorEngine, AcceleratorEngineConfig, AcceleratorEngineId, AcceleratorError,
-    AcceleratorTraceEvent, AcceleratorTraceKind,
+    AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngine, AcceleratorEngineConfig,
+    AcceleratorEngineId, AcceleratorError, AcceleratorPendingDmaWrite, AcceleratorTraceEvent,
+    AcceleratorTraceKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryRequest,
+    MemoryRequestId,
+};
+use rem6_transport::{
+    MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, RequestDelivery,
+    TargetOutcome, TransportEndpointId,
+};
+use std::sync::{Arc, Mutex};
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
+}
+
+fn line_layout() -> CacheLineLayout {
+    CacheLineLayout::new(64).unwrap()
+}
 
 #[test]
 fn accelerator_engine_dispatches_remote_commands_on_parallel_scheduler_partition() {
@@ -107,6 +125,236 @@ fn accelerator_engine_dispatches_remote_commands_on_parallel_scheduler_partition
                 7,
             ),
         ],
+    );
+}
+
+#[test]
+fn accelerator_dma_copy_uses_parallel_memory_transport() {
+    let accelerator_partition = PartitionId::new(0);
+    let memory_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let accelerator = endpoint("accelerator0.dma");
+    let memory = endpoint("memory0.port");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                accelerator.clone(),
+                accelerator_partition,
+                memory.clone(),
+                memory_partition,
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let engine = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(9), accelerator_partition, 1)
+            .unwrap(),
+    );
+    let mut store = LineMemoryStore::new(line_layout());
+    let mut source_line = vec![0; 64];
+    source_line[8..12].copy_from_slice(&[0x10, 0x20, 0x30, 0x40]);
+    store
+        .insert_line(Address::new(0x1000), source_line)
+        .unwrap();
+    store
+        .insert_line(Address::new(0x2000), vec![0; 64])
+        .unwrap();
+    let store = Arc::new(Mutex::new(store));
+    let read_request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(9), 1),
+        Address::new(0x1008),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let copy = AcceleratorDmaCopy::new(
+        AcceleratorCommandId::new(30),
+        route,
+        read_request.clone(),
+        route,
+        MemoryRequestId::new(AgentId::new(9), 2),
+        Address::new(0x2004),
+    )
+    .unwrap();
+
+    let read_store = Arc::clone(&store);
+    engine
+        .submit_dma_copy_read(
+            &mut scheduler,
+            &transport,
+            copy.clone(),
+            trace.clone(),
+            move |delivery: RequestDelivery, _context| {
+                let response = read_store
+                    .lock()
+                    .unwrap()
+                    .respond(delivery.request())
+                    .unwrap()
+                    .unwrap();
+                TargetOutcome::Respond(response)
+            },
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        engine.pending_dma_writes(),
+        vec![AcceleratorPendingDmaWrite::new(
+            copy.clone(),
+            vec![0x10, 0x20, 0x30, 0x40],
+            4,
+        )]
+    );
+
+    let write_store = Arc::clone(&store);
+    assert!(engine
+        .issue_next_dma_write(
+            &mut scheduler,
+            &transport,
+            trace.clone(),
+            move |delivery: RequestDelivery, _context| {
+                let response = write_store
+                    .lock()
+                    .unwrap()
+                    .respond(delivery.request())
+                    .unwrap()
+                    .unwrap();
+                TargetOutcome::Respond(response)
+            },
+        )
+        .unwrap()
+        .is_some());
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let destination = store
+        .lock()
+        .unwrap()
+        .line_data(Address::new(0x2000))
+        .unwrap();
+    assert_eq!(&destination[4..8], &[0x10, 0x20, 0x30, 0x40]);
+    assert!(engine.pending_dma_writes().is_empty());
+    assert_eq!(
+        engine.dma_completions(),
+        vec![AcceleratorDmaCompletion::new(
+            AcceleratorCommandId::new(30),
+            read_request.id(),
+            MemoryRequestId::new(AgentId::new(9), 2),
+            4,
+            8,
+        )]
+    );
+    assert_eq!(
+        engine.trace(),
+        vec![
+            AcceleratorTraceEvent::new(
+                0,
+                AcceleratorTraceKind::DmaReadIssued {
+                    command: AcceleratorCommandId::new(30),
+                    request: read_request.id(),
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                4,
+                AcceleratorTraceKind::DmaReadCompleted {
+                    command: AcceleratorCommandId::new(30),
+                    request: read_request.id(),
+                    bytes: 4,
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                4,
+                AcceleratorTraceKind::DmaWriteIssued {
+                    command: AcceleratorCommandId::new(30),
+                    request: MemoryRequestId::new(AgentId::new(9), 2),
+                },
+            ),
+            AcceleratorTraceEvent::new(
+                8,
+                AcceleratorTraceKind::DmaWriteCompleted {
+                    command: AcceleratorCommandId::new(30),
+                    request: MemoryRequestId::new(AgentId::new(9), 2),
+                },
+            ),
+        ],
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                accelerator.clone(),
+                MemoryTraceKind::RequestSent,
+                read_request.id(),
+            ),
+            MemoryTraceEvent::request(
+                2,
+                route,
+                memory.clone(),
+                MemoryTraceKind::RequestArrived,
+                read_request.id(),
+            ),
+            MemoryTraceEvent::response(
+                4,
+                route,
+                accelerator.clone(),
+                read_request.id(),
+                rem6_memory::ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::request(
+                4,
+                route,
+                accelerator,
+                MemoryTraceKind::RequestSent,
+                MemoryRequestId::new(AgentId::new(9), 2),
+            ),
+            MemoryTraceEvent::request(
+                6,
+                route,
+                memory,
+                MemoryTraceKind::RequestArrived,
+                MemoryRequestId::new(AgentId::new(9), 2),
+            ),
+            MemoryTraceEvent::response(
+                8,
+                route,
+                endpoint("accelerator0.dma"),
+                MemoryRequestId::new(AgentId::new(9), 2),
+                rem6_memory::ResponseStatus::Completed,
+            ),
+        ],
+    );
+}
+
+#[test]
+fn accelerator_dma_copy_rejects_requests_without_return_data() {
+    let request = MemoryRequest::write(
+        MemoryRequestId::new(AgentId::new(4), 1),
+        Address::new(0x3000),
+        AccessSize::new(4).unwrap(),
+        vec![1, 2, 3, 4],
+        ByteMask::full(AccessSize::new(4).unwrap()).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        AcceleratorDmaCopy::new(
+            AcceleratorCommandId::new(31),
+            rem6_transport::MemoryRouteId::new(0),
+            request.clone(),
+            rem6_transport::MemoryRouteId::new(0),
+            MemoryRequestId::new(AgentId::new(4), 2),
+            Address::new(0x4000),
+        ),
+        Err(AcceleratorError::DmaReadRequiresData {
+            command: AcceleratorCommandId::new(31),
+            request: request.id(),
+        }),
     );
 }
 

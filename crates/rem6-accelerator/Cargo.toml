@@ -7,6 +7,8 @@ repository.workspace = true
 
 [dependencies]
 rem6-kernel = { path = "../rem6-kernel" }
+rem6-memory = { path = "../rem6-memory" }
+rem6-transport = { path = "../rem6-transport" }
 
 [lints]
 workspace = true

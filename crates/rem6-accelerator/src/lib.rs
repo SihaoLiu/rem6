@@ -6,6 +6,11 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick,
 };
+use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
+use rem6_transport::{
+    MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
+    TransportError,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AcceleratorEngineId(u32);
@@ -116,10 +121,23 @@ impl AcceleratorEngineConfig {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AcceleratorError {
-    ZeroLanes { engine: AcceleratorEngineId },
-    ZeroExecutionLatency { command: AcceleratorCommandId },
-    TickOverflow { now: Tick, delay: Tick },
+    ZeroLanes {
+        engine: AcceleratorEngineId,
+    },
+    ZeroExecutionLatency {
+        command: AcceleratorCommandId,
+    },
+    DmaReadRequiresData {
+        command: AcceleratorCommandId,
+        request: MemoryRequestId,
+    },
+    TickOverflow {
+        now: Tick,
+        delay: Tick,
+    },
+    Memory(MemoryError),
     Scheduler(SchedulerError),
+    Transport(TransportError),
 }
 
 impl fmt::Display for AcceleratorError {
@@ -137,10 +155,19 @@ impl fmt::Display for AcceleratorError {
                 "accelerator command {} needs positive execution latency",
                 command.get()
             ),
+            Self::DmaReadRequiresData { command, request } => write!(
+                formatter,
+                "accelerator command {} DMA read request {} from agent {} must return data",
+                command.get(),
+                request.sequence(),
+                request.agent().get(),
+            ),
             Self::TickOverflow { now, delay } => {
                 write!(formatter, "tick {now} overflows when adding delay {delay}")
             }
+            Self::Memory(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -148,7 +175,9 @@ impl fmt::Display for AcceleratorError {
 impl Error for AcceleratorError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            Self::Transport(error) => Some(error),
             _ => None,
         }
     }
@@ -189,6 +218,23 @@ pub enum AcceleratorTraceKind {
     Completed {
         command: AcceleratorCommandId,
         lane: u32,
+    },
+    DmaReadIssued {
+        command: AcceleratorCommandId,
+        request: MemoryRequestId,
+    },
+    DmaReadCompleted {
+        command: AcceleratorCommandId,
+        request: MemoryRequestId,
+        bytes: u64,
+    },
+    DmaWriteIssued {
+        command: AcceleratorCommandId,
+        request: MemoryRequestId,
+    },
+    DmaWriteCompleted {
+        command: AcceleratorCommandId,
+        request: MemoryRequestId,
     },
 }
 
@@ -236,6 +282,155 @@ impl AcceleratorCompletion {
 
     pub const fn completed_at(&self) -> Tick {
         self.completed_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceleratorDmaCopy {
+    command: AcceleratorCommandId,
+    read_route: MemoryRouteId,
+    read_request: MemoryRequest,
+    write_route: MemoryRouteId,
+    write_request: MemoryRequestId,
+    destination: Address,
+}
+
+impl AcceleratorDmaCopy {
+    pub fn new(
+        command: AcceleratorCommandId,
+        read_route: MemoryRouteId,
+        read_request: MemoryRequest,
+        write_route: MemoryRouteId,
+        write_request: MemoryRequestId,
+        destination: Address,
+    ) -> Result<Self, AcceleratorError> {
+        if !read_request.returns_data() {
+            return Err(AcceleratorError::DmaReadRequiresData {
+                command,
+                request: read_request.id(),
+            });
+        }
+
+        Ok(Self {
+            command,
+            read_route,
+            read_request,
+            write_route,
+            write_request,
+            destination,
+        })
+    }
+
+    pub const fn command(&self) -> AcceleratorCommandId {
+        self.command
+    }
+
+    pub const fn read_route(&self) -> MemoryRouteId {
+        self.read_route
+    }
+
+    pub const fn read_request(&self) -> &MemoryRequest {
+        &self.read_request
+    }
+
+    pub const fn write_route(&self) -> MemoryRouteId {
+        self.write_route
+    }
+
+    pub const fn write_request(&self) -> MemoryRequestId {
+        self.write_request
+    }
+
+    pub const fn destination(&self) -> Address {
+        self.destination
+    }
+
+    fn make_write_request(&self, data: Vec<u8>) -> Result<MemoryRequest, AcceleratorError> {
+        MemoryRequest::write(
+            self.write_request,
+            self.destination,
+            self.read_request.size(),
+            data,
+            ByteMask::full(self.read_request.size()).map_err(AcceleratorError::Memory)?,
+            self.read_request.line_layout(),
+        )
+        .map_err(AcceleratorError::Memory)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceleratorPendingDmaWrite {
+    copy: AcceleratorDmaCopy,
+    data: Vec<u8>,
+    read_completed_at: Tick,
+}
+
+impl AcceleratorPendingDmaWrite {
+    pub fn new(copy: AcceleratorDmaCopy, data: Vec<u8>, read_completed_at: Tick) -> Self {
+        Self {
+            copy,
+            data,
+            read_completed_at,
+        }
+    }
+
+    pub const fn copy(&self) -> &AcceleratorDmaCopy {
+        &self.copy
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub const fn read_completed_at(&self) -> Tick {
+        self.read_completed_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceleratorDmaCompletion {
+    command: AcceleratorCommandId,
+    read_request: MemoryRequestId,
+    write_request: MemoryRequestId,
+    read_completed_at: Tick,
+    write_completed_at: Tick,
+}
+
+impl AcceleratorDmaCompletion {
+    pub const fn new(
+        command: AcceleratorCommandId,
+        read_request: MemoryRequestId,
+        write_request: MemoryRequestId,
+        read_completed_at: Tick,
+        write_completed_at: Tick,
+    ) -> Self {
+        Self {
+            command,
+            read_request,
+            write_request,
+            read_completed_at,
+            write_completed_at,
+        }
+    }
+
+    pub const fn command(&self) -> AcceleratorCommandId {
+        self.command
+    }
+
+    pub const fn read_request(&self) -> MemoryRequestId {
+        self.read_request
+    }
+
+    pub const fn write_request(&self) -> MemoryRequestId {
+        self.write_request
+    }
+
+    pub const fn read_completed_at(&self) -> Tick {
+        self.read_completed_at
+    }
+
+    pub const fn write_completed_at(&self) -> Tick {
+        self.write_completed_at
     }
 }
 
@@ -317,6 +512,111 @@ impl AcceleratorEngine {
             .expect("accelerator state lock")
             .completed
             .clone()
+    }
+
+    pub fn pending_dma_writes(&self) -> Vec<AcceleratorPendingDmaWrite> {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .pending_dma_writes
+            .clone()
+    }
+
+    pub fn dma_completions(&self) -> Vec<AcceleratorDmaCompletion> {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .dma_completions
+            .clone()
+    }
+
+    pub fn submit_dma_copy_read<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        copy: AcceleratorDmaCopy,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<PartitionEventId, AcceleratorError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let command = copy.command();
+        let request = copy.read_request().id();
+        let read_request = copy.read_request().clone();
+        let sink_engine = self.clone();
+        let sink_copy = copy.clone();
+        let event = transport
+            .submit_parallel(
+                scheduler,
+                copy.read_route(),
+                read_request,
+                trace,
+                responder,
+                move |delivery| sink_engine.accept_dma_read_response(sink_copy, delivery),
+            )
+            .map_err(AcceleratorError::Transport)?;
+        self.record(AcceleratorTraceEvent::new(
+            scheduler.now(),
+            AcceleratorTraceKind::DmaReadIssued { command, request },
+        ));
+        Ok(event)
+    }
+
+    pub fn issue_next_dma_write<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<PartitionEventId>, AcceleratorError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let Some(pending) = self.pop_pending_dma_write() else {
+            return Ok(None);
+        };
+        let write_request = match pending.copy.make_write_request(pending.data.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.push_pending_dma_write(pending);
+                return Err(error);
+            }
+        };
+        let command = pending.copy.command();
+        let request = write_request.id();
+        let sink_engine = self.clone();
+        let completion = AcceleratorDmaCompletion::new(
+            command,
+            pending.copy.read_request().id(),
+            write_request.id(),
+            pending.read_completed_at(),
+            0,
+        );
+        let route = pending.copy.write_route();
+        let event = match transport.submit_parallel(
+            scheduler,
+            route,
+            write_request,
+            trace,
+            responder,
+            move |delivery| sink_engine.accept_dma_write_response(completion, delivery),
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                self.push_pending_dma_write(pending);
+                return Err(AcceleratorError::Transport(error));
+            }
+        };
+        self.record(AcceleratorTraceEvent::new(
+            scheduler.now(),
+            AcceleratorTraceKind::DmaWriteIssued { command, request },
+        ));
+        Ok(Some(event))
     }
 
     fn accept_on_partition(
@@ -413,6 +713,58 @@ impl AcceleratorEngine {
             .trace
             .push(event);
     }
+
+    fn accept_dma_read_response(&self, copy: AcceleratorDmaCopy, delivery: ResponseDelivery) {
+        if let Some(data) = response_data(delivery.response()) {
+            let bytes = data.len() as u64;
+            let mut state = self.state.lock().expect("accelerator state lock");
+            state.trace.push(AcceleratorTraceEvent::new(
+                delivery.tick(),
+                AcceleratorTraceKind::DmaReadCompleted {
+                    command: copy.command(),
+                    request: copy.read_request().id(),
+                    bytes,
+                },
+            ));
+            state
+                .pending_dma_writes
+                .push(AcceleratorPendingDmaWrite::new(copy, data, delivery.tick()));
+        }
+    }
+
+    fn accept_dma_write_response(
+        &self,
+        mut completion: AcceleratorDmaCompletion,
+        delivery: ResponseDelivery,
+    ) {
+        completion.write_completed_at = delivery.tick();
+        let mut state = self.state.lock().expect("accelerator state lock");
+        state.trace.push(AcceleratorTraceEvent::new(
+            delivery.tick(),
+            AcceleratorTraceKind::DmaWriteCompleted {
+                command: completion.command(),
+                request: completion.write_request(),
+            },
+        ));
+        state.dma_completions.push(completion);
+    }
+
+    fn pop_pending_dma_write(&self) -> Option<AcceleratorPendingDmaWrite> {
+        let mut state = self.state.lock().expect("accelerator state lock");
+        if state.pending_dma_writes.is_empty() {
+            None
+        } else {
+            Some(state.pending_dma_writes.remove(0))
+        }
+    }
+
+    fn push_pending_dma_write(&self, pending: AcceleratorPendingDmaWrite) {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .pending_dma_writes
+            .insert(0, pending);
+    }
 }
 
 impl fmt::Debug for AcceleratorEngine {
@@ -438,6 +790,8 @@ struct AcceleratorEngineState {
     lane_busy_until: Vec<Tick>,
     trace: Vec<AcceleratorTraceEvent>,
     completed: Vec<AcceleratorCompletion>,
+    pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
+    dma_completions: Vec<AcceleratorDmaCompletion>,
 }
 
 impl AcceleratorEngineState {
@@ -446,8 +800,14 @@ impl AcceleratorEngineState {
             lane_busy_until: vec![0; lanes as usize],
             trace: Vec::new(),
             completed: Vec::new(),
+            pending_dma_writes: Vec::new(),
+            dma_completions: Vec::new(),
         }
     }
+}
+
+fn response_data(response: &MemoryResponse) -> Option<Vec<u8>> {
+    response.data().map(<[u8]>::to_vec)
 }
 
 fn validate_submission_latency(
