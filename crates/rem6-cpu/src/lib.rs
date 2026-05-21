@@ -29,6 +29,7 @@ mod indirect_target_predictor;
 mod riscv_activity;
 mod riscv_cluster;
 mod topology;
+mod tournament_predictor;
 
 pub use bimode_predictor::{
     BiModeBranchPredictor, BiModeBranchPredictorConfig, BiModeBranchPredictorError,
@@ -62,6 +63,12 @@ pub use riscv_cluster::{
     RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
 };
 pub use topology::{CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
+pub use tournament_predictor::{
+    TournamentBranchPredictor, TournamentBranchPredictorConfig, TournamentBranchPredictorError,
+    TournamentBranchPredictorSnapshot, TournamentHistory, TournamentHistoryUpdate,
+    TournamentPrediction, TournamentPredictorSelection, TournamentSquash, TournamentThreadSnapshot,
+    TournamentTrainingUpdate,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CpuId(u32);
