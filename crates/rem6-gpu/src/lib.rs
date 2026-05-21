@@ -7,6 +7,12 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick,
 };
+use rem6_topology::{Endpoint, TopologyError};
+use rem6_transport::TopologyRouteError;
+
+mod topology;
+
+pub use topology::{GpuCommandPath, GpuTopologyConfig, GpuTopologyDevice};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GpuDeviceId(u32);
@@ -142,12 +148,30 @@ impl GpuKernelLaunch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GpuError {
-    ZeroComputeUnits { device: GpuDeviceId },
-    ZeroWaveSlots { device: GpuDeviceId },
-    ZeroWorkgroups { kernel: GpuKernelId },
-    ZeroWorkgroupLatency { kernel: GpuKernelId },
-    TickOverflow { now: Tick, delay: Tick },
+    ZeroComputeUnits {
+        device: GpuDeviceId,
+    },
+    ZeroWaveSlots {
+        device: GpuDeviceId,
+    },
+    ZeroWorkgroups {
+        kernel: GpuKernelId,
+    },
+    ZeroWorkgroupLatency {
+        kernel: GpuKernelId,
+    },
+    CommandTargetPartitionMismatch {
+        endpoint: Endpoint,
+        expected: PartitionId,
+        actual: PartitionId,
+    },
+    TickOverflow {
+        now: Tick,
+        delay: Tick,
+    },
     Scheduler(SchedulerError),
+    Topology(TopologyError),
+    TopologyRoute(TopologyRouteError),
 }
 
 impl fmt::Display for GpuError {
@@ -175,10 +199,24 @@ impl fmt::Display for GpuError {
                 "GPU kernel {} needs positive workgroup latency",
                 kernel.get()
             ),
+            Self::CommandTargetPartitionMismatch {
+                endpoint,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "command endpoint {}.{} is on partition {} but GPU partition is {}",
+                endpoint.component().as_str(),
+                endpoint.port().as_str(),
+                actual.index(),
+                expected.index()
+            ),
             Self::TickOverflow { now, delay } => {
                 write!(formatter, "tick {now} overflows when adding delay {delay}")
             }
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Topology(error) => write!(formatter, "{error}"),
+            Self::TopologyRoute(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -187,6 +225,8 @@ impl Error for GpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Scheduler(error) => Some(error),
+            Self::Topology(error) => Some(error),
+            Self::TopologyRoute(error) => Some(error),
             _ => None,
         }
     }
@@ -292,7 +332,7 @@ impl GpuWorkgroupCompletion {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GpuDevice {
     config: GpuComputeConfig,
     state: Arc<Mutex<GpuDeviceState>>,

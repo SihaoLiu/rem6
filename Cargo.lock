@@ -95,6 +95,8 @@ name = "rem6-gpu"
 version = "0.1.0"
 dependencies = [
  "rem6-kernel",
+ "rem6-topology",
+ "rem6-transport",
 ]
 
 [[package]]
@@ -170,6 +172,7 @@ dependencies = [
  "rem6-cpu",
  "rem6-dram",
  "rem6-fabric",
+ "rem6-gpu",
  "rem6-interrupt",
  "rem6-isa-riscv",
  "rem6-kernel",

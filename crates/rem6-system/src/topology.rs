@@ -14,6 +14,7 @@ use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
 };
 use rem6_fabric::FabricModel;
+use rem6_gpu::{GpuDeviceId, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick,
@@ -45,6 +46,7 @@ pub struct RiscvTopologySystem {
     transport: MemoryTransport,
     cluster: RiscvCluster,
     accelerators: BTreeMap<AcceleratorEngineId, AcceleratorTopologyDevice>,
+    gpus: BTreeMap<GpuDeviceId, GpuTopologyDevice>,
     platform: Option<Platform>,
     memory: Option<RiscvTopologyMemoryBackend>,
     host: Option<RiscvTopologyHost>,
@@ -396,6 +398,7 @@ impl RiscvTopologySystem {
             transport,
             cluster,
             accelerators: BTreeMap::new(),
+            gpus: BTreeMap::new(),
             platform: None,
             memory: None,
             host: None,
@@ -415,6 +418,18 @@ impl RiscvTopologySystem {
             AcceleratorTopologyDevice::from_topology(&self.topology, &mut self.transport, config)
                 .map_err(RiscvTopologySystemError::Accelerator)?;
         self.accelerators.insert(engine, device);
+        Ok(self)
+    }
+
+    pub fn with_gpu(mut self, config: GpuTopologyConfig) -> Result<Self, RiscvTopologySystemError> {
+        let device_id = config.compute().device();
+        if self.gpus.contains_key(&device_id) {
+            return Err(RiscvTopologySystemError::DuplicateGpu { device: device_id });
+        }
+
+        let device = GpuTopologyDevice::from_topology(&self.topology, config)
+            .map_err(RiscvTopologySystemError::Gpu)?;
+        self.gpus.insert(device_id, device);
         Ok(self)
     }
 
@@ -558,6 +573,14 @@ impl RiscvTopologySystem {
             .map(|(engine, device)| (*engine, device))
     }
 
+    pub fn gpu(&self, device: GpuDeviceId) -> Option<&GpuTopologyDevice> {
+        self.gpus.get(&device)
+    }
+
+    pub fn gpus(&self) -> impl Iterator<Item = (GpuDeviceId, &GpuTopologyDevice)> {
+        self.gpus.iter().map(|(device, gpu)| (*device, gpu))
+    }
+
     pub const fn platform(&self) -> Option<&Platform> {
         self.platform.as_ref()
     }
@@ -687,6 +710,19 @@ impl RiscvTopologySystem {
         device
             .submit_command(&mut self.scheduler, command)
             .map_err(RiscvTopologySystemError::Accelerator)
+    }
+
+    pub fn submit_gpu_kernel_parallel(
+        &mut self,
+        device: GpuDeviceId,
+        launch: GpuKernelLaunch,
+    ) -> Result<PartitionEventId, RiscvTopologySystemError> {
+        let gpu = self
+            .gpus
+            .get(&device)
+            .ok_or(RiscvTopologySystemError::UnknownGpu { device })?;
+        gpu.submit_kernel(&mut self.scheduler, launch)
+            .map_err(RiscvTopologySystemError::Gpu)
     }
 
     pub fn drive_until_host_stop_parallel<E>(
@@ -917,11 +953,14 @@ pub enum RiscvTopologySystemError {
     DuplicateAccelerator { engine: AcceleratorEngineId },
     UnknownAccelerator { engine: AcceleratorEngineId },
     AcceleratorDmaWriteNotReady { engine: AcceleratorEngineId },
+    DuplicateGpu { device: GpuDeviceId },
+    UnknownGpu { device: GpuDeviceId },
     PlatformPartitionMismatch { topology: u32, platform: u32 },
     HostPartitionOutOfRange { host: PartitionId, partitions: u32 },
     MissingMemoryStore,
     MissingHostController,
     Accelerator(AcceleratorError),
+    Gpu(GpuError),
     Memory(MemoryError),
     Dram(DramMemoryError),
     Boot(BootError),
@@ -944,6 +983,12 @@ impl fmt::Display for RiscvTopologySystemError {
                 "accelerator engine {} has no completed DMA read to write",
                 engine.get()
             ),
+            Self::DuplicateGpu { device } => {
+                write!(formatter, "GPU device {} is already attached", device.get())
+            }
+            Self::UnknownGpu { device } => {
+                write!(formatter, "GPU device {} is not attached", device.get())
+            }
             Self::PlatformPartitionMismatch { topology, platform } => write!(
                 formatter,
                 "platform partition count {platform} does not match topology partition count {topology}"
@@ -958,6 +1003,7 @@ impl fmt::Display for RiscvTopologySystemError {
                 write!(formatter, "topology system has no host controller")
             }
             Self::Accelerator(error) => write!(formatter, "{error}"),
+            Self::Gpu(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
@@ -974,11 +1020,14 @@ impl Error for RiscvTopologySystemError {
             Self::DuplicateAccelerator { .. } => None,
             Self::UnknownAccelerator { .. } => None,
             Self::AcceleratorDmaWriteNotReady { .. } => None,
+            Self::DuplicateGpu { .. } => None,
+            Self::UnknownGpu { .. } => None,
             Self::PlatformPartitionMismatch { .. } => None,
             Self::HostPartitionOutOfRange { .. } => None,
             Self::MissingMemoryStore => None,
             Self::MissingHostController => None,
             Self::Accelerator(error) => Some(error),
+            Self::Gpu(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
             Self::Boot(error) => Some(error),
