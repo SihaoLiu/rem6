@@ -4,7 +4,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
-    FabricError, FabricModel, FabricPacket, FabricPacketId, FabricPath, VirtualNetworkId,
+    FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
+    FabricPacket, FabricPacketId, FabricPath, VirtualNetworkId,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -496,6 +497,48 @@ impl MemoryTransport {
 
     pub fn fabric(&self) -> Option<Arc<Mutex<FabricModel>>> {
         self.fabric.as_ref().map(Arc::clone)
+    }
+
+    pub fn mark_fabric_activity(&self) -> Option<FabricActivityMarker> {
+        self.fabric
+            .as_ref()
+            .map(|fabric| fabric.lock().expect("fabric lock").mark_activity())
+    }
+
+    pub fn fabric_lane_activities(&self) -> Option<Vec<FabricLaneActivity>> {
+        self.fabric
+            .as_ref()
+            .map(|fabric| fabric.lock().expect("fabric lock").lane_activities())
+    }
+
+    pub fn fabric_lane_activities_since(
+        &self,
+        marker: FabricActivityMarker,
+    ) -> Option<Vec<FabricLaneActivity>> {
+        self.fabric.as_ref().map(|fabric| {
+            fabric
+                .lock()
+                .expect("fabric lock")
+                .lane_activities_since(marker)
+        })
+    }
+
+    pub fn fabric_activity_profile(&self) -> Option<FabricActivityProfile> {
+        self.fabric
+            .as_ref()
+            .map(|fabric| fabric.lock().expect("fabric lock").activity_profile())
+    }
+
+    pub fn fabric_activity_profile_since(
+        &self,
+        marker: FabricActivityMarker,
+    ) -> Option<FabricActivityProfile> {
+        self.fabric.as_ref().map(|fabric| {
+            fabric
+                .lock()
+                .expect("fabric lock")
+                .activity_profile_since(marker)
+        })
     }
 
     pub fn add_route(&mut self, route: MemoryRoute) -> Result<MemoryRouteId, TransportError> {

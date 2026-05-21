@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use rem6_accelerator::{AcceleratorDmaCopy, AcceleratorEngineId};
+use rem6_fabric::{FabricActivityProfile, FabricLaneActivity, FabricLinkId, VirtualNetworkId};
 use rem6_gpu::{GpuDeviceId, GpuDmaCopy};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRunProfile, PartitionEventId, PartitionId,
@@ -87,6 +88,7 @@ pub struct RiscvTopologyDmaStageRunSummary {
     dma_completion_count: usize,
     accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyDmaDeviceActivity>,
     gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyDmaDeviceActivity>,
+    fabric_activity: Vec<FabricLaneActivity>,
 }
 
 impl RiscvTopologyDmaStageRunSummary {
@@ -105,6 +107,7 @@ impl RiscvTopologyDmaStageRunSummary {
             dma_completion_count,
             accelerator_activity: BTreeMap::new(),
             gpu_activity: BTreeMap::new(),
+            fabric_activity: Vec::new(),
         }
     }
 
@@ -115,6 +118,11 @@ impl RiscvTopologyDmaStageRunSummary {
     ) -> Self {
         self.accelerator_activity = accelerator_activity;
         self.gpu_activity = gpu_activity;
+        self
+    }
+
+    pub fn with_fabric_activity(mut self, fabric_activity: Vec<FabricLaneActivity>) -> Self {
+        self.fabric_activity = fabric_activity;
         self
     }
 
@@ -222,6 +230,42 @@ impl RiscvTopologyDmaStageRunSummary {
     pub const fn has_dma_activity(&self) -> bool {
         self.device_activity_count() != 0
     }
+
+    pub fn fabric_activity(
+        &self,
+        link: &FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    ) -> Option<FabricLaneActivity> {
+        self.fabric_activity
+            .iter()
+            .find(|activity| {
+                activity.link() == link && activity.virtual_network() == virtual_network
+            })
+            .cloned()
+    }
+
+    pub fn fabric_activities(&self) -> &[FabricLaneActivity] {
+        &self.fabric_activity
+    }
+
+    pub fn fabric_profile(&self) -> FabricActivityProfile {
+        FabricActivityProfile::from_lanes(self.fabric_activity.iter())
+    }
+
+    pub fn active_fabric_lane_count(&self) -> usize {
+        self.fabric_activity.len()
+    }
+
+    pub fn fabric_transfer_count(&self) -> usize {
+        self.fabric_activity
+            .iter()
+            .map(FabricLaneActivity::transfer_count)
+            .sum()
+    }
+
+    pub fn has_fabric_activity(&self) -> bool {
+        self.fabric_transfer_count() != 0
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -327,6 +371,43 @@ impl RiscvTopologyDmaRunSummary {
         activities
     }
 
+    pub fn fabric_activity(
+        &self,
+        link: &FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    ) -> Option<FabricLaneActivity> {
+        self.fabric_activities()
+            .remove(&(link.clone(), virtual_network))
+    }
+
+    pub fn fabric_activities(
+        &self,
+    ) -> BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity> {
+        let mut activities = collect_fabric_activity(self.read.fabric_activities());
+        merge_fabric_activity_maps(&mut activities, self.write.fabric_activities());
+        activities
+    }
+
+    pub fn fabric_profile(&self) -> FabricActivityProfile {
+        let activities = self.fabric_activities();
+        FabricActivityProfile::from_lanes(activities.values())
+    }
+
+    pub fn active_fabric_lane_count(&self) -> usize {
+        self.fabric_activities().len()
+    }
+
+    pub fn fabric_transfer_count(&self) -> usize {
+        self.fabric_activities()
+            .values()
+            .map(FabricLaneActivity::transfer_count)
+            .sum()
+    }
+
+    pub fn has_fabric_activity(&self) -> bool {
+        self.fabric_transfer_count() != 0
+    }
+
     pub fn final_tick(&self) -> Tick {
         self.write.final_tick()
     }
@@ -381,5 +462,31 @@ fn merge_parallel_partition_activity_maps(
                 );
             })
             .or_insert(activity);
+    }
+}
+
+fn collect_fabric_activity(
+    source: &[FabricLaneActivity],
+) -> BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity> {
+    source
+        .iter()
+        .map(|activity| {
+            (
+                (activity.link().clone(), activity.virtual_network()),
+                activity.clone(),
+            )
+        })
+        .collect()
+}
+
+fn merge_fabric_activity_maps(
+    target: &mut BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity>,
+    source: &[FabricLaneActivity],
+) {
+    for activity in source {
+        target
+            .entry((activity.link().clone(), activity.virtual_network()))
+            .and_modify(|stored| *stored = stored.clone().merge_window(activity.clone()))
+            .or_insert_with(|| activity.clone());
     }
 }

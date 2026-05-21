@@ -1135,6 +1135,33 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
     assert!(summary.has_partition_activity(PartitionId::new(3)));
     assert!(!summary.has_partition_activity(PartitionId::new(4)));
     assert!(summary.active_partition_count() >= 3);
+    let hetero_link = FabricLinkId::new("hetero_mem").unwrap();
+    let read_requests = summary
+        .read()
+        .fabric_activity(&hetero_link, VirtualNetworkId::new(1))
+        .unwrap();
+    assert_eq!(read_requests.transfer_count(), 2);
+    assert_eq!(read_requests.byte_count(), 8);
+    assert_eq!(read_requests.occupied_ticks(), 2);
+    assert_eq!(read_requests.queue_delay_ticks(), 1);
+    assert!(summary.read().has_fabric_activity());
+    assert_eq!(summary.read().active_fabric_lane_count(), 2);
+    assert_eq!(summary.read().fabric_profile().active_lane_count(), 2);
+    assert_eq!(summary.read().fabric_profile().transfer_count(), 4);
+    assert_eq!(summary.read().fabric_profile().byte_count(), 16);
+    assert_eq!(summary.read().fabric_profile().contended_lane_count(), 1);
+    let full_requests = summary
+        .fabric_activity(&hetero_link, VirtualNetworkId::new(1))
+        .unwrap();
+    assert_eq!(full_requests.transfer_count(), 4);
+    assert_eq!(full_requests.byte_count(), 16);
+    assert_eq!(full_requests.occupied_ticks(), 4);
+    assert_eq!(summary.active_fabric_lane_count(), 2);
+    assert_eq!(summary.fabric_transfer_count(), 8);
+    assert_eq!(summary.fabric_profile().active_lane_count(), 2);
+    assert_eq!(summary.fabric_profile().transfer_count(), 8);
+    assert_eq!(summary.fabric_profile().byte_count(), 26);
+    assert_eq!(summary.fabric_profile().contended_lane_count(), 1);
     let read_gpu = summary.read().gpu_activity(gpu_id).unwrap();
     assert_eq!(read_gpu.trace_event_count(), 2);
     assert_eq!(read_gpu.pending_dma_write_count(), 1);

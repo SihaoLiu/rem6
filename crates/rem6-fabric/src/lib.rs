@@ -276,6 +276,17 @@ impl FabricTransfer {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FabricActivityMarker {
+    offset: usize,
+}
+
+impl FabricActivityMarker {
+    const fn new(offset: usize) -> Self {
+        Self { offset }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct FabricLaneKey {
     link: FabricLinkId,
@@ -328,6 +339,244 @@ impl FabricLaneSnapshot {
 
     pub fn credit_return_ticks(&self) -> &[Tick] {
         &self.credit_return_ticks
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricLaneActivity {
+    link: FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    transfer_count: usize,
+    byte_count: u64,
+    occupied_ticks: Tick,
+    queue_delay_ticks: Tick,
+    max_queue_delay_ticks: Tick,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl FabricLaneActivity {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        transfer_count: usize,
+        byte_count: u64,
+        occupied_ticks: Tick,
+        queue_delay_ticks: Tick,
+        max_queue_delay_ticks: Tick,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Self {
+        Self {
+            link,
+            virtual_network,
+            transfer_count,
+            byte_count,
+            occupied_ticks,
+            queue_delay_ticks,
+            max_queue_delay_ticks,
+            first_tick,
+            last_tick,
+        }
+    }
+
+    pub fn link(&self) -> &FabricLinkId {
+        &self.link
+    }
+
+    pub const fn virtual_network(&self) -> VirtualNetworkId {
+        self.virtual_network
+    }
+
+    pub const fn transfer_count(&self) -> usize {
+        self.transfer_count
+    }
+
+    pub const fn byte_count(&self) -> u64 {
+        self.byte_count
+    }
+
+    pub const fn occupied_ticks(&self) -> Tick {
+        self.occupied_ticks
+    }
+
+    pub const fn queue_delay_ticks(&self) -> Tick {
+        self.queue_delay_ticks
+    }
+
+    pub const fn max_queue_delay_ticks(&self) -> Tick {
+        self.max_queue_delay_ticks
+    }
+
+    pub const fn first_tick(&self) -> Tick {
+        self.first_tick
+    }
+
+    pub const fn last_tick(&self) -> Tick {
+        self.last_tick
+    }
+
+    pub const fn has_contention(&self) -> bool {
+        self.queue_delay_ticks != 0
+    }
+
+    pub fn merge_window(self, later: Self) -> Self {
+        debug_assert_eq!(&self.link, &later.link);
+        debug_assert_eq!(self.virtual_network, later.virtual_network);
+        Self {
+            link: self.link,
+            virtual_network: self.virtual_network,
+            transfer_count: self.transfer_count + later.transfer_count,
+            byte_count: self.byte_count + later.byte_count,
+            occupied_ticks: self.occupied_ticks + later.occupied_ticks,
+            queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
+            max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
+            first_tick: self.first_tick.min(later.first_tick),
+            last_tick: self.last_tick.max(later.last_tick),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FabricActivityProfile {
+    active_lane_count: usize,
+    transfer_count: usize,
+    byte_count: u64,
+    occupied_ticks: Tick,
+    queue_delay_ticks: Tick,
+    max_queue_delay_ticks: Tick,
+    contended_lane_count: usize,
+}
+
+impl FabricActivityProfile {
+    pub const fn new(
+        active_lane_count: usize,
+        transfer_count: usize,
+        byte_count: u64,
+        occupied_ticks: Tick,
+        queue_delay_ticks: Tick,
+        max_queue_delay_ticks: Tick,
+        contended_lane_count: usize,
+    ) -> Self {
+        Self {
+            active_lane_count,
+            transfer_count,
+            byte_count,
+            occupied_ticks,
+            queue_delay_ticks,
+            max_queue_delay_ticks,
+            contended_lane_count,
+        }
+    }
+
+    pub fn from_lanes<'a, I>(lanes: I) -> Self
+    where
+        I: IntoIterator<Item = &'a FabricLaneActivity>,
+    {
+        let mut profile = Self::default();
+        for lane in lanes {
+            profile.active_lane_count += 1;
+            profile.transfer_count += lane.transfer_count();
+            profile.byte_count += lane.byte_count();
+            profile.occupied_ticks += lane.occupied_ticks();
+            profile.queue_delay_ticks += lane.queue_delay_ticks();
+            profile.max_queue_delay_ticks = profile
+                .max_queue_delay_ticks
+                .max(lane.max_queue_delay_ticks());
+            if lane.has_contention() {
+                profile.contended_lane_count += 1;
+            }
+        }
+        profile
+    }
+
+    pub const fn active_lane_count(self) -> usize {
+        self.active_lane_count
+    }
+
+    pub const fn transfer_count(self) -> usize {
+        self.transfer_count
+    }
+
+    pub const fn byte_count(self) -> u64 {
+        self.byte_count
+    }
+
+    pub const fn occupied_ticks(self) -> Tick {
+        self.occupied_ticks
+    }
+
+    pub const fn queue_delay_ticks(self) -> Tick {
+        self.queue_delay_ticks
+    }
+
+    pub const fn max_queue_delay_ticks(self) -> Tick {
+        self.max_queue_delay_ticks
+    }
+
+    pub const fn contended_lane_count(self) -> usize {
+        self.contended_lane_count
+    }
+
+    pub const fn has_contention(self) -> bool {
+        self.contended_lane_count != 0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.transfer_count == 0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FabricLaneActivityRecord {
+    link: FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    bytes: u64,
+    occupied_ticks: Tick,
+    queue_delay_ticks: Tick,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl FabricLaneActivityRecord {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        bytes: u64,
+        occupied_ticks: Tick,
+        queue_delay_ticks: Tick,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Self {
+        Self {
+            link,
+            virtual_network,
+            bytes,
+            occupied_ticks,
+            queue_delay_ticks,
+            first_tick,
+            last_tick,
+        }
+    }
+
+    fn key(&self) -> FabricLaneKey {
+        FabricLaneKey::new(self.link.clone(), self.virtual_network)
+    }
+
+    fn activity(&self) -> FabricLaneActivity {
+        FabricLaneActivity::new(
+            self.link.clone(),
+            self.virtual_network,
+            1,
+            self.bytes,
+            self.occupied_ticks,
+            self.queue_delay_ticks,
+            self.queue_delay_ticks,
+            self.first_tick,
+            self.last_tick,
+        )
     }
 }
 
@@ -405,6 +654,7 @@ struct FabricLaneReservation {
 #[derive(Clone, Debug, Default)]
 pub struct FabricModel {
     lanes: BTreeMap<FabricLaneKey, FabricLaneState>,
+    activity_log: Vec<FabricLaneActivityRecord>,
 }
 
 impl FabricModel {
@@ -480,6 +730,61 @@ impl FabricModel {
         Ok(())
     }
 
+    pub fn mark_activity(&self) -> FabricActivityMarker {
+        FabricActivityMarker::new(self.activity_log.len())
+    }
+
+    pub fn lane_activities(&self) -> Vec<FabricLaneActivity> {
+        collect_lane_activities(&self.activity_log)
+    }
+
+    pub fn lane_activities_since(&self, marker: FabricActivityMarker) -> Vec<FabricLaneActivity> {
+        let Some(records) = self.activity_log.get(marker.offset..) else {
+            return Vec::new();
+        };
+        collect_lane_activities(records)
+    }
+
+    pub fn activity_profile(&self) -> FabricActivityProfile {
+        FabricActivityProfile::from_lanes(self.lane_activities().iter())
+    }
+
+    pub fn activity_profile_since(&self, marker: FabricActivityMarker) -> FabricActivityProfile {
+        FabricActivityProfile::from_lanes(self.lane_activities_since(marker).iter())
+    }
+
+    pub fn lane_activity(
+        &self,
+        link: &FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    ) -> Option<FabricLaneActivity> {
+        self.lane_activities().into_iter().find(|activity| {
+            activity.link() == link && activity.virtual_network() == virtual_network
+        })
+    }
+
+    pub fn active_lane_count(&self) -> usize {
+        self.lane_activities().len()
+    }
+
+    pub fn total_transfer_count(&self) -> usize {
+        self.lane_activities()
+            .iter()
+            .map(FabricLaneActivity::transfer_count)
+            .sum()
+    }
+
+    pub fn total_queue_delay_ticks(&self) -> Tick {
+        self.lane_activities()
+            .iter()
+            .map(FabricLaneActivity::queue_delay_ticks)
+            .sum()
+    }
+
+    pub fn clear_activity(&mut self) {
+        self.activity_log.clear();
+    }
+
     fn reserve_transfer(
         &mut self,
         injection_tick: Tick,
@@ -490,15 +795,20 @@ impl FabricModel {
         let mut timings = Vec::with_capacity(path.hops().len());
 
         for hop in path.hops() {
+            let ready_tick = arrival_tick;
             let lane = FabricLaneKey::new(hop.link().clone(), packet.virtual_network());
             let serialization_ticks =
                 serialization_ticks(packet.bytes(), hop.bandwidth_bytes_per_tick());
             let reservation = self.lanes.entry(lane).or_default().reserve(
-                arrival_tick,
+                ready_tick,
                 serialization_ticks,
                 hop.latency(),
                 hop.credit_depth(),
             )?;
+            let queue_delay_ticks = reservation
+                .start_tick
+                .checked_sub(ready_tick)
+                .ok_or(FabricError::TickOverflow)?;
 
             timings.push(FabricHopTiming {
                 link: hop.link().clone(),
@@ -509,6 +819,15 @@ impl FabricModel {
                 depart_tick: reservation.depart_tick,
                 arrival_tick: reservation.arrival_tick,
             });
+            self.activity_log.push(FabricLaneActivityRecord::new(
+                hop.link().clone(),
+                packet.virtual_network(),
+                packet.bytes(),
+                serialization_ticks,
+                queue_delay_ticks,
+                ready_tick,
+                reservation.arrival_tick,
+            ));
             arrival_tick = reservation.arrival_tick;
         }
 
@@ -519,6 +838,17 @@ impl FabricModel {
             hops: timings,
         })
     }
+}
+
+fn collect_lane_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricLaneActivity> {
+    let mut activities = BTreeMap::<FabricLaneKey, FabricLaneActivity>::new();
+    for record in records {
+        activities
+            .entry(record.key())
+            .and_modify(|stored| *stored = stored.clone().merge_window(record.activity()))
+            .or_insert_with(|| record.activity());
+    }
+    activities.into_values().collect()
 }
 
 fn serialization_ticks(bytes: u64, bandwidth_bytes_per_tick: u64) -> Tick {

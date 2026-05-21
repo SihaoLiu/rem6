@@ -1042,6 +1042,7 @@ fn transport_parallel_batch_reserves_shared_fabric_by_stable_packet_order() {
 fn transport_parallel_batch_respects_finite_fabric_credit_depth() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
     let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let activity_start = transport.mark_fabric_activity().unwrap();
     let memory = endpoint("memory0");
     let shared_path = credit_fabric_path("mesh_credit", 10, 8, 2);
     let route_a = transport
@@ -1157,6 +1158,29 @@ fn transport_parallel_batch_respects_finite_fabric_credit_depth() {
             (route_c, 22, req_c.id()),
         ],
     );
+
+    let activities = transport
+        .fabric_lane_activities_since(activity_start)
+        .unwrap();
+    assert_eq!(activities.len(), 1);
+    let activity = &activities[0];
+    assert_eq!(activity.link(), &fabric_link("mesh_credit"));
+    assert_eq!(activity.virtual_network().get(), 0);
+    assert_eq!(activity.transfer_count(), 3);
+    assert_eq!(activity.byte_count(), 24);
+    assert_eq!(activity.occupied_ticks(), 3);
+    assert_eq!(activity.queue_delay_ticks(), 12);
+    assert_eq!(activity.max_queue_delay_ticks(), 11);
+    assert!(activity.has_contention());
+
+    let profile = transport
+        .fabric_activity_profile_since(activity_start)
+        .unwrap();
+    assert_eq!(profile.active_lane_count(), 1);
+    assert_eq!(profile.transfer_count(), 3);
+    assert_eq!(profile.byte_count(), 24);
+    assert_eq!(profile.queue_delay_ticks(), 12);
+    assert_eq!(profile.contended_lane_count(), 1);
 }
 
 #[test]

@@ -917,6 +917,7 @@ impl RiscvTopologySystem {
         let before = self.dma_device_snapshots(&copies)?;
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
+        let fabric_activity_start = self.transport.mark_fabric_activity();
         let mut issue_records = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
 
@@ -982,6 +983,9 @@ impl RiscvTopologySystem {
             return Err(error);
         }
         let activity = self.dma_activity_since(&before)?;
+        let fabric_activity = fabric_activity_start
+            .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
+            .unwrap_or_default();
 
         Ok(RiscvTopologyDmaStageRunSummary::new(
             events,
@@ -990,7 +994,8 @@ impl RiscvTopologySystem {
             activity.pending_dma_write_count,
             activity.dma_completion_count,
         )
-        .with_device_activity(activity.accelerator_activity, activity.gpu_activity))
+        .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
+        .with_fabric_activity(fabric_activity))
     }
 
     pub fn run_dma_copies_parallel<I>(
@@ -1042,6 +1047,7 @@ impl RiscvTopologySystem {
         let before = self.dma_device_snapshots(&copies)?;
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
+        let fabric_activity_start = self.transport.mark_fabric_activity();
         let mut issue_records = Vec::new();
         let mut rollbacks = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
@@ -1128,6 +1134,9 @@ impl RiscvTopologySystem {
             return Err(error);
         }
         let activity = self.dma_activity_since(&before)?;
+        let fabric_activity = fabric_activity_start
+            .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
+            .unwrap_or_default();
 
         Ok(RiscvTopologyDmaStageRunSummary::new(
             events,
@@ -1136,7 +1145,8 @@ impl RiscvTopologySystem {
             activity.pending_dma_write_count,
             activity.dma_completion_count,
         )
-        .with_device_activity(activity.accelerator_activity, activity.gpu_activity))
+        .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
+        .with_fabric_activity(fabric_activity))
     }
 
     fn dma_device_snapshots(

@@ -73,6 +73,7 @@ fn fabric_keeps_virtual_network_lanes_independent() {
 #[test]
 fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
     let mut fabric = FabricModel::new();
+    let activity_start = fabric.mark_activity();
     let route = path([FabricPathHop::new(link("mesh_credit"), 10, 8)
         .unwrap()
         .with_credit_depth(2)
@@ -102,6 +103,42 @@ fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
     assert_eq!(transfers[2].hops()[0].ready_tick(), 11);
     assert_eq!(transfers[2].hops()[0].depart_tick(), 12);
     assert_eq!(transfers[2].arrival_tick(), 22);
+
+    let activity = fabric
+        .lane_activity(&link("mesh_credit"), VirtualNetworkId::new(1))
+        .unwrap();
+    assert_eq!(activity.transfer_count(), 3);
+    assert_eq!(activity.byte_count(), 24);
+    assert_eq!(activity.occupied_ticks(), 3);
+    assert_eq!(activity.queue_delay_ticks(), 12);
+    assert_eq!(activity.max_queue_delay_ticks(), 11);
+    assert_eq!(activity.first_tick(), 0);
+    assert_eq!(activity.last_tick(), 22);
+    assert!(activity.has_contention());
+    assert_eq!(fabric.active_lane_count(), 1);
+    assert_eq!(fabric.total_transfer_count(), 3);
+    assert_eq!(fabric.total_queue_delay_ticks(), 12);
+
+    let window = fabric.lane_activities_since(activity_start);
+    assert_eq!(window, vec![activity]);
+
+    let profile = fabric.activity_profile();
+    assert_eq!(profile.active_lane_count(), 1);
+    assert_eq!(profile.transfer_count(), 3);
+    assert_eq!(profile.byte_count(), 24);
+    assert_eq!(profile.occupied_ticks(), 3);
+    assert_eq!(profile.queue_delay_ticks(), 12);
+    assert_eq!(profile.max_queue_delay_ticks(), 11);
+    assert_eq!(profile.contended_lane_count(), 1);
+    assert!(profile.has_contention());
+    assert!(!profile.is_empty());
+    assert_eq!(fabric.activity_profile_since(activity_start), profile);
+
+    fabric.clear_activity();
+    assert!(fabric.activity_profile().is_empty());
+    let later = fabric.transmit(0, packet(4, 8, 1), route).unwrap();
+    assert_eq!(later.arrival_tick(), 23);
+    assert_eq!(fabric.activity_profile().transfer_count(), 1);
 }
 
 #[test]
