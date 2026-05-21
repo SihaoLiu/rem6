@@ -33,13 +33,14 @@ use rem6_coherence::{
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryActivityMarker, DramMemoryActivityProfile,
-    DramMemoryController, DramMemoryError, DramTargetActivity, DramTiming, ExternalMemoryProfile,
+    DramMemoryController, DramMemoryError, DramMemoryWaitForMarker, DramTargetActivity, DramTiming,
+    ExternalMemoryProfile,
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{GpuDeviceId, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
-    Tick,
+    Tick, WaitForGraph,
 };
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryRequestId, MemoryResponse,
@@ -911,6 +912,7 @@ impl RiscvTopologySystem {
         let fabric_activity_start = self.transport.mark_fabric_activity();
         let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
+        let dram_wait_for_start = mark_dram_wait_for(&memory);
         let msi_data_cache = self.msi_data_cache.clone();
         let msi_data_run_start = msi_data_cache
             .as_ref()
@@ -1005,6 +1007,7 @@ impl RiscvTopologySystem {
             .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
             .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let dram_wait_for = dram_wait_for_since(&memory, dram_wait_for_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
             dram_activity,
@@ -1038,6 +1041,7 @@ impl RiscvTopologySystem {
             .with_fabric_activity(fabric_activity)
             .with_fabric_wait_for(fabric_wait_for)
             .with_dram_activity(dram_activity)
+            .with_dram_wait_for(dram_wait_for)
             .with_data_cache_run_records(data_cache_run_records))
     }
 
@@ -1274,6 +1278,18 @@ fn mark_dram_activity(memory: &RiscvTopologyMemoryBackend) -> Option<DramMemoryA
     }
 }
 
+fn mark_dram_wait_for(memory: &RiscvTopologyMemoryBackend) -> Option<DramMemoryWaitForMarker> {
+    match memory {
+        RiscvTopologyMemoryBackend::Store { .. } => None,
+        RiscvTopologyMemoryBackend::Dram { memory, .. } => Some(
+            memory
+                .lock()
+                .expect("topology DRAM memory lock")
+                .mark_wait_for(),
+        ),
+    }
+}
+
 fn dram_activities_since(
     memory: &RiscvTopologyMemoryBackend,
     marker: Option<DramMemoryActivityMarker>,
@@ -1287,6 +1303,22 @@ fn dram_activities_since(
             .lock()
             .expect("topology DRAM memory lock")
             .target_activities_since(&marker),
+    }
+}
+
+fn dram_wait_for_since(
+    memory: &RiscvTopologyMemoryBackend,
+    marker: Option<DramMemoryWaitForMarker>,
+) -> WaitForGraph {
+    let Some(marker) = marker else {
+        return WaitForGraph::new();
+    };
+    match memory {
+        RiscvTopologyMemoryBackend::Store { .. } => WaitForGraph::new(),
+        RiscvTopologyMemoryBackend::Dram { memory, .. } => memory
+            .lock()
+            .expect("topology DRAM memory lock")
+            .wait_for_graph_since(&marker),
     }
 }
 

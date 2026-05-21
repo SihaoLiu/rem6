@@ -433,6 +433,9 @@ fn system_run_starts_without_resource_activity() {
     assert_eq!(run.fabric_wait_for_edge_count(), 0);
     assert!(run.fabric_wait_for_edges().is_empty());
     assert!(!run.has_fabric_wait_for_edges());
+    assert_eq!(run.dram_wait_for_edge_count(), 0);
+    assert!(run.dram_wait_for_edges().is_empty());
+    assert!(!run.has_dram_wait_for_edges());
     assert_eq!(run.initial_data_cache_deadlock_diagnostic_count(), 0);
     assert_eq!(run.remaining_data_cache_deadlock_diagnostic_count(), 0);
     assert_eq!(run.data_cache_deadlock_diagnostic_count(), 0);
@@ -494,6 +497,54 @@ fn system_run_aggregates_fabric_wait_for_diagnostics() {
     assert_eq!(
         run.resource_activity_count(),
         run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+    );
+}
+
+#[test]
+fn system_run_aggregates_dram_wait_for_diagnostics() {
+    let request = wait_node("dram.target.0.agent.1.request.7");
+    let bank = wait_resource("dram.target.0.port.0.bank.0");
+    let bus = wait_resource("dram.target.0.port.0.bus");
+    let mut graph = WaitForGraph::new();
+    graph
+        .record_wait(request.clone(), bank, WaitForEdgeKind::Queue, 4)
+        .unwrap();
+    graph
+        .record_wait(request.clone(), bus, WaitForEdgeKind::Resource, 8)
+        .unwrap();
+    graph
+        .record_wait(
+            request,
+            wait_resource("dram.target.0.port.1.bus"),
+            WaitForEdgeKind::Resource,
+            11,
+        )
+        .unwrap();
+
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 12 },
+    )
+    .with_dram_wait_for(graph);
+
+    assert!(run.has_resource_activity());
+    assert!(run.has_dram_wait_for_edges());
+    assert_eq!(run.dram_wait_for_edge_count(), 3);
+    assert_eq!(
+        run.dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Resource),
+        2,
+    );
+    assert_eq!(run.dram_wait_for_blocked_nodes().len(), 1);
+    assert_eq!(run.dram_first_wait_tick(), Some(4));
+    assert_eq!(run.dram_last_wait_tick(), Some(11));
+    assert_eq!(run.dram_longest_observed_wait_span(), Some(0));
+    assert_eq!(
+        run.resource_activity_count(),
+        run.fabric_transfer_count()
+            + run.dram_access_count()
+            + run.fabric_wait_for_edge_count()
+            + run.dram_wait_for_edge_count(),
     );
 }
 
@@ -911,9 +962,16 @@ fn topology_run_reports_fabric_wait_for_for_contended_fetches() {
     assert!(run.fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue) >= 1);
     assert!(!run.fabric_wait_for_blocked_nodes().is_empty());
     assert!(run.fabric_first_wait_tick().unwrap() <= run.fabric_last_wait_tick().unwrap());
+    assert!(run.has_dram_wait_for_edges());
+    assert!(run.dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue) >= 1);
+    assert!(!run.dram_wait_for_blocked_nodes().is_empty());
+    assert!(run.dram_first_wait_tick().unwrap() <= run.dram_last_wait_tick().unwrap());
     assert_eq!(
         run.resource_activity_count(),
-        run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+        run.fabric_transfer_count()
+            + run.dram_access_count()
+            + run.fabric_wait_for_edge_count()
+            + run.dram_wait_for_edge_count(),
     );
 }
 

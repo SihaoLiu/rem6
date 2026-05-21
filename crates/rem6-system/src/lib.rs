@@ -613,6 +613,7 @@ pub struct RiscvSystemRun {
     fabric_activity: Vec<FabricLaneActivity>,
     pub(crate) fabric_wait_for: WaitForGraph,
     dram_activity: Vec<DramTargetActivity>,
+    pub(crate) dram_wait_for: WaitForGraph,
     pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
     pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
 }
@@ -630,6 +631,7 @@ impl RiscvSystemRun {
             fabric_activity: Vec::new(),
             fabric_wait_for: WaitForGraph::new(),
             dram_activity: Vec::new(),
+            dram_wait_for: WaitForGraph::new(),
             data_cache_runs: Vec::new(),
             data_cache_run_protocols: Vec::new(),
         }
@@ -901,7 +903,10 @@ impl RiscvSystemRun {
     }
 
     pub fn resource_activity_count(&self) -> usize {
-        self.fabric_transfer_count() + self.dram_access_count() + self.fabric_wait_for_edge_count()
+        self.fabric_transfer_count()
+            + self.dram_access_count()
+            + self.fabric_wait_for_edge_count()
+            + self.dram_wait_for_edge_count()
     }
 
     pub fn has_resource_activity(&self) -> bool {

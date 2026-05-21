@@ -12,6 +12,11 @@ impl RiscvSystemRun {
         self
     }
 
+    pub fn with_dram_wait_for(mut self, dram_wait_for: WaitForGraph) -> Self {
+        self.dram_wait_for = dram_wait_for;
+        self
+    }
+
     pub fn fabric_wait_for_edges(&self) -> Vec<WaitForEdge> {
         self.fabric_wait_for.edges()
     }
@@ -91,6 +96,87 @@ impl RiscvSystemRun {
 
     pub fn fabric_deadlock_diagnostic_count(&self) -> usize {
         self.fabric_deadlock_diagnostics().len()
+    }
+
+    pub fn dram_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        self.dram_wait_for.edges()
+    }
+
+    pub fn dram_wait_for_edge_count(&self) -> usize {
+        self.dram_wait_for.edge_count()
+    }
+
+    pub fn has_dram_wait_for_edges(&self) -> bool {
+        self.dram_wait_for_edge_count() != 0
+    }
+
+    pub fn dram_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.dram_wait_for.blocked_nodes()
+    }
+
+    pub fn dram_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        let mut counts = BTreeMap::new();
+        for edge in self.dram_wait_for_edges() {
+            *counts.entry(edge.kind()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    pub fn dram_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.dram_wait_for_edges()
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
+    }
+
+    pub fn dram_oldest_wait_edge(&self) -> Option<WaitForEdge> {
+        oldest_edge(self.dram_wait_for_edges())
+    }
+
+    pub fn dram_newest_observed_wait_edge(&self) -> Option<WaitForEdge> {
+        newest_edge(self.dram_wait_for_edges())
+    }
+
+    pub fn dram_total_wait_observation_count(&self) -> u64 {
+        self.dram_wait_for_edges()
+            .iter()
+            .map(WaitForEdge::observation_count)
+            .sum()
+    }
+
+    pub fn dram_first_wait_tick(&self) -> Option<Tick> {
+        self.dram_wait_for_edges()
+            .iter()
+            .map(WaitForEdge::first_observed_tick)
+            .min()
+    }
+
+    pub fn dram_last_wait_tick(&self) -> Option<Tick> {
+        self.dram_wait_for_edges()
+            .iter()
+            .map(WaitForEdge::last_observed_tick)
+            .max()
+    }
+
+    pub fn dram_longest_observed_wait_span(&self) -> Option<Tick> {
+        self.dram_wait_for_edges()
+            .iter()
+            .map(|edge| {
+                edge.last_observed_tick()
+                    .saturating_sub(edge.first_observed_tick())
+            })
+            .max()
+    }
+
+    pub fn dram_deadlock_diagnostics(&self) -> Vec<DeadlockDiagnostic> {
+        self.dram_wait_for
+            .deadlock_diagnostic()
+            .into_iter()
+            .collect()
+    }
+
+    pub fn dram_deadlock_diagnostic_count(&self) -> usize {
+        self.dram_deadlock_diagnostics().len()
     }
 }
 
