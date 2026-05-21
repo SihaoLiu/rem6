@@ -33,6 +33,10 @@ use crate::{
     PartitionedDramMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
 };
 
+mod snapshot;
+
+pub use snapshot::PartitionedMoesiDirectoryLineHarnessSnapshot;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MoesiHarnessError {
     LineBusy { state: MoesiState },
@@ -46,7 +50,9 @@ pub enum MoesiHarnessError {
     Directory(MoesiDirectoryError),
     Memory(MemoryError),
     Dram(DramMemoryError),
+    Fabric(FabricError),
     Scheduler(SchedulerError),
+    SnapshotResourceMismatch { resource: &'static str },
     Topology(TopologyError),
     Transport(TransportError),
     Backing(HarnessError),
@@ -93,7 +99,12 @@ impl fmt::Display for MoesiHarnessError {
             Self::Directory(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
+            Self::Fabric(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::SnapshotResourceMismatch { resource } => write!(
+                formatter,
+                "snapshot resource {resource} does not match harness configuration"
+            ),
             Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),
@@ -108,6 +119,7 @@ impl Error for MoesiHarnessError {
             Self::Directory(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
+            Self::Fabric(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Topology(error) => Some(error),
             Self::Transport(error) => Some(error),

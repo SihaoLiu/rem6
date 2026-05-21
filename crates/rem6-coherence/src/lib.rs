@@ -42,7 +42,7 @@ pub use mesi::{
 pub use moesi::{
     MoesiCpuResponseRecord, MoesiDirectoryDecisionRecord, MoesiDirectoryLineHarness,
     MoesiDirectoryLineHarnessSnapshot, MoesiHarnessError, MoesiSubmitResult,
-    PartitionedMoesiDirectoryLineHarness,
+    PartitionedMoesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarnessSnapshot,
 };
 pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
 pub use topology::{
