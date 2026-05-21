@@ -29,6 +29,7 @@ mod indirect_target_predictor;
 mod loop_predictor;
 mod riscv_activity;
 mod riscv_cluster;
+mod tage_predictor;
 mod topology;
 mod tournament_predictor;
 
@@ -67,6 +68,11 @@ pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
     RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
+};
+pub use tage_predictor::{
+    FoldedHistorySnapshot, TageBranchPredictor, TageBranchPredictorConfig,
+    TageBranchPredictorError, TageBranchPredictorSnapshot, TageHistory, TageHistoryUpdate,
+    TagePrediction, TageProvider, TageTableEntry, TageThreadSnapshot, TageTrainingUpdate,
 };
 pub use topology::{CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 pub use tournament_predictor::{
