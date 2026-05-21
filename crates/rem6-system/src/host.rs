@@ -3,8 +3,8 @@ use rem6_kernel::Tick;
 use rem6_stats::{StatSnapshot, StatsRegistry, StatsResetRecord};
 
 use crate::{
-    AcceleratorCheckpointBank, DramMemoryCheckpointBank, GpuCheckpointBank, GuestEventDelivery,
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    AcceleratorCheckpointBank, DramMemoryCheckpointBank, FabricCheckpointBank, GpuCheckpointBank,
+    GuestEventDelivery, GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, RiscvCoreCheckpointBank,
     SchedulerCheckpointBank, StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
 };
@@ -39,6 +39,7 @@ pub struct SystemActionExecutor {
     stats: StatsRegistry,
     checkpoints: CheckpointRegistry,
     accelerator_checkpoints: Option<AcceleratorCheckpointBank>,
+    fabric_checkpoints: Option<FabricCheckpointBank>,
     gpu_checkpoints: Option<GpuCheckpointBank>,
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     scheduler_checkpoints: Option<SchedulerCheckpointBank>,
@@ -59,6 +60,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
@@ -79,6 +81,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
             scheduler_checkpoints: None,
@@ -99,6 +102,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
@@ -119,6 +123,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
@@ -139,6 +144,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
@@ -160,6 +166,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
             scheduler_checkpoints: None,
@@ -181,6 +188,7 @@ impl SystemActionExecutor {
             stats,
             checkpoints,
             accelerator_checkpoints: None,
+            fabric_checkpoints: None,
             gpu_checkpoints: None,
             riscv_checkpoints: Some(riscv_checkpoints),
             scheduler_checkpoints: None,
@@ -223,6 +231,15 @@ impl SystemActionExecutor {
     ) -> Result<(), CheckpointError> {
         accelerator_checkpoints.register_all(&mut self.checkpoints)?;
         self.accelerator_checkpoints = Some(accelerator_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_fabric_checkpoint_bank(
+        &mut self,
+        fabric_checkpoints: FabricCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        fabric_checkpoints.register_all(&mut self.checkpoints)?;
+        self.fabric_checkpoints = Some(fabric_checkpoints);
         Ok(())
     }
 
@@ -301,6 +318,10 @@ impl SystemActionExecutor {
         self.accelerator_checkpoints.as_ref()
     }
 
+    pub const fn fabric_checkpoint_bank(&self) -> Option<&FabricCheckpointBank> {
+        self.fabric_checkpoints.as_ref()
+    }
+
     pub const fn gpu_checkpoint_bank(&self) -> Option<&GpuCheckpointBank> {
         self.gpu_checkpoints.as_ref()
     }
@@ -348,6 +369,11 @@ impl SystemActionExecutor {
                     accelerator_checkpoints
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(fabric_checkpoints) = &self.fabric_checkpoints {
+                    fabric_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::FabricCheckpoint)?;
                 }
                 if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
                     gpu_checkpoints
@@ -409,6 +435,11 @@ impl SystemActionExecutor {
                     accelerator_checkpoints
                         .restore_all_from(&self.checkpoints)
                         .map_err(SystemError::AcceleratorCheckpoint)?;
+                }
+                if let Some(fabric_checkpoints) = &self.fabric_checkpoints {
+                    fabric_checkpoints
+                        .restore_all_from(&self.checkpoints)
+                        .map_err(SystemError::FabricCheckpoint)?;
                 }
                 if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
                     gpu_checkpoints

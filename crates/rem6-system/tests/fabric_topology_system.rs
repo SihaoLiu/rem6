@@ -5,9 +5,12 @@ use rem6_accelerator::{
     AcceleratorEngineId, AcceleratorPendingDmaWrite, AcceleratorTopologyConfig,
 };
 use rem6_boot::BootImage;
+use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
-use rem6_fabric::{FabricLinkId, VirtualNetworkId};
+use rem6_fabric::{
+    FabricLinkId, FabricPacket, FabricPacketId, FabricPath, FabricPathHop, VirtualNetworkId,
+};
 use rem6_gpu::{
     GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuPendingDmaWrite,
     GpuTopologyConfig,
@@ -19,9 +22,9 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, RiscvSystemRunStopReason, RiscvTopologyDmaCopy,
-    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
-    RiscvTopologySystem,
+    GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvSystemRunStopReason,
+    RiscvTopologyDmaCopy, RiscvTopologyDramConfig, RiscvTopologyHostConfig,
+    RiscvTopologyMemoryConfig, RiscvTopologySystem, SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, FabricConnectionConfig, PortDirection,
@@ -70,6 +73,23 @@ fn ecall_image() -> BootImage {
 fn fabric(link: &str, bandwidth: u64) -> FabricConnectionConfig {
     FabricConnectionConfig::new(FabricLinkId::new(link).unwrap(), bandwidth)
         .with_virtual_networks(VirtualNetworkId::new(1), VirtualNetworkId::new(2))
+}
+
+fn fabric_packet(id: u64, bytes: u64, virtual_network: u16) -> FabricPacket {
+    FabricPacket::new(
+        FabricPacketId::new(id),
+        bytes,
+        VirtualNetworkId::new(virtual_network),
+    )
+    .unwrap()
+}
+
+fn fabric_path(link: &str) -> FabricPath {
+    FabricPath::new([FabricPathHop::new(FabricLinkId::new(link).unwrap(), 10, 8)
+        .unwrap()
+        .with_credit_depth(2)
+        .unwrap()])
+    .unwrap()
 }
 
 fn memory_config() -> RiscvTopologyMemoryConfig {
@@ -456,6 +476,179 @@ fn topology_system_drives_cpu_fetch_over_declared_fabric_path() {
                 ResponseStatus::Completed,
             ),
         ],
+    );
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_fabric() {
+    let source = GuestSourceId::new(82);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        cpu_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 82, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_memory(memory_config(), &ecall_image())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(2), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let fabric_component = CheckpointComponentId::new("fabric0").unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .fabric_checkpoint_bank()
+        .is_some());
+
+    let fetch_trace = MemoryTrace::new();
+    system
+        .drive_attached_until_host_stop_parallel(fetch_trace, Default::default(), 20, |_| {
+            GuestEventId::new(182)
+        })
+        .unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        26,
+        PartitionId::new(2),
+        PartitionId::new(2),
+        GuestEventId::new(183),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-fabric".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &fabric_component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&fabric_component, "fabric")
+            .unwrap()
+            .len()
+            > 16
+    );
+}
+
+#[test]
+fn topology_host_controller_restores_custom_fabric_checkpoint_component() {
+    let source = GuestSourceId::new(83);
+    let fabric_component = CheckpointComponentId::new("mesh-fabric").unwrap();
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        cpu_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 83, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_memory(memory_config(), &ecall_image())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(2), 2, source)
+            .with_fabric_checkpoint_component(fabric_component.clone()),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let fabric = system.transport().fabric().unwrap();
+    let path = fabric_path("manual_mesh");
+    {
+        let mut fabric = fabric.lock().unwrap();
+        fabric
+            .transmit_batch(
+                0,
+                [
+                    (fabric_packet(1, 8, 1), path.clone()),
+                    (fabric_packet(2, 8, 1), path.clone()),
+                ],
+            )
+            .unwrap();
+    }
+    let fabric_snapshot = fabric.lock().unwrap().lane_snapshots();
+    let mut expected = fabric.lock().unwrap().clone();
+    let expected_transfer = expected
+        .transmit(1, fabric_packet(3, 8, 1), path.clone())
+        .unwrap();
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .fabric_checkpoint_bank()
+            .unwrap()
+            .components(),
+        vec![fabric_component.clone()]
+    );
+
+    let checkpoint = HostActionRecord::new(
+        28,
+        PartitionId::new(2),
+        PartitionId::new(2),
+        GuestEventId::new(184),
+        source,
+        HostAction::Checkpoint {
+            label: "custom-fabric".to_string(),
+        },
+    );
+    let checkpoint = host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap();
+    let SystemActionOutcome::Checkpoint { manifest, .. } = &checkpoint else {
+        panic!("checkpoint outcome expected");
+    };
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &fabric_component));
+
+    fabric
+        .lock()
+        .unwrap()
+        .transmit(20, fabric_packet(9, 8, 1), path.clone())
+        .unwrap();
+    assert_ne!(fabric.lock().unwrap().lane_snapshots(), fabric_snapshot);
+
+    let restore = HostActionRecord::new(
+        36,
+        PartitionId::new(2),
+        PartitionId::new(2),
+        GuestEventId::new(185),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(fabric.lock().unwrap().lane_snapshots(), fabric_snapshot);
+    let replayed = fabric
+        .lock()
+        .unwrap()
+        .transmit(1, fabric_packet(3, 8, 1), path)
+        .unwrap();
+    assert_eq!(replayed, expected_transfer);
+    assert_eq!(
+        fabric.lock().unwrap().lane_snapshots(),
+        expected.lane_snapshots()
     );
 }
 

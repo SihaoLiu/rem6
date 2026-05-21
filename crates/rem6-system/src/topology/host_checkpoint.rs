@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     AcceleratorCheckpointBank, AcceleratorCheckpointPort, DramMemoryCheckpointBank,
-    DramMemoryCheckpointPort, GpuCheckpointBank, GpuCheckpointPort,
-    InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
+    DramMemoryCheckpointPort, FabricCheckpointBank, FabricCheckpointPort, GpuCheckpointBank,
+    GpuCheckpointPort, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort, SystemError,
     TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
@@ -17,6 +17,31 @@ use super::{
 };
 
 impl RiscvTopologySystem {
+    pub(super) fn attach_fabric_checkpoint_to_host(
+        &mut self,
+    ) -> Result<(), RiscvTopologySystemError> {
+        let Some(host) = self.host.as_ref() else {
+            return Ok(());
+        };
+        let Some(fabric) = self.transport.fabric() else {
+            return Ok(());
+        };
+        let bank = FabricCheckpointBank::new([FabricCheckpointPort::new(
+            host.fabric_checkpoint_component.clone(),
+            fabric,
+        )])
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        host.controller
+            .lock()
+            .expect("topology host controller lock")
+            .executor_mut()
+            .attach_fabric_checkpoint_bank(bank)
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
+        Ok(())
+    }
+
     pub(super) fn attach_scheduler_checkpoint_to_host(
         &mut self,
     ) -> Result<(), RiscvTopologySystemError> {

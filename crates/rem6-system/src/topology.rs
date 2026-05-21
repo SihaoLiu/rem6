@@ -113,6 +113,7 @@ pub struct RiscvTopologyHostConfig {
     host_latency: Tick,
     source: GuestSourceId,
     scheduler_checkpoint_component: CheckpointComponentId,
+    fabric_checkpoint_component: CheckpointComponentId,
 }
 
 impl RiscvTopologyHostConfig {
@@ -122,11 +123,17 @@ impl RiscvTopologyHostConfig {
             host_latency,
             source,
             scheduler_checkpoint_component: default_scheduler_checkpoint_component(),
+            fabric_checkpoint_component: default_fabric_checkpoint_component(),
         }
     }
 
     pub fn with_scheduler_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
         self.scheduler_checkpoint_component = component;
+        self
+    }
+
+    pub fn with_fabric_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
+        self.fabric_checkpoint_component = component;
         self
     }
 
@@ -145,6 +152,10 @@ impl RiscvTopologyHostConfig {
     pub fn scheduler_checkpoint_component(&self) -> &CheckpointComponentId {
         &self.scheduler_checkpoint_component
     }
+
+    pub fn fabric_checkpoint_component(&self) -> &CheckpointComponentId {
+        &self.fabric_checkpoint_component
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +163,7 @@ struct RiscvTopologyHost {
     controller: Arc<Mutex<SystemHostController>>,
     driver: RiscvSystemRunDriver,
     scheduler_checkpoint_component: CheckpointComponentId,
+    fabric_checkpoint_component: CheckpointComponentId,
 }
 
 fn default_memory_checkpoint_component(target: MemoryTargetId) -> CheckpointComponentId {
@@ -197,6 +209,10 @@ fn default_interrupt_checkpoint_component() -> CheckpointComponentId {
 fn default_scheduler_checkpoint_component() -> CheckpointComponentId {
     CheckpointComponentId::new("scheduler0")
         .expect("static scheduler checkpoint component is nonempty")
+}
+
+fn default_fabric_checkpoint_component() -> CheckpointComponentId {
+    CheckpointComponentId::new("fabric0").expect("static fabric checkpoint component is nonempty")
 }
 
 #[derive(Clone, Debug)]
@@ -599,7 +615,9 @@ impl RiscvTopologySystem {
             controller,
             driver: RiscvSystemRunDriver::new(trap_port),
             scheduler_checkpoint_component: config.scheduler_checkpoint_component().clone(),
+            fabric_checkpoint_component: config.fabric_checkpoint_component().clone(),
         });
+        self.attach_fabric_checkpoint_to_host()?;
         self.attach_scheduler_checkpoint_to_host()?;
         self.attach_riscv_checkpoint_to_host()?;
         self.attach_heterogeneous_checkpoint_to_host()?;

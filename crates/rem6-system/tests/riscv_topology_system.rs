@@ -1284,6 +1284,7 @@ fn topology_host_controller_checkpoints_attached_dram_memory() {
         vec![
             cpu_component.clone(),
             dram_component.clone(),
+            CheckpointComponentId::new("fabric0").unwrap(),
             CheckpointComponentId::new("scheduler0").unwrap(),
         ]
     );

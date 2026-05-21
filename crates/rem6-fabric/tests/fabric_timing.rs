@@ -162,6 +162,79 @@ fn fabric_reports_credit_lane_state_in_deterministic_order() {
 }
 
 #[test]
+fn fabric_restore_reinstates_lane_reservations() {
+    let mut fabric = FabricModel::new();
+    let route = path([FabricPathHop::new(link("mesh_restore"), 10, 8)
+        .unwrap()
+        .with_credit_depth(2)
+        .unwrap()]);
+
+    fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 1), route.clone()),
+            ],
+        )
+        .unwrap();
+    let snapshot = fabric.lane_snapshots();
+    let mut expected = fabric.clone();
+    let expected_transfer = expected
+        .transmit(1, packet(3, 8, 1), route.clone())
+        .unwrap();
+
+    fabric.transmit(20, packet(9, 8, 1), route.clone()).unwrap();
+    assert_ne!(fabric.lane_snapshots(), snapshot);
+
+    fabric.restore_lane_snapshots(snapshot.clone()).unwrap();
+
+    assert_eq!(fabric.lane_snapshots(), snapshot);
+    let replayed = fabric.transmit(1, packet(3, 8, 1), route).unwrap();
+    assert_eq!(replayed, expected_transfer);
+    assert_eq!(fabric.lane_snapshots(), expected.lane_snapshots());
+}
+
+#[test]
+fn fabric_restore_rejects_duplicate_lane_snapshots() {
+    let mut fabric = FabricModel::new();
+    let route = path([FabricPathHop::new(link("mesh_duplicate"), 10, 8).unwrap()]);
+    fabric.transmit(0, packet(1, 8, 2), route).unwrap();
+
+    let mut snapshot = fabric.lane_snapshots();
+    snapshot.push(snapshot[0].clone());
+
+    assert_eq!(
+        fabric.restore_lane_snapshots(snapshot).unwrap_err(),
+        FabricError::DuplicateLaneSnapshot {
+            link: link("mesh_duplicate"),
+            virtual_network: VirtualNetworkId::new(2),
+        }
+    );
+}
+
+#[test]
+fn fabric_restore_sorts_credit_return_ticks() {
+    let mut fabric = FabricModel::new();
+    fabric
+        .restore_lane_snapshots([rem6_fabric::FabricLaneSnapshot::new(
+            link("mesh_credit_order"),
+            VirtualNetworkId::new(4),
+            9,
+            vec![30, 10, 20],
+        )])
+        .unwrap();
+
+    let lanes = fabric.lane_snapshots();
+
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].link().as_str(), "mesh_credit_order");
+    assert_eq!(lanes[0].virtual_network(), VirtualNetworkId::new(4));
+    assert_eq!(lanes[0].next_available_tick(), 9);
+    assert_eq!(lanes[0].credit_return_ticks(), &[10, 20, 30]);
+}
+
+#[test]
 fn fabric_pipelines_multi_hop_paths_by_link_occupancy() {
     let mut fabric = FabricModel::new();
     let route = path([

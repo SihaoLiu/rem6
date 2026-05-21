@@ -494,6 +494,10 @@ impl MemoryTransport {
         }
     }
 
+    pub fn fabric(&self) -> Option<Arc<Mutex<FabricModel>>> {
+        self.fabric.as_ref().map(Arc::clone)
+    }
+
     pub fn add_route(&mut self, route: MemoryRoute) -> Result<MemoryRouteId, TransportError> {
         if self.routes.iter().any(|stored| {
             stored.route.source() == route.source() && stored.route.target() == route.target()

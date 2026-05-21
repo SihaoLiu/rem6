@@ -16,6 +16,7 @@ use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod fabric_checkpoint;
 mod heterogeneous_checkpoint;
 mod host;
 mod interrupt_checkpoint;
@@ -26,6 +27,9 @@ mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
 
+pub use fabric_checkpoint::{
+    FabricCheckpointBank, FabricCheckpointError, FabricCheckpointPort, FabricCheckpointRecord,
+};
 pub use heterogeneous_checkpoint::{
     AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,
     AcceleratorCheckpointRecord, GpuCheckpointBank, GpuCheckpointError, GpuCheckpointPort,
@@ -1285,6 +1289,7 @@ pub enum SystemError {
     Stats(StatsError),
     Checkpoint(CheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
+    FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
     SchedulerCheckpoint(SchedulerCheckpointError),
@@ -1306,6 +1311,7 @@ impl fmt::Display for SystemError {
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
+            Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
@@ -1326,6 +1332,7 @@ impl Error for SystemError {
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),
+            Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
             Self::SchedulerCheckpoint(error) => Some(error),

@@ -56,7 +56,13 @@ pub enum FabricError {
     ZeroLinkLatency,
     ZeroLinkBandwidth,
     ZeroCreditDepth,
-    DuplicatePacketInBatch { packet: FabricPacketId },
+    DuplicatePacketInBatch {
+        packet: FabricPacketId,
+    },
+    DuplicateLaneSnapshot {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    },
     TickOverflow,
 }
 
@@ -72,6 +78,15 @@ impl fmt::Display for FabricError {
             Self::DuplicatePacketInBatch { packet } => {
                 write!(formatter, "packet {} appears more than once", packet.get())
             }
+            Self::DuplicateLaneSnapshot {
+                link,
+                virtual_network,
+            } => write!(
+                formatter,
+                "fabric lane {} virtual network {} appears more than once in snapshot",
+                link.as_str(),
+                virtual_network.get()
+            ),
             Self::TickOverflow => write!(formatter, "fabric tick calculation overflowed"),
         }
     }
@@ -285,7 +300,7 @@ pub struct FabricLaneSnapshot {
 }
 
 impl FabricLaneSnapshot {
-    fn new(
+    pub fn new(
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
         next_available_tick: Tick,
@@ -323,6 +338,15 @@ struct FabricLaneState {
 }
 
 impl FabricLaneState {
+    fn from_snapshot(snapshot: &FabricLaneSnapshot) -> Self {
+        let mut credit_returns = snapshot.credit_return_ticks.clone();
+        credit_returns.sort_unstable();
+        Self {
+            next_available: snapshot.next_available_tick,
+            credit_returns,
+        }
+    }
+
     fn reserve(
         &mut self,
         arrival_tick: Tick,
@@ -434,6 +458,26 @@ impl FabricModel {
                 )
             })
             .collect()
+    }
+
+    pub fn restore_lane_snapshots<I>(&mut self, snapshots: I) -> Result<(), FabricError>
+    where
+        I: IntoIterator<Item = FabricLaneSnapshot>,
+    {
+        let mut lanes = BTreeMap::new();
+        for snapshot in snapshots {
+            let key = FabricLaneKey::new(snapshot.link.clone(), snapshot.virtual_network);
+            if lanes.contains_key(&key) {
+                return Err(FabricError::DuplicateLaneSnapshot {
+                    link: snapshot.link,
+                    virtual_network: snapshot.virtual_network,
+                });
+            }
+            lanes.insert(key, FabricLaneState::from_snapshot(&snapshot));
+        }
+
+        self.lanes = lanes;
+        Ok(())
     }
 
     fn reserve_transfer(

@@ -404,6 +404,7 @@ fn topology_host_controller_checkpoints_attached_heterogeneous_devices() {
         vec![
             CheckpointComponentId::new("accelerator9").unwrap(),
             CheckpointComponentId::new("cpu0").unwrap(),
+            CheckpointComponentId::new("fabric0").unwrap(),
             CheckpointComponentId::new("gpu10").unwrap(),
             CheckpointComponentId::new("scheduler0").unwrap(),
         ],
