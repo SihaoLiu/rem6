@@ -45,8 +45,9 @@ use self::workload_replay_dma::{run_accelerator_dma_copies, WorkloadAcceleratorD
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, accelerator_wait_for_graph_since, accelerator_wait_for_markers,
     build_accelerator_devices, build_gpu_devices, gpu_snapshots, gpu_wait_for_graph_since,
-    gpu_wait_for_markers, schedule_accelerator_commands, schedule_gpu_kernel_launches,
-    WorkloadAcceleratorActivity, WorkloadGpuActivity, WorkloadGpuRuntime,
+    gpu_wait_for_markers, merge_wait_for_graph, schedule_accelerator_commands,
+    schedule_gpu_kernel_launches, WorkloadAcceleratorActivity, WorkloadGpuActivity,
+    WorkloadGpuRuntime,
 };
 use crate::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
@@ -168,6 +169,16 @@ struct WorkloadGpuDmaActivity {
     copy_count: usize,
     completion_count: usize,
     active_device_count: usize,
+    wait_for_edge_count: usize,
+    deadlock_diagnostic_count: usize,
+}
+
+impl WorkloadGpuDmaActivity {
+    fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
+        self.wait_for_edge_count = wait_for.edge_count();
+        self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
+        self
+    }
 }
 
 struct WorkloadReplayActivityRefs<'a> {
@@ -1011,6 +1022,8 @@ impl RiscvWorkloadReplay {
             return Ok(WorkloadGpuDmaActivity::default());
         }
 
+        let fabric_wait_for_start = transport.mark_fabric_wait_for();
+        let dram_wait_for_start = memory.mark_dram_wait_for();
         let before = gpu_snapshots(devices);
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
@@ -1090,11 +1103,21 @@ impl RiscvWorkloadReplay {
             completion_count += device_completions;
         }
 
+        let mut wait_for = memory.dram_wait_for_since(dram_wait_for_start);
+        if let Some(fabric_wait_for) =
+            fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
+        {
+            merge_wait_for_graph(&mut wait_for, fabric_wait_for);
+        }
+
         Ok(WorkloadGpuDmaActivity {
             copy_count: topology.gpu_dma_copies().len(),
             completion_count,
             active_device_count,
-        })
+            wait_for_edge_count: 0,
+            deadlock_diagnostic_count: 0,
+        }
+        .with_wait_for_graph(wait_for))
     }
 
     fn gpu_dma_copy(
@@ -1483,6 +1506,10 @@ fn parallel_execution_summary(
             activities.gpu_dma.completion_count,
             activities.gpu_dma.active_device_count,
         )
+        .with_gpu_dma_diagnostics(
+            activities.gpu_dma.wait_for_edge_count,
+            activities.gpu_dma.deadlock_diagnostic_count,
+        )
         .with_accelerator_compute_counts(
             activities.accelerator.command_count,
             activities.accelerator.trace_event_count,
@@ -1497,6 +1524,10 @@ fn parallel_execution_summary(
             activities.accelerator_dma.copy_count,
             activities.accelerator_dma.completion_count,
             activities.accelerator_dma.active_device_count,
+        )
+        .with_accelerator_dma_diagnostics(
+            activities.accelerator_dma.wait_for_edge_count,
+            activities.accelerator_dma.deadlock_diagnostic_count,
         )
 }
 

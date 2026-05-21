@@ -136,6 +136,20 @@ fn boot_image_with_gpu_dma_data() -> BootImage {
         .unwrap()
 }
 
+fn boot_image_with_contended_dma_data() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x9024), vec![0x3a, 0x4b, 0x5c, 0x6d])
+        .unwrap()
+        .add_segment(Address::new(0x9048), vec![0; 4])
+        .unwrap()
+        .add_segment(Address::new(0x9064), vec![0x7e, 0x8f, 0x90, 0xa1])
+        .unwrap()
+        .add_segment(Address::new(0x9088), vec![0; 4])
+        .unwrap()
+}
+
 fn dram_geometry() -> DramGeometry {
     DramGeometry::new(4, 64, 16).unwrap()
 }
@@ -605,6 +619,141 @@ fn replay_topology_with_accelerator_dma_copy() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_profiled_contended_dma_copies() -> WorkloadTopology {
+    WorkloadTopology::new(6, 2, 4, WorkloadHostPlacement::new(5, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(single_channel_ddr_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 3, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("gpu0.dma"), "gpu0.dma", 3, "memory", 2, 3, 5)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                4,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.dma"),
+                "accelerator0.dma",
+                4,
+                "memory",
+                2,
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .unwrap()
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                12,
+                200,
+                route_id("gpu0.dma"),
+                77,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_dma_copy(
+            WorkloadGpuDmaCopy::new(
+                12,
+                201,
+                route_id("gpu0.dma"),
+                77,
+                Address::new(0x9064),
+                Address::new(0x9088),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 4, 2, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_dma_copy(
+            WorkloadAcceleratorDmaCopy::new(
+                22,
+                300,
+                route_id("accelerator0.dma"),
+                88,
+                Address::new(0x9024),
+                Address::new(0x9048),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_dma_copy(
+            WorkloadAcceleratorDmaCopy::new(
+                22,
+                301,
+                route_id("accelerator0.dma"),
+                88,
+                Address::new(0x9064),
+                Address::new(0x9088),
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_cached_accelerator_dma_copy() -> WorkloadTopology {
     WorkloadTopology::new(5, 2, 4, WorkloadHostPlacement::new(4, 2, 51).unwrap())
         .unwrap()
@@ -945,6 +1094,25 @@ fn replay_manifest_with_accelerator_dma_copy() -> WorkloadManifest {
     .unwrap()
 }
 
+fn replay_manifest_with_profiled_contended_dma_copies() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-profiled-contended-dma-copies"),
+        boot_image_with_contended_dma_data(),
+    )
+    .with_topology(replay_topology_with_profiled_contended_dma_copies())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
 fn replay_manifest_with_cached_accelerator_dma_copy() -> WorkloadManifest {
     WorkloadManifest::builder(
         workload_id("riscv-replay-cached-accelerator-dma-copy"),
@@ -1237,7 +1405,8 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
         summary.full_system_wait_for_edge_count(),
         summary.resource_wait_for_edge_count()
             + summary.data_cache_wait_for_edge_count()
-            + summary.compute_wait_for_edge_count(),
+            + summary.compute_wait_for_edge_count()
+            + summary.dma_wait_for_edge_count(),
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_dispatch_count(),
@@ -1303,13 +1472,15 @@ fn workload_replay_summary_reports_resource_wait_diagnostics() {
         summary.full_system_wait_for_edge_count(),
         summary.resource_wait_for_edge_count()
             + summary.data_cache_wait_for_edge_count()
-            + summary.compute_wait_for_edge_count(),
+            + summary.compute_wait_for_edge_count()
+            + summary.dma_wait_for_edge_count(),
     );
     assert_eq!(
         summary.full_system_deadlock_diagnostic_count(),
         summary.resource_deadlock_diagnostic_count()
             + summary.data_cache_deadlock_diagnostic_count()
-            + summary.compute_deadlock_diagnostic_count(),
+            + summary.compute_deadlock_diagnostic_count()
+            + summary.dma_deadlock_diagnostic_count(),
     );
     assert!(summary.has_dram_diagnostics());
     assert!(summary.has_resource_diagnostics());
@@ -1348,11 +1519,52 @@ fn workload_replay_summary_reports_compute_wait_diagnostics() {
         summary.full_system_wait_for_edge_count(),
         summary.resource_wait_for_edge_count()
             + summary.data_cache_wait_for_edge_count()
-            + summary.compute_wait_for_edge_count(),
+            + summary.compute_wait_for_edge_count()
+            + summary.dma_wait_for_edge_count(),
     );
     assert!(summary.has_gpu_compute_diagnostics());
     assert!(summary.has_accelerator_compute_diagnostics());
     assert!(summary.has_compute_diagnostics());
+    assert!(summary.has_full_system_diagnostics());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_summary_reports_dma_wait_diagnostics() {
+    let manifest = replay_manifest_with_profiled_contended_dma_copies();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(512)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(summary.gpu_dma_copy_count(), 2);
+    assert_eq!(summary.gpu_dma_completion_count(), 2);
+    assert_eq!(summary.accelerator_dma_copy_count(), 2);
+    assert_eq!(summary.accelerator_dma_completion_count(), 2);
+    assert!(summary.gpu_dma_wait_for_edge_count() >= 1);
+    assert!(summary.accelerator_dma_wait_for_edge_count() >= 1);
+    assert_eq!(
+        summary.dma_wait_for_edge_count(),
+        summary.gpu_dma_wait_for_edge_count() + summary.accelerator_dma_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.dma_deadlock_diagnostic_count(),
+        summary.gpu_dma_deadlock_diagnostic_count()
+            + summary.accelerator_dma_deadlock_diagnostic_count(),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count(),
+        summary.resource_wait_for_edge_count()
+            + summary.data_cache_wait_for_edge_count()
+            + summary.compute_wait_for_edge_count()
+            + summary.dma_wait_for_edge_count(),
+    );
+    assert!(summary.has_gpu_dma_diagnostics());
+    assert!(summary.has_accelerator_dma_diagnostics());
+    assert!(summary.has_dma_diagnostics());
     assert!(summary.has_full_system_diagnostics());
     plan.verify_result(outcome.result()).unwrap();
 }

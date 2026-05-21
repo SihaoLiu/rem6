@@ -388,7 +388,7 @@ fn accelerator_command_kind(kind: &WorkloadAcceleratorCommandKind) -> Accelerato
     }
 }
 
-fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
+pub(crate) fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
     for edge in source.edges() {
         target
             .record_wait(
@@ -397,7 +397,7 @@ fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
                 edge.kind(),
                 edge.first_observed_tick(),
             )
-            .expect("merged compute wait-for graph already contains valid labels");
+            .expect("merged wait-for graph already contains valid labels");
         if edge.last_observed_tick() != edge.first_observed_tick() {
             target
                 .record_wait(
@@ -406,7 +406,7 @@ fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
                     edge.kind(),
                     edge.last_observed_tick(),
                 )
-                .expect("merged compute wait-for graph already contains valid labels");
+                .expect("merged wait-for graph already contains valid labels");
         }
     }
 }

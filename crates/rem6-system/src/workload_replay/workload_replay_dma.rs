@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorCommandId, AcceleratorDmaCopy, AcceleratorEngineId};
-use rem6_kernel::PartitionedScheduler;
+use rem6_kernel::{PartitionedScheduler, WaitForGraph};
 use rem6_memory::{
     AccessSize, AddressRange, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
@@ -13,13 +13,25 @@ use super::{
     cached_memory_response, RiscvWorkloadReplayError, WorkloadDataCacheBackend,
     WorkloadMemoryBackend,
 };
-use crate::workload_replay_heterogeneous::{accelerator_snapshots, WorkloadAcceleratorRuntime};
+use crate::workload_replay_heterogeneous::{
+    accelerator_snapshots, merge_wait_for_graph, WorkloadAcceleratorRuntime,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) copy_count: usize,
     pub(super) completion_count: usize,
     pub(super) active_device_count: usize,
+    pub(super) wait_for_edge_count: usize,
+    pub(super) deadlock_diagnostic_count: usize,
+}
+
+impl WorkloadAcceleratorDmaActivity {
+    fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
+        self.wait_for_edge_count = wait_for.edge_count();
+        self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
+        self
+    }
 }
 
 pub(super) fn run_accelerator_dma_copies(
@@ -34,6 +46,8 @@ pub(super) fn run_accelerator_dma_copies(
         return Ok(WorkloadAcceleratorDmaActivity::default());
     }
 
+    let fabric_wait_for_start = transport.mark_fabric_wait_for();
+    let dram_wait_for_start = memory.mark_dram_wait_for();
     let before = accelerator_snapshots(devices);
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
         topology.partition_count(),
@@ -115,11 +129,21 @@ pub(super) fn run_accelerator_dma_copies(
         completion_count += device_completions;
     }
 
+    let mut wait_for = memory.dram_wait_for_since(dram_wait_for_start);
+    if let Some(fabric_wait_for) =
+        fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
+    {
+        merge_wait_for_graph(&mut wait_for, fabric_wait_for);
+    }
+
     Ok(WorkloadAcceleratorDmaActivity {
         copy_count: topology.accelerator_dma_copies().len(),
         completion_count,
         active_device_count,
-    })
+        wait_for_edge_count: 0,
+        deadlock_diagnostic_count: 0,
+    }
+    .with_wait_for_graph(wait_for))
 }
 
 fn accelerator_dma_copy(

@@ -81,6 +81,8 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_copy_count: usize,
     gpu_dma_completion_count: usize,
     active_gpu_dma_device_count: usize,
+    gpu_dma_wait_for_edge_count: usize,
+    gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
     accelerator_trace_event_count: usize,
     accelerator_completion_count: usize,
@@ -90,6 +92,8 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_copy_count: usize,
     accelerator_dma_completion_count: usize,
     active_accelerator_dma_device_count: usize,
+    accelerator_dma_wait_for_edge_count: usize,
+    accelerator_dma_deadlock_diagnostic_count: usize,
 }
 
 impl WorkloadParallelExecutionSummary {
@@ -238,6 +242,16 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub const fn with_gpu_dma_diagnostics(
+        mut self,
+        wait_for_edge_count: usize,
+        deadlock_diagnostic_count: usize,
+    ) -> Self {
+        self.gpu_dma_wait_for_edge_count = wait_for_edge_count;
+        self.gpu_dma_deadlock_diagnostic_count = deadlock_diagnostic_count;
+        self
+    }
+
     pub const fn with_accelerator_compute_counts(
         mut self,
         command_count: usize,
@@ -271,6 +285,16 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_copy_count = copy_count;
         self.accelerator_dma_completion_count = completion_count;
         self.active_accelerator_dma_device_count = active_device_count;
+        self
+    }
+
+    pub const fn with_accelerator_dma_diagnostics(
+        mut self,
+        wait_for_edge_count: usize,
+        deadlock_diagnostic_count: usize,
+    ) -> Self {
+        self.accelerator_dma_wait_for_edge_count = wait_for_edge_count;
+        self.accelerator_dma_deadlock_diagnostic_count = deadlock_diagnostic_count;
         self
     }
 
@@ -453,18 +477,21 @@ impl WorkloadParallelExecutionSummary {
         self.resource_wait_for_edge_count()
             + self.data_cache_wait_for_edge_count
             + self.compute_wait_for_edge_count()
+            + self.dma_wait_for_edge_count()
     }
 
     pub const fn full_system_deadlock_diagnostic_count(&self) -> usize {
         self.resource_deadlock_diagnostic_count()
             + self.data_cache_deadlock_diagnostic_count
             + self.compute_deadlock_diagnostic_count()
+            + self.dma_deadlock_diagnostic_count()
     }
 
     pub const fn has_full_system_diagnostics(&self) -> bool {
         self.has_resource_diagnostics()
             || self.has_data_cache_diagnostics()
             || self.has_compute_diagnostics()
+            || self.has_dma_diagnostics()
     }
 
     pub const fn gpu_kernel_launch_count(&self) -> usize {
@@ -515,6 +542,18 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn has_gpu_dma_activity(&self) -> bool {
         self.gpu_dma_copy_count != 0 || self.gpu_dma_completion_count != 0
+    }
+
+    pub const fn gpu_dma_wait_for_edge_count(&self) -> usize {
+        self.gpu_dma_wait_for_edge_count
+    }
+
+    pub const fn gpu_dma_deadlock_diagnostic_count(&self) -> usize {
+        self.gpu_dma_deadlock_diagnostic_count
+    }
+
+    pub const fn has_gpu_dma_diagnostics(&self) -> bool {
+        self.gpu_dma_wait_for_edge_count != 0 || self.gpu_dma_deadlock_diagnostic_count != 0
     }
 
     pub const fn accelerator_command_count(&self) -> usize {
@@ -579,6 +618,31 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn has_accelerator_dma_activity(&self) -> bool {
         self.accelerator_dma_copy_count != 0 || self.accelerator_dma_completion_count != 0
+    }
+
+    pub const fn accelerator_dma_wait_for_edge_count(&self) -> usize {
+        self.accelerator_dma_wait_for_edge_count
+    }
+
+    pub const fn accelerator_dma_deadlock_diagnostic_count(&self) -> usize {
+        self.accelerator_dma_deadlock_diagnostic_count
+    }
+
+    pub const fn has_accelerator_dma_diagnostics(&self) -> bool {
+        self.accelerator_dma_wait_for_edge_count != 0
+            || self.accelerator_dma_deadlock_diagnostic_count != 0
+    }
+
+    pub const fn dma_wait_for_edge_count(&self) -> usize {
+        self.gpu_dma_wait_for_edge_count + self.accelerator_dma_wait_for_edge_count
+    }
+
+    pub const fn dma_deadlock_diagnostic_count(&self) -> usize {
+        self.gpu_dma_deadlock_diagnostic_count + self.accelerator_dma_deadlock_diagnostic_count
+    }
+
+    pub const fn has_dma_diagnostics(&self) -> bool {
+        self.has_gpu_dma_diagnostics() || self.has_accelerator_dma_diagnostics()
     }
 
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
