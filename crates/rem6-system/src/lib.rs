@@ -55,7 +55,8 @@ pub use heterogeneous_checkpoint::{
     GpuCheckpointRecord,
 };
 pub use host::{
-    SystemActionExecutor, SystemActionOutcome, SystemHostController, SystemRunController,
+    ExecutionModeCheckpointError, SystemActionExecutor, SystemActionOutcome, SystemHostController,
+    SystemRunController,
 };
 pub use interrupt_checkpoint::{
     InterruptControllerCheckpointBank, InterruptControllerCheckpointError,
@@ -1692,6 +1693,7 @@ pub enum SystemError {
     RiscvCluster(RiscvClusterError),
     Stats(StatsError),
     Checkpoint(CheckpointError),
+    ExecutionModeCheckpoint(ExecutionModeCheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
     MsiBankCheckpoint(MsiBankCheckpointError),
     FabricCheckpoint(FabricCheckpointError),
@@ -1715,6 +1717,7 @@ impl fmt::Display for SystemError {
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
+            Self::ExecutionModeCheckpoint(error) => write!(formatter, "{error}"),
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
             Self::MsiBankCheckpoint(error) => write!(formatter, "{error}"),
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
@@ -1737,6 +1740,7 @@ impl Error for SystemError {
             Self::RiscvCluster(error) => Some(error),
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
+            Self::ExecutionModeCheckpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),
             Self::MsiBankCheckpoint(error) => Some(error),
             Self::FabricCheckpoint(error) => Some(error),

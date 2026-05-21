@@ -95,6 +95,17 @@ fn request_id(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(11), sequence)
 }
 
+fn execution_mode_checkpoint_payload(manifest: &CheckpointManifest) -> Option<&[u8]> {
+    manifest
+        .states()
+        .iter()
+        .find(|state| state.component().as_str() == "host.execution_modes")?
+        .chunks()
+        .iter()
+        .find(|chunk| chunk.name() == "modes")
+        .map(|chunk| chunk.payload())
+}
+
 fn uart_byte_mask() -> ByteMask {
     ByteMask::full(AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap()).unwrap()
 }
@@ -1291,6 +1302,90 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
                 mode: ExecutionMode::Detailed,
             },
         ]
+    );
+}
+
+#[test]
+fn execution_mode_switches_are_checkpointed_and_restored() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(13);
+    let target = ExecutionModeTarget::new("cpu0");
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+
+    executor
+        .apply(&HostActionRecord::new(
+            10,
+            guest,
+            host,
+            GuestEventId::new(20),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap();
+
+    let checkpoint = executor
+        .apply(&HostActionRecord::new(
+            12,
+            guest,
+            host,
+            GuestEventId::new(21),
+            source,
+            HostAction::Checkpoint {
+                label: "mode-functional".to_string(),
+            },
+        ))
+        .unwrap();
+    let manifest = match checkpoint {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(execution_mode_checkpoint_payload(&manifest).is_some_and(|payload| !payload.is_empty()));
+
+    executor
+        .apply(&HostActionRecord::new(
+            14,
+            guest,
+            host,
+            GuestEventId::new(22),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Detailed,
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        executor.execution_mode(&target),
+        Some(ExecutionMode::Detailed)
+    );
+
+    assert_eq!(
+        executor
+            .apply(&HostActionRecord::new(
+                18,
+                guest,
+                host,
+                GuestEventId::new(23),
+                source,
+                HostAction::RestoreCheckpoint {
+                    manifest: manifest.clone(),
+                },
+            ))
+            .unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 18,
+            event: GuestEventId::new(23),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(
+        executor.execution_mode(&target),
+        Some(ExecutionMode::Functional)
     );
 }
 
