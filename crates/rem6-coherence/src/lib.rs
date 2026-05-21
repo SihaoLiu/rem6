@@ -45,7 +45,8 @@ use snoop::{DirectorySnoopWork, SnoopRoute};
 
 pub use backing::LineBackingStore;
 pub use bank::{
-    MsiBankBackingLineSnapshot, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
+    MsiBankBackingLineSnapshot, MsiBankCycleAccepted, MsiBankCycleEntry, MsiBankCyclePlan,
+    MsiBankCycleRun, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
 };
 pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{
@@ -155,15 +156,42 @@ impl CpuResponseRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HarnessError {
-    LineBusy { state: MsiState },
-    UnknownCache { agent: AgentId },
-    DuplicateCache { agent: AgentId },
-    MissingTopologyConnection { from: Endpoint, to: Endpoint },
-    MissingBackingMemory { line: Address },
-    WrongLine { expected: Address, actual: Address },
-    LineDataSizeMismatch { expected: u64, actual: u64 },
-    MissingDirectoryGrant { request: MemoryRequestId },
-    GrantDataUnavailable { agent: AgentId, line: MsiLineId },
+    LineBusy {
+        state: MsiState,
+    },
+    UnknownCache {
+        agent: AgentId,
+    },
+    DuplicateCache {
+        agent: AgentId,
+    },
+    MissingTopologyConnection {
+        from: Endpoint,
+        to: Endpoint,
+    },
+    MissingBackingMemory {
+        line: Address,
+    },
+    WrongLine {
+        expected: Address,
+        actual: Address,
+    },
+    LineDataSizeMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    MissingDirectoryGrant {
+        request: MemoryRequestId,
+    },
+    GrantDataUnavailable {
+        agent: AgentId,
+        line: MsiLineId,
+    },
+    ParallelLineConflict {
+        line: Address,
+        first: MemoryRequestId,
+        second: MemoryRequestId,
+    },
     Cache(CacheControllerError),
     CacheBank(MsiCacheBankError),
     Directory(DirectoryError),
@@ -171,7 +199,9 @@ pub enum HarnessError {
     Fabric(FabricError),
     Memory(MemoryError),
     Scheduler(SchedulerError),
-    SnapshotResourceMismatch { resource: &'static str },
+    SnapshotResourceMismatch {
+        resource: &'static str,
+    },
     Topology(TopologyError),
     Transport(TransportError),
 }
@@ -222,6 +252,19 @@ impl fmt::Display for HarnessError {
                 "agent {} has no data for line {:#x}",
                 agent.get(),
                 line.address().get()
+            ),
+            Self::ParallelLineConflict {
+                line,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "parallel MSI bank cycle has conflicting requests {} from agent {} and {} from agent {} for line {:#x}",
+                first.sequence(),
+                first.agent().get(),
+                second.sequence(),
+                second.agent().get(),
+                line.get()
             ),
             Self::Cache(error) => write!(formatter, "{error}"),
             Self::CacheBank(error) => write!(formatter, "{error}"),

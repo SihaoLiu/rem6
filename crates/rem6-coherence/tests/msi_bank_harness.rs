@@ -250,6 +250,208 @@ fn msi_bank_harness_transfers_modified_owner_data_without_touching_other_lines()
 }
 
 #[test]
+fn msi_bank_harness_parallel_cycle_accepts_independent_lines_in_stable_order() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(2), agent(1)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+
+    let run = harness
+        .submit_parallel_cycle(
+            17,
+            [
+                (agent(2), read(2, 20, 0x1018)),
+                (agent(1), read(1, 10, 0x1004)),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(run.tick(), 17);
+    assert_eq!(run.accepted_count(), 2);
+    assert_eq!(
+        run.accepted_lines(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+    assert_eq!(run.accepted()[0].agent(), agent(1));
+    assert_eq!(run.accepted()[0].request(), request_id(1, 10));
+    assert_eq!(run.accepted()[0].result().kind(), SubmitKind::ScheduledMiss);
+    assert_eq!(run.accepted()[1].agent(), agent(2));
+    assert_eq!(run.accepted()[1].request(), request_id(2, 20));
+
+    assert_eq!(
+        harness.cache_state(agent(1), Address::new(0x1004)).unwrap(),
+        Some(MsiState::Shared)
+    );
+    assert_eq!(
+        harness.cache_state(agent(2), Address::new(0x1018)).unwrap(),
+        Some(MsiState::Shared)
+    );
+    assert_eq!(
+        harness.directory_line_addresses(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+
+    let responses = harness.cpu_responses();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0].tick(), 17);
+    assert_eq!(responses[0].request(), request_id(1, 10));
+    assert_eq!(responses[0].data().unwrap(), &[0x11; 8]);
+    assert_eq!(responses[1].tick(), 17);
+    assert_eq!(responses[1].request(), request_id(2, 20));
+    assert_eq!(responses[1].data().unwrap(), &[0x22; 8]);
+}
+
+#[test]
+fn msi_bank_harness_parallel_cycle_plan_is_stable_and_side_effect_free() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(2), agent(1)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    let before = harness.snapshot();
+
+    let plan = harness
+        .plan_parallel_cycle(
+            19,
+            [
+                (agent(2), read(2, 22, 0x1018)),
+                (agent(1), read(1, 11, 0x1004)),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(plan.tick(), 19);
+    assert_eq!(plan.entry_count(), 2);
+    assert!(plan.has_parallel_work());
+    assert_eq!(
+        plan.lines(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+    assert_eq!(plan.entries()[0].agent(), agent(1));
+    assert_eq!(plan.entries()[0].request(), request_id(1, 11));
+    assert_eq!(plan.entries()[1].agent(), agent(2));
+    assert_eq!(plan.entries()[1].request(), request_id(2, 22));
+    assert_eq!(harness.snapshot(), before);
+
+    let run = harness.submit_parallel_cycle_plan(plan).unwrap();
+
+    assert_eq!(run.tick(), 19);
+    assert_eq!(run.accepted_count(), 2);
+    assert_eq!(run.response_count(), 2);
+    assert_eq!(run.scheduled_miss_count(), 2);
+    assert_eq!(run.immediate_hit_count(), 0);
+    assert_ne!(harness.snapshot(), before);
+}
+
+#[test]
+fn msi_bank_harness_parallel_cycle_reports_hit_and_miss_mix() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x22))
+        .unwrap();
+    harness
+        .submit_cpu_request(agent(1), read(1, 10, 0x1004))
+        .unwrap();
+
+    let run = harness
+        .submit_parallel_cycle(
+            29,
+            [
+                (agent(1), read(1, 11, 0x1004)),
+                (agent(2), read(2, 20, 0x1018)),
+            ],
+        )
+        .unwrap();
+
+    assert!(run.has_parallel_work());
+    assert_eq!(run.accepted_count(), 2);
+    assert_eq!(run.immediate_hit_count(), 1);
+    assert_eq!(run.scheduled_miss_count(), 1);
+    assert_eq!(run.response_count(), 2);
+    assert_eq!(run.accepted()[0].result().kind(), SubmitKind::ImmediateHit);
+    assert_eq!(run.accepted()[1].result().kind(), SubmitKind::ScheduledMiss);
+
+    let responses = harness.cpu_responses();
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[1].tick(), 29);
+    assert_eq!(responses[1].request(), request_id(1, 11));
+    assert_eq!(responses[1].data().unwrap(), &[0x11; 8]);
+    assert_eq!(responses[2].tick(), 29);
+    assert_eq!(responses[2].request(), request_id(2, 20));
+    assert_eq!(responses[2].data().unwrap(), &[0x22; 8]);
+}
+
+#[test]
+fn msi_bank_harness_parallel_cycle_allows_empty_work_without_mutation() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    let before = harness.snapshot();
+
+    let plan = harness
+        .plan_parallel_cycle(31, std::iter::empty::<(AgentId, MemoryRequest)>())
+        .unwrap();
+
+    assert_eq!(plan.tick(), 31);
+    assert!(plan.is_empty());
+    assert!(!plan.has_parallel_work());
+    assert_eq!(plan.entry_count(), 0);
+    assert!(plan.lines().is_empty());
+    assert_eq!(harness.snapshot(), before);
+
+    let run = harness.submit_parallel_cycle_plan(plan).unwrap();
+
+    assert_eq!(run.tick(), 31);
+    assert!(run.is_empty());
+    assert!(!run.has_parallel_work());
+    assert_eq!(run.accepted_count(), 0);
+    assert_eq!(run.response_count(), 0);
+    assert_eq!(harness.snapshot(), before);
+    assert!(harness.cpu_responses().is_empty());
+}
+
+#[test]
+fn msi_bank_harness_parallel_cycle_rejects_same_line_conflict_without_mutation() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    let before = harness.snapshot();
+
+    assert_eq!(
+        harness
+            .submit_parallel_cycle(
+                23,
+                [
+                    (agent(2), read(2, 20, 0x1008)),
+                    (agent(1), write(1, 10, 0x1004, vec![0xaa; 8])),
+                ],
+            )
+            .unwrap_err(),
+        HarnessError::ParallelLineConflict {
+            line: Address::new(0x1000),
+            first: request_id(1, 10),
+            second: request_id(2, 20),
+        }
+    );
+    assert_eq!(harness.snapshot(), before);
+    assert!(harness.cpu_responses().is_empty());
+    assert_eq!(
+        harness.directory_state(Address::new(0x1000)),
+        DirectoryLineState::new(line(0x1000))
+    );
+}
+
+#[test]
 fn msi_bank_harness_snapshot_restore_reinstates_multi_line_state() {
     let mut source = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
     source

@@ -6,12 +6,15 @@ use rem6_cache::{
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, MsiDirectory,
 };
-use rem6_memory::{Address, AgentId, CacheLineLayout, MemoryRequest, MemoryResponse};
+use rem6_memory::{
+    Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
+};
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{response_record, CpuResponseRecord, HarnessError, SubmitKind, SubmitResult};
 
+#[derive(Clone)]
 pub struct MsiBankDirectoryHarness {
     layout: CacheLineLayout,
     directory: MsiDirectory,
@@ -49,6 +52,194 @@ pub struct MsiBankDirectoryHarnessSnapshot {
     backing_lines: Vec<MsiBankBackingLineSnapshot>,
     cpu_responses: Vec<CpuResponseRecord>,
     directory_decisions: Vec<DirectoryDecision>,
+}
+
+#[derive(Clone, Debug)]
+struct MsiBankCycleRequest {
+    agent: AgentId,
+    request: MemoryRequest,
+    line_address: Address,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MsiBankCycleEntry {
+    agent: AgentId,
+    request: MemoryRequestId,
+    line_address: Address,
+}
+
+impl MsiBankCycleEntry {
+    pub const fn new(agent: AgentId, request: MemoryRequestId, line_address: Address) -> Self {
+        Self {
+            agent,
+            request,
+            line_address,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn request(&self) -> MemoryRequestId {
+        self.request
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MsiBankCyclePlan {
+    tick: u64,
+    entries: Vec<MsiBankCycleEntry>,
+    requests: Vec<MsiBankCycleRequest>,
+}
+
+impl MsiBankCyclePlan {
+    fn new(tick: u64, requests: Vec<MsiBankCycleRequest>) -> Self {
+        let entries = requests
+            .iter()
+            .map(|request| {
+                MsiBankCycleEntry::new(request.agent, request.request.id(), request.line_address)
+            })
+            .collect();
+        Self {
+            tick,
+            entries,
+            requests,
+        }
+    }
+
+    pub const fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    pub fn entries(&self) -> &[MsiBankCycleEntry] {
+        &self.entries
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.entries.len() > 1
+    }
+
+    pub fn lines(&self) -> Vec<Address> {
+        self.entries
+            .iter()
+            .map(MsiBankCycleEntry::line_address)
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankCycleAccepted {
+    agent: AgentId,
+    request: MemoryRequestId,
+    line_address: Address,
+    result: SubmitResult,
+}
+
+impl MsiBankCycleAccepted {
+    pub const fn new(
+        agent: AgentId,
+        request: MemoryRequestId,
+        line_address: Address,
+        result: SubmitResult,
+    ) -> Self {
+        Self {
+            agent,
+            request,
+            line_address,
+            result,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn request(&self) -> MemoryRequestId {
+        self.request
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+
+    pub const fn result(&self) -> &SubmitResult {
+        &self.result
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankCycleRun {
+    tick: u64,
+    accepted: Vec<MsiBankCycleAccepted>,
+    response_count: usize,
+}
+
+impl MsiBankCycleRun {
+    pub fn new(tick: u64, accepted: Vec<MsiBankCycleAccepted>, response_count: usize) -> Self {
+        Self {
+            tick,
+            accepted,
+            response_count,
+        }
+    }
+
+    pub const fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    pub fn accepted(&self) -> &[MsiBankCycleAccepted] {
+        &self.accepted
+    }
+
+    pub fn accepted_count(&self) -> usize {
+        self.accepted.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.accepted.is_empty()
+    }
+
+    pub fn response_count(&self) -> usize {
+        self.response_count
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.accepted.len() > 1
+    }
+
+    pub fn immediate_hit_count(&self) -> usize {
+        self.accepted
+            .iter()
+            .filter(|accepted| accepted.result.kind() == SubmitKind::ImmediateHit)
+            .count()
+    }
+
+    pub fn scheduled_miss_count(&self) -> usize {
+        self.accepted
+            .iter()
+            .filter(|accepted| accepted.result.kind() == SubmitKind::ScheduledMiss)
+            .count()
+    }
+
+    pub fn accepted_lines(&self) -> Vec<Address> {
+        self.accepted
+            .iter()
+            .map(MsiBankCycleAccepted::line_address)
+            .collect()
+    }
 }
 
 impl MsiBankDirectoryHarnessSnapshot {
@@ -189,6 +380,96 @@ impl MsiBankDirectoryHarness {
         agent: AgentId,
         request: MemoryRequest,
     ) -> Result<SubmitResult, HarnessError> {
+        self.submit_cpu_request_at(0, agent, request)
+    }
+
+    pub fn submit_parallel_cycle<I>(
+        &mut self,
+        tick: u64,
+        requests: I,
+    ) -> Result<MsiBankCycleRun, HarnessError>
+    where
+        I: IntoIterator<Item = (AgentId, MemoryRequest)>,
+    {
+        let plan = self.plan_parallel_cycle(tick, requests)?;
+        self.submit_parallel_cycle_plan(plan)
+    }
+
+    pub fn plan_parallel_cycle<I>(
+        &self,
+        tick: u64,
+        requests: I,
+    ) -> Result<MsiBankCyclePlan, HarnessError>
+    where
+        I: IntoIterator<Item = (AgentId, MemoryRequest)>,
+    {
+        let mut requests: Vec<_> = requests
+            .into_iter()
+            .map(|(agent, request)| MsiBankCycleRequest {
+                agent,
+                line_address: self.layout.line_address(request.line_address()),
+                request,
+            })
+            .collect();
+        requests.sort_by_key(|entry| {
+            (
+                entry.line_address.get(),
+                entry.agent.get(),
+                entry.request.id().sequence(),
+            )
+        });
+
+        self.validate_parallel_cycle_requests(&requests)?;
+        Ok(MsiBankCyclePlan::new(tick, requests))
+    }
+
+    pub fn submit_parallel_cycle_plan(
+        &mut self,
+        plan: MsiBankCyclePlan,
+    ) -> Result<MsiBankCycleRun, HarnessError> {
+        self.validate_parallel_cycle_requests(&plan.requests)?;
+        let mut next = self.clone();
+        let response_count_before = next.cpu_responses.len();
+        let mut accepted = Vec::with_capacity(plan.requests.len());
+        for entry in plan.requests {
+            let request_id = entry.request.id();
+            let result = next.submit_cpu_request_at(plan.tick, entry.agent, entry.request)?;
+            accepted.push(MsiBankCycleAccepted::new(
+                entry.agent,
+                request_id,
+                entry.line_address,
+                result,
+            ));
+        }
+        let response_count = next.cpu_responses.len() - response_count_before;
+        *self = next;
+        Ok(MsiBankCycleRun::new(plan.tick, accepted, response_count))
+    }
+
+    fn validate_parallel_cycle_requests(
+        &self,
+        requests: &[MsiBankCycleRequest],
+    ) -> Result<(), HarnessError> {
+        let mut claimed_lines = BTreeMap::new();
+        for entry in requests {
+            self.cache(entry.agent)?;
+            if let Some(first) = claimed_lines.insert(entry.line_address, entry.request.id()) {
+                return Err(HarnessError::ParallelLineConflict {
+                    line: entry.line_address,
+                    first,
+                    second: entry.request.id(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn submit_cpu_request_at(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        request: MemoryRequest,
+    ) -> Result<SubmitResult, HarnessError> {
         let result = self
             .cache_mut(agent)?
             .accept_cpu_request(request)
@@ -196,7 +477,7 @@ impl MsiBankDirectoryHarness {
         let cache_result = result.kind();
 
         if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-            self.record_cpu_response(0, cache_result, response);
+            self.record_cpu_response(tick, cache_result, response);
             return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
         }
 
@@ -215,7 +496,7 @@ impl MsiBankDirectoryHarness {
             .accept_fill(response)
             .map_err(HarnessError::CacheBank)?;
         if let Some(TargetOutcome::Respond(response)) = fill.target_outcome() {
-            self.record_cpu_response(0, fill.kind(), response);
+            self.record_cpu_response(tick, fill.kind(), response);
         }
 
         Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
