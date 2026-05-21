@@ -489,6 +489,7 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
     match error {
         SchedulerError::NoPartitions => write_u64(payload, 0),
         SchedulerError::ZeroLookahead => write_u64(payload, 1),
+        SchedulerError::ZeroParallelWorkers => write_u64(payload, 13),
         SchedulerError::UnknownPartition {
             partition,
             partitions,
@@ -568,6 +569,14 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u64(payload, *snapshot_min_remote_delay);
             write_u64(payload, *scheduler_min_remote_delay);
         }
+        SchedulerError::SnapshotParallelWorkerLimitMismatch {
+            snapshot_max_parallel_workers,
+            scheduler_max_parallel_workers,
+        } => {
+            write_u64(payload, 14);
+            write_u64(payload, *snapshot_max_parallel_workers as u64);
+            write_u64(payload, *scheduler_max_parallel_workers as u64);
+        }
     }
 }
 
@@ -577,6 +586,7 @@ fn decode_scheduler_error(
     match cursor.read_u64("scheduler error kind")? {
         0 => Ok(SchedulerError::NoPartitions),
         1 => Ok(SchedulerError::ZeroLookahead),
+        13 => Ok(SchedulerError::ZeroParallelWorkers),
         2 => Ok(SchedulerError::UnknownPartition {
             partition: PartitionId::new(cursor.read_u32("scheduler unknown partition")?),
             partitions: cursor.read_u32("scheduler partition count")?,
@@ -622,6 +632,12 @@ fn decode_scheduler_error(
             partition: PartitionId::new(cursor.read_u32("scheduler horizon partition")?),
             now: cursor.read_u64("scheduler horizon now")?,
             delay: cursor.read_u64("scheduler horizon delay")?,
+        }),
+        14 => Ok(SchedulerError::SnapshotParallelWorkerLimitMismatch {
+            snapshot_max_parallel_workers: cursor
+                .read_count("scheduler snapshot parallel worker limit")?,
+            scheduler_max_parallel_workers: cursor
+                .read_count("scheduler live parallel worker limit")?,
         }),
         value => Err(cursor.invalid(format!("scheduler error has invalid kind {value}"))),
     }

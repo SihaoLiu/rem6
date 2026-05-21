@@ -5,7 +5,7 @@ use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
 use rem6_interrupt::{InterruptLineId, InterruptPriority, InterruptSourceId, InterruptTargetId};
-use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
+use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
@@ -18,8 +18,9 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTopologyDramConfig,
-    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem, RiscvTrapEventPort,
-    StopRequest, SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem,
+    RiscvTopologySystemError, RiscvTrapEventPort, StopRequest, SystemActionOutcome,
+    SystemHostController, SystemHostEventPort,
 };
 use rem6_timer::{TimerArm, TimerId, TimerSnapshot};
 use rem6_topology::{
@@ -551,6 +552,128 @@ fn topology_system_builds_cluster_and_drives_parallel_host_stop() {
             .unwrap()
             .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
         0xabcd_ef01_2345_6789
+    );
+}
+
+#[test]
+fn topology_system_drives_parallel_host_stop_with_worker_limit() {
+    let system = RiscvTopologySystem::with_parallel_worker_limit(
+        topology(),
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+        1,
+    )
+    .unwrap();
+    assert_eq!(system.scheduler().partition_count(), 4);
+    assert_eq!(system.scheduler().min_remote_delay(), 2);
+    assert_eq!(system.scheduler().max_parallel_workers(), 1);
+
+    let store = loaded_program_store(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+            (0x9000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x9004, 0x0010_0073),
+        ],
+        &[
+            (0x9808, vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe]),
+            (0x9818, vec![0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab]),
+        ],
+    );
+    system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9800);
+    system
+        .cluster()
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let source = GuestSourceId::new(47);
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(PartitionId::new(3), 2, Arc::clone(&controller))
+            .unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+    let (cluster, mut scheduler, transport) = system.execution_parts_mut();
+
+    let run = driver
+        .drive_until_host_stop_parallel(
+            cluster,
+            &mut scheduler,
+            transport,
+            Default::default(),
+            Default::default(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context: &mut rem6_kernel::ParallelSchedulerContext<'_>| {
+                    memory_response(&store, &delivery)
+                }
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context: &mut rem6_kernel::ParallelSchedulerContext<'_>| {
+                    memory_response(&store, &delivery)
+                }
+            },
+            40,
+            |cpu| GuestEventId::new(180 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(180), source, 0);
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert_eq!(run.max_parallel_scheduler_workers(), 1);
+    assert!(run
+        .parallel_scheduler_batches()
+        .iter()
+        .all(|batch| batch.worker_count() <= 1));
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(1))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        0xabcd_ef01_2345_6789
+    );
+}
+
+#[test]
+fn topology_system_rejects_zero_parallel_worker_limit() {
+    let error = match RiscvTopologySystem::with_parallel_worker_limit(
+        topology(),
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+        0,
+    ) {
+        Ok(_) => panic!("zero parallel worker limit was accepted"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        RiscvTopologySystemError::Scheduler(SchedulerError::ZeroParallelWorkers)
     );
 }
 

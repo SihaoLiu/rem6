@@ -9,7 +9,7 @@ use rem6_kernel::{
 };
 
 const SCHEDULER_CHUNK: &str = "scheduler";
-const FORMAT_VERSION: u64 = 1;
+const FORMAT_VERSION: u64 = 2;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
@@ -239,6 +239,7 @@ fn encode_snapshot(snapshot: &SchedulerSnapshot) -> Vec<u8> {
     write_u64(&mut payload, FORMAT_VERSION);
     write_u64(&mut payload, snapshot.now());
     write_u64(&mut payload, snapshot.min_remote_delay());
+    write_u64(&mut payload, snapshot.max_parallel_workers() as u64);
     write_u64(&mut payload, snapshot.partitions().len() as u64);
     for partition in snapshot.partitions() {
         write_u32(&mut payload, partition.partition().index());
@@ -264,6 +265,7 @@ fn decode_snapshot(
 
     let now = cursor.read_u64("scheduler now")?;
     let min_remote_delay = cursor.read_u64("scheduler lookahead")?;
+    let max_parallel_workers = cursor.read_count("scheduler parallel worker limit")?;
     let partition_count = cursor.read_count("scheduler partition count")?;
     let mut partitions = Vec::with_capacity(partition_count);
     for _ in 0..partition_count {
@@ -285,7 +287,12 @@ fn decode_snapshot(
         ));
     }
     cursor.finish()?;
-    Ok(SchedulerSnapshot::new(now, min_remote_delay, partitions))
+    Ok(SchedulerSnapshot::with_parallel_worker_limit(
+        now,
+        min_remote_delay,
+        max_parallel_workers,
+        partitions,
+    ))
 }
 
 fn write_u32(payload: &mut Vec<u8>, value: u32) {

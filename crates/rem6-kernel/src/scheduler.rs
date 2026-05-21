@@ -53,6 +53,7 @@ impl PartitionEventId {
 pub enum SchedulerError {
     NoPartitions,
     ZeroLookahead,
+    ZeroParallelWorkers,
     UnknownPartition {
         partition: PartitionId,
         partitions: u32,
@@ -99,6 +100,10 @@ pub enum SchedulerError {
         snapshot_min_remote_delay: Tick,
         scheduler_min_remote_delay: Tick,
     },
+    SnapshotParallelWorkerLimitMismatch {
+        snapshot_max_parallel_workers: usize,
+        scheduler_max_parallel_workers: usize,
+    },
 }
 
 impl fmt::Display for SchedulerError {
@@ -106,6 +111,9 @@ impl fmt::Display for SchedulerError {
         match self {
             Self::NoPartitions => write!(formatter, "scheduler requires at least one partition"),
             Self::ZeroLookahead => write!(formatter, "scheduler lookahead must be positive"),
+            Self::ZeroParallelWorkers => {
+                write!(formatter, "scheduler parallel worker limit must be positive")
+            }
             Self::UnknownPartition {
                 partition,
                 partitions,
@@ -180,6 +188,13 @@ impl fmt::Display for SchedulerError {
                 formatter,
                 "scheduler snapshot lookahead is {snapshot_min_remote_delay}; scheduler lookahead is {scheduler_min_remote_delay}"
             ),
+            Self::SnapshotParallelWorkerLimitMismatch {
+                snapshot_max_parallel_workers,
+                scheduler_max_parallel_workers,
+            } => write!(
+                formatter,
+                "scheduler snapshot parallel worker limit is {snapshot_max_parallel_workers}; scheduler parallel worker limit is {scheduler_max_parallel_workers}"
+            ),
         }
     }
 }
@@ -230,6 +245,7 @@ type ParallelSchedulerCallback =
 pub struct PartitionedScheduler {
     now: Tick,
     min_remote_delay: Tick,
+    max_parallel_workers: usize,
     partitions: Vec<PartitionQueue>,
 }
 
@@ -242,16 +258,28 @@ impl PartitionedScheduler {
         partitions: u32,
         min_remote_delay: Tick,
     ) -> Result<Self, SchedulerError> {
+        Self::with_parallel_worker_limit(partitions, min_remote_delay, usize::MAX)
+    }
+
+    pub fn with_parallel_worker_limit(
+        partitions: u32,
+        min_remote_delay: Tick,
+        max_parallel_workers: usize,
+    ) -> Result<Self, SchedulerError> {
         if partitions == 0 {
             return Err(SchedulerError::NoPartitions);
         }
         if min_remote_delay == 0 {
             return Err(SchedulerError::ZeroLookahead);
         }
+        if max_parallel_workers == 0 {
+            return Err(SchedulerError::ZeroParallelWorkers);
+        }
 
         Ok(Self {
             now: 0,
             min_remote_delay,
+            max_parallel_workers,
             partitions: (0..partitions).map(|_| PartitionQueue::new()).collect(),
         })
     }
@@ -266,6 +294,10 @@ impl PartitionedScheduler {
 
     pub fn min_remote_delay(&self) -> Tick {
         self.min_remote_delay
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.max_parallel_workers
     }
 
     pub fn is_idle(&self) -> bool {
@@ -356,6 +388,7 @@ impl PartitionedScheduler {
         SchedulerSnapshot {
             now: self.now,
             min_remote_delay: self.min_remote_delay,
+            max_parallel_workers: self.max_parallel_workers,
             partitions: self
                 .partitions
                 .iter()
@@ -405,6 +438,12 @@ impl PartitionedScheduler {
             return Err(SchedulerError::SnapshotLookaheadMismatch {
                 snapshot_min_remote_delay: snapshot.min_remote_delay,
                 scheduler_min_remote_delay: self.min_remote_delay,
+            });
+        }
+        if snapshot.max_parallel_workers != self.max_parallel_workers {
+            return Err(SchedulerError::SnapshotParallelWorkerLimitMismatch {
+                snapshot_max_parallel_workers: snapshot.max_parallel_workers,
+                scheduler_max_parallel_workers: self.max_parallel_workers,
             });
         }
 
@@ -495,7 +534,14 @@ impl PartitionedScheduler {
         let mut dispatches = Vec::new();
         let mut batches = Vec::new();
         while !ready_partitions.is_empty() {
-            let batch = self.run_parallel_batch(horizon, ready_partitions)?;
+            let batch = self.run_parallel_batch(
+                horizon,
+                ready_partitions
+                    .iter()
+                    .take(self.max_parallel_workers)
+                    .copied()
+                    .collect(),
+            )?;
             executed_events += batch.executed_events;
             dispatches.extend(batch.dispatches);
             batches.push(batch.record);
@@ -857,6 +903,7 @@ impl fmt::Debug for PartitionedScheduler {
             .debug_struct("PartitionedScheduler")
             .field("now", &self.now)
             .field("min_remote_delay", &self.min_remote_delay)
+            .field("max_parallel_workers", &self.max_parallel_workers)
             .field("partition_count", &self.partition_count())
             .finish()
     }

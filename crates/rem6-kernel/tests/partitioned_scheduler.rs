@@ -969,6 +969,106 @@ fn scheduler_recorded_parallel_epoch_reports_empty_batches_without_ready_workers
 }
 
 #[test]
+fn scheduler_parallel_epoch_respects_configured_worker_limit() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
+
+    for index in 0..4 {
+        let partition = PartitionId::new(index);
+        let log = Arc::clone(&observed);
+        scheduler
+            .schedule_parallel_at(partition, 0, move |context| {
+                log.lock()
+                    .unwrap()
+                    .push((context.now(), context.partition()));
+            })
+            .unwrap();
+    }
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(epoch.summary().executed_events(), 4);
+    assert_eq!(epoch.summary().final_tick(), 4);
+    assert_eq!(epoch.batch_count(), 2);
+    assert_eq!(epoch.max_parallel_workers(), 2);
+    assert_eq!(epoch.total_parallel_workers(), 4);
+    assert_eq!(
+        epoch.batches()[0].worker_partitions(),
+        vec![PartitionId::new(0), PartitionId::new(1)]
+    );
+    assert_eq!(
+        epoch.batches()[1].worker_partitions(),
+        vec![PartitionId::new(2), PartitionId::new(3)]
+    );
+    assert_eq!(scheduler.max_parallel_workers(), 2);
+    assert!(scheduler.is_idle());
+    let mut observed = observed.lock().unwrap().clone();
+    observed.sort_by_key(|entry| entry.1);
+    assert_eq!(
+        observed,
+        vec![
+            (0, PartitionId::new(0)),
+            (0, PartitionId::new(1)),
+            (0, PartitionId::new(2)),
+            (0, PartitionId::new(3)),
+        ]
+    );
+}
+
+#[test]
+fn scheduler_rejects_zero_parallel_worker_limit() {
+    assert_eq!(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 0).unwrap_err(),
+        SchedulerError::ZeroParallelWorkers
+    );
+}
+
+#[test]
+fn scheduler_min_delay_constructor_keeps_unbounded_worker_limit() {
+    let scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
+
+    assert_eq!(scheduler.max_parallel_workers(), usize::MAX);
+    assert_eq!(
+        scheduler.snapshot().max_parallel_workers(),
+        scheduler.max_parallel_workers()
+    );
+}
+
+#[test]
+fn scheduler_snapshot_preserves_parallel_worker_limit() {
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap();
+
+    let snapshot = scheduler.quiescent_snapshot().unwrap();
+
+    assert_eq!(snapshot.max_parallel_workers(), 1);
+
+    let mut matching = PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap();
+    matching.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(matching.max_parallel_workers(), 1);
+
+    let mut mismatched = PartitionedScheduler::with_parallel_worker_limit(2, 5, 2).unwrap();
+    assert_eq!(
+        mismatched.restore_quiescent(&snapshot).unwrap_err(),
+        SchedulerError::SnapshotParallelWorkerLimitMismatch {
+            snapshot_max_parallel_workers: 1,
+            scheduler_max_parallel_workers: 2,
+        }
+    );
+
+    let legacy_snapshot = SchedulerSnapshot::new(
+        3,
+        5,
+        vec![
+            PartitionSnapshot::quiescent(core, 3, 0, 0),
+            PartitionSnapshot::quiescent(memory, 3, 0, 0),
+        ],
+    );
+    assert_eq!(legacy_snapshot.max_parallel_workers(), usize::MAX);
+}
+
+#[test]
 fn scheduler_parallel_plan_exposes_frontiers_and_serial_blockers_without_dispatching() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();

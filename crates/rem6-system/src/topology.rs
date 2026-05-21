@@ -522,9 +522,19 @@ impl RiscvTopologySystem {
         cluster_config: RiscvClusterTopologyConfig,
         min_remote_delay: Tick,
     ) -> Result<Self, RiscvTopologySystemError> {
-        let scheduler = PartitionedScheduler::with_min_remote_delay(
+        Self::with_parallel_worker_limit(topology, cluster_config, min_remote_delay, usize::MAX)
+    }
+
+    pub fn with_parallel_worker_limit(
+        topology: Topology,
+        cluster_config: RiscvClusterTopologyConfig,
+        min_remote_delay: Tick,
+        max_parallel_workers: usize,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        let scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
             min_remote_delay,
+            max_parallel_workers,
         )
         .map_err(RiscvTopologySystemError::Scheduler)?;
         let scheduler = Arc::new(Mutex::new(scheduler));

@@ -1089,6 +1089,129 @@ fn riscv_cluster_run_collects_parallel_epoch_records() {
 }
 
 #[test]
+fn riscv_cluster_parallel_run_respects_scheduler_worker_limit() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x9000,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    let store = store_with_programs(&[
+        (0x8000, i_type(61, 0, 0x0, 1, 0x13)),
+        (0x9000, i_type(62, 0, 0x0, 1, 0x13)),
+    ]);
+
+    let run = cluster
+        .drive_until_parallel(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            20,
+            |turn| {
+                turn.core_events().iter().any(|event| {
+                    matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))
+                })
+            },
+        )
+        .unwrap();
+
+    assert_eq!(run.max_parallel_scheduler_workers(), 1);
+    assert!(run
+        .parallel_scheduler_batches()
+        .iter()
+        .all(|batch| batch.worker_count() <= 1));
+    assert!(run.parallel_scheduler_batches().len() >= 2);
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(1)),
+        61
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
+        62
+    );
+}
+
+#[test]
 fn riscv_cluster_parallel_fetch_batches_shared_fabric_by_packet_order() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let mut transport = MemoryTransport::with_fabric(FabricModel::new());

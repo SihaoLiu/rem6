@@ -16,7 +16,7 @@ fn host_checkpoint_refreshes_and_restores_scheduler_state() {
     let core = PartitionId::new(0);
     let memory = PartitionId::new(1);
     let component = CheckpointComponentId::new("scheduler0").unwrap();
-    let mut live_scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+    let mut live_scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap();
     let first_id = live_scheduler
         .schedule_parallel_at(core, 3, move |context| {
             context.schedule_local_after(1, |_| {}).unwrap();
@@ -99,10 +99,42 @@ fn host_checkpoint_refreshes_and_restores_scheduler_state() {
     );
     let mut scheduler = scheduler.lock().unwrap();
     assert_eq!(scheduler.now(), 5);
+    assert_eq!(scheduler.max_parallel_workers(), 1);
     assert_eq!(scheduler.partition_now(core).unwrap(), 5);
     assert_eq!(scheduler.partition_now(memory).unwrap(), 5);
     let restored_id = scheduler.schedule_parallel_at(core, 6, |_| {}).unwrap();
     assert_eq!(restored_id, PartitionEventId::new(core, 2));
+}
+
+#[test]
+fn host_checkpoint_rejects_scheduler_worker_limit_mismatch_on_restore() {
+    let source_component = CheckpointComponentId::new("scheduler0").unwrap();
+    let source_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
+    ));
+    let source_port =
+        SchedulerCheckpointPort::new(source_component.clone(), Arc::clone(&source_scheduler));
+    let mut registry = CheckpointRegistry::new();
+    registry.register(source_component.clone()).unwrap();
+    let captured = source_port.capture_into(&mut registry).unwrap();
+    assert_eq!(captured.snapshot().max_parallel_workers(), 1);
+
+    let target_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 2).unwrap(),
+    ));
+    let target_port =
+        SchedulerCheckpointPort::new(source_component.clone(), Arc::clone(&target_scheduler));
+
+    assert_eq!(
+        target_port.restore_from(&registry).unwrap_err(),
+        SchedulerCheckpointError::Scheduler {
+            component: source_component,
+            error: SchedulerError::SnapshotParallelWorkerLimitMismatch {
+                snapshot_max_parallel_workers: 1,
+                scheduler_max_parallel_workers: 2,
+            },
+        }
+    );
 }
 
 #[test]

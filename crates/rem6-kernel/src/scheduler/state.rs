@@ -260,14 +260,25 @@ pub enum ScheduledEventKind {
 pub struct SchedulerSnapshot {
     pub(super) now: Tick,
     pub(super) min_remote_delay: Tick,
+    pub(super) max_parallel_workers: usize,
     pub(super) partitions: Vec<PartitionSnapshot>,
 }
 
 impl SchedulerSnapshot {
     pub fn new(now: Tick, min_remote_delay: Tick, partitions: Vec<PartitionSnapshot>) -> Self {
+        Self::with_parallel_worker_limit(now, min_remote_delay, usize::MAX, partitions)
+    }
+
+    pub fn with_parallel_worker_limit(
+        now: Tick,
+        min_remote_delay: Tick,
+        max_parallel_workers: usize,
+        partitions: Vec<PartitionSnapshot>,
+    ) -> Self {
         Self {
             now,
             min_remote_delay,
+            max_parallel_workers,
             partitions,
         }
     }
@@ -278,6 +289,10 @@ impl SchedulerSnapshot {
 
     pub fn min_remote_delay(&self) -> Tick {
         self.min_remote_delay
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.max_parallel_workers
     }
 
     pub fn partitions(&self) -> &[PartitionSnapshot] {
