@@ -36,6 +36,7 @@ mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
 
+pub use data_cache_run::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
 pub use fabric_checkpoint::{
     FabricCheckpointBank, FabricCheckpointError, FabricCheckpointPort, FabricCheckpointRecord,
 };
@@ -600,6 +601,7 @@ pub struct RiscvSystemRun {
     fabric_activity: Vec<FabricLaneActivity>,
     dram_activity: Vec<DramTargetActivity>,
     pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
+    pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
 }
 
 impl RiscvSystemRun {
@@ -615,6 +617,7 @@ impl RiscvSystemRun {
             fabric_activity: Vec::new(),
             dram_activity: Vec::new(),
             data_cache_runs: Vec::new(),
+            data_cache_run_protocols: Vec::new(),
         }
     }
 
@@ -632,7 +635,23 @@ impl RiscvSystemRun {
         mut self,
         data_cache_runs: Vec<ParallelCoherenceRunSummary>,
     ) -> Self {
+        self.data_cache_run_protocols = vec![None; data_cache_runs.len()];
         self.data_cache_runs = data_cache_runs;
+        self
+    }
+
+    pub fn with_data_cache_run_records(
+        mut self,
+        data_cache_run_records: Vec<RiscvDataCacheRunRecord>,
+    ) -> Self {
+        self.data_cache_run_protocols = data_cache_run_records
+            .iter()
+            .map(RiscvDataCacheRunRecord::protocol)
+            .collect();
+        self.data_cache_runs = data_cache_run_records
+            .into_iter()
+            .map(RiscvDataCacheRunRecord::into_summary)
+            .collect();
         self
     }
 

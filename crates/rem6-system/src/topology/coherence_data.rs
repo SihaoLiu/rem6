@@ -9,6 +9,8 @@ use rem6_dram::DramTargetActivity;
 use rem6_memory::{MemoryRequest, MemoryResponse, ResponseStatus};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
+use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
+
 use super::RiscvTopologySystemError;
 
 #[derive(Clone)]
@@ -177,13 +179,7 @@ fn topology_msi_data_response_result(
     drop(harness);
     cache.record_run(run);
 
-    let response = msi_response_record_to_memory_response(delivery.request(), &response_record)?;
-    let delay = response_record.tick().saturating_sub(start_tick);
-    if delay == 0 {
-        Ok(TargetOutcome::Respond(response))
-    } else {
-        Ok(TargetOutcome::RespondAfter { delay, response })
-    }
+    data_cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)
 }
 
 pub(super) fn topology_mesi_data_response(
@@ -226,13 +222,7 @@ fn topology_mesi_data_response_result(
     drop(harness);
     cache.record_run(run);
 
-    let response = mesi_response_record_to_memory_response(delivery.request(), &response_record)?;
-    let delay = response_record.tick().saturating_sub(start_tick);
-    if delay == 0 {
-        Ok(TargetOutcome::Respond(response))
-    } else {
-        Ok(TargetOutcome::RespondAfter { delay, response })
-    }
+    data_cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)
 }
 
 pub(super) fn topology_moesi_data_response(
@@ -275,8 +265,67 @@ fn topology_moesi_data_response_result(
     drop(harness);
     cache.record_run(run);
 
-    let response = moesi_response_record_to_memory_response(delivery.request(), &response_record)?;
-    let delay = response_record.tick().saturating_sub(start_tick);
+    data_cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)
+}
+
+trait DataCacheCpuResponseRecord {
+    fn status(&self) -> ResponseStatus;
+    fn data(&self) -> Option<&[u8]>;
+    fn tick(&self) -> u64;
+}
+
+impl DataCacheCpuResponseRecord for CpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+}
+
+impl DataCacheCpuResponseRecord for MesiCpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+}
+
+impl DataCacheCpuResponseRecord for MoesiCpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+}
+
+fn data_cache_response_record_to_target_outcome<R>(
+    request: &MemoryRequest,
+    start_tick: u64,
+    record: &R,
+) -> Result<TargetOutcome, RiscvTopologySystemError>
+where
+    R: DataCacheCpuResponseRecord,
+{
+    let response = data_cache_response_record_to_memory_response(request, record)?;
+    let delay = record.tick().saturating_sub(start_tick);
     if delay == 0 {
         Ok(TargetOutcome::Respond(response))
     } else {
@@ -284,36 +333,13 @@ fn topology_moesi_data_response_result(
     }
 }
 
-fn msi_response_record_to_memory_response(
+fn data_cache_response_record_to_memory_response<R>(
     request: &MemoryRequest,
-    record: &CpuResponseRecord,
-) -> Result<MemoryResponse, RiscvTopologySystemError> {
-    match record.status() {
-        ResponseStatus::Completed => {
-            MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
-                .map_err(RiscvTopologySystemError::Memory)
-        }
-        ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
-    }
-}
-
-fn mesi_response_record_to_memory_response(
-    request: &MemoryRequest,
-    record: &MesiCpuResponseRecord,
-) -> Result<MemoryResponse, RiscvTopologySystemError> {
-    match record.status() {
-        ResponseStatus::Completed => {
-            MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
-                .map_err(RiscvTopologySystemError::Memory)
-        }
-        ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
-    }
-}
-
-fn moesi_response_record_to_memory_response(
-    request: &MemoryRequest,
-    record: &MoesiCpuResponseRecord,
-) -> Result<MemoryResponse, RiscvTopologySystemError> {
+    record: &R,
+) -> Result<MemoryResponse, RiscvTopologySystemError>
+where
+    R: DataCacheCpuResponseRecord,
+{
     match record.status() {
         ResponseStatus::Completed => {
             MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
@@ -336,22 +362,23 @@ pub(super) fn merge_msi_data_cache_activity(
         return (fabric_activity, dram_activity);
     };
 
-    for run in cache.runs_since(marker) {
-        fabric_activity.extend(run.fabric_activities().into_values());
-        dram_activity.extend(run.dram_target_activities().into_values());
-    }
+    merge_data_cache_run_activity(
+        &mut fabric_activity,
+        &mut dram_activity,
+        cache.runs_since(marker),
+    );
 
     (fabric_activity, dram_activity)
 }
 
-pub(super) fn msi_data_cache_runs_since(
+pub(super) fn msi_data_cache_run_records_since(
     cache: Option<&RiscvTopologyMsiDataCache>,
     marker: Option<usize>,
-) -> Vec<ParallelCoherenceRunSummary> {
+) -> Vec<RiscvDataCacheRunRecord> {
     let (Some(cache), Some(marker)) = (cache, marker) else {
         return Vec::new();
     };
-    cache.runs_since(marker)
+    data_cache_run_records_since(RiscvDataCacheProtocol::Msi, cache.runs_since(marker))
 }
 
 pub(super) fn merge_mesi_data_cache_activity(
@@ -367,22 +394,23 @@ pub(super) fn merge_mesi_data_cache_activity(
         return (fabric_activity, dram_activity);
     };
 
-    for run in cache.runs_since(marker) {
-        fabric_activity.extend(run.fabric_activities().into_values());
-        dram_activity.extend(run.dram_target_activities().into_values());
-    }
+    merge_data_cache_run_activity(
+        &mut fabric_activity,
+        &mut dram_activity,
+        cache.runs_since(marker),
+    );
 
     (fabric_activity, dram_activity)
 }
 
-pub(super) fn mesi_data_cache_runs_since(
+pub(super) fn mesi_data_cache_run_records_since(
     cache: Option<&RiscvTopologyMesiDataCache>,
     marker: Option<usize>,
-) -> Vec<ParallelCoherenceRunSummary> {
+) -> Vec<RiscvDataCacheRunRecord> {
     let (Some(cache), Some(marker)) = (cache, marker) else {
         return Vec::new();
     };
-    cache.runs_since(marker)
+    data_cache_run_records_since(RiscvDataCacheProtocol::Mesi, cache.runs_since(marker))
 }
 
 pub(super) fn merge_moesi_data_cache_activity(
@@ -398,22 +426,43 @@ pub(super) fn merge_moesi_data_cache_activity(
         return (fabric_activity, dram_activity);
     };
 
-    for run in cache.runs_since(marker) {
-        fabric_activity.extend(run.fabric_activities().into_values());
-        dram_activity.extend(run.dram_target_activities().into_values());
-    }
+    merge_data_cache_run_activity(
+        &mut fabric_activity,
+        &mut dram_activity,
+        cache.runs_since(marker),
+    );
 
     (fabric_activity, dram_activity)
 }
 
-pub(super) fn moesi_data_cache_runs_since(
+pub(super) fn moesi_data_cache_run_records_since(
     cache: Option<&RiscvTopologyMoesiDataCache>,
     marker: Option<usize>,
-) -> Vec<ParallelCoherenceRunSummary> {
+) -> Vec<RiscvDataCacheRunRecord> {
     let (Some(cache), Some(marker)) = (cache, marker) else {
         return Vec::new();
     };
-    cache.runs_since(marker)
+    data_cache_run_records_since(RiscvDataCacheProtocol::Moesi, cache.runs_since(marker))
+}
+
+fn merge_data_cache_run_activity(
+    fabric_activity: &mut Vec<rem6_fabric::FabricLaneActivity>,
+    dram_activity: &mut Vec<DramTargetActivity>,
+    runs: Vec<ParallelCoherenceRunSummary>,
+) {
+    for run in runs {
+        fabric_activity.extend(run.fabric_activities().into_values());
+        dram_activity.extend(run.dram_target_activities().into_values());
+    }
+}
+
+fn data_cache_run_records_since(
+    protocol: RiscvDataCacheProtocol,
+    runs: Vec<ParallelCoherenceRunSummary>,
+) -> Vec<RiscvDataCacheRunRecord> {
+    runs.into_iter()
+        .map(|run| RiscvDataCacheRunRecord::new(protocol, run))
+        .collect()
 }
 
 fn record_coherence_error(

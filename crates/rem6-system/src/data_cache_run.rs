@@ -9,13 +9,112 @@ use rem6_kernel::{
 
 use crate::RiscvSystemRun;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum RiscvDataCacheProtocol {
+    Msi,
+    Mesi,
+    Moesi,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvDataCacheRunRecord {
+    protocol: Option<RiscvDataCacheProtocol>,
+    summary: ParallelCoherenceRunSummary,
+}
+
+impl RiscvDataCacheRunRecord {
+    pub const fn new(
+        protocol: RiscvDataCacheProtocol,
+        summary: ParallelCoherenceRunSummary,
+    ) -> Self {
+        Self {
+            protocol: Some(protocol),
+            summary,
+        }
+    }
+
+    pub const fn without_protocol(summary: ParallelCoherenceRunSummary) -> Self {
+        Self {
+            protocol: None,
+            summary,
+        }
+    }
+
+    pub const fn protocol(&self) -> Option<RiscvDataCacheProtocol> {
+        self.protocol
+    }
+
+    pub const fn summary(&self) -> &ParallelCoherenceRunSummary {
+        &self.summary
+    }
+
+    pub fn into_summary(self) -> ParallelCoherenceRunSummary {
+        self.summary
+    }
+}
+
 impl RiscvSystemRun {
     pub fn data_cache_runs(&self) -> &[ParallelCoherenceRunSummary] {
         &self.data_cache_runs
     }
 
+    pub fn data_cache_run_records(&self) -> Vec<RiscvDataCacheRunRecord> {
+        self.data_cache_runs
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, summary)| RiscvDataCacheRunRecord {
+                protocol: self.data_cache_run_protocols.get(index).copied().flatten(),
+                summary,
+            })
+            .collect()
+    }
+
     pub fn data_cache_run_count(&self) -> usize {
         self.data_cache_runs.len()
+    }
+
+    pub fn data_cache_protocols(&self) -> Vec<Option<RiscvDataCacheProtocol>> {
+        (0..self.data_cache_runs.len())
+            .map(|index| self.data_cache_run_protocols.get(index).copied().flatten())
+            .collect()
+    }
+
+    pub fn data_cache_protocol_counts(&self) -> BTreeMap<RiscvDataCacheProtocol, usize> {
+        let mut counts = BTreeMap::new();
+        for protocol in self.data_cache_protocols().into_iter().flatten() {
+            *counts.entry(protocol).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    pub fn data_cache_run_count_for_protocol(&self, protocol: RiscvDataCacheProtocol) -> usize {
+        self.data_cache_protocols()
+            .into_iter()
+            .filter(|candidate| *candidate == Some(protocol))
+            .count()
+    }
+
+    pub fn data_cache_runs_for_protocol(
+        &self,
+        protocol: RiscvDataCacheProtocol,
+    ) -> Vec<ParallelCoherenceRunSummary> {
+        self.data_cache_run_records()
+            .into_iter()
+            .filter(|record| record.protocol() == Some(protocol))
+            .map(RiscvDataCacheRunRecord::into_summary)
+            .collect()
+    }
+
+    pub fn has_data_cache_protocol(&self, protocol: RiscvDataCacheProtocol) -> bool {
+        self.data_cache_run_count_for_protocol(protocol) != 0
+    }
+
+    pub fn unattributed_data_cache_run_count(&self) -> usize {
+        self.data_cache_protocols()
+            .into_iter()
+            .filter(Option::is_none)
+            .count()
     }
 
     pub fn data_cache_parallel_scheduler_epochs(&self) -> Vec<RecordedRunSummary> {

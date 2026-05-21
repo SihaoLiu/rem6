@@ -11,8 +11,8 @@ use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId}
 use rem6_protocol_mesi::MesiState;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, RiscvSystemRunStopReason, RiscvTopologyDramConfig,
-    RiscvTopologyHostConfig, RiscvTopologySystem, StopRequest,
+    GuestEventId, GuestSourceId, RiscvDataCacheProtocol, RiscvSystemRunStopReason,
+    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologySystem, StopRequest,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -345,6 +345,28 @@ fn topology_system_routes_cpu_data_load_through_mesi_cache_backend() {
     assert_eq!(cache_runs.len(), 1);
     assert_eq!(run.data_cache_runs(), cache_runs.as_slice());
     assert_eq!(run.data_cache_run_count(), 1);
+    assert_eq!(
+        run.data_cache_protocols(),
+        vec![Some(RiscvDataCacheProtocol::Mesi); cache_runs.len()],
+    );
+    assert_eq!(run.unattributed_data_cache_run_count(), 0);
+    assert_eq!(
+        run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Mesi),
+        cache_runs.len(),
+    );
+    assert_eq!(
+        run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
+        0,
+    );
+    assert!(run.has_data_cache_protocol(RiscvDataCacheProtocol::Mesi));
+    assert!(!run.has_data_cache_protocol(RiscvDataCacheProtocol::Moesi));
+    assert_eq!(
+        run.data_cache_runs_for_protocol(RiscvDataCacheProtocol::Mesi),
+        cache_runs.clone(),
+    );
+    assert!(run
+        .data_cache_runs_for_protocol(RiscvDataCacheProtocol::Msi)
+        .is_empty());
     assert_eq!(
         run.data_cache_parallel_scheduler_epoch_count(),
         cache_runs[0].epoch_count(),
