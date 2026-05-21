@@ -28,7 +28,7 @@ mod topology;
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
-    RiscvClusterStopReason, RiscvClusterTurn,
+    RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
 };
 pub use topology::{CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 

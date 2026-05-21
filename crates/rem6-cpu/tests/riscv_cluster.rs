@@ -9,7 +9,7 @@ use rem6_cpu::{
 };
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
 use rem6_isa_riscv::Register;
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
+use rem6_kernel::{PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore,
@@ -838,6 +838,50 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
     assert!(scheduler_summaries
         .iter()
         .any(|summary| summary.executed_events() > 0));
+    let parallel_epochs = turns
+        .iter()
+        .filter_map(RiscvClusterTurn::parallel_scheduler_epoch)
+        .collect::<Vec<_>>();
+    assert!(!parallel_epochs.is_empty());
+    assert!(parallel_epochs
+        .iter()
+        .all(|epoch| epoch.plan().is_parallel_safe()));
+    assert!(parallel_epochs
+        .iter()
+        .all(|epoch| epoch.plan().frontier_count() == scheduler.partition_count() as usize));
+    assert!(parallel_epochs.iter().any(|epoch| epoch
+        .dispatches()
+        .iter()
+        .any(|record| record.kind() == ScheduledEventKind::Parallel)));
+    for epoch in &parallel_epochs {
+        assert_eq!(epoch.horizon(), epoch.plan().horizon());
+        assert_eq!(
+            epoch.ready_partition_count(),
+            epoch.plan().ready_partition_count()
+        );
+        assert_eq!(epoch.ready_partitions(), epoch.plan().ready_partitions());
+        assert_eq!(epoch.frontiers(), epoch.plan().frontiers());
+        assert_eq!(epoch.serial_blockers(), epoch.plan().serial_blockers());
+        assert!(epoch.serial_blockers().is_empty());
+        assert_eq!(
+            epoch.frontier(PartitionId::new(0)),
+            epoch.plan().frontier(PartitionId::new(0))
+        );
+        assert!(epoch
+            .parallel_dispatches()
+            .iter()
+            .all(|record| record.kind() == ScheduledEventKind::Parallel));
+        assert!(epoch
+            .dispatches_for_partition(PartitionId::new(0))
+            .iter()
+            .all(|record| record.partition() == PartitionId::new(0)));
+        assert_eq!(epoch.summary().final_tick(), epoch.plan().horizon());
+        assert_eq!(Some(epoch.summary()), epoch.turn_summary());
+        assert!(epoch
+            .dispatches()
+            .iter()
+            .all(|record| record.tick() <= epoch.plan().horizon()));
+    }
     assert_eq!(
         executed
             .core_events()
@@ -858,6 +902,137 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
         cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
         81
     );
+}
+
+#[test]
+fn riscv_cluster_run_collects_parallel_epoch_records() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route: cpu0_fetch,
+        data_endpoint: "cpu0.dmem",
+        data_route: cpu0_data,
+    })])
+    .unwrap();
+    let store = store_with_programs(&[(0x8000, i_type(91, 0, 0x0, 1, 0x13))]);
+
+    let run = cluster
+        .drive_until(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(store.clone()),
+            |_cpu| responder(store.clone()),
+            10,
+            |turn| {
+                turn.core_events().iter().any(|event| {
+                    matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))
+                })
+            },
+        )
+        .unwrap();
+
+    assert!(run.parallel_scheduler_epochs().is_empty());
+    assert!(run.parallel_scheduler_dispatches().is_empty());
+
+    let parallel_cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route: cpu0_fetch,
+        data_endpoint: "cpu0.dmem",
+        data_route: cpu0_data,
+    })])
+    .unwrap();
+    let parallel_store = store_with_programs(&[(0x8000, i_type(91, 0, 0x0, 1, 0x13))]);
+    let mut parallel_scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let run = parallel_cluster
+        .drive_until_parallel(
+            &mut parallel_scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = parallel_store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = parallel_store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            10,
+            |turn| {
+                turn.core_events().iter().any(|event| {
+                    matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_))
+                })
+            },
+        )
+        .unwrap();
+
+    let epochs = run.parallel_scheduler_epochs();
+    assert!(!epochs.is_empty());
+    assert_eq!(
+        run.parallel_scheduler_dispatches().len(),
+        epochs
+            .iter()
+            .map(|epoch| epoch.dispatches().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_frontiers().len(),
+        epochs
+            .iter()
+            .map(|epoch| epoch.frontiers().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_ready_partitions().len(),
+        epochs
+            .iter()
+            .map(|epoch| epoch.ready_partitions().len())
+            .sum::<usize>()
+    );
+    assert!(run
+        .parallel_scheduler_dispatches_for_partition(PartitionId::new(0))
+        .iter()
+        .all(|record| record.partition() == PartitionId::new(0)));
+    assert!(epochs
+        .iter()
+        .all(|epoch| epoch.plan().frontier(PartitionId::new(0)).is_some()));
 }
 
 #[test]

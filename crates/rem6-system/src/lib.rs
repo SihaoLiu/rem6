@@ -5,12 +5,14 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointError, CheckpointManifest};
 use rem6_cpu::{
-    CpuId, RiscvCluster, RiscvClusterError, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction,
+    CpuId, RiscvCluster, RiscvClusterError, RiscvClusterSchedulerEpoch, RiscvClusterTurn,
+    RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
-    SchedulerContext, SchedulerError, Tick,
+    ParallelSchedulerContext, PartitionEventId, PartitionFrontier, PartitionId,
+    PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord,
+    SchedulerError, Tick,
 };
 use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
@@ -624,6 +626,44 @@ impl RiscvSystemRun {
             RiscvSystemRunStopReason::HostStop(stop) => Some(stop.tick()),
             RiscvSystemRunStopReason::Idle { tick } => Some(tick),
         }
+    }
+
+    pub fn parallel_scheduler_epochs(&self) -> Vec<&RiscvClusterSchedulerEpoch> {
+        self.turns
+            .iter()
+            .filter_map(RiscvClusterTurn::parallel_scheduler_epoch)
+            .collect()
+    }
+
+    pub fn parallel_scheduler_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.dispatches().iter().copied())
+            .collect()
+    }
+
+    pub fn parallel_scheduler_dispatches_for_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Vec<SchedulerDispatchRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.dispatches_for_partition(partition))
+            .collect()
+    }
+
+    pub fn parallel_scheduler_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.frontiers().iter().copied())
+            .collect()
+    }
+
+    pub fn parallel_scheduler_ready_partitions(&self) -> Vec<ReadyPartition> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.ready_partitions().iter().copied())
+            .collect()
     }
 }
 

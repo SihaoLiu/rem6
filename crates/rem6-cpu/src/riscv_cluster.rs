@@ -3,8 +3,9 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionedScheduler, RunSummary, SchedulerContext, SchedulerError,
-    Tick,
+    ParallelEpochPlan, ParallelSchedulerContext, PartitionFrontier, PartitionId,
+    PartitionedScheduler, ReadyPartition, RecordedRunSummary, RunSummary, ScheduledEventKind,
+    SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
 };
 use rem6_memory::AgentId;
 use rem6_mmio::MmioBus;
@@ -533,10 +534,7 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        scheduler
-            .run_next_epoch_parallel()
-            .map(RiscvClusterTurn::scheduler)
-            .map_err(RiscvClusterError::Scheduler)
+        drive_parallel_scheduler_turn(scheduler)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -575,10 +573,7 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        scheduler
-            .run_next_epoch_parallel()
-            .map(RiscvClusterTurn::scheduler)
-            .map_err(RiscvClusterError::Scheduler)
+        drive_parallel_scheduler_turn(scheduler)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -619,10 +614,7 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        scheduler
-            .run_next_epoch_parallel()
-            .map(RiscvClusterTurn::scheduler)
-            .map_err(RiscvClusterError::Scheduler)
+        drive_parallel_scheduler_turn(scheduler)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -647,6 +639,62 @@ impl RiscvCluster {
         let mut turns = Vec::new();
         for _ in 0..max_turns {
             let turn = self.drive_turn(
+                scheduler,
+                transport,
+                fetch_trace.clone(),
+                data_trace.clone(),
+                &mut fetch_responder,
+                &mut data_responder,
+            )?;
+            if let Some(tick) = turn.idle_tick() {
+                turns.push(turn);
+                return Ok(RiscvClusterRun::new(
+                    turns,
+                    RiscvClusterStopReason::Idle { tick },
+                ));
+            }
+            if stop(&turn) {
+                turns.push(turn);
+                return Ok(RiscvClusterRun::new(
+                    turns,
+                    RiscvClusterStopReason::StopCondition,
+                ));
+            }
+            turns.push(turn);
+        }
+
+        Err(RiscvClusterError::TurnLimitExceeded {
+            limit: max_turns,
+            completed: turns.len(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_until_parallel<F, D, FR, DR, S>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        max_turns: usize,
+        mut stop: S,
+    ) -> Result<RiscvClusterRun, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        S: FnMut(&RiscvClusterTurn) -> bool,
+    {
+        let mut turns = Vec::new();
+        for _ in 0..max_turns {
+            let turn = self.drive_turn_parallel(
                 scheduler,
                 transport,
                 fetch_trace.clone(),
@@ -702,6 +750,7 @@ impl RiscvClusterDriveEvent {
 pub struct RiscvClusterTurn {
     core_events: Vec<RiscvClusterDriveEvent>,
     scheduler: Option<RunSummary>,
+    parallel_scheduler: Option<RiscvClusterSchedulerEpoch>,
     idle_tick: Option<Tick>,
 }
 
@@ -710,6 +759,7 @@ impl RiscvClusterTurn {
         Self {
             core_events,
             scheduler: None,
+            parallel_scheduler: None,
             idle_tick: None,
         }
     }
@@ -718,6 +768,16 @@ impl RiscvClusterTurn {
         Self {
             core_events: Vec::new(),
             scheduler: Some(summary),
+            parallel_scheduler: None,
+            idle_tick: None,
+        }
+    }
+
+    pub fn parallel_scheduler(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
+        Self {
+            core_events: Vec::new(),
+            scheduler: None,
+            parallel_scheduler: Some(RiscvClusterSchedulerEpoch::new(plan, recorded)),
             idle_tick: None,
         }
     }
@@ -726,6 +786,7 @@ impl RiscvClusterTurn {
         Self {
             core_events: Vec::new(),
             scheduler: None,
+            parallel_scheduler: None,
             idle_tick: Some(tick),
         }
     }
@@ -735,7 +796,19 @@ impl RiscvClusterTurn {
     }
 
     pub const fn scheduler_summary(&self) -> Option<RunSummary> {
+        match (self.scheduler, self.parallel_scheduler.as_ref()) {
+            (Some(summary), _) => Some(summary),
+            (None, Some(epoch)) => Some(epoch.summary()),
+            (None, None) => None,
+        }
+    }
+
+    pub const fn serial_scheduler_summary(&self) -> Option<RunSummary> {
         self.scheduler
+    }
+
+    pub const fn parallel_scheduler_epoch(&self) -> Option<&RiscvClusterSchedulerEpoch> {
+        self.parallel_scheduler.as_ref()
     }
 
     pub const fn idle_tick(&self) -> Option<Tick> {
@@ -744,6 +817,99 @@ impl RiscvClusterTurn {
 
     pub const fn is_idle(&self) -> bool {
         self.idle_tick.is_some()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvClusterSchedulerEpoch {
+    plan: ParallelEpochPlan,
+    summary: RunSummary,
+    dispatches: Vec<SchedulerDispatchRecord>,
+}
+
+impl RiscvClusterSchedulerEpoch {
+    pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
+        Self {
+            plan,
+            summary: recorded.summary(),
+            dispatches: recorded.dispatches().to_vec(),
+        }
+    }
+
+    pub const fn plan(&self) -> &ParallelEpochPlan {
+        &self.plan
+    }
+
+    pub fn horizon(&self) -> Tick {
+        self.plan.horizon()
+    }
+
+    pub fn ready_partitions(&self) -> &[ReadyPartition] {
+        self.plan.ready_partitions()
+    }
+
+    pub fn ready_partition_count(&self) -> usize {
+        self.plan.ready_partition_count()
+    }
+
+    pub fn frontiers(&self) -> &[PartitionFrontier] {
+        self.plan.frontiers()
+    }
+
+    pub fn frontier(&self, partition: PartitionId) -> Option<PartitionFrontier> {
+        self.plan.frontier(partition)
+    }
+
+    pub fn serial_blockers(&self) -> &[SchedulerDispatchRecord] {
+        self.plan.serial_blockers()
+    }
+
+    pub fn serial_blocker_count(&self) -> usize {
+        self.plan.serial_blocker_count()
+    }
+
+    pub fn first_serial_blocker(&self) -> Option<SchedulerDispatchRecord> {
+        self.plan.first_serial_blocker()
+    }
+
+    pub fn is_parallel_safe(&self) -> bool {
+        self.plan.is_parallel_safe()
+    }
+
+    pub const fn summary(&self) -> RunSummary {
+        self.summary
+    }
+
+    pub const fn turn_summary(&self) -> Option<RunSummary> {
+        Some(self.summary)
+    }
+
+    pub fn dispatches(&self) -> &[SchedulerDispatchRecord] {
+        &self.dispatches
+    }
+
+    pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
+        self.dispatches
+            .iter()
+            .copied()
+            .filter(|record| record.partition() == partition)
+            .collect()
+    }
+
+    pub fn parallel_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.dispatches
+            .iter()
+            .copied()
+            .filter(|record| record.kind() == ScheduledEventKind::Parallel)
+            .collect()
+    }
+
+    pub fn serial_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.dispatches
+            .iter()
+            .copied()
+            .filter(|record| record.kind() == ScheduledEventKind::Serial)
+            .collect()
     }
 }
 
@@ -773,12 +939,65 @@ impl RiscvClusterRun {
             .collect()
     }
 
+    pub fn parallel_scheduler_epochs(&self) -> Vec<&RiscvClusterSchedulerEpoch> {
+        self.turns
+            .iter()
+            .filter_map(RiscvClusterTurn::parallel_scheduler_epoch)
+            .collect()
+    }
+
+    pub fn parallel_scheduler_dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.dispatches().iter().copied())
+            .collect()
+    }
+
+    pub fn parallel_scheduler_dispatches_for_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Vec<SchedulerDispatchRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.dispatches_for_partition(partition))
+            .collect()
+    }
+
+    pub fn parallel_scheduler_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.frontiers().iter().copied())
+            .collect()
+    }
+
+    pub fn parallel_scheduler_ready_partitions(&self) -> Vec<ReadyPartition> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.ready_partitions().iter().copied())
+            .collect()
+    }
+
     pub const fn idle_tick(&self) -> Option<Tick> {
         match self.stop_reason {
             RiscvClusterStopReason::Idle { tick } => Some(tick),
             RiscvClusterStopReason::StopCondition => None,
         }
     }
+}
+
+fn drive_parallel_scheduler_turn(
+    scheduler: &mut PartitionedScheduler,
+) -> Result<RiscvClusterTurn, RiscvClusterError> {
+    let Some(plan) = scheduler
+        .plan_next_parallel_epoch()
+        .map_err(RiscvClusterError::Scheduler)?
+    else {
+        return Ok(RiscvClusterTurn::idle(scheduler.now()));
+    };
+    let recorded = scheduler
+        .run_next_epoch_parallel_recorded()
+        .map_err(RiscvClusterError::Scheduler)?;
+    Ok(RiscvClusterTurn::parallel_scheduler(plan, recorded))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

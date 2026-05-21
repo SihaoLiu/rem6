@@ -5,7 +5,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
     RiscvCoreDriveAction, RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
+use rem6_kernel::{PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
     PartitionedMemoryStore,
@@ -499,6 +499,42 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
         .iter()
         .filter_map(|turn| turn.scheduler_summary())
         .any(|summary| summary.executed_events() > 0));
+    let parallel_epochs = run.parallel_scheduler_epochs();
+    assert!(!parallel_epochs.is_empty());
+    assert!(parallel_epochs
+        .iter()
+        .all(|epoch| epoch.plan().is_parallel_safe()));
+    assert!(parallel_epochs
+        .iter()
+        .all(|epoch| epoch.summary().final_tick() == epoch.plan().horizon()));
+    assert_eq!(
+        run.parallel_scheduler_dispatches().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.dispatches().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_frontiers().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.frontiers().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_ready_partitions().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.ready_partitions().len())
+            .sum::<usize>()
+    );
+    assert!(run
+        .parallel_scheduler_dispatches_for_partition(PartitionId::new(0))
+        .iter()
+        .all(|record| {
+            record.partition() == PartitionId::new(0)
+                && record.kind() == ScheduledEventKind::Parallel
+        }));
     assert_eq!(
         cluster
             .core(CpuId::new(0))
@@ -725,4 +761,17 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
         cpu1_events[0].target(),
         RiscvDataAccessTarget::Memory { route, .. } if route == cpu1_data
     ));
+    let parallel_epochs = run.parallel_scheduler_epochs();
+    assert!(!parallel_epochs.is_empty());
+    assert_eq!(
+        run.parallel_scheduler_frontiers().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.frontiers().len())
+            .sum::<usize>()
+    );
+    assert!(run
+        .parallel_scheduler_dispatches()
+        .iter()
+        .all(|record| record.kind() == ScheduledEventKind::Parallel));
 }
