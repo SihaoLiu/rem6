@@ -4,7 +4,10 @@ use rem6_gpu::{
     GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind,
     GpuWorkgroupCompletion, GpuWorkgroupId,
 };
-use rem6_kernel::{ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{
+    ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError, WaitForEdgeKind,
+    WaitForNode,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, LineMemoryStore, MemoryRequest, MemoryRequestId,
 };
@@ -192,6 +195,48 @@ fn gpu_launch_runs_workgroups_on_compute_units_deterministically() {
 }
 
 #[test]
+fn gpu_wait_for_graph_tracks_queued_workgroups_until_slot_starts() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(8), gpu_partition, 1, 1).unwrap());
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(40), 3, 4).unwrap();
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    let first_epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(first_epoch.summary().final_tick(), 2);
+    assert_eq!(gpu.snapshot().slots()[0].queued()[0].queued_at(), 2);
+    let slot = WaitForNode::resource("gpu.8.cu.0.slot.0").unwrap();
+    let second_workgroup = WaitForNode::transaction("gpu.8.kernel.40.wg.1").unwrap();
+    let third_workgroup = WaitForNode::transaction("gpu.8.kernel.40.wg.2").unwrap();
+    let wait_for = gpu.wait_for_graph().snapshot();
+
+    assert_eq!(wait_for.edge_count(), 2);
+    assert_eq!(wait_for.first_observed_tick(), Some(2));
+    assert_eq!(wait_for.last_observed_tick(), Some(2));
+    assert!(wait_for.contains_edge(&second_workgroup, &slot, WaitForEdgeKind::Queue));
+    assert!(wait_for.contains_edge(&third_workgroup, &slot, WaitForEdgeKind::Queue));
+    assert_eq!(
+        wait_for.dependencies(&second_workgroup)[0].observation_count(),
+        1
+    );
+
+    while scheduler.now() < 6 {
+        scheduler.run_next_epoch_parallel_recorded().unwrap();
+    }
+    let after_second_start = gpu.wait_for_graph().snapshot();
+    assert_eq!(after_second_start.edge_count(), 1);
+    assert!(!after_second_start.contains_edge(&second_workgroup, &slot, WaitForEdgeKind::Queue));
+    assert!(after_second_start.contains_edge(&third_workgroup, &slot, WaitForEdgeKind::Queue));
+
+    scheduler.run_until_idle_parallel_recorded().unwrap();
+    assert!(gpu.wait_for_graph().is_empty());
+}
+
+#[test]
 fn gpu_launch_rejects_invalid_config_and_submission_before_enqueueing() {
     let gpu_partition = PartitionId::new(1);
     assert_eq!(
@@ -285,12 +330,20 @@ fn gpu_device_restores_snapshot_state_and_slot_reservations() {
         snapshot.dma_completions().to_vec(),
     );
     assert_eq!(rebuilt, snapshot);
-    let queued =
-        GpuQueuedWorkgroupSnapshot::new(GpuKernelId::new(33), GpuWorkgroupId::new(4), 2, 1, 13, 21);
+    let queued = GpuQueuedWorkgroupSnapshot::new(
+        GpuKernelId::new(33),
+        GpuWorkgroupId::new(4),
+        2,
+        1,
+        11,
+        13,
+        21,
+    );
     assert_eq!(queued.kernel(), GpuKernelId::new(33));
     assert_eq!(queued.workgroup(), GpuWorkgroupId::new(4));
     assert_eq!(queued.compute_unit(), 2);
     assert_eq!(queued.slot(), 1);
+    assert_eq!(queued.queued_at(), 11);
     assert_eq!(queued.started_at(), 13);
     assert_eq!(queued.completed_at(), 21);
 

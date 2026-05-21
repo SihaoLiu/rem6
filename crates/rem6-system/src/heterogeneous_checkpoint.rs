@@ -876,6 +876,7 @@ fn write_gpu_slot_vec(payload: &mut Vec<u8>, slots: &[GpuSlotSnapshot]) {
             write_u32(payload, workgroup.workgroup().get());
             write_u32(payload, workgroup.compute_unit());
             write_u32(payload, workgroup.slot());
+            write_u64(payload, workgroup.queued_at());
             write_u64(payload, workgroup.started_at());
             write_u64(payload, workgroup.completed_at());
         }
@@ -896,6 +897,7 @@ fn read_gpu_slot_vec(reader: &mut ChunkReader<'_>) -> Result<Vec<GpuSlotSnapshot
                 GpuWorkgroupId::new(reader.read_u32("GPU queued workgroup")?),
                 reader.read_u32("GPU queued compute unit")?,
                 reader.read_u32("GPU queued slot")?,
+                reader.read_u64("GPU queued enqueue")?,
                 reader.read_u64("GPU queued start")?,
                 reader.read_u64("GPU queued completion")?,
             ));

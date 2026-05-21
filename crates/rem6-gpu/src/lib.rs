@@ -7,7 +7,7 @@ use rem6_kernel::{
     ConservativeRunSummary, ParallelEpochBatchRecord, ParallelPartitionActivity,
     ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
     PartitionedScheduler, RecordedConservativeRunSummary, RecordedRunSummary,
-    SchedulerDispatchRecord, SchedulerError, Tick,
+    SchedulerDispatchRecord, SchedulerError, Tick, WaitForEdgeKind, WaitForGraph, WaitForNode,
 };
 use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_topology::{Endpoint, TopologyError};
@@ -842,6 +842,7 @@ pub struct GpuQueuedWorkgroupSnapshot {
     workgroup: GpuWorkgroupId,
     compute_unit: u32,
     slot: u32,
+    queued_at: Tick,
     started_at: Tick,
     completed_at: Tick,
 }
@@ -852,6 +853,7 @@ impl GpuQueuedWorkgroupSnapshot {
         workgroup: GpuWorkgroupId,
         compute_unit: u32,
         slot: u32,
+        queued_at: Tick,
         started_at: Tick,
         completed_at: Tick,
     ) -> Self {
@@ -860,6 +862,7 @@ impl GpuQueuedWorkgroupSnapshot {
             workgroup,
             compute_unit,
             slot,
+            queued_at,
             started_at,
             completed_at,
         }
@@ -879,6 +882,10 @@ impl GpuQueuedWorkgroupSnapshot {
 
     pub const fn slot(self) -> u32 {
         self.slot
+    }
+
+    pub const fn queued_at(self) -> Tick {
+        self.queued_at
     }
 
     pub const fn started_at(self) -> Tick {
@@ -988,6 +995,13 @@ impl GpuDevice {
 
     pub fn snapshot(&self) -> GpuDeviceSnapshot {
         self.state.lock().expect("GPU state lock").snapshot()
+    }
+
+    pub fn wait_for_graph(&self) -> WaitForGraph {
+        self.state
+            .lock()
+            .expect("GPU state lock")
+            .wait_for_graph(self.id())
     }
 
     pub fn restore(&self, snapshot: &GpuDeviceSnapshot) {
@@ -1197,6 +1211,7 @@ impl GpuDevice {
                 workgroup: GpuWorkgroupId::new(workgroup),
                 compute_unit: compute_unit_for_slot(slot_index, self.wave_slots_per_compute_unit()),
                 slot: wave_slot_for_slot(slot_index, self.wave_slots_per_compute_unit()),
+                queued_at: now,
                 started_at,
                 completed_at,
             });
@@ -1399,6 +1414,26 @@ impl GpuDeviceState {
         }
     }
 
+    fn wait_for_graph(&self, device: GpuDeviceId) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        for slot in &self.slots {
+            for workgroup in &slot.queued {
+                if workgroup.started_at <= workgroup.queued_at {
+                    continue;
+                }
+                graph
+                    .record_wait(
+                        gpu_workgroup_node(device, workgroup.kernel, workgroup.workgroup),
+                        gpu_slot_node(device, workgroup.compute_unit, workgroup.slot),
+                        WaitForEdgeKind::Queue,
+                        workgroup.queued_at,
+                    )
+                    .expect("GPU wait-for labels are generated from typed ids");
+            }
+        }
+        graph
+    }
+
     fn next_slot_index(&self) -> usize {
         self.slots
             .iter()
@@ -1455,6 +1490,7 @@ struct GpuQueuedWorkgroup {
     workgroup: GpuWorkgroupId,
     compute_unit: u32,
     slot: u32,
+    queued_at: Tick,
     started_at: Tick,
     completed_at: Tick,
 }
@@ -1466,6 +1502,7 @@ impl GpuQueuedWorkgroup {
             self.workgroup,
             self.compute_unit,
             self.slot,
+            self.queued_at,
             self.started_at,
             self.completed_at,
         )
@@ -1477,10 +1514,35 @@ impl GpuQueuedWorkgroup {
             workgroup: snapshot.workgroup,
             compute_unit: snapshot.compute_unit,
             slot: snapshot.slot,
+            queued_at: snapshot.queued_at,
             started_at: snapshot.started_at,
             completed_at: snapshot.completed_at,
         }
     }
+}
+
+fn gpu_workgroup_node(
+    device: GpuDeviceId,
+    kernel: GpuKernelId,
+    workgroup: GpuWorkgroupId,
+) -> WaitForNode {
+    WaitForNode::transaction(format!(
+        "gpu.{}.kernel.{}.wg.{}",
+        device.get(),
+        kernel.get(),
+        workgroup.get()
+    ))
+    .expect("GPU workgroup wait-for label is generated from numeric ids")
+}
+
+fn gpu_slot_node(device: GpuDeviceId, compute_unit: u32, slot: u32) -> WaitForNode {
+    WaitForNode::resource(format!(
+        "gpu.{}.cu.{}.slot.{}",
+        device.get(),
+        compute_unit,
+        slot
+    ))
+    .expect("GPU slot wait-for label is generated from numeric ids")
 }
 
 fn compute_unit_for_slot(slot_index: usize, slots_per_compute_unit: u32) -> u32 {
