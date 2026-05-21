@@ -137,6 +137,7 @@ pub struct FabricPathHop {
     latency: Tick,
     bandwidth_bytes_per_tick: u64,
     credit_depth: Option<u32>,
+    virtual_network: Option<VirtualNetworkId>,
 }
 
 impl FabricPathHop {
@@ -157,6 +158,7 @@ impl FabricPathHop {
             latency,
             bandwidth_bytes_per_tick,
             credit_depth: None,
+            virtual_network: None,
         })
     }
 
@@ -167,6 +169,11 @@ impl FabricPathHop {
 
         self.credit_depth = Some(credit_depth);
         Ok(self)
+    }
+
+    pub const fn with_virtual_network(mut self, virtual_network: VirtualNetworkId) -> Self {
+        self.virtual_network = Some(virtual_network);
+        self
     }
 
     pub fn link(&self) -> &FabricLinkId {
@@ -183,6 +190,10 @@ impl FabricPathHop {
 
     pub const fn credit_depth(&self) -> Option<u32> {
         self.credit_depth
+    }
+
+    pub const fn virtual_network(&self) -> Option<VirtualNetworkId> {
+        self.virtual_network
     }
 }
 
@@ -897,7 +908,8 @@ impl FabricModel {
 
         for hop in path.hops() {
             let ready_tick = arrival_tick;
-            let lane = FabricLaneKey::new(hop.link().clone(), packet.virtual_network());
+            let virtual_network = hop.virtual_network().unwrap_or(packet.virtual_network());
+            let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
             let serialization_ticks =
                 serialization_ticks(packet.bytes(), hop.bandwidth_bytes_per_tick());
             let reservation = self.lanes.entry(lane).or_default().reserve(
@@ -915,7 +927,7 @@ impl FabricModel {
                 self.wait_log.push(FabricWaitRecord::new(
                     packet.id(),
                     hop.link().clone(),
-                    packet.virtual_network(),
+                    virtual_network,
                     wait_kind,
                     ready_tick,
                     reservation.start_tick,
@@ -924,7 +936,7 @@ impl FabricModel {
 
             timings.push(FabricHopTiming {
                 link: hop.link().clone(),
-                virtual_network: packet.virtual_network(),
+                virtual_network,
                 ready_tick: reservation.ready_tick,
                 start_tick: reservation.start_tick,
                 serialization_ticks,
@@ -933,7 +945,7 @@ impl FabricModel {
             });
             self.activity_log.push(FabricLaneActivityRecord::new(
                 hop.link().clone(),
-                packet.virtual_network(),
+                virtual_network,
                 packet.bytes(),
                 serialization_ticks,
                 queue_delay_ticks,

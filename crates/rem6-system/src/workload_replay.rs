@@ -1609,10 +1609,16 @@ fn workload_memory_route_hop(
     .map_err(RiscvWorkloadReplayError::Transport)?;
 
     if let Some(fabric) = hop.fabric() {
-        route_hop = route_hop
-            .with_request_fabric_path(workload_route_fabric_path(fabric, hop.request_latency())?);
-        route_hop = route_hop
-            .with_response_fabric_path(workload_route_fabric_path(fabric, hop.response_latency())?);
+        route_hop = route_hop.with_request_fabric_path(workload_route_fabric_path(
+            fabric,
+            hop.request_latency(),
+            VirtualNetworkId::new(fabric.request_virtual_network()),
+        )?);
+        route_hop = route_hop.with_response_fabric_path(workload_route_fabric_path(
+            fabric,
+            hop.response_latency(),
+            VirtualNetworkId::new(fabric.response_virtual_network()),
+        )?);
     }
 
     Ok(route_hop)
@@ -1621,13 +1627,15 @@ fn workload_memory_route_hop(
 fn workload_route_fabric_path(
     fabric: &WorkloadRouteFabric,
     latency: u64,
+    virtual_network: VirtualNetworkId,
 ) -> Result<FabricPath, RiscvWorkloadReplayError> {
     let link = FabricLinkId::new(fabric.link())
         .map_err(TransportError::Fabric)
         .map_err(RiscvWorkloadReplayError::Transport)?;
     let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
         .map_err(TransportError::Fabric)
-        .map_err(RiscvWorkloadReplayError::Transport)?;
+        .map_err(RiscvWorkloadReplayError::Transport)?
+        .with_virtual_network(virtual_network);
     let hop = if let Some(credit_depth) = fabric.credit_depth() {
         hop.with_credit_depth(credit_depth)
             .map_err(TransportError::Fabric)

@@ -330,6 +330,37 @@ fn fabric_pipelines_multi_hop_paths_by_link_occupancy() {
 }
 
 #[test]
+fn fabric_path_hops_can_override_packet_virtual_network() {
+    let mut fabric = FabricModel::new();
+    let route = path([
+        FabricPathHop::new(link("cpu_to_router"), 2, 8).unwrap(),
+        FabricPathHop::new(link("router_to_mem"), 3, 8)
+            .unwrap()
+            .with_virtual_network(VirtualNetworkId::new(3)),
+    ]);
+
+    let transfer = fabric.transmit(0, packet(7, 16, 1), route).unwrap();
+
+    assert_eq!(
+        transfer.hops()[0].virtual_network(),
+        VirtualNetworkId::new(1)
+    );
+    assert_eq!(
+        transfer.hops()[1].virtual_network(),
+        VirtualNetworkId::new(3)
+    );
+    assert!(fabric
+        .lane_activity(&link("cpu_to_router"), VirtualNetworkId::new(1))
+        .is_some());
+    assert!(fabric
+        .lane_activity(&link("router_to_mem"), VirtualNetworkId::new(3))
+        .is_some());
+    assert!(fabric
+        .lane_activity(&link("router_to_mem"), VirtualNetworkId::new(1))
+        .is_none());
+}
+
+#[test]
 fn fabric_rejects_invalid_packets_paths_and_batches() {
     assert_eq!(FabricLinkId::new("").err(), Some(FabricError::EmptyLinkId));
     assert_eq!(

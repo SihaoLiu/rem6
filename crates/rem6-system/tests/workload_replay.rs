@@ -337,7 +337,7 @@ fn replay_topology_with_multihop_fabric_fetch() -> WorkloadTopology {
         .unwrap();
     let router_to_memory = WorkloadRouteFabric::new("router_memory", 8)
         .unwrap()
-        .with_virtual_networks(1, 2)
+        .with_virtual_networks(3, 4)
         .with_credit_depth(2)
         .unwrap();
 
@@ -1662,9 +1662,27 @@ fn workload_replay_routes_declared_multihop_fabric_path_and_reports_activity() {
         .keys()
         .map(|(link, _virtual_network)| link.as_str().to_string())
         .collect::<Vec<_>>();
+    let lanes = outcome
+        .run()
+        .fabric_activities()
+        .keys()
+        .map(|(link, virtual_network)| (link.as_str().to_string(), virtual_network.get()))
+        .collect::<Vec<_>>();
 
     assert!(links.iter().any(|link| link == "cpu_router"));
     assert!(links.iter().any(|link| link == "router_memory"));
+    assert!(lanes
+        .iter()
+        .any(|(link, virtual_network)| link == "cpu_router" && *virtual_network == 1));
+    assert!(lanes
+        .iter()
+        .any(|(link, virtual_network)| link == "cpu_router" && *virtual_network == 2));
+    assert!(lanes
+        .iter()
+        .any(|(link, virtual_network)| link == "router_memory" && *virtual_network == 3));
+    assert!(lanes
+        .iter()
+        .any(|(link, virtual_network)| link == "router_memory" && *virtual_network == 4));
     assert!(summary.fabric_transfer_count() >= 4);
     assert_eq!(
         summary.fabric_transfer_count(),
