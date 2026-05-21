@@ -199,6 +199,7 @@ dependencies = [
  "rem6-topology",
  "rem6-transport",
  "rem6-uart",
+ "rem6-workload",
 ]
 
 [[package]]

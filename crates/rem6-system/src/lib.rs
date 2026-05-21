@@ -35,6 +35,7 @@ mod scheduler_checkpoint;
 mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
+mod workload_replay;
 
 pub use data_cache_run::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
 pub use fabric_checkpoint::{
@@ -78,6 +79,9 @@ pub use topology::{
 };
 pub use uart_checkpoint::{
     UartCheckpointBank, UartCheckpointError, UartCheckpointPort, UartCheckpointRecord,
+};
+pub use workload_replay::{
+    RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

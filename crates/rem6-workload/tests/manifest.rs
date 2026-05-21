@@ -3,9 +3,10 @@ use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
-    CheckpointLineage, HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadId,
-    WorkloadManifest, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    CheckpointLineage, HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadHostPlacement,
+    WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
+    WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -14,6 +15,10 @@ fn id(value: &str) -> WorkloadId {
 
 fn resource_id(value: &str) -> WorkloadResourceId {
     WorkloadResourceId::new(value).unwrap()
+}
+
+fn route_id(value: &str) -> WorkloadRouteId {
+    WorkloadRouteId::new(value).unwrap()
 }
 
 fn boot_image() -> BootImage {
@@ -62,6 +67,58 @@ fn replay_manifest_with_planned_outputs() -> WorkloadManifest {
             },
         ))
         .build()
+        .unwrap()
+}
+
+fn riscv_topology() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                rem6_memory::AddressRange::new(
+                    Address::new(0x8000),
+                    AccessSize::new(0x2000).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x9000),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
         .unwrap()
 }
 
@@ -252,6 +309,61 @@ fn workload_manifest_reconstructs_boot_image_and_replay_plan() {
             label: "cold-boot".to_string(),
         },
     );
+}
+
+#[test]
+fn workload_manifest_records_topology_for_full_system_replay() {
+    let manifest = WorkloadManifest::builder(id("topology-run"), boot_image())
+        .with_topology(riscv_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let topology = plan.topology().unwrap();
+
+    assert_eq!(topology.partition_count(), 4);
+    assert_eq!(topology.min_remote_delay(), 2);
+    assert_eq!(topology.parallel_worker_limit(), 2);
+    assert_eq!(topology.host().partition(), 3);
+    assert_eq!(topology.host().latency(), 2);
+    assert_eq!(topology.host().source(), 41);
+    assert_eq!(topology.memory_targets().len(), 1);
+    assert_eq!(topology.memory_targets()[0].target(), 0);
+    assert_eq!(topology.memory_targets()[0].line_bytes(), 16);
+    assert_eq!(topology.memory_routes().len(), 2);
+    assert_eq!(topology.memory_routes()[0].id().as_str(), "cpu0.fetch");
+    assert_eq!(topology.riscv_cores().len(), 2);
+    assert_eq!(
+        topology.riscv_cores()[1].fetch_route().as_str(),
+        "cpu1.fetch"
+    );
+
+    let different_topology = WorkloadManifest::builder(id("topology-run"), boot_image())
+        .with_topology(
+            riscv_topology()
+                .add_memory_route(
+                    WorkloadMemoryRoute::new(
+                        route_id("extra.fetch"),
+                        "cpu2.ifetch",
+                        2,
+                        "memory",
+                        2,
+                        2,
+                        3,
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    assert_ne!(manifest.identity(), different_topology.identity());
 }
 
 #[test]

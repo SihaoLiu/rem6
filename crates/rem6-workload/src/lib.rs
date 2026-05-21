@@ -108,6 +108,393 @@ impl WorkloadResource {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WorkloadRouteId(String);
+
+impl WorkloadRouteId {
+    pub fn new(value: impl Into<String>) -> Result<Self, WorkloadError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(WorkloadError::EmptyRouteId);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkloadHostPlacement {
+    partition: u32,
+    latency: Tick,
+    source: u32,
+}
+
+impl WorkloadHostPlacement {
+    pub const fn new(partition: u32, latency: Tick, source: u32) -> Result<Self, WorkloadError> {
+        if latency == 0 {
+            return Err(WorkloadError::ZeroHostLatency);
+        }
+
+        Ok(Self {
+            partition,
+            latency,
+            source,
+        })
+    }
+
+    pub const fn partition(self) -> u32 {
+        self.partition
+    }
+
+    pub const fn latency(self) -> Tick {
+        self.latency
+    }
+
+    pub const fn source(self) -> u32 {
+        self.source
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkloadMemoryTarget {
+    target: u32,
+    line_bytes: u64,
+    range: AddressRange,
+}
+
+impl WorkloadMemoryTarget {
+    pub const fn new(
+        target: u32,
+        line_bytes: u64,
+        range: AddressRange,
+    ) -> Result<Self, WorkloadError> {
+        if line_bytes == 0 {
+            return Err(WorkloadError::ZeroLineBytes { target });
+        }
+
+        Ok(Self {
+            target,
+            line_bytes,
+            range,
+        })
+    }
+
+    pub const fn target(self) -> u32 {
+        self.target
+    }
+
+    pub const fn line_bytes(self) -> u64 {
+        self.line_bytes
+    }
+
+    pub const fn range(self) -> AddressRange {
+        self.range
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadRouteLatency {
+    Request,
+    Response,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadMemoryRoute {
+    id: WorkloadRouteId,
+    source_endpoint: String,
+    source_partition: u32,
+    target_endpoint: String,
+    target_partition: u32,
+    request_latency: Tick,
+    response_latency: Tick,
+}
+
+impl WorkloadMemoryRoute {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: WorkloadRouteId,
+        source_endpoint: impl Into<String>,
+        source_partition: u32,
+        target_endpoint: impl Into<String>,
+        target_partition: u32,
+        request_latency: Tick,
+        response_latency: Tick,
+    ) -> Result<Self, WorkloadError> {
+        let source_endpoint = source_endpoint.into();
+        if source_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        let target_endpoint = target_endpoint.into();
+        if target_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        if request_latency == 0 {
+            return Err(WorkloadError::ZeroRouteLatency {
+                route: id.clone(),
+                latency: WorkloadRouteLatency::Request,
+            });
+        }
+
+        if response_latency == 0 {
+            return Err(WorkloadError::ZeroRouteLatency {
+                route: id.clone(),
+                latency: WorkloadRouteLatency::Response,
+            });
+        }
+
+        Ok(Self {
+            id,
+            source_endpoint,
+            source_partition,
+            target_endpoint,
+            target_partition,
+            request_latency,
+            response_latency,
+        })
+    }
+
+    pub fn id(&self) -> &WorkloadRouteId {
+        &self.id
+    }
+
+    pub fn source_endpoint(&self) -> &str {
+        &self.source_endpoint
+    }
+
+    pub const fn source_partition(&self) -> u32 {
+        self.source_partition
+    }
+
+    pub fn target_endpoint(&self) -> &str {
+        &self.target_endpoint
+    }
+
+    pub const fn target_partition(&self) -> u32 {
+        self.target_partition
+    }
+
+    pub const fn request_latency(&self) -> Tick {
+        self.request_latency
+    }
+
+    pub const fn response_latency(&self) -> Tick {
+        self.response_latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadRiscvCore {
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    entry: Address,
+    fetch_endpoint: String,
+    fetch_route: WorkloadRouteId,
+}
+
+impl WorkloadRiscvCore {
+    pub fn new(
+        cpu: u32,
+        partition: u32,
+        agent: u32,
+        entry: Address,
+        fetch_endpoint: impl Into<String>,
+        fetch_route: WorkloadRouteId,
+    ) -> Result<Self, WorkloadError> {
+        let fetch_endpoint = fetch_endpoint.into();
+        if fetch_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        Ok(Self {
+            cpu,
+            partition,
+            agent,
+            entry,
+            fetch_endpoint,
+            fetch_route,
+        })
+    }
+
+    pub const fn cpu(&self) -> u32 {
+        self.cpu
+    }
+
+    pub const fn partition(&self) -> u32 {
+        self.partition
+    }
+
+    pub const fn agent(&self) -> u32 {
+        self.agent
+    }
+
+    pub const fn entry(&self) -> Address {
+        self.entry
+    }
+
+    pub fn fetch_endpoint(&self) -> &str {
+        &self.fetch_endpoint
+    }
+
+    pub fn fetch_route(&self) -> &WorkloadRouteId {
+        &self.fetch_route
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadTopology {
+    partition_count: u32,
+    min_remote_delay: Tick,
+    parallel_worker_limit: usize,
+    host: WorkloadHostPlacement,
+    memory_targets: Vec<WorkloadMemoryTarget>,
+    memory_routes: Vec<WorkloadMemoryRoute>,
+    riscv_cores: Vec<WorkloadRiscvCore>,
+}
+
+impl WorkloadTopology {
+    pub const fn new(
+        partition_count: u32,
+        min_remote_delay: Tick,
+        parallel_worker_limit: usize,
+        host: WorkloadHostPlacement,
+    ) -> Result<Self, WorkloadError> {
+        if partition_count == 0 {
+            return Err(WorkloadError::ZeroTopologyPartitions);
+        }
+        if min_remote_delay == 0 {
+            return Err(WorkloadError::ZeroMinRemoteDelay);
+        }
+        if parallel_worker_limit == 0 {
+            return Err(WorkloadError::ZeroParallelWorkerLimit);
+        }
+        if host.partition() >= partition_count {
+            return Err(WorkloadError::PartitionOutOfRange {
+                partition: host.partition(),
+                partition_count,
+            });
+        }
+
+        Ok(Self {
+            partition_count,
+            min_remote_delay,
+            parallel_worker_limit,
+            host,
+            memory_targets: Vec::new(),
+            memory_routes: Vec::new(),
+            riscv_cores: Vec::new(),
+        })
+    }
+
+    pub fn add_memory_target(
+        mut self,
+        target: WorkloadMemoryTarget,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .memory_targets
+            .iter()
+            .any(|existing| existing.target() == target.target())
+        {
+            return Err(WorkloadError::DuplicateMemoryTarget {
+                target: target.target(),
+            });
+        }
+
+        self.memory_targets.push(target);
+        self.memory_targets
+            .sort_by_key(|target| (target.target(), target.range().start()));
+        Ok(self)
+    }
+
+    pub fn add_memory_route(mut self, route: WorkloadMemoryRoute) -> Result<Self, WorkloadError> {
+        self.validate_partition(route.source_partition())?;
+        self.validate_partition(route.target_partition())?;
+        if self
+            .memory_routes
+            .iter()
+            .any(|existing| existing.id() == route.id())
+        {
+            return Err(WorkloadError::DuplicateRoute {
+                route: route.id().clone(),
+            });
+        }
+
+        self.memory_routes.push(route);
+        self.memory_routes
+            .sort_by(|left, right| left.id().cmp(right.id()));
+        Ok(self)
+    }
+
+    pub fn add_riscv_core(mut self, core: WorkloadRiscvCore) -> Result<Self, WorkloadError> {
+        self.validate_partition(core.partition())?;
+        if self
+            .riscv_cores
+            .iter()
+            .any(|existing| existing.cpu() == core.cpu())
+        {
+            return Err(WorkloadError::DuplicateRiscvCore { cpu: core.cpu() });
+        }
+        if !self
+            .memory_routes
+            .iter()
+            .any(|route| route.id() == core.fetch_route())
+        {
+            return Err(WorkloadError::MissingCoreFetchRoute {
+                cpu: core.cpu(),
+                route: core.fetch_route().clone(),
+            });
+        }
+
+        self.riscv_cores.push(core);
+        self.riscv_cores.sort_by_key(WorkloadRiscvCore::cpu);
+        Ok(self)
+    }
+
+    pub const fn partition_count(&self) -> u32 {
+        self.partition_count
+    }
+
+    pub const fn min_remote_delay(&self) -> Tick {
+        self.min_remote_delay
+    }
+
+    pub const fn parallel_worker_limit(&self) -> usize {
+        self.parallel_worker_limit
+    }
+
+    pub const fn host(&self) -> WorkloadHostPlacement {
+        self.host
+    }
+
+    pub fn memory_targets(&self) -> &[WorkloadMemoryTarget] {
+        &self.memory_targets
+    }
+
+    pub fn memory_routes(&self) -> &[WorkloadMemoryRoute] {
+        &self.memory_routes
+    }
+
+    pub fn riscv_cores(&self) -> &[WorkloadRiscvCore] {
+        &self.riscv_cores
+    }
+
+    fn validate_partition(&self, partition: u32) -> Result<(), WorkloadError> {
+        if partition >= self.partition_count {
+            return Err(WorkloadError::PartitionOutOfRange {
+                partition,
+                partition_count: self.partition_count,
+            });
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadBootImage {
     entry: Address,
@@ -240,6 +627,7 @@ impl WorkloadManifestIdentity {
 pub struct WorkloadManifest {
     id: WorkloadId,
     boot: WorkloadBootImage,
+    topology: Option<WorkloadTopology>,
     resources: Vec<WorkloadResource>,
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
@@ -258,6 +646,10 @@ impl WorkloadManifest {
 
     pub const fn boot(&self) -> &WorkloadBootImage {
         &self.boot
+    }
+
+    pub fn topology(&self) -> Option<&WorkloadTopology> {
+        self.topology.as_ref()
     }
 
     pub fn resources(&self) -> &[WorkloadResource] {
@@ -306,6 +698,7 @@ impl WorkloadManifest {
 pub struct WorkloadManifestBuilder {
     id: WorkloadId,
     boot: WorkloadBootImage,
+    topology: Option<WorkloadTopology>,
     resources: BTreeMap<WorkloadResourceId, WorkloadResource>,
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
@@ -317,6 +710,7 @@ impl WorkloadManifestBuilder {
         Self {
             id,
             boot,
+            topology: None,
             resources: BTreeMap::new(),
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
@@ -343,6 +737,11 @@ impl WorkloadManifestBuilder {
         self
     }
 
+    pub fn with_topology(mut self, topology: WorkloadTopology) -> Self {
+        self.topology = Some(topology);
+        self
+    }
+
     pub fn with_checkpoint_lineage(mut self, lineage: CheckpointLineage) -> Self {
         self.checkpoint_lineage = Some(lineage);
         self
@@ -363,6 +762,7 @@ impl WorkloadManifestBuilder {
         let identity = manifest_identity(
             &self.id,
             &self.boot,
+            self.topology.as_ref(),
             &resources,
             &required_resources,
             &self.host_events,
@@ -372,6 +772,7 @@ impl WorkloadManifestBuilder {
         Ok(WorkloadManifest {
             id: self.id,
             boot: self.boot,
+            topology: self.topology,
             resources,
             required_resources,
             host_events: self.host_events,
@@ -385,6 +786,7 @@ impl WorkloadManifestBuilder {
 pub struct WorkloadReplayPlan {
     manifest_identity: WorkloadManifestIdentity,
     boot: WorkloadBootImage,
+    topology: Option<WorkloadTopology>,
     required_resources: Vec<WorkloadResource>,
     host_events: Vec<WorkloadHostEvent>,
     planned_checkpoint_labels: Vec<String>,
@@ -398,6 +800,7 @@ impl WorkloadReplayPlan {
         Ok(Self {
             manifest_identity: manifest.identity(),
             boot: manifest.boot().clone(),
+            topology: manifest.topology().cloned(),
             required_resources: manifest.required_resource_details()?,
             planned_checkpoint_labels: planned_checkpoint_labels(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
@@ -416,6 +819,10 @@ impl WorkloadReplayPlan {
 
     pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
         self.boot.to_boot_image()
+    }
+
+    pub fn topology(&self) -> Option<&WorkloadTopology> {
+        self.topology.as_ref()
     }
 
     pub fn required_resources(&self) -> &[WorkloadResource] {
@@ -593,6 +1000,8 @@ pub enum WorkloadError {
     Boot(BootError),
     EmptyWorkloadId,
     EmptyResourceId,
+    EmptyRouteId,
+    EmptyEndpoint,
     EmptyResourceDigest {
         resource: WorkloadResourceId,
     },
@@ -604,6 +1013,34 @@ pub enum WorkloadError {
     },
     MissingRequiredResource {
         resource: WorkloadResourceId,
+    },
+    ZeroHostLatency,
+    ZeroLineBytes {
+        target: u32,
+    },
+    ZeroRouteLatency {
+        route: WorkloadRouteId,
+        latency: WorkloadRouteLatency,
+    },
+    ZeroTopologyPartitions,
+    ZeroMinRemoteDelay,
+    ZeroParallelWorkerLimit,
+    PartitionOutOfRange {
+        partition: u32,
+        partition_count: u32,
+    },
+    DuplicateMemoryTarget {
+        target: u32,
+    },
+    DuplicateRoute {
+        route: WorkloadRouteId,
+    },
+    DuplicateRiscvCore {
+        cpu: u32,
+    },
+    MissingCoreFetchRoute {
+        cpu: u32,
+        route: WorkloadRouteId,
     },
     ManifestIdentityMismatch {
         expected: WorkloadManifestIdentity,
@@ -635,6 +1072,8 @@ impl fmt::Display for WorkloadError {
             Self::Boot(error) => write!(formatter, "{error}"),
             Self::EmptyWorkloadId => write!(formatter, "workload id must not be empty"),
             Self::EmptyResourceId => write!(formatter, "resource id must not be empty"),
+            Self::EmptyRouteId => write!(formatter, "route id must not be empty"),
+            Self::EmptyEndpoint => write!(formatter, "endpoint id must not be empty"),
             Self::EmptyResourceDigest { resource } => write!(
                 formatter,
                 "resource {} must include a digest",
@@ -656,6 +1095,46 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "required resource {} is not defined",
                 resource.as_str()
+            ),
+            Self::ZeroHostLatency => write!(formatter, "host latency must be positive"),
+            Self::ZeroLineBytes { target } => {
+                write!(
+                    formatter,
+                    "memory target {target} line bytes must be positive"
+                )
+            }
+            Self::ZeroRouteLatency { route, latency } => write!(
+                formatter,
+                "route {} {latency:?} latency must be positive",
+                route.as_str()
+            ),
+            Self::ZeroTopologyPartitions => {
+                write!(formatter, "topology partition count must be positive")
+            }
+            Self::ZeroMinRemoteDelay => write!(formatter, "minimum remote delay must be positive"),
+            Self::ZeroParallelWorkerLimit => {
+                write!(formatter, "parallel worker limit must be positive")
+            }
+            Self::PartitionOutOfRange {
+                partition,
+                partition_count,
+            } => write!(
+                formatter,
+                "partition {partition} is outside topology partition count {partition_count}"
+            ),
+            Self::DuplicateMemoryTarget { target } => {
+                write!(formatter, "memory target {target} is already defined")
+            }
+            Self::DuplicateRoute { route } => {
+                write!(formatter, "route {} is already defined", route.as_str())
+            }
+            Self::DuplicateRiscvCore { cpu } => {
+                write!(formatter, "RISC-V core {cpu} is already defined")
+            }
+            Self::MissingCoreFetchRoute { cpu, route } => write!(
+                formatter,
+                "RISC-V core {cpu} fetch route {} is not defined",
+                route.as_str()
             ),
             Self::ManifestIdentityMismatch { expected, actual } => write!(
                 formatter,
@@ -735,6 +1214,7 @@ fn planned_stop_reason(events: &[WorkloadHostEvent]) -> Option<String> {
 fn manifest_identity(
     id: &WorkloadId,
     boot: &WorkloadBootImage,
+    topology: Option<&WorkloadTopology>,
     resources: &[WorkloadResource],
     required_resources: &[WorkloadResourceId],
     host_events: &[WorkloadHostEvent],
@@ -750,6 +1230,7 @@ fn manifest_identity(
         hash_u64(&mut hash, segment.range().size().bytes());
         hash_bytes(&mut hash, segment.data());
     }
+    hash_topology(&mut hash, topology);
     hash_u64(&mut hash, resources.len() as u64);
     for resource in resources {
         hash_str(&mut hash, resource.id().as_str());
@@ -768,6 +1249,47 @@ fn manifest_identity(
     }
     hash_checkpoint_lineage(&mut hash, checkpoint_lineage);
     WorkloadManifestIdentity::new(hash)
+}
+
+fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
+    let Some(topology) = topology else {
+        hash_str(hash, "topology.none");
+        return;
+    };
+
+    hash_str(hash, "topology.riscv.v1");
+    hash_u64(hash, u64::from(topology.partition_count()));
+    hash_u64(hash, topology.min_remote_delay());
+    hash_u64(hash, topology.parallel_worker_limit() as u64);
+    hash_u64(hash, u64::from(topology.host().partition()));
+    hash_u64(hash, topology.host().latency());
+    hash_u64(hash, u64::from(topology.host().source()));
+    hash_u64(hash, topology.memory_targets().len() as u64);
+    for target in topology.memory_targets() {
+        hash_u64(hash, u64::from(target.target()));
+        hash_u64(hash, target.line_bytes());
+        hash_u64(hash, target.range().start().get());
+        hash_u64(hash, target.range().size().bytes());
+    }
+    hash_u64(hash, topology.memory_routes().len() as u64);
+    for route in topology.memory_routes() {
+        hash_str(hash, route.id().as_str());
+        hash_str(hash, route.source_endpoint());
+        hash_u64(hash, u64::from(route.source_partition()));
+        hash_str(hash, route.target_endpoint());
+        hash_u64(hash, u64::from(route.target_partition()));
+        hash_u64(hash, route.request_latency());
+        hash_u64(hash, route.response_latency());
+    }
+    hash_u64(hash, topology.riscv_cores().len() as u64);
+    for core in topology.riscv_cores() {
+        hash_u64(hash, u64::from(core.cpu()));
+        hash_u64(hash, u64::from(core.partition()));
+        hash_u64(hash, u64::from(core.agent()));
+        hash_u64(hash, core.entry().get());
+        hash_str(hash, core.fetch_endpoint());
+        hash_str(hash, core.fetch_route().as_str());
+    }
 }
 
 fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
