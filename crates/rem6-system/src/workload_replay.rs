@@ -4,6 +4,12 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootError;
+use rem6_coherence::{
+    CpuResponseRecord, HarnessError, LineBackingStore, MesiCpuResponseRecord, MesiHarnessError,
+    MoesiCpuResponseRecord, MoesiHarnessError, PartitionedCacheAgentConfig,
+    PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
+    PartitionedMoesiDirectoryLineHarness,
+};
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
 };
@@ -13,8 +19,9 @@ use rem6_dram::{
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
-    AccessSize, AgentId, CacheLineLayout, MemoryError, MemoryTargetId, PartitionedMemorySnapshot,
-    PartitionedMemoryStore,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
+    MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
+    ResponseStatus,
 };
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
@@ -24,13 +31,14 @@ use rem6_transport::{
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
     WorkloadHostEvent, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult,
-    WorkloadRouteId,
+    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
 };
 
 use crate::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
-    RiscvDataCacheProtocol, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason,
-    RiscvTrapEventPort, SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
+    SystemHostEventPort,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -76,6 +84,343 @@ impl WorkloadMemoryBackend {
                 .target_activities(),
         }
     }
+
+    fn line_data(
+        &self,
+        target: MemoryTargetId,
+        line: Address,
+    ) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
+        match self {
+            Self::Store(store) => store
+                .lock()
+                .expect("workload replay memory lock")
+                .line_data(target, line)
+                .map_err(RiscvWorkloadReplayError::Memory),
+            Self::Dram(dram) => dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .line_data(target, line)
+                .map_err(RiscvWorkloadReplayError::Dram),
+        }
+    }
+}
+
+enum WorkloadDataCacheHarness {
+    Msi(PartitionedDirectoryLineHarness),
+    Mesi(PartitionedMesiDirectoryLineHarness),
+    Moesi(PartitionedMoesiDirectoryLineHarness),
+}
+
+struct WorkloadDataCacheBackend {
+    protocol: RiscvDataCacheProtocol,
+    line: Address,
+    harness: WorkloadDataCacheHarness,
+    records: Vec<RiscvDataCacheRunRecord>,
+    error: Option<RiscvWorkloadReplayError>,
+}
+
+impl WorkloadDataCacheBackend {
+    fn new(
+        config: &WorkloadRiscvDataCache,
+        layout: CacheLineLayout,
+        line_data: Vec<u8>,
+        agents: Vec<PartitionedCacheAgentConfig>,
+    ) -> Result<Self, RiscvWorkloadReplayError> {
+        let line = layout.line_address(config.line_address());
+        let backing = LineBackingStore::new(layout, line, line_data)
+            .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+        let directory_partition = PartitionId::new(config.directory_partition());
+        let directory_endpoint = TransportEndpointId::new(config.directory_endpoint())
+            .map_err(RiscvWorkloadReplayError::Transport)?;
+        let (protocol, harness) = match config.protocol() {
+            WorkloadDataCacheProtocol::Msi => (
+                RiscvDataCacheProtocol::Msi,
+                WorkloadDataCacheHarness::Msi(
+                    PartitionedDirectoryLineHarness::new(
+                        layout,
+                        line,
+                        backing,
+                        directory_partition,
+                        directory_endpoint,
+                        agents,
+                    )
+                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?,
+                ),
+            ),
+            WorkloadDataCacheProtocol::Mesi => (
+                RiscvDataCacheProtocol::Mesi,
+                WorkloadDataCacheHarness::Mesi(
+                    PartitionedMesiDirectoryLineHarness::new(
+                        layout,
+                        line,
+                        backing,
+                        directory_partition,
+                        directory_endpoint,
+                        agents,
+                    )
+                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?,
+                ),
+            ),
+            WorkloadDataCacheProtocol::Moesi => (
+                RiscvDataCacheProtocol::Moesi,
+                WorkloadDataCacheHarness::Moesi(
+                    PartitionedMoesiDirectoryLineHarness::new(
+                        layout,
+                        line,
+                        backing,
+                        directory_partition,
+                        directory_endpoint,
+                        agents,
+                    )
+                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?,
+                ),
+            ),
+        };
+
+        Ok(Self {
+            protocol,
+            line,
+            harness,
+            records: Vec::new(),
+            error: None,
+        })
+    }
+
+    fn records(&self) -> Vec<RiscvDataCacheRunRecord> {
+        self.records.clone()
+    }
+
+    fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
+        self.error.take()
+    }
+
+    fn respond(&mut self, delivery: &RequestDelivery) -> Option<TargetOutcome> {
+        if delivery.request().line_address() != self.line {
+            return None;
+        }
+        let outcome = match &mut self.harness {
+            WorkloadDataCacheHarness::Msi(harness) => workload_msi_data_cache_response_result(
+                self.protocol,
+                &mut self.records,
+                harness,
+                delivery,
+            ),
+            WorkloadDataCacheHarness::Mesi(harness) => workload_mesi_data_cache_response_result(
+                self.protocol,
+                &mut self.records,
+                harness,
+                delivery,
+            ),
+            WorkloadDataCacheHarness::Moesi(harness) => workload_moesi_data_cache_response_result(
+                self.protocol,
+                &mut self.records,
+                harness,
+                delivery,
+            ),
+        };
+        Some(match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.error = Some(error);
+                TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+            }
+        })
+    }
+}
+
+trait WorkloadDataCacheResponseRecord {
+    fn status(&self) -> ResponseStatus;
+    fn data(&self) -> Option<&[u8]>;
+    fn tick(&self) -> u64;
+    fn request(&self) -> MemoryRequestId;
+}
+
+impl WorkloadDataCacheResponseRecord for CpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+
+    fn request(&self) -> MemoryRequestId {
+        self.request()
+    }
+}
+
+impl WorkloadDataCacheResponseRecord for MesiCpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+
+    fn request(&self) -> MemoryRequestId {
+        self.request()
+    }
+}
+
+impl WorkloadDataCacheResponseRecord for MoesiCpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+
+    fn request(&self) -> MemoryRequestId {
+        self.request()
+    }
+}
+
+fn workload_msi_data_cache_response_result(
+    protocol: RiscvDataCacheProtocol,
+    records: &mut Vec<RiscvDataCacheRunRecord>,
+    harness: &mut PartitionedDirectoryLineHarness,
+    delivery: &RequestDelivery,
+) -> Result<TargetOutcome, RiscvWorkloadReplayError> {
+    let start_tick = harness.now();
+    let responses_before = harness.cpu_responses().len();
+    harness
+        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
+        .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+    let run = harness
+        .run_until_idle_parallel_recorded()
+        .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+    let response_record = workload_data_cache_response_record(
+        &harness.cpu_responses(),
+        responses_before,
+        delivery.request().id(),
+    )?;
+    records.push(RiscvDataCacheRunRecord::new(protocol, run));
+
+    workload_data_cache_response_record_to_target_outcome(
+        delivery.request(),
+        start_tick,
+        &response_record,
+    )
+}
+
+fn workload_mesi_data_cache_response_result(
+    protocol: RiscvDataCacheProtocol,
+    records: &mut Vec<RiscvDataCacheRunRecord>,
+    harness: &mut PartitionedMesiDirectoryLineHarness,
+    delivery: &RequestDelivery,
+) -> Result<TargetOutcome, RiscvWorkloadReplayError> {
+    let start_tick = harness.now();
+    let responses_before = harness.cpu_responses().len();
+    harness
+        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
+        .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
+    let run = harness
+        .run_until_idle_parallel_recorded()
+        .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
+    let response_record = workload_data_cache_response_record(
+        &harness.cpu_responses(),
+        responses_before,
+        delivery.request().id(),
+    )?;
+    records.push(RiscvDataCacheRunRecord::new(protocol, run));
+
+    workload_data_cache_response_record_to_target_outcome(
+        delivery.request(),
+        start_tick,
+        &response_record,
+    )
+}
+
+fn workload_moesi_data_cache_response_result(
+    protocol: RiscvDataCacheProtocol,
+    records: &mut Vec<RiscvDataCacheRunRecord>,
+    harness: &mut PartitionedMoesiDirectoryLineHarness,
+    delivery: &RequestDelivery,
+) -> Result<TargetOutcome, RiscvWorkloadReplayError> {
+    let start_tick = harness.now();
+    let responses_before = harness.cpu_responses().len();
+    harness
+        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
+        .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
+    let run = harness
+        .run_until_idle_parallel_recorded()
+        .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
+    let response_record = workload_data_cache_response_record(
+        &harness.cpu_responses(),
+        responses_before,
+        delivery.request().id(),
+    )?;
+    records.push(RiscvDataCacheRunRecord::new(protocol, run));
+
+    workload_data_cache_response_record_to_target_outcome(
+        delivery.request(),
+        start_tick,
+        &response_record,
+    )
+}
+
+fn workload_data_cache_response_record<R>(
+    responses: &[R],
+    responses_before: usize,
+    request: MemoryRequestId,
+) -> Result<R, RiscvWorkloadReplayError>
+where
+    R: Clone + WorkloadDataCacheResponseRecord,
+{
+    responses
+        .get(responses_before..)
+        .unwrap_or_default()
+        .iter()
+        .find(|record| record.request() == request)
+        .cloned()
+        .ok_or(RiscvWorkloadReplayError::MissingDataCacheResponse { request })
+}
+
+fn workload_data_cache_response_record_to_target_outcome<R>(
+    request: &MemoryRequest,
+    start_tick: u64,
+    record: &R,
+) -> Result<TargetOutcome, RiscvWorkloadReplayError>
+where
+    R: WorkloadDataCacheResponseRecord,
+{
+    let response = workload_data_cache_response_record_to_memory_response(request, record)?;
+    let delay = record.tick().saturating_sub(start_tick);
+    if delay == 0 {
+        Ok(TargetOutcome::Respond(response))
+    } else {
+        Ok(TargetOutcome::RespondAfter { delay, response })
+    }
+}
+
+fn workload_data_cache_response_record_to_memory_response<R>(
+    request: &MemoryRequest,
+    record: &R,
+) -> Result<MemoryResponse, RiscvWorkloadReplayError>
+where
+    R: WorkloadDataCacheResponseRecord,
+{
+    match record.status() {
+        ResponseStatus::Completed => {
+            MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
+                .map_err(RiscvWorkloadReplayError::Memory)
+        }
+        ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -104,6 +449,7 @@ impl RiscvWorkloadReplay {
             .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
         let route_map = self.build_route_map()?;
         let memory = self.load_memory_backend()?;
+        let data_cache = self.build_data_cache(&memory)?;
         let cluster = self.build_cluster(&route_map)?;
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
@@ -132,25 +478,54 @@ impl RiscvWorkloadReplay {
             GuestSourceId::new(topology.host().source()),
         );
         let driver = RiscvSystemRunDriver::new(trap_port);
-        let mut run = driver
-            .drive_until_host_stop_parallel(
-                &cluster,
-                &mut scheduler,
-                &transport,
-                MemoryTrace::new(),
-                MemoryTrace::new(),
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| memory_response(&memory, &delivery)
-                },
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| memory_response(&memory, &delivery)
-                },
-                self.max_turns,
-                |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
-            )
-            .map_err(RiscvWorkloadReplayError::System)?;
+        let run_result = driver.drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let memory = memory.clone();
+                move |delivery, _context| memory_response(&memory, &delivery)
+            },
+            |_cpu| {
+                let memory = memory.clone();
+                let data_cache = data_cache.clone();
+                move |delivery, _context| {
+                    if let Some(data_cache) = data_cache.as_ref() {
+                        if let Some(outcome) = data_cache
+                            .lock()
+                            .expect("workload data cache lock")
+                            .respond(&delivery)
+                        {
+                            return outcome;
+                        }
+                    }
+                    memory_response(&memory, &delivery)
+                }
+            },
+            self.max_turns,
+            |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
+        );
+        if let Some(data_cache) = data_cache.as_ref() {
+            if let Some(error) = data_cache
+                .lock()
+                .expect("workload data cache lock")
+                .take_error()
+            {
+                return Err(error);
+            }
+        }
+        let mut run = run_result.map_err(RiscvWorkloadReplayError::System)?;
+        if let Some(data_cache) = data_cache.as_ref() {
+            let records = data_cache
+                .lock()
+                .expect("workload data cache lock")
+                .records();
+            if !records.is_empty() {
+                run = run.with_data_cache_run_records(records);
+            }
+        }
         let dram_target_activities = memory.dram_target_activities();
         if !dram_target_activities.is_empty() {
             run = run.with_dram_activity(dram_target_activities);
@@ -301,6 +676,68 @@ impl RiscvWorkloadReplay {
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 
         RiscvCluster::new(cores).map_err(RiscvWorkloadReplayError::RiscvCluster)
+    }
+
+    fn build_data_cache(
+        &self,
+        memory: &WorkloadMemoryBackend,
+    ) -> Result<Option<Arc<Mutex<WorkloadDataCacheBackend>>>, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+        let Some(config) = topology.riscv_data_cache() else {
+            return Ok(None);
+        };
+        let target = topology
+            .memory_targets()
+            .iter()
+            .find(|target| target.target() == config.memory_target())
+            .ok_or(RiscvWorkloadReplayError::MissingMemoryTarget)?;
+        let layout =
+            CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)?;
+        let line = layout.line_address(config.line_address());
+        let line_data = memory.line_data(MemoryTargetId::new(config.memory_target()), line)?;
+        let agents = self.data_cache_agents(topology)?;
+        if agents.is_empty() {
+            return Err(RiscvWorkloadReplayError::MissingDataCacheAgent);
+        }
+
+        Ok(Some(Arc::new(Mutex::new(WorkloadDataCacheBackend::new(
+            config, layout, line_data, agents,
+        )?))))
+    }
+
+    fn data_cache_agents(
+        &self,
+        topology: &WorkloadTopology,
+    ) -> Result<Vec<PartitionedCacheAgentConfig>, RiscvWorkloadReplayError> {
+        topology
+            .riscv_cores()
+            .iter()
+            .filter_map(|core| {
+                let data_endpoint = core.data_endpoint()?;
+                let data_route = core.data_route()?;
+                Some((core, data_endpoint, data_route))
+            })
+            .map(|(core, data_endpoint, data_route)| {
+                let route = topology
+                    .memory_routes()
+                    .iter()
+                    .find(|route| route.id() == data_route)
+                    .ok_or_else(|| RiscvWorkloadReplayError::MissingRoute {
+                        route: data_route.clone(),
+                    })?;
+                Ok(PartitionedCacheAgentConfig::new(
+                    AgentId::new(core.agent()),
+                    PartitionId::new(route.source_partition()),
+                    TransportEndpointId::new(data_endpoint)
+                        .map_err(RiscvWorkloadReplayError::Transport)?,
+                    route.request_latency(),
+                    route.response_latency(),
+                ))
+            })
+            .collect()
     }
 
     fn instruction_layout(&self) -> Result<CacheLineLayout, RiscvWorkloadReplayError> {
@@ -563,6 +1000,8 @@ impl RiscvWorkloadReplayOutcome {
 pub enum RiscvWorkloadReplayError {
     MissingTopology,
     MissingMemoryTarget,
+    MissingDataCacheAgent,
+    MissingDataCacheResponse { request: MemoryRequestId },
     MissingRoute { route: WorkloadRouteId },
     MissingFinalTick,
     Workload(WorkloadError),
@@ -570,6 +1009,9 @@ pub enum RiscvWorkloadReplayError {
     Dram(DramMemoryError),
     DramModel(rem6_dram::DramError),
     Memory(MemoryError),
+    MsiDataCache(HarnessError),
+    MesiDataCache(MesiHarnessError),
+    MoesiDataCache(MoesiHarnessError),
     Cpu(CpuError),
     RiscvCluster(rem6_cpu::RiscvClusterError),
     Scheduler(SchedulerError),
@@ -584,6 +1026,18 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::MissingMemoryTarget => {
                 write!(formatter, "workload replay topology has no memory target")
             }
+            Self::MissingDataCacheAgent => {
+                write!(
+                    formatter,
+                    "workload replay data cache has no RISC-V data agents"
+                )
+            }
+            Self::MissingDataCacheResponse { request } => write!(
+                formatter,
+                "workload replay data cache did not record response for request {} from agent {}",
+                request.sequence(),
+                request.agent().get()
+            ),
             Self::MissingRoute { route } => {
                 write!(
                     formatter,
@@ -597,6 +1051,9 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::DramModel(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::MsiDataCache(error) => write!(formatter, "{error}"),
+            Self::MesiDataCache(error) => write!(formatter, "{error}"),
+            Self::MoesiDataCache(error) => write!(formatter, "{error}"),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
@@ -614,6 +1071,9 @@ impl Error for RiscvWorkloadReplayError {
             Self::Dram(error) => Some(error),
             Self::DramModel(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::MsiDataCache(error) => Some(error),
+            Self::MesiDataCache(error) => Some(error),
+            Self::MoesiDataCache(error) => Some(error),
             Self::Cpu(error) => Some(error),
             Self::RiscvCluster(error) => Some(error),
             Self::Scheduler(error) => Some(error),
@@ -621,6 +1081,8 @@ impl Error for RiscvWorkloadReplayError {
             Self::System(error) => Some(error),
             Self::MissingTopology
             | Self::MissingMemoryTarget
+            | Self::MissingDataCacheAgent
+            | Self::MissingDataCacheResponse { .. }
             | Self::MissingRoute { .. }
             | Self::MissingFinalTick => None,
         }

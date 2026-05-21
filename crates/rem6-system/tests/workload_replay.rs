@@ -7,8 +7,8 @@ use rem6_system::{RiscvSystemRunStopReason, RiscvWorkloadReplay, SystemActionOut
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadHostEvent, WorkloadHostPlacement,
     WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteId,
-    WorkloadTopology,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore,
+    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -206,6 +206,21 @@ fn replay_topology_with_data_route() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_msi_data_cache() -> WorkloadTopology {
+    replay_topology_with_data_route()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_profiled_data_route() -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
@@ -287,6 +302,25 @@ fn replay_manifest_with_data_load() -> WorkloadManifest {
         boot_image_with_data_load(),
     )
     .with_topology(replay_topology_with_data_route())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_msi_data_cache_load() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-msi-data-cache-load"),
+        boot_image_with_data_load(),
+    )
+    .with_topology(replay_topology_with_msi_data_cache())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -488,6 +522,40 @@ fn workload_replay_reconstructs_riscv_data_route() {
     let data_events = outcome.cluster().core(cpu0).unwrap().data_access_events();
     assert_eq!(data_events.len(), 2);
     assert_eq!(data_events[0].endpoint().as_str(), "cpu0.dmem");
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_data_load_through_declared_msi_cache() {
+    let manifest = replay_manifest_with_msi_data_cache_load();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(outcome.run().data_cache_run_count(), 1);
+    assert_eq!(
+        outcome
+            .run()
+            .data_cache_run_count_for_protocol(rem6_system::RiscvDataCacheProtocol::Msi),
+        1,
+    );
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Msi),
+        1,
+    );
+    assert!(summary.has_data_cache_parallel_work());
     plan.verify_result(outcome.result()).unwrap();
 }
 

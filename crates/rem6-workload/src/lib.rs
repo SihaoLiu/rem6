@@ -416,6 +416,58 @@ impl WorkloadRiscvCore {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadRiscvDataCache {
+    protocol: WorkloadDataCacheProtocol,
+    memory_target: u32,
+    line_address: Address,
+    directory_partition: u32,
+    directory_endpoint: String,
+}
+
+impl WorkloadRiscvDataCache {
+    pub fn new(
+        protocol: WorkloadDataCacheProtocol,
+        memory_target: u32,
+        line_address: Address,
+        directory_partition: u32,
+        directory_endpoint: impl Into<String>,
+    ) -> Result<Self, WorkloadError> {
+        let directory_endpoint = directory_endpoint.into();
+        if directory_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        Ok(Self {
+            protocol,
+            memory_target,
+            line_address,
+            directory_partition,
+            directory_endpoint,
+        })
+    }
+
+    pub const fn protocol(&self) -> WorkloadDataCacheProtocol {
+        self.protocol
+    }
+
+    pub const fn memory_target(&self) -> u32 {
+        self.memory_target
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+
+    pub const fn directory_partition(&self) -> u32 {
+        self.directory_partition
+    }
+
+    pub fn directory_endpoint(&self) -> &str {
+        &self.directory_endpoint
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadTopology {
     partition_count: u32,
     min_remote_delay: Tick,
@@ -424,6 +476,7 @@ pub struct WorkloadTopology {
     memory_targets: Vec<WorkloadMemoryTarget>,
     memory_routes: Vec<WorkloadMemoryRoute>,
     riscv_cores: Vec<WorkloadRiscvCore>,
+    riscv_data_cache: Option<WorkloadRiscvDataCache>,
 }
 
 impl WorkloadTopology {
@@ -457,6 +510,7 @@ impl WorkloadTopology {
             memory_targets: Vec::new(),
             memory_routes: Vec::new(),
             riscv_cores: Vec::new(),
+            riscv_data_cache: None,
         })
     }
 
@@ -536,6 +590,25 @@ impl WorkloadTopology {
         Ok(self)
     }
 
+    pub fn with_riscv_data_cache(
+        mut self,
+        cache: WorkloadRiscvDataCache,
+    ) -> Result<Self, WorkloadError> {
+        self.validate_partition(cache.directory_partition())?;
+        if !self
+            .memory_targets
+            .iter()
+            .any(|target| target.target() == cache.memory_target())
+        {
+            return Err(WorkloadError::MissingMemoryTarget {
+                target: cache.memory_target(),
+            });
+        }
+
+        self.riscv_data_cache = Some(cache);
+        Ok(self)
+    }
+
     pub const fn partition_count(&self) -> u32 {
         self.partition_count
     }
@@ -569,6 +642,10 @@ impl WorkloadTopology {
 
     pub fn riscv_cores(&self) -> &[WorkloadRiscvCore] {
         &self.riscv_cores
+    }
+
+    pub fn riscv_data_cache(&self) -> Option<&WorkloadRiscvDataCache> {
+        self.riscv_data_cache.as_ref()
     }
 
     fn validate_partition(&self, partition: u32) -> Result<(), WorkloadError> {
@@ -1160,6 +1237,9 @@ pub enum WorkloadError {
     DuplicateMemoryTarget {
         target: u32,
     },
+    MissingMemoryTarget {
+        target: u32,
+    },
     DuplicateRoute {
         route: WorkloadRouteId,
     },
@@ -1282,6 +1362,9 @@ impl fmt::Display for WorkloadError {
             ),
             Self::DuplicateMemoryTarget { target } => {
                 write!(formatter, "memory target {target} is already defined")
+            }
+            Self::MissingMemoryTarget { target } => {
+                write!(formatter, "memory target {target} is not defined")
             }
             Self::DuplicateRoute { route } => {
                 write!(formatter, "route {} is already defined", route.as_str())
@@ -1468,6 +1551,17 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
             (None, None) => hash_str(hash, "data.none"),
             _ => hash_str(hash, "data.invalid"),
         }
+    }
+    match topology.riscv_data_cache() {
+        Some(cache) => {
+            hash_str(hash, "riscv.data_cache");
+            hash_str(hash, cache.protocol().as_str());
+            hash_u64(hash, u64::from(cache.memory_target()));
+            hash_u64(hash, cache.line_address().get());
+            hash_u64(hash, u64::from(cache.directory_partition()));
+            hash_str(hash, cache.directory_endpoint());
+        }
+        None => hash_str(hash, "riscv.data_cache.none"),
     }
 }
 
