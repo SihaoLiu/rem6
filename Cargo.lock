@@ -98,6 +98,7 @@ name = "rem6-gpu"
 version = "0.1.0"
 dependencies = [
  "rem6-kernel",
+ "rem6-memory",
  "rem6-topology",
  "rem6-transport",
 ]

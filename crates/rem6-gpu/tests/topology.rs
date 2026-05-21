@@ -7,7 +7,7 @@ use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder, TopologyError,
 };
-use rem6_transport::TopologyRouteError;
+use rem6_transport::{MemoryTransport, TopologyRouteError};
 
 fn component(name: &str) -> ComponentId {
     ComponentId::new(name).unwrap()
@@ -70,8 +70,13 @@ fn gpu_config(device: GpuDeviceId) -> GpuTopologyConfig {
 #[test]
 fn gpu_topology_device_submits_kernel_through_declared_control_path() {
     let topology = gpu_topology();
-    let device =
-        GpuTopologyDevice::from_topology(&topology, gpu_config(GpuDeviceId::new(7))).unwrap();
+    let mut transport = MemoryTransport::new();
+    let device = GpuTopologyDevice::from_topology(
+        &topology,
+        &mut transport,
+        gpu_config(GpuDeviceId::new(7)),
+    )
+    .unwrap();
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let launch = GpuKernelLaunch::new(GpuKernelId::new(20), 3, 4).unwrap();
 
@@ -86,6 +91,7 @@ fn gpu_topology_device_submits_kernel_through_declared_control_path() {
         PartitionId::new(1)
     );
     assert_eq!(device.command_path().latency(), 3);
+    assert_eq!(device.memory_route(), None);
 
     device
         .submit_kernel(&mut scheduler, launch.clone())
@@ -183,8 +189,10 @@ fn gpu_topology_device_submits_kernel_through_declared_control_path() {
 fn gpu_topology_rejects_bad_control_path_without_device_mutation() {
     let topology = gpu_topology();
 
+    let mut transport = MemoryTransport::new();
     let error = GpuTopologyDevice::from_topology(
         &topology,
+        &mut transport,
         GpuTopologyConfig::new(
             GpuComputeConfig::new(GpuDeviceId::new(8), PartitionId::new(1), 1, 1).unwrap(),
             endpoint("missing_cpu", "gpu"),
@@ -199,8 +207,10 @@ fn gpu_topology_rejects_bad_control_path_without_device_mutation() {
         }),
     );
 
+    let mut transport = MemoryTransport::new();
     let error = GpuTopologyDevice::from_topology(
         &topology,
+        &mut transport,
         GpuTopologyConfig::new(
             GpuComputeConfig::new(GpuDeviceId::new(9), PartitionId::new(0), 1, 1).unwrap(),
             endpoint("cpu0", "gpu"),
@@ -242,9 +252,13 @@ fn gpu_topology_rejects_bad_control_path_without_device_mutation() {
         .unwrap()
         .build()
         .unwrap();
-    let error =
-        GpuTopologyDevice::from_topology(&no_link_topology, gpu_config(GpuDeviceId::new(10)))
-            .unwrap_err();
+    let mut transport = MemoryTransport::new();
+    let error = GpuTopologyDevice::from_topology(
+        &no_link_topology,
+        &mut transport,
+        gpu_config(GpuDeviceId::new(10)),
+    )
+    .unwrap_err();
     assert_eq!(
         error,
         GpuError::TopologyRoute(TopologyRouteError::MissingTopologyConnection {

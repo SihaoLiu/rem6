@@ -1,15 +1,20 @@
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_gpu::{
-    GpuComputeConfig, GpuDeviceId, GpuError, GpuKernelId, GpuKernelLaunch, GpuTopologyConfig,
-    GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion, GpuWorkgroupId,
+    GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuError, GpuKernelId,
+    GpuKernelLaunch, GpuTopologyConfig, GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion,
+    GpuWorkgroupId,
 };
 use rem6_kernel::{ClockDomain, PartitionId};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
+    PartitionedMemoryStore, ResponseStatus,
+};
 use rem6_system::{RiscvTopologySystem, RiscvTopologySystemError};
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
 };
+use rem6_transport::{MemoryTrace, MemoryTraceEvent, MemoryTraceKind, TransportEndpointId};
 
 fn component(name: &str) -> ComponentId {
     ComponentId::new(name).unwrap()
@@ -25,6 +30,10 @@ fn port(name: &str) -> PortName {
 
 fn endpoint(component_name: &str, port_name: &str) -> Endpoint {
     Endpoint::new(component(component_name), port(port_name))
+}
+
+fn transport_endpoint(component_name: &str, port_name: &str) -> TransportEndpointId {
+    TransportEndpointId::from_topology_endpoint(&endpoint(component_name, port_name)).unwrap()
 }
 
 fn clock(period: u64) -> ClockDomain {
@@ -60,6 +69,8 @@ fn topology_with_gpu() -> Topology {
                 clock(1),
             )
             .add_port(port("control"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("dma"), PortDirection::Initiator)
             .unwrap(),
         )
         .unwrap()
@@ -84,6 +95,8 @@ fn topology_with_gpu() -> Topology {
         .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mem0", "requests"), 2, 2)
         .unwrap()
         .connect_with_latencies(endpoint("cpu0", "gpu"), endpoint("gpu0", "control"), 4, 1)
+        .unwrap()
+        .connect_with_latencies(endpoint("gpu0", "dma"), endpoint("mem0", "requests"), 3, 5)
         .unwrap()
         .build()
         .unwrap()
@@ -115,6 +128,47 @@ fn gpu_config(device: GpuDeviceId) -> GpuTopologyConfig {
         endpoint("cpu0", "gpu"),
         endpoint("gpu0", "control"),
     )
+}
+
+fn gpu_config_with_memory(device: GpuDeviceId) -> GpuTopologyConfig {
+    gpu_config(device).with_memory(endpoint("gpu0", "dma"), endpoint("mem0", "requests"))
+}
+
+fn memory_request(sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(77), sequence)
+}
+
+fn memory_read(sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::read_shared(
+        memory_request(sequence),
+        Address::new(address),
+        AccessSize::new(4).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn memory_store() -> PartitionedMemoryStore {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x3000).unwrap(),
+        )
+        .unwrap();
+
+    let mut source_line = vec![0; 16];
+    source_line[4..8].copy_from_slice(&[0x3a, 0x4b, 0x5c, 0x6d]);
+    store
+        .insert_line(target, Address::new(0x1000), source_line)
+        .unwrap();
+    store
+        .insert_line(target, Address::new(0x3000), vec![0; 16])
+        .unwrap();
+    store
 }
 
 #[test]
@@ -226,6 +280,136 @@ fn topology_system_attaches_gpu_and_submits_kernel_over_control_path() {
                     compute_unit: 0,
                     slot: 0,
                 },
+            ),
+        ],
+    );
+}
+
+#[test]
+fn topology_system_runs_gpu_dma_copy_on_parallel_memory_backend() {
+    let gpu_id = GpuDeviceId::new(33);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology_with_gpu(),
+        RiscvClusterTopologyConfig::new([core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(memory_store())
+    .unwrap()
+    .with_gpu(gpu_config_with_memory(gpu_id))
+    .unwrap();
+    let route = system.gpu(gpu_id).unwrap().memory_route().unwrap();
+    let trace = MemoryTrace::new();
+    let copy = GpuDmaCopy::new(
+        GpuDmaId::new(120),
+        route,
+        memory_read(240, 0x1004),
+        route,
+        memory_request(241),
+        Address::new(0x3008),
+    )
+    .unwrap();
+
+    system
+        .run_gpu_dma_copy_parallel(gpu_id, copy, trace.clone())
+        .unwrap();
+
+    let destination = system
+        .memory_store()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x3000))
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0x3a, 0x4b, 0x5c, 0x6d]);
+    assert_eq!(
+        system.gpu(gpu_id).unwrap().gpu().dma_completions(),
+        vec![GpuDmaCompletion::new(
+            GpuDmaId::new(120),
+            memory_request(240),
+            memory_request(241),
+            8,
+            16,
+        )],
+    );
+    assert_eq!(
+        system.gpu(gpu_id).unwrap().gpu().trace(),
+        vec![
+            GpuTraceEvent::new(
+                0,
+                GpuTraceKind::DmaReadIssued {
+                    transfer: GpuDmaId::new(120),
+                    request: memory_request(240),
+                },
+            ),
+            GpuTraceEvent::new(
+                8,
+                GpuTraceKind::DmaReadCompleted {
+                    transfer: GpuDmaId::new(120),
+                    request: memory_request(240),
+                    bytes: 4,
+                },
+            ),
+            GpuTraceEvent::new(
+                8,
+                GpuTraceKind::DmaWriteIssued {
+                    transfer: GpuDmaId::new(120),
+                    request: memory_request(241),
+                },
+            ),
+            GpuTraceEvent::new(
+                16,
+                GpuTraceKind::DmaWriteCompleted {
+                    transfer: GpuDmaId::new(120),
+                    request: memory_request(241),
+                },
+            ),
+        ],
+    );
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                transport_endpoint("gpu0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(240),
+            ),
+            MemoryTraceEvent::request(
+                3,
+                route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(240),
+            ),
+            MemoryTraceEvent::response(
+                8,
+                route,
+                transport_endpoint("gpu0", "dma"),
+                memory_request(240),
+                ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::request(
+                8,
+                route,
+                transport_endpoint("gpu0", "dma"),
+                MemoryTraceKind::RequestSent,
+                memory_request(241),
+            ),
+            MemoryTraceEvent::request(
+                11,
+                route,
+                transport_endpoint("mem0", "requests"),
+                MemoryTraceKind::RequestArrived,
+                memory_request(241),
+            ),
+            MemoryTraceEvent::response(
+                16,
+                route,
+                transport_endpoint("gpu0", "dma"),
+                memory_request(241),
+                ResponseStatus::Completed,
             ),
         ],
     );

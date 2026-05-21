@@ -7,8 +7,12 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick,
 };
+use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_topology::{Endpoint, TopologyError};
-use rem6_transport::TopologyRouteError;
+use rem6_transport::{
+    MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
+    TopologyRouteError, TransportError,
+};
 
 mod topology;
 
@@ -49,6 +53,19 @@ impl GpuWorkgroupId {
     }
 
     pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GpuDmaId(u64);
+
+impl GpuDmaId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -160,7 +177,16 @@ pub enum GpuError {
     ZeroWorkgroupLatency {
         kernel: GpuKernelId,
     },
+    DmaReadRequiresData {
+        transfer: GpuDmaId,
+        request: MemoryRequestId,
+    },
     CommandTargetPartitionMismatch {
+        endpoint: Endpoint,
+        expected: PartitionId,
+        actual: PartitionId,
+    },
+    MemorySourcePartitionMismatch {
         endpoint: Endpoint,
         expected: PartitionId,
         actual: PartitionId,
@@ -170,8 +196,10 @@ pub enum GpuError {
         delay: Tick,
     },
     Scheduler(SchedulerError),
+    Memory(MemoryError),
     Topology(TopologyError),
     TopologyRoute(TopologyRouteError),
+    Transport(TransportError),
 }
 
 impl fmt::Display for GpuError {
@@ -199,6 +227,13 @@ impl fmt::Display for GpuError {
                 "GPU kernel {} needs positive workgroup latency",
                 kernel.get()
             ),
+            Self::DmaReadRequiresData { transfer, request } => write!(
+                formatter,
+                "GPU DMA transfer {} read request {} from agent {} must return data",
+                transfer.get(),
+                request.sequence(),
+                request.agent().get(),
+            ),
             Self::CommandTargetPartitionMismatch {
                 endpoint,
                 expected,
@@ -211,12 +246,26 @@ impl fmt::Display for GpuError {
                 actual.index(),
                 expected.index()
             ),
+            Self::MemorySourcePartitionMismatch {
+                endpoint,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "memory endpoint {}.{} is on partition {} but GPU partition is {}",
+                endpoint.component().as_str(),
+                endpoint.port().as_str(),
+                actual.index(),
+                expected.index()
+            ),
             Self::TickOverflow { now, delay } => {
                 write!(formatter, "tick {now} overflows when adding delay {delay}")
             }
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Memory(error) => write!(formatter, "{error}"),
             Self::Topology(error) => write!(formatter, "{error}"),
             Self::TopologyRoute(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -225,8 +274,10 @@ impl Error for GpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Scheduler(error) => Some(error),
+            Self::Memory(error) => Some(error),
             Self::Topology(error) => Some(error),
             Self::TopologyRoute(error) => Some(error),
+            Self::Transport(error) => Some(error),
             _ => None,
         }
     }
@@ -275,6 +326,23 @@ pub enum GpuTraceKind {
         workgroup: GpuWorkgroupId,
         compute_unit: u32,
         slot: u32,
+    },
+    DmaReadIssued {
+        transfer: GpuDmaId,
+        request: MemoryRequestId,
+    },
+    DmaReadCompleted {
+        transfer: GpuDmaId,
+        request: MemoryRequestId,
+        bytes: u64,
+    },
+    DmaWriteIssued {
+        transfer: GpuDmaId,
+        request: MemoryRequestId,
+    },
+    DmaWriteCompleted {
+        transfer: GpuDmaId,
+        request: MemoryRequestId,
     },
 }
 
@@ -329,6 +397,155 @@ impl GpuWorkgroupCompletion {
 
     pub const fn completed_at(&self) -> Tick {
         self.completed_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuDmaCopy {
+    transfer: GpuDmaId,
+    read_route: MemoryRouteId,
+    read_request: MemoryRequest,
+    write_route: MemoryRouteId,
+    write_request: MemoryRequestId,
+    destination: Address,
+}
+
+impl GpuDmaCopy {
+    pub fn new(
+        transfer: GpuDmaId,
+        read_route: MemoryRouteId,
+        read_request: MemoryRequest,
+        write_route: MemoryRouteId,
+        write_request: MemoryRequestId,
+        destination: Address,
+    ) -> Result<Self, GpuError> {
+        if !read_request.returns_data() {
+            return Err(GpuError::DmaReadRequiresData {
+                transfer,
+                request: read_request.id(),
+            });
+        }
+
+        Ok(Self {
+            transfer,
+            read_route,
+            read_request,
+            write_route,
+            write_request,
+            destination,
+        })
+    }
+
+    pub const fn transfer(&self) -> GpuDmaId {
+        self.transfer
+    }
+
+    pub const fn read_route(&self) -> MemoryRouteId {
+        self.read_route
+    }
+
+    pub const fn read_request(&self) -> &MemoryRequest {
+        &self.read_request
+    }
+
+    pub const fn write_route(&self) -> MemoryRouteId {
+        self.write_route
+    }
+
+    pub const fn write_request(&self) -> MemoryRequestId {
+        self.write_request
+    }
+
+    pub const fn destination(&self) -> Address {
+        self.destination
+    }
+
+    fn make_write_request(&self, data: Vec<u8>) -> Result<MemoryRequest, GpuError> {
+        MemoryRequest::write(
+            self.write_request,
+            self.destination,
+            self.read_request.size(),
+            data,
+            ByteMask::full(self.read_request.size()).map_err(GpuError::Memory)?,
+            self.read_request.line_layout(),
+        )
+        .map_err(GpuError::Memory)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuPendingDmaWrite {
+    copy: GpuDmaCopy,
+    data: Vec<u8>,
+    read_completed_at: Tick,
+}
+
+impl GpuPendingDmaWrite {
+    pub fn new(copy: GpuDmaCopy, data: Vec<u8>, read_completed_at: Tick) -> Self {
+        Self {
+            copy,
+            data,
+            read_completed_at,
+        }
+    }
+
+    pub const fn copy(&self) -> &GpuDmaCopy {
+        &self.copy
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub const fn read_completed_at(&self) -> Tick {
+        self.read_completed_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuDmaCompletion {
+    transfer: GpuDmaId,
+    read_request: MemoryRequestId,
+    write_request: MemoryRequestId,
+    read_completed_at: Tick,
+    write_completed_at: Tick,
+}
+
+impl GpuDmaCompletion {
+    pub const fn new(
+        transfer: GpuDmaId,
+        read_request: MemoryRequestId,
+        write_request: MemoryRequestId,
+        read_completed_at: Tick,
+        write_completed_at: Tick,
+    ) -> Self {
+        Self {
+            transfer,
+            read_request,
+            write_request,
+            read_completed_at,
+            write_completed_at,
+        }
+    }
+
+    pub const fn transfer(&self) -> GpuDmaId {
+        self.transfer
+    }
+
+    pub const fn read_request(&self) -> MemoryRequestId {
+        self.read_request
+    }
+
+    pub const fn write_request(&self) -> MemoryRequestId {
+        self.write_request
+    }
+
+    pub const fn read_completed_at(&self) -> Tick {
+        self.read_completed_at
+    }
+
+    pub const fn write_completed_at(&self) -> Tick {
+        self.write_completed_at
     }
 }
 
@@ -410,6 +627,111 @@ impl GpuDevice {
             .expect("GPU state lock")
             .completions
             .clone()
+    }
+
+    pub fn pending_dma_writes(&self) -> Vec<GpuPendingDmaWrite> {
+        self.state
+            .lock()
+            .expect("GPU state lock")
+            .pending_dma_writes
+            .clone()
+    }
+
+    pub fn dma_completions(&self) -> Vec<GpuDmaCompletion> {
+        self.state
+            .lock()
+            .expect("GPU state lock")
+            .dma_completions
+            .clone()
+    }
+
+    pub fn submit_dma_copy_read<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        copy: GpuDmaCopy,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<PartitionEventId, GpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let transfer = copy.transfer();
+        let request = copy.read_request().id();
+        let read_request = copy.read_request().clone();
+        let sink_gpu = self.clone();
+        let sink_copy = copy.clone();
+        let event = transport
+            .submit_parallel(
+                scheduler,
+                copy.read_route(),
+                read_request,
+                trace,
+                responder,
+                move |delivery| sink_gpu.accept_dma_read_response(sink_copy, delivery),
+            )
+            .map_err(GpuError::Transport)?;
+        self.record(GpuTraceEvent::new(
+            scheduler.now(),
+            GpuTraceKind::DmaReadIssued { transfer, request },
+        ));
+        Ok(event)
+    }
+
+    pub fn issue_next_dma_write<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<PartitionEventId>, GpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let Some(pending) = self.pop_pending_dma_write() else {
+            return Ok(None);
+        };
+        let write_request = match pending.copy.make_write_request(pending.data.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.push_pending_dma_write(pending);
+                return Err(error);
+            }
+        };
+        let transfer = pending.copy.transfer();
+        let request = write_request.id();
+        let sink_gpu = self.clone();
+        let completion = GpuDmaCompletion::new(
+            transfer,
+            pending.copy.read_request().id(),
+            write_request.id(),
+            pending.read_completed_at(),
+            0,
+        );
+        let route = pending.copy.write_route();
+        let event = match transport.submit_parallel(
+            scheduler,
+            route,
+            write_request,
+            trace,
+            responder,
+            move |delivery| sink_gpu.accept_dma_write_response(completion, delivery),
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                self.push_pending_dma_write(pending);
+                return Err(GpuError::Transport(error));
+            }
+        };
+        self.record(GpuTraceEvent::new(
+            scheduler.now(),
+            GpuTraceKind::DmaWriteIssued { transfer, request },
+        ));
+        Ok(Some(event))
     }
 
     fn accept_launch(&self, context: &mut ParallelSchedulerContext<'_>, launch: GpuKernelLaunch) {
@@ -547,6 +869,58 @@ impl GpuDevice {
     fn record(&self, event: GpuTraceEvent) {
         self.state.lock().expect("GPU state lock").trace.push(event);
     }
+
+    fn accept_dma_read_response(&self, copy: GpuDmaCopy, delivery: ResponseDelivery) {
+        if let Some(data) = response_data(delivery.response()) {
+            let bytes = data.len() as u64;
+            let mut state = self.state.lock().expect("GPU state lock");
+            state.trace.push(GpuTraceEvent::new(
+                delivery.tick(),
+                GpuTraceKind::DmaReadCompleted {
+                    transfer: copy.transfer(),
+                    request: copy.read_request().id(),
+                    bytes,
+                },
+            ));
+            state
+                .pending_dma_writes
+                .push(GpuPendingDmaWrite::new(copy, data, delivery.tick()));
+        }
+    }
+
+    fn accept_dma_write_response(
+        &self,
+        mut completion: GpuDmaCompletion,
+        delivery: ResponseDelivery,
+    ) {
+        completion.write_completed_at = delivery.tick();
+        let mut state = self.state.lock().expect("GPU state lock");
+        state.trace.push(GpuTraceEvent::new(
+            delivery.tick(),
+            GpuTraceKind::DmaWriteCompleted {
+                transfer: completion.transfer(),
+                request: completion.write_request(),
+            },
+        ));
+        state.dma_completions.push(completion);
+    }
+
+    fn pop_pending_dma_write(&self) -> Option<GpuPendingDmaWrite> {
+        let mut state = self.state.lock().expect("GPU state lock");
+        if state.pending_dma_writes.is_empty() {
+            None
+        } else {
+            Some(state.pending_dma_writes.remove(0))
+        }
+    }
+
+    fn push_pending_dma_write(&self, pending: GpuPendingDmaWrite) {
+        self.state
+            .lock()
+            .expect("GPU state lock")
+            .pending_dma_writes
+            .insert(0, pending);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -554,6 +928,8 @@ struct GpuDeviceState {
     slots: Vec<GpuSlotState>,
     trace: Vec<GpuTraceEvent>,
     completions: Vec<GpuWorkgroupCompletion>,
+    pending_dma_writes: Vec<GpuPendingDmaWrite>,
+    dma_completions: Vec<GpuDmaCompletion>,
 }
 
 impl GpuDeviceState {
@@ -562,6 +938,8 @@ impl GpuDeviceState {
             slots: vec![GpuSlotState::new(); config.slot_count()],
             trace: Vec::new(),
             completions: Vec::new(),
+            pending_dma_writes: Vec::new(),
+            dma_completions: Vec::new(),
         }
     }
 
@@ -608,6 +986,10 @@ fn compute_unit_for_slot(slot_index: usize, slots_per_compute_unit: u32) -> u32 
 
 fn wave_slot_for_slot(slot_index: usize, slots_per_compute_unit: u32) -> u32 {
     (slot_index % slots_per_compute_unit as usize) as u32
+}
+
+fn response_data(response: &MemoryResponse) -> Option<Vec<u8>> {
+    response.data().map(<[u8]>::to_vec)
 }
 
 fn validate_submission_latency(

@@ -15,7 +15,9 @@ use rem6_dram::{
     ExternalMemoryProfile,
 };
 use rem6_fabric::FabricModel;
-use rem6_gpu::{GpuDeviceId, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice};
+use rem6_gpu::{
+    GpuDeviceId, GpuDmaCopy, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice,
+};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick,
@@ -473,7 +475,7 @@ impl RiscvTopologySystem {
             return Err(RiscvTopologySystemError::DuplicateGpu { device: device_id });
         }
 
-        let device = GpuTopologyDevice::from_topology(&self.topology, config)
+        let device = GpuTopologyDevice::from_topology(&self.topology, &mut self.transport, config)
             .map_err(RiscvTopologySystemError::Gpu)?;
         self.gpus.insert(device_id, device);
         Ok(self)
@@ -771,6 +773,69 @@ impl RiscvTopologySystem {
             .map_err(RiscvTopologySystemError::Gpu)
     }
 
+    pub fn run_gpu_dma_copy_parallel(
+        &mut self,
+        device: GpuDeviceId,
+        copy: GpuDmaCopy,
+        trace: MemoryTrace,
+    ) -> Result<(), RiscvTopologySystemError> {
+        let gpu = self
+            .gpus
+            .get(&device)
+            .ok_or(RiscvTopologySystemError::UnknownGpu { device })?
+            .gpu()
+            .clone();
+        let memory = self
+            .memory
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
+            .clone();
+        let memory_error = Arc::new(Mutex::new(None));
+
+        let read_memory = memory.clone();
+        let read_error = Arc::clone(&memory_error);
+        gpu.submit_dma_copy_read(
+            &mut self.scheduler,
+            &self.transport,
+            copy,
+            trace.clone(),
+            move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
+                topology_memory_response(&read_memory, &read_error, &delivery)
+            },
+        )
+        .map_err(RiscvTopologySystemError::Gpu)?;
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        if let Some(error) = take_memory_error(&memory_error) {
+            return Err(error);
+        }
+
+        let write_memory = memory.clone();
+        let write_error = Arc::clone(&memory_error);
+        let Some(_event) = gpu
+            .issue_next_dma_write(
+                &mut self.scheduler,
+                &self.transport,
+                trace,
+                move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
+                    topology_memory_response(&write_memory, &write_error, &delivery)
+                },
+            )
+            .map_err(RiscvTopologySystemError::Gpu)?
+        else {
+            return Err(RiscvTopologySystemError::GpuDmaWriteNotReady { device });
+        };
+        self.scheduler
+            .run_until_idle_parallel()
+            .map_err(RiscvTopologySystemError::Scheduler)?;
+        if let Some(error) = take_memory_error(&memory_error) {
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
     pub fn drive_until_host_stop_parallel<E>(
         &mut self,
         driver: &RiscvSystemRunDriver,
@@ -1001,6 +1066,7 @@ pub enum RiscvTopologySystemError {
     AcceleratorDmaWriteNotReady { engine: AcceleratorEngineId },
     DuplicateGpu { device: GpuDeviceId },
     UnknownGpu { device: GpuDeviceId },
+    GpuDmaWriteNotReady { device: GpuDeviceId },
     PlatformPartitionMismatch { topology: u32, platform: u32 },
     HostPartitionOutOfRange { host: PartitionId, partitions: u32 },
     MissingMemoryStore,
@@ -1035,6 +1101,13 @@ impl fmt::Display for RiscvTopologySystemError {
             Self::UnknownGpu { device } => {
                 write!(formatter, "GPU device {} is not attached", device.get())
             }
+            Self::GpuDmaWriteNotReady { device } => {
+                write!(
+                    formatter,
+                    "GPU device {} has no completed DMA read to write",
+                    device.get()
+                )
+            }
             Self::PlatformPartitionMismatch { topology, platform } => write!(
                 formatter,
                 "platform partition count {platform} does not match topology partition count {topology}"
@@ -1068,6 +1141,7 @@ impl Error for RiscvTopologySystemError {
             Self::AcceleratorDmaWriteNotReady { .. } => None,
             Self::DuplicateGpu { .. } => None,
             Self::UnknownGpu { .. } => None,
+            Self::GpuDmaWriteNotReady { .. } => None,
             Self::PlatformPartitionMismatch { .. } => None,
             Self::HostPartitionOutOfRange { .. } => None,
             Self::MissingMemoryStore => None,
