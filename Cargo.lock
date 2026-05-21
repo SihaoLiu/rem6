@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "rem6-accelerator"
+version = "0.1.0"
+dependencies = [
+ "rem6-kernel",
+]
+
+[[package]]
 name = "rem6-boot"
 version = "0.1.0"
 dependencies = [
