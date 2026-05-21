@@ -11,8 +11,10 @@ use rem6_protocol_mesi::{
 use rem6_protocol_msi::{MsiCacheLine, MsiError, MsiEvent, MsiLineId, MsiState, MsiTransition};
 use rem6_transport::TargetOutcome;
 
+mod bank;
 mod moesi;
 
+pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MoesiPendingMissSnapshot,
@@ -319,6 +321,14 @@ impl MsiCacheController {
 
     pub fn line(&self) -> MsiLineId {
         self.line.line()
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub(crate) fn set_next_sequence(&mut self, next_sequence: u64) {
+        self.next_sequence = next_sequence;
     }
 
     pub fn cached_data(&self) -> Option<&[u8]> {
