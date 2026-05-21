@@ -323,6 +323,10 @@ impl TageBranchPredictorConfig {
         &self.tag_widths
     }
 
+    pub const fn inst_shift(&self) -> u8 {
+        self.inst_shift
+    }
+
     fn table_entries(&self, bank: usize) -> usize {
         1usize << self.log_table_sizes[bank]
     }

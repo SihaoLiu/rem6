@@ -27,6 +27,7 @@ mod error;
 mod gshare_predictor;
 mod indirect_target_predictor;
 mod loop_predictor;
+mod ltage_predictor;
 mod riscv_activity;
 mod riscv_cluster;
 mod tage_predictor;
@@ -63,6 +64,11 @@ pub use loop_predictor::{
     LoopBranchPredictor, LoopBranchPredictorConfig, LoopBranchPredictorError,
     LoopBranchPredictorSnapshot, LoopEntrySnapshot, LoopHistory, LoopPrediction, LoopSquash,
     LoopTrainingUpdate,
+};
+pub use ltage_predictor::{
+    LTageBranchPredictor, LTageBranchPredictorConfig, LTageBranchPredictorError,
+    LTageBranchPredictorSnapshot, LTageHistory, LTagePrediction, LTageProvider, LTageRepair,
+    LTageTrainingUpdate,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
