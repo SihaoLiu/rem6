@@ -1148,6 +1148,42 @@ fn scheduler_parallel_epoch_respects_configured_worker_limit() {
 }
 
 #[test]
+fn scheduler_parallel_batches_earlier_ticks_before_horizon_receivers() {
+    let sent_sources = Arc::new(Mutex::new(Vec::new()));
+    let receive_observations = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(5, 4, 1).unwrap();
+
+    let target = PartitionId::new(0);
+    for source_index in 1..=4 {
+        let source = PartitionId::new(source_index);
+        let source_sent = Arc::clone(&sent_sources);
+        let receive_sent = Arc::clone(&sent_sources);
+        let receive_log = Arc::clone(&receive_observations);
+        scheduler
+            .schedule_parallel_at(source, 0, move |context| {
+                source_sent.lock().unwrap().push(source_index);
+                context
+                    .schedule_remote_after(target, 4, move |_| {
+                        let sent_count = receive_sent.lock().unwrap().len();
+                        receive_log.lock().unwrap().push((source_index, sent_count));
+                    })
+                    .unwrap();
+            })
+            .unwrap();
+    }
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(epoch.summary().executed_events(), 8);
+    assert_eq!(epoch.summary().final_tick(), 4);
+    assert_eq!(sent_sources.lock().unwrap().as_slice(), &[1, 2, 3, 4]);
+    assert_eq!(
+        receive_observations.lock().unwrap().as_slice(),
+        &[(1, 4), (2, 4), (3, 4), (4, 4)]
+    );
+}
+
+#[test]
 fn scheduler_rejects_zero_parallel_worker_limit() {
     assert_eq!(
         PartitionedScheduler::with_parallel_worker_limit(2, 4, 0).unwrap_err(),
@@ -1229,12 +1265,12 @@ fn scheduler_parallel_plan_exposes_frontiers_and_serial_blockers_without_dispatc
         plan.ready_partitions(),
         &[
             rem6_kernel::ReadyPartition {
-                partition: core,
-                next_tick: 4,
-            },
-            rem6_kernel::ReadyPartition {
                 partition: device,
                 next_tick: 3,
+            },
+            rem6_kernel::ReadyPartition {
+                partition: core,
+                next_tick: 4,
             },
         ]
     );

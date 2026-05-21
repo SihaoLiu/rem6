@@ -690,7 +690,8 @@ impl PartitionedScheduler {
                     next_tick,
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let ready_partitions = sort_ready_partitions(ready_partitions);
         let serial_blockers = self.serial_blockers_at_or_before(horizon);
 
         Ok(Some(ParallelEpochPlan::new(
@@ -775,16 +776,22 @@ impl PartitionedScheduler {
     }
 
     fn ready_partitions_at_or_before(&self, horizon: Tick) -> Vec<PartitionId> {
-        self.partitions
-            .iter()
-            .enumerate()
-            .filter_map(|(index, queue)| {
-                queue
-                    .peek_tick()
-                    .is_some_and(|tick| tick <= horizon)
-                    .then_some(PartitionId::new(index as u32))
-            })
-            .collect()
+        sort_ready_partitions(
+            self.partitions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, queue)| {
+                    let next_tick = queue.peek_tick()?;
+                    (next_tick <= horizon).then_some(ReadyPartition {
+                        partition: PartitionId::new(index as u32),
+                        next_tick,
+                    })
+                })
+                .collect(),
+        )
+        .into_iter()
+        .map(|ready| ready.partition)
+        .collect()
     }
 
     fn run_parallel_batch(
@@ -1097,6 +1104,11 @@ impl ParallelSchedulerContext<'_> {
             local: order,
         })
     }
+}
+
+fn sort_ready_partitions(mut ready_partitions: Vec<ReadyPartition>) -> Vec<ReadyPartition> {
+    ready_partitions.sort_by_key(|ready| (ready.next_tick, ready.partition));
+    ready_partitions
 }
 
 struct ParallelPartitionResult {
