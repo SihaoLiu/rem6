@@ -427,7 +427,7 @@ fn riscv_core_parallel_data_load_uses_topology_built_route() {
         &transport,
         data_trace.clone(),
         move |delivery, context| {
-            assert_eq!(delivery.tick(), 11);
+            assert_eq!(delivery.tick(), 9);
             assert_eq!(context.partition(), PartitionId::new(2));
             assert_eq!(delivery.endpoint().as_str(), "mem0.requests");
             assert_eq!(delivery.request().range().start(), Address::new(0x9008));
@@ -445,41 +445,41 @@ fn riscv_core_parallel_data_load_uses_topology_built_route() {
     .unwrap();
     let summary = scheduler.run_until_idle_parallel().unwrap();
 
-    assert_eq!(summary.final_tick(), 20);
+    assert_eq!(summary.final_tick(), 18);
     assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
     assert_eq!(
         data_trace.snapshot(),
         vec![
             MemoryTraceEvent::request(
-                6,
+                4,
                 data_route,
                 endpoint_id("cpu0.dmem"),
                 MemoryTraceKind::RequestSent,
                 MemoryRequestId::new(AgentId::new(7), 1),
             ),
             MemoryTraceEvent::request(
-                8,
+                6,
                 data_route,
                 endpoint_id("mesh0.cpu_in"),
                 MemoryTraceKind::RequestArrived,
                 MemoryRequestId::new(AgentId::new(7), 1),
             ),
             MemoryTraceEvent::request(
-                11,
+                9,
                 data_route,
                 endpoint_id("mem0.requests"),
                 MemoryTraceKind::RequestArrived,
                 MemoryRequestId::new(AgentId::new(7), 1),
             ),
             MemoryTraceEvent::response(
-                16,
+                14,
                 data_route,
                 endpoint_id("mesh0.cpu_in"),
                 MemoryRequestId::new(AgentId::new(7), 1),
                 rem6_memory::ResponseStatus::Completed,
             ),
             MemoryTraceEvent::response(
-                20,
+                18,
                 data_route,
                 endpoint_id("cpu0.dmem"),
                 MemoryRequestId::new(AgentId::new(7), 1),

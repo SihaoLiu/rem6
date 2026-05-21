@@ -571,12 +571,52 @@ fn scheduler_parallel_runner_executes_epochs_until_idle() {
 
     let summary = scheduler.run_until_idle_parallel().unwrap();
 
-    assert_eq!(summary.epochs(), 2);
+    assert_eq!(summary.epochs(), 1);
     assert_eq!(summary.executed_events(), 2);
-    assert_eq!(summary.final_tick(), 4);
+    assert_eq!(summary.final_tick(), 2);
     assert!(scheduler.is_idle());
     assert_eq!(
         observed.lock().unwrap().as_slice(),
         &[(0, core, "send"), (2, memory, "receive")]
+    );
+}
+
+#[test]
+fn scheduler_parallel_epoch_executes_boundary_remote_events_before_returning() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+
+    let send_log = Arc::clone(&observed);
+    let receive_log = Arc::clone(&observed);
+    scheduler
+        .schedule_parallel_at(core, 0, move |context| {
+            send_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "send"));
+            context
+                .schedule_remote_after(memory, 4, move |context| {
+                    receive_log.lock().unwrap().push((
+                        context.now(),
+                        context.partition(),
+                        "receive",
+                    ));
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let epoch = scheduler.run_next_epoch_parallel().unwrap();
+
+    assert_eq!(epoch.executed_events(), 2);
+    assert_eq!(epoch.final_tick(), 4);
+    assert_eq!(scheduler.now(), 4);
+    assert!(scheduler.is_idle());
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[(0, core, "send"), (4, memory, "receive")]
     );
 }
