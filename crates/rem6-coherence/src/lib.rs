@@ -10,11 +10,7 @@ use rem6_directory::{
 };
 use rem6_dram::{DramMemoryController, DramMemoryError};
 use rem6_fabric::{FabricError, FabricModel, FabricPath, VirtualNetworkId};
-use rem6_kernel::{
-    ConservativeRunSummary, ParallelEpochBatchRecord, ParallelRunProfile, PartitionId,
-    PartitionedScheduler, RecordedConservativeRunSummary, RecordedRunSummary,
-    SchedulerDispatchRecord, SchedulerError, Tick,
-};
+use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse, MemoryTargetId, ResponseStatus,
@@ -32,6 +28,7 @@ mod mesi;
 mod moesi;
 mod partitioned_snapshot;
 mod snoop;
+mod summary;
 mod topology;
 
 use deferred::{DeferredMemoryPath, DeferredMemoryWork};
@@ -49,6 +46,7 @@ pub use moesi::{
     PartitionedMoesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarnessSnapshot,
 };
 pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
+pub use summary::ParallelCoherenceRunSummary;
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
     TopologyDramMemoryConfig,
@@ -65,118 +63,6 @@ pub struct SubmitResult {
     kind: SubmitKind,
     cache_result: CacheControllerResultKind,
     directory_decision: Option<DirectoryDecision>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParallelCoherenceRunSummary {
-    scheduler_run: RecordedConservativeRunSummary,
-    cpu_response_count: usize,
-    directory_decision_count: usize,
-    dram_access_count: usize,
-}
-
-impl ParallelCoherenceRunSummary {
-    pub const fn new(
-        scheduler_run: RecordedConservativeRunSummary,
-        cpu_response_count: usize,
-        directory_decision_count: usize,
-        dram_access_count: usize,
-    ) -> Self {
-        Self {
-            scheduler_run,
-            cpu_response_count,
-            directory_decision_count,
-            dram_access_count,
-        }
-    }
-
-    pub const fn scheduler_run(&self) -> &RecordedConservativeRunSummary {
-        &self.scheduler_run
-    }
-
-    pub fn scheduler_epochs(&self) -> &[RecordedRunSummary] {
-        self.scheduler_run.epochs()
-    }
-
-    pub fn summary(&self) -> ConservativeRunSummary {
-        self.scheduler_run.summary()
-    }
-
-    pub fn profile(&self) -> ParallelRunProfile {
-        self.scheduler_run.profile()
-    }
-
-    pub fn epoch_count(&self) -> usize {
-        self.scheduler_run.epoch_count()
-    }
-
-    pub fn empty_epoch_count(&self) -> usize {
-        self.scheduler_run.empty_epoch_count()
-    }
-
-    pub fn dispatch_count(&self) -> usize {
-        self.scheduler_run.dispatch_count()
-    }
-
-    pub fn batch_count(&self) -> usize {
-        self.scheduler_run.batch_count()
-    }
-
-    pub fn max_parallel_workers(&self) -> usize {
-        self.scheduler_run.max_parallel_workers()
-    }
-
-    pub fn total_parallel_workers(&self) -> usize {
-        self.scheduler_run.total_parallel_workers()
-    }
-
-    pub fn has_parallel_work(&self) -> bool {
-        self.scheduler_run.has_parallel_work()
-    }
-
-    pub fn dispatches(&self) -> Vec<SchedulerDispatchRecord> {
-        self.scheduler_run.dispatches()
-    }
-
-    pub fn batches(&self) -> Vec<ParallelEpochBatchRecord> {
-        self.scheduler_run.batches()
-    }
-
-    pub fn parallel_worker_partitions(&self) -> Vec<PartitionId> {
-        self.scheduler_run.parallel_worker_partitions()
-    }
-
-    pub fn executed_events(&self) -> usize {
-        self.summary().executed_events()
-    }
-
-    pub fn final_tick(&self) -> Tick {
-        self.summary().final_tick()
-    }
-
-    pub const fn cpu_response_count(&self) -> usize {
-        self.cpu_response_count
-    }
-
-    pub const fn directory_decision_count(&self) -> usize {
-        self.directory_decision_count
-    }
-
-    pub const fn dram_access_count(&self) -> usize {
-        self.dram_access_count
-    }
-
-    pub const fn protocol_activity_count(&self) -> usize {
-        self.cpu_response_count + self.directory_decision_count + self.dram_access_count
-    }
-
-    pub const fn has_directory_activity(&self) -> bool {
-        self.directory_decision_count != 0
-    }
-
-    pub const fn has_dram_activity(&self) -> bool {
-        self.dram_access_count != 0
-    }
 }
 
 impl SubmitResult {

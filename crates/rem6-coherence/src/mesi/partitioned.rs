@@ -20,6 +20,7 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId,
 };
 
+use crate::summary::CoherenceResourceActivityWindow;
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunSummary,
     PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
@@ -683,6 +684,8 @@ impl PartitionedMesiDirectoryLineHarness {
             .expect("decision lock")
             .len();
         let dram_accesses_before = self.dram_accesses.lock().expect("dram access lock").len();
+        let resource_window =
+            CoherenceResourceActivityWindow::mark(&self.transport, self.dram_memory.as_ref());
 
         let scheduler_run = self
             .scheduler
@@ -707,12 +710,16 @@ impl PartitionedMesiDirectoryLineHarness {
             .expect("dram access lock")
             .len()
             .saturating_sub(dram_accesses_before);
+        let (fabric_activity, dram_activity) =
+            resource_window.collect(&self.transport, self.dram_memory.as_ref());
 
         Ok(ParallelCoherenceRunSummary::new(
             scheduler_run,
             cpu_response_count,
             directory_decision_count,
             dram_access_count,
+            fabric_activity,
+            dram_activity,
         ))
     }
 

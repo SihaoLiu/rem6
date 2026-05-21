@@ -336,6 +336,26 @@ fn topology_moesi_harness_reserves_fabric_for_dram_fill_response() {
     assert!(run.has_parallel_work());
     assert!(run.has_directory_activity());
     assert!(run.has_dram_activity());
+    assert!(run.has_fabric_activity());
+    assert_eq!(run.active_fabric_lane_count(), 1);
+    assert_eq!(run.fabric_profile().transfer_count(), 2);
+    assert!(run.fabric_profile().byte_count() > 0);
+    assert_eq!(run.active_dram_target_count(), 1);
+    assert_eq!(run.dram_profile().access_count(), run.dram_access_count());
+    assert_eq!(run.dram_profile().read_count(), 1);
+    assert_eq!(run.dram_profile().write_count(), 0);
+    assert_eq!(
+        run.dram_target_activity(dram_target())
+            .unwrap()
+            .profile()
+            .access_count(),
+        1
+    );
+    assert_eq!(
+        run.resource_activity_count(),
+        run.fabric_transfer_count() + run.dram_access_count()
+    );
+    assert!(run.has_resource_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MoesiState::Modified);
     assert_eq!(
         harness.cpu_responses(),

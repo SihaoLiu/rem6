@@ -241,6 +241,22 @@ fn topology_mesi_harness_builds_intermediate_dram_path_for_parallel_reader() {
     assert!(run.has_parallel_work());
     assert!(run.has_directory_activity());
     assert!(run.has_dram_activity());
+    assert!(!run.has_fabric_activity());
+    assert_eq!(run.active_fabric_lane_count(), 0);
+    assert_eq!(run.fabric_profile().transfer_count(), 0);
+    assert_eq!(run.active_dram_target_count(), 1);
+    assert_eq!(run.dram_profile().access_count(), run.dram_access_count());
+    assert_eq!(run.dram_profile().read_count(), 1);
+    assert_eq!(run.dram_profile().write_count(), 0);
+    assert_eq!(
+        run.dram_target_activity(dram_target())
+            .unwrap()
+            .profile()
+            .access_count(),
+        1
+    );
+    assert_eq!(run.resource_activity_count(), run.dram_access_count());
+    assert!(run.has_resource_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
     assert_eq!(
         harness.cpu_responses(),
