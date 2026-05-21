@@ -9,7 +9,7 @@ use rem6_fabric::{
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
-    SchedulerContext, SchedulerError, Tick,
+    SchedulerContext, SchedulerError, Tick, WaitForGraph,
 };
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_topology::{Endpoint, Topology, TopologyError, TopologyPath};
@@ -539,6 +539,12 @@ impl MemoryTransport {
                 .expect("fabric lock")
                 .activity_profile_since(marker)
         })
+    }
+
+    pub fn fabric_wait_for_graph_at(&self, tick: Tick) -> Option<WaitForGraph> {
+        self.fabric
+            .as_ref()
+            .map(|fabric| fabric.lock().expect("fabric lock").wait_for_graph_at(tick))
     }
 
     pub fn add_route(&mut self, route: MemoryRoute) -> Result<MemoryRouteId, TransportError> {

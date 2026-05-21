@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use rem6_kernel::Tick;
+use rem6_kernel::{Tick, WaitForEdgeKind, WaitForGraph, WaitForNode};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FabricLinkId(String);
@@ -580,6 +580,62 @@ impl FabricLaneActivityRecord {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FabricWaitKind {
+    Queue,
+    Credit,
+}
+
+impl FabricWaitKind {
+    const fn edge_kind(self) -> WaitForEdgeKind {
+        match self {
+            Self::Queue => WaitForEdgeKind::Queue,
+            Self::Credit => WaitForEdgeKind::Credit,
+        }
+    }
+
+    const fn resource_suffix(self) -> &'static str {
+        match self {
+            Self::Queue => "lane",
+            Self::Credit => "credit",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FabricWaitRecord {
+    packet: FabricPacketId,
+    link: FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    kind: FabricWaitKind,
+    first_blocked_tick: Tick,
+    unblocked_tick: Tick,
+}
+
+impl FabricWaitRecord {
+    fn new(
+        packet: FabricPacketId,
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        kind: FabricWaitKind,
+        first_blocked_tick: Tick,
+        unblocked_tick: Tick,
+    ) -> Self {
+        Self {
+            packet,
+            link,
+            virtual_network,
+            kind,
+            first_blocked_tick,
+            unblocked_tick,
+        }
+    }
+
+    const fn is_active_at(&self, tick: Tick) -> bool {
+        self.first_blocked_tick <= tick && tick < self.unblocked_tick
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct FabricLaneState {
     next_available: Tick,
@@ -604,6 +660,7 @@ impl FabricLaneState {
         credit_depth: Option<u32>,
     ) -> Result<FabricLaneReservation, FabricError> {
         let mut start_tick = arrival_tick.max(self.next_available);
+        let mut wait_kind = (start_tick > arrival_tick).then_some(FabricWaitKind::Queue);
         if let Some(credit_depth) = credit_depth {
             loop {
                 self.credit_returns
@@ -616,6 +673,7 @@ impl FabricLaneState {
                 if credit_ready_tick <= start_tick {
                     break;
                 }
+                wait_kind = Some(FabricWaitKind::Credit);
                 start_tick = credit_ready_tick.max(self.next_available);
             }
         }
@@ -639,6 +697,7 @@ impl FabricLaneState {
             start_tick,
             depart_tick,
             arrival_tick: next_arrival_tick,
+            wait_kind,
         })
     }
 }
@@ -649,12 +708,14 @@ struct FabricLaneReservation {
     start_tick: Tick,
     depart_tick: Tick,
     arrival_tick: Tick,
+    wait_kind: Option<FabricWaitKind>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct FabricModel {
     lanes: BTreeMap<FabricLaneKey, FabricLaneState>,
     activity_log: Vec<FabricLaneActivityRecord>,
+    wait_log: Vec<FabricWaitRecord>,
 }
 
 impl FabricModel {
@@ -781,8 +842,28 @@ impl FabricModel {
             .sum()
     }
 
+    pub fn wait_for_graph_at(&self, tick: Tick) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        for wait in self.wait_log.iter().filter(|wait| wait.is_active_at(tick)) {
+            graph
+                .record_wait(
+                    fabric_packet_node(wait.packet),
+                    fabric_resource_node(
+                        &wait.link,
+                        wait.virtual_network,
+                        wait.kind.resource_suffix(),
+                    ),
+                    wait.kind.edge_kind(),
+                    tick,
+                )
+                .expect("fabric wait-for labels are generated from typed ids");
+        }
+        graph
+    }
+
     pub fn clear_activity(&mut self) {
         self.activity_log.clear();
+        self.wait_log.clear();
     }
 
     fn reserve_transfer(
@@ -809,6 +890,17 @@ impl FabricModel {
                 .start_tick
                 .checked_sub(ready_tick)
                 .ok_or(FabricError::TickOverflow)?;
+            if queue_delay_ticks != 0 {
+                let wait_kind = reservation.wait_kind.unwrap_or(FabricWaitKind::Queue);
+                self.wait_log.push(FabricWaitRecord::new(
+                    packet.id(),
+                    hop.link().clone(),
+                    packet.virtual_network(),
+                    wait_kind,
+                    ready_tick,
+                    reservation.start_tick,
+                ));
+            }
 
             timings.push(FabricHopTiming {
                 link: hop.link().clone(),
@@ -853,4 +945,36 @@ fn collect_lane_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricLa
 
 fn serialization_ticks(bytes: u64, bandwidth_bytes_per_tick: u64) -> Tick {
     ((bytes - 1) / bandwidth_bytes_per_tick) + 1
+}
+
+fn fabric_packet_node(packet: FabricPacketId) -> WaitForNode {
+    WaitForNode::transaction(format!("fabric.packet.{}", packet.get()))
+        .expect("fabric packet wait-for label is generated from numeric ids")
+}
+
+fn fabric_resource_node(
+    link: &FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    suffix: &str,
+) -> WaitForNode {
+    WaitForNode::resource(format!(
+        "fabric.{}.vn.{}.{}",
+        wait_for_label_segment(link.as_str()),
+        virtual_network.get(),
+        suffix
+    ))
+    .expect("fabric resource wait-for label is sanitized")
+}
+
+fn wait_for_label_segment(label: &str) -> String {
+    label
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':') {
+                byte as char
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }

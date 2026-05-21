@@ -2,6 +2,7 @@ use rem6_fabric::{
     FabricError, FabricLinkId, FabricModel, FabricPacket, FabricPacketId, FabricPath,
     FabricPathHop, VirtualNetworkId,
 };
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 
 fn packet(id: u64, bytes: u64, virtual_network: u16) -> FabricPacket {
     FabricPacket::new(
@@ -139,6 +140,42 @@ fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
     let later = fabric.transmit(0, packet(4, 8, 1), route).unwrap();
     assert_eq!(later.arrival_tick(), 23);
     assert_eq!(fabric.activity_profile().transfer_count(), 1);
+}
+
+#[test]
+fn fabric_wait_for_graph_tracks_credit_blocked_packets_until_credit_returns() {
+    let mut fabric = FabricModel::new();
+    let route = path([FabricPathHop::new(link("mesh_wait_credit"), 10, 8)
+        .unwrap()
+        .with_credit_depth(2)
+        .unwrap()]);
+
+    fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(3, 8, 1), route.clone()),
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 1), route.clone()),
+            ],
+        )
+        .unwrap();
+
+    let packet_wait = WaitForNode::transaction("fabric.packet.3").unwrap();
+    let credit = WaitForNode::resource("fabric.mesh_wait_credit.vn.1.credit").unwrap();
+    let active_wait = fabric.wait_for_graph_at(2).snapshot();
+
+    assert_eq!(active_wait.edge_count(), 1);
+    assert_eq!(active_wait.first_observed_tick(), Some(2));
+    assert_eq!(active_wait.last_observed_tick(), Some(2));
+    assert!(active_wait.contains_edge(&packet_wait, &credit, WaitForEdgeKind::Credit));
+    assert_eq!(
+        active_wait.dependencies(&packet_wait)[0].observation_count(),
+        1
+    );
+
+    assert!(fabric.wait_for_graph_at(11).is_empty());
+    assert!(fabric.wait_for_graph_at(22).is_empty());
 }
 
 #[test]

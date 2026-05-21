@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
     ResponseStatus,
@@ -54,6 +54,13 @@ fn request(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
         line_layout(),
     )
     .unwrap()
+}
+
+fn request_fabric_packet_node(route: MemoryRouteId, request: MemoryRequestId) -> WaitForNode {
+    let packet = ((route.get() & 0x7fff) << 48)
+        | ((u64::from(request.agent().get()) & 0xffff) << 32)
+        | (request.sequence() & 0xffff_ffff);
+    WaitForNode::transaction(format!("fabric.packet.{packet}")).unwrap()
 }
 
 #[test]
@@ -1181,6 +1188,13 @@ fn transport_parallel_batch_respects_finite_fabric_credit_depth() {
     assert_eq!(profile.byte_count(), 24);
     assert_eq!(profile.queue_delay_ticks(), 12);
     assert_eq!(profile.contended_lane_count(), 1);
+
+    let packet_wait = request_fabric_packet_node(route_c, req_c.id());
+    let credit = WaitForNode::resource("fabric.mesh_credit.vn.0.credit").unwrap();
+    let wait_for = transport.fabric_wait_for_graph_at(2).unwrap().snapshot();
+    assert_eq!(wait_for.edge_count(), 1);
+    assert!(wait_for.contains_edge(&packet_wait, &credit, WaitForEdgeKind::Credit));
+    assert!(transport.fabric_wait_for_graph_at(11).unwrap().is_empty());
 }
 
 #[test]
