@@ -9,6 +9,7 @@ repository.workspace = true
 rem6-accelerator = { path = "../rem6-accelerator" }
 rem6-boot = { path = "../rem6-boot" }
 rem6-checkpoint = { path = "../rem6-checkpoint" }
+rem6-coherence = { path = "../rem6-coherence" }
 rem6-cpu = { path = "../rem6-cpu" }
 rem6-dram = { path = "../rem6-dram" }
 rem6-fabric = { path = "../rem6-fabric" }
@@ -24,6 +25,9 @@ rem6-timer = { path = "../rem6-timer" }
 rem6-topology = { path = "../rem6-topology" }
 rem6-transport = { path = "../rem6-transport" }
 rem6-uart = { path = "../rem6-uart" }
+
+[dev-dependencies]
+rem6-protocol-mesi = { path = "../rem6-protocol-mesi" }
 
 [lints]
 workspace = true

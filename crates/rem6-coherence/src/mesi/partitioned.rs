@@ -8,7 +8,7 @@ use rem6_directory::{
 use rem6_dram::DramMemoryController;
 use rem6_kernel::{
     ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
-    SchedulerContext, SchedulerError,
+    SchedulerContext, SchedulerError, Tick,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
@@ -667,6 +667,10 @@ impl PartitionedMesiDirectoryLineHarness {
 
     pub fn run_until_idle(&mut self) -> ConservativeRunSummary {
         self.scheduler.run_until_idle_conservative()
+    }
+
+    pub fn now(&self) -> Tick {
+        self.scheduler.now()
     }
 
     pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, MesiHarnessError> {
