@@ -76,6 +76,14 @@ fn wait_for_graph_reports_deterministic_deadlock_cycle() {
     );
     assert_eq!(diagnostic.first_observed_tick(), 5);
     assert_eq!(diagnostic.last_observed_tick(), 13);
+
+    let snapshot = graph.snapshot();
+    assert_eq!(snapshot.edge_count(), 4);
+    assert!(snapshot.has_edges());
+    assert_eq!(snapshot.first_observed_tick(), Some(5));
+    assert_eq!(snapshot.last_observed_tick(), Some(13));
+    assert_eq!(snapshot.deadlock_diagnostic(), Some(&diagnostic));
+    assert!(snapshot.has_deadlock());
 }
 
 #[test]
@@ -108,6 +116,68 @@ fn wait_for_graph_updates_edges_and_clears_resolved_waits() {
     assert_eq!(graph.clear_waits_from(&core), 1);
     assert!(graph.dependencies(&core).is_empty());
     assert_eq!(graph.blocked_nodes(), vec![queue]);
+}
+
+#[test]
+fn wait_for_graph_exposes_deterministic_edge_snapshot() {
+    let core = WaitForNode::partition(PartitionId::new(0));
+    let queue = resource("l1d0.mshr");
+    let memory = component("mem0");
+    let mut graph = WaitForGraph::new();
+
+    graph
+        .record_wait(queue.clone(), memory.clone(), WaitForEdgeKind::Resource, 16)
+        .unwrap();
+    graph
+        .record_wait(core.clone(), queue.clone(), WaitForEdgeKind::Queue, 10)
+        .unwrap();
+    graph
+        .record_wait(core.clone(), queue.clone(), WaitForEdgeKind::Queue, 14)
+        .unwrap();
+
+    let edges = graph.edges();
+    assert_eq!(edges.len(), 2);
+    assert_eq!(edges[0].source(), &core);
+    assert_eq!(edges[0].target(), &queue);
+    assert_eq!(edges[0].kind(), WaitForEdgeKind::Queue);
+    assert_eq!(edges[0].first_observed_tick(), 10);
+    assert_eq!(edges[0].last_observed_tick(), 14);
+    assert_eq!(edges[0].observation_count(), 2);
+    assert_eq!(edges[1].source(), &queue);
+    assert_eq!(edges[1].target(), &memory);
+    assert_eq!(edges[1].kind(), WaitForEdgeKind::Resource);
+    assert_eq!(edges[1].first_observed_tick(), 16);
+    assert_eq!(edges[1].last_observed_tick(), 16);
+    assert_eq!(edges[1].observation_count(), 1);
+
+    let snapshot = graph.snapshot();
+    assert_eq!(snapshot.edges(), edges.as_slice());
+    assert_eq!(snapshot.edge_count(), 2);
+    assert!(snapshot.has_edges());
+    assert!(!snapshot.is_empty());
+    assert_eq!(snapshot.first_observed_tick(), Some(10));
+    assert_eq!(snapshot.last_observed_tick(), Some(16));
+    assert_eq!(snapshot.deadlock_diagnostic(), None);
+    assert!(!snapshot.has_deadlock());
+    assert_eq!(snapshot.blocked_nodes(), vec![core.clone(), queue.clone()]);
+    assert_eq!(snapshot.dependencies(&core), vec![edges[0].clone()]);
+    assert_eq!(snapshot.dependents(&queue), vec![edges[0].clone()]);
+    assert!(snapshot.contains_edge(&core, &queue, WaitForEdgeKind::Queue));
+    assert!(!snapshot.contains_edge(&core, &memory, WaitForEdgeKind::Message));
+    assert_eq!(snapshot.edge_count_by_kind(WaitForEdgeKind::Queue), 1);
+    assert_eq!(snapshot.edge_count_by_kind(WaitForEdgeKind::Resource), 1);
+    assert_eq!(snapshot.edge_count_by_kind(WaitForEdgeKind::Message), 0);
+    assert_eq!(
+        snapshot
+            .edge_kind_counts()
+            .get(&WaitForEdgeKind::Queue)
+            .copied(),
+        Some(1)
+    );
+    assert_eq!(snapshot.oldest_wait_edge(), Some(&edges[0]));
+    assert_eq!(snapshot.newest_observed_edge(), Some(&edges[1]));
+    assert_eq!(snapshot.total_observation_count(), 3);
+    assert_eq!(snapshot.longest_observed_span(), Some(4));
 }
 
 #[test]

@@ -1,10 +1,12 @@
+use std::collections::BTreeSet;
+
 use rem6_coherence::{
-    HarnessError, MesiHarnessError, MoesiHarnessError, PartitionedCacheAgentConfig,
-    PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
+    HarnessError, MesiHarnessError, MoesiHarnessError, ParallelCoherenceRunSummary,
+    PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
     PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
-use rem6_kernel::{PartitionId, WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{PartitionId, WaitForEdge, WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId,
@@ -44,6 +46,96 @@ fn endpoint(name: &str) -> TransportEndpointId {
 
 fn line_data() -> Vec<u8> {
     (0..64).collect()
+}
+
+fn assert_summary_drained_wait_for_edges(
+    run: &ParallelCoherenceRunSummary,
+    expected_initial_edges: &[WaitForEdge],
+) {
+    let blocked_nodes = expected_initial_edges
+        .iter()
+        .map(|edge| edge.source().clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let total_observation_count = expected_initial_edges
+        .iter()
+        .map(WaitForEdge::observation_count)
+        .sum::<u64>();
+    let first_wait_tick = expected_initial_edges
+        .iter()
+        .map(WaitForEdge::first_observed_tick)
+        .min();
+    let last_wait_tick = expected_initial_edges
+        .iter()
+        .map(WaitForEdge::last_observed_tick)
+        .max();
+    let newest_observed_edge = expected_initial_edges
+        .iter()
+        .max_by_key(|edge| (edge.last_observed_tick(), edge.first_observed_tick()));
+    let longest_observed_span = expected_initial_edges
+        .iter()
+        .map(|edge| {
+            edge.last_observed_tick()
+                .saturating_sub(edge.first_observed_tick())
+        })
+        .max();
+
+    assert_eq!(run.initial_wait_for_edges(), expected_initial_edges);
+    assert_eq!(
+        run.initial_wait_for_edge_count(),
+        expected_initial_edges.len()
+    );
+    assert_eq!(
+        run.initial_oldest_wait_edge(),
+        expected_initial_edges.first()
+    );
+    assert_eq!(
+        run.initial_total_wait_observation_count(),
+        total_observation_count
+    );
+    assert_eq!(
+        run.initial_newest_observed_wait_edge(),
+        newest_observed_edge
+    );
+    assert_eq!(run.initial_first_wait_tick(), first_wait_tick);
+    assert_eq!(run.initial_last_wait_tick(), last_wait_tick);
+    assert_eq!(
+        run.initial_longest_observed_wait_span(),
+        longest_observed_span
+    );
+    assert!(!run.initial_has_deadlock());
+    assert_eq!(run.initial_deadlock_diagnostic(), None);
+    assert_eq!(run.initial_wait_for_blocked_nodes(), blocked_nodes);
+    assert_eq!(
+        run.initial_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        expected_initial_edges.len()
+    );
+    assert_eq!(
+        run.initial_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Queue)
+            .copied(),
+        Some(expected_initial_edges.len())
+    );
+    assert_eq!(run.remaining_wait_for_edge_count(), 0);
+    assert!(run.remaining_wait_for_edges().is_empty());
+    assert_eq!(run.remaining_oldest_wait_edge(), None);
+    assert_eq!(run.remaining_total_wait_observation_count(), 0);
+    assert_eq!(run.remaining_newest_observed_wait_edge(), None);
+    assert_eq!(run.remaining_first_wait_tick(), None);
+    assert_eq!(run.remaining_last_wait_tick(), None);
+    assert_eq!(run.remaining_longest_observed_wait_span(), None);
+    assert!(!run.remaining_has_deadlock());
+    assert_eq!(run.remaining_deadlock_diagnostic(), None);
+    assert!(run.remaining_wait_for_blocked_nodes().is_empty());
+    assert_eq!(
+        run.remaining_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        0
+    );
+    assert!(run.remaining_wait_for_edge_kind_counts().is_empty());
+    assert_eq!(run.wait_for_edge_count(), 0);
+    assert!(run.wait_for_edges().is_empty());
+    assert_eq!(run.deadlock_diagnostic(), None);
 }
 
 fn read(agent: u32, sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
@@ -202,8 +294,10 @@ fn msi_parallel_busy_line_records_wait_for_edge_until_fill() {
     assert_eq!(dependencies[0].last_observed_tick(), 0);
     assert_eq!(dependencies[0].observation_count(), 1);
     assert_eq!(graph.deadlock_diagnostic(), None);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -239,8 +333,10 @@ fn msi_parallel_repeated_busy_line_updates_wait_observation() {
     assert_eq!(dependencies[0].first_observed_tick(), 0);
     assert_eq!(dependencies[0].last_observed_tick(), 0);
     assert_eq!(dependencies[0].observation_count(), 2);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -273,8 +369,10 @@ fn msi_parallel_fill_clears_all_waiters_for_busy_line() {
     assert_eq!(graph.dependencies(&request_node(1, 21)).len(), 1);
     assert_eq!(graph.dependencies(&request_node(1, 22)).len(), 1);
     assert_eq!(graph.dependents(&target).len(), 2);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -306,8 +404,10 @@ fn mesi_parallel_busy_line_records_wait_for_edge_until_fill() {
     assert_eq!(dependencies[0].last_observed_tick(), 0);
     assert_eq!(dependencies[0].observation_count(), 1);
     assert_eq!(graph.deadlock_diagnostic(), None);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -343,8 +443,10 @@ fn mesi_parallel_repeated_busy_line_updates_wait_observation() {
     assert_eq!(dependencies[0].first_observed_tick(), 0);
     assert_eq!(dependencies[0].last_observed_tick(), 0);
     assert_eq!(dependencies[0].observation_count(), 2);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -377,8 +479,10 @@ fn mesi_parallel_fill_clears_all_waiters_for_busy_line() {
     assert_eq!(graph.dependencies(&request_node(1, 41)).len(), 1);
     assert_eq!(graph.dependencies(&request_node(1, 42)).len(), 1);
     assert_eq!(graph.dependents(&target).len(), 2);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -410,8 +514,10 @@ fn moesi_parallel_busy_line_records_wait_for_edge_until_fill() {
     assert_eq!(dependencies[0].last_observed_tick(), 0);
     assert_eq!(dependencies[0].observation_count(), 1);
     assert_eq!(graph.deadlock_diagnostic(), None);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -447,8 +553,10 @@ fn moesi_parallel_repeated_busy_line_updates_wait_observation() {
     assert_eq!(dependencies[0].first_observed_tick(), 0);
     assert_eq!(dependencies[0].last_observed_tick(), 0);
     assert_eq!(dependencies[0].observation_count(), 2);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }
 
@@ -481,7 +589,9 @@ fn moesi_parallel_fill_clears_all_waiters_for_busy_line() {
     assert_eq!(graph.dependencies(&request_node(1, 71)).len(), 1);
     assert_eq!(graph.dependencies(&request_node(1, 72)).len(), 1);
     assert_eq!(graph.dependents(&target).len(), 2);
+    let expected_edges = graph.edges();
 
-    harness.run_until_idle_parallel_recorded().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_summary_drained_wait_for_edges(&run, &expected_edges);
     assert!(harness.wait_for_graph().is_empty());
 }

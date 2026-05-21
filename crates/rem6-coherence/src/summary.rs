@@ -8,8 +8,9 @@ use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricLaneActivity, FabricLinkId, VirtualNetworkId,
 };
 use rem6_kernel::{
-    ConservativeRunSummary, ParallelEpochBatchRecord, ParallelRunProfile, PartitionId,
-    RecordedConservativeRunSummary, RecordedRunSummary, SchedulerDispatchRecord, Tick,
+    ConservativeRunSummary, DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelRunProfile,
+    PartitionId, RecordedConservativeRunSummary, RecordedRunSummary, SchedulerDispatchRecord, Tick,
+    WaitForEdge, WaitForEdgeKind, WaitForGraph, WaitForGraphSnapshot, WaitForNode,
 };
 use rem6_memory::MemoryTargetId;
 use rem6_transport::MemoryTransport;
@@ -22,6 +23,20 @@ pub struct ParallelCoherenceRunSummary {
     dram_access_count: usize,
     fabric_activity: Vec<FabricLaneActivity>,
     dram_activity: Vec<DramTargetActivity>,
+    initial_wait_for: WaitForGraphSnapshot,
+    remaining_wait_for: WaitForGraphSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParallelCoherenceWaitForGraphs {
+    initial: WaitForGraph,
+    remaining: WaitForGraph,
+}
+
+impl ParallelCoherenceWaitForGraphs {
+    pub const fn new(initial: WaitForGraph, remaining: WaitForGraph) -> Self {
+        Self { initial, remaining }
+    }
 }
 
 pub(crate) struct CoherenceResourceActivityWindow {
@@ -73,6 +88,7 @@ impl ParallelCoherenceRunSummary {
         dram_access_count: usize,
         fabric_activity: Vec<FabricLaneActivity>,
         dram_activity: Vec<DramTargetActivity>,
+        wait_for_graphs: ParallelCoherenceWaitForGraphs,
     ) -> Self {
         Self {
             scheduler_run,
@@ -81,6 +97,8 @@ impl ParallelCoherenceRunSummary {
             dram_access_count,
             fabric_activity,
             dram_activity,
+            initial_wait_for: wait_for_graphs.initial.snapshot(),
+            remaining_wait_for: wait_for_graphs.remaining.snapshot(),
         }
     }
 
@@ -170,6 +188,146 @@ impl ParallelCoherenceRunSummary {
 
     pub const fn has_dram_activity(&self) -> bool {
         self.dram_access_count != 0
+    }
+
+    pub const fn initial_wait_for_snapshot(&self) -> &WaitForGraphSnapshot {
+        &self.initial_wait_for
+    }
+
+    pub fn initial_wait_for_edges(&self) -> &[WaitForEdge] {
+        self.initial_wait_for.edges()
+    }
+
+    pub fn initial_wait_for_edge_count(&self) -> usize {
+        self.initial_wait_for.edge_count()
+    }
+
+    pub fn initial_has_wait_for_edges(&self) -> bool {
+        self.initial_wait_for.has_edges()
+    }
+
+    pub fn initial_deadlock_diagnostic(&self) -> Option<&DeadlockDiagnostic> {
+        self.initial_wait_for.deadlock_diagnostic()
+    }
+
+    pub fn initial_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.initial_wait_for.blocked_nodes()
+    }
+
+    pub fn initial_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        self.initial_wait_for.edge_kind_counts()
+    }
+
+    pub fn initial_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.initial_wait_for.edge_count_by_kind(kind)
+    }
+
+    pub fn initial_oldest_wait_edge(&self) -> Option<&WaitForEdge> {
+        self.initial_wait_for.oldest_wait_edge()
+    }
+
+    pub fn initial_newest_observed_wait_edge(&self) -> Option<&WaitForEdge> {
+        self.initial_wait_for.newest_observed_edge()
+    }
+
+    pub fn initial_total_wait_observation_count(&self) -> u64 {
+        self.initial_wait_for.total_observation_count()
+    }
+
+    pub const fn initial_first_wait_tick(&self) -> Option<Tick> {
+        self.initial_wait_for.first_observed_tick()
+    }
+
+    pub const fn initial_last_wait_tick(&self) -> Option<Tick> {
+        self.initial_wait_for.last_observed_tick()
+    }
+
+    pub fn initial_longest_observed_wait_span(&self) -> Option<Tick> {
+        self.initial_wait_for.longest_observed_span()
+    }
+
+    pub fn initial_has_deadlock(&self) -> bool {
+        self.initial_wait_for.has_deadlock()
+    }
+
+    pub const fn remaining_wait_for_snapshot(&self) -> &WaitForGraphSnapshot {
+        &self.remaining_wait_for
+    }
+
+    pub fn remaining_wait_for_edges(&self) -> &[WaitForEdge] {
+        self.remaining_wait_for.edges()
+    }
+
+    pub fn remaining_wait_for_edge_count(&self) -> usize {
+        self.remaining_wait_for.edge_count()
+    }
+
+    pub fn remaining_has_wait_for_edges(&self) -> bool {
+        self.remaining_wait_for.has_edges()
+    }
+
+    pub fn remaining_deadlock_diagnostic(&self) -> Option<&DeadlockDiagnostic> {
+        self.remaining_wait_for.deadlock_diagnostic()
+    }
+
+    pub fn remaining_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.remaining_wait_for.blocked_nodes()
+    }
+
+    pub fn remaining_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        self.remaining_wait_for.edge_kind_counts()
+    }
+
+    pub fn remaining_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.remaining_wait_for.edge_count_by_kind(kind)
+    }
+
+    pub fn remaining_oldest_wait_edge(&self) -> Option<&WaitForEdge> {
+        self.remaining_wait_for.oldest_wait_edge()
+    }
+
+    pub fn remaining_newest_observed_wait_edge(&self) -> Option<&WaitForEdge> {
+        self.remaining_wait_for.newest_observed_edge()
+    }
+
+    pub fn remaining_total_wait_observation_count(&self) -> u64 {
+        self.remaining_wait_for.total_observation_count()
+    }
+
+    pub const fn remaining_first_wait_tick(&self) -> Option<Tick> {
+        self.remaining_wait_for.first_observed_tick()
+    }
+
+    pub const fn remaining_last_wait_tick(&self) -> Option<Tick> {
+        self.remaining_wait_for.last_observed_tick()
+    }
+
+    pub fn remaining_longest_observed_wait_span(&self) -> Option<Tick> {
+        self.remaining_wait_for.longest_observed_span()
+    }
+
+    pub fn remaining_has_deadlock(&self) -> bool {
+        self.remaining_wait_for.has_deadlock()
+    }
+
+    pub const fn wait_for_snapshot(&self) -> &WaitForGraphSnapshot {
+        self.remaining_wait_for_snapshot()
+    }
+
+    pub fn wait_for_edges(&self) -> &[WaitForEdge] {
+        self.remaining_wait_for_edges()
+    }
+
+    pub fn wait_for_edge_count(&self) -> usize {
+        self.remaining_wait_for_edge_count()
+    }
+
+    pub fn has_wait_for_edges(&self) -> bool {
+        self.remaining_has_wait_for_edges()
+    }
+
+    pub fn deadlock_diagnostic(&self) -> Option<&DeadlockDiagnostic> {
+        self.remaining_deadlock_diagnostic()
     }
 
     pub fn fabric_activity(

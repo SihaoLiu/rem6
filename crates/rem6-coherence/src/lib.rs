@@ -51,7 +51,7 @@ pub use moesi::{
 };
 pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
 use summary::CoherenceResourceActivityWindow;
-pub use summary::ParallelCoherenceRunSummary;
+pub use summary::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
     TopologyDramMemoryConfig,
@@ -1372,12 +1372,11 @@ impl PartitionedDirectoryLineHarness {
         let dram_accesses_before = self.dram_accesses.lock().expect("DRAM access lock").len();
         let resource_window =
             CoherenceResourceActivityWindow::mark(&self.transport, self.dram_memory.as_ref());
-
+        let wait_for_graph_before = self.wait_for.graph();
         let scheduler_run = self
             .scheduler
             .run_until_idle_parallel_recorded()
             .map_err(HarnessError::Scheduler)?;
-
         let cpu_response_count = self
             .cpu_responses
             .lock()
@@ -1398,7 +1397,6 @@ impl PartitionedDirectoryLineHarness {
             .saturating_sub(dram_accesses_before);
         let (fabric_activity, dram_activity) =
             resource_window.collect(&self.transport, self.dram_memory.as_ref());
-
         Ok(ParallelCoherenceRunSummary::new(
             scheduler_run,
             cpu_response_count,
@@ -1406,6 +1404,7 @@ impl PartitionedDirectoryLineHarness {
             dram_access_count,
             fabric_activity,
             dram_activity,
+            ParallelCoherenceWaitForGraphs::new(wait_for_graph_before, self.wait_for.graph()),
         ))
     }
 

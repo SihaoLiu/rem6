@@ -166,6 +166,134 @@ impl DeadlockDiagnostic {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WaitForGraphSnapshot {
+    edges: Vec<WaitForEdge>,
+    deadlock_diagnostic: Option<DeadlockDiagnostic>,
+    first_observed_tick: Option<Tick>,
+    last_observed_tick: Option<Tick>,
+}
+
+impl WaitForGraphSnapshot {
+    fn new(edges: Vec<WaitForEdge>, deadlock_diagnostic: Option<DeadlockDiagnostic>) -> Self {
+        let first_observed_tick = edges.iter().map(WaitForEdge::first_observed_tick).min();
+        let last_observed_tick = edges.iter().map(WaitForEdge::last_observed_tick).max();
+
+        Self {
+            edges,
+            deadlock_diagnostic,
+            first_observed_tick,
+            last_observed_tick,
+        }
+    }
+
+    pub fn edges(&self) -> &[WaitForEdge] {
+        &self.edges
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.edges.is_empty()
+    }
+
+    pub fn has_edges(&self) -> bool {
+        !self.edges.is_empty()
+    }
+
+    pub fn has_deadlock(&self) -> bool {
+        self.deadlock_diagnostic.is_some()
+    }
+
+    pub fn deadlock_diagnostic(&self) -> Option<&DeadlockDiagnostic> {
+        self.deadlock_diagnostic.as_ref()
+    }
+
+    pub fn blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.edges
+            .iter()
+            .map(|edge| edge.source().clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    pub fn dependencies(&self, source: &WaitForNode) -> Vec<WaitForEdge> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.source() == source)
+            .cloned()
+            .collect()
+    }
+
+    pub fn dependents(&self, target: &WaitForNode) -> Vec<WaitForEdge> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.target() == target)
+            .cloned()
+            .collect()
+    }
+
+    pub fn contains_edge(
+        &self,
+        source: &WaitForNode,
+        target: &WaitForNode,
+        kind: WaitForEdgeKind,
+    ) -> bool {
+        self.edges
+            .iter()
+            .any(|edge| edge.source() == source && edge.target() == target && edge.kind() == kind)
+    }
+
+    pub fn edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        let mut counts = BTreeMap::new();
+        for edge in &self.edges {
+            *counts.entry(edge.kind()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    pub fn edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.edges.iter().filter(|edge| edge.kind() == kind).count()
+    }
+
+    pub fn oldest_wait_edge(&self) -> Option<&WaitForEdge> {
+        self.edges
+            .iter()
+            .min_by_key(|edge| (edge.first_observed_tick(), edge.last_observed_tick()))
+    }
+
+    pub fn newest_observed_edge(&self) -> Option<&WaitForEdge> {
+        self.edges
+            .iter()
+            .max_by_key(|edge| (edge.last_observed_tick(), edge.first_observed_tick()))
+    }
+
+    pub fn total_observation_count(&self) -> u64 {
+        self.edges.iter().map(WaitForEdge::observation_count).sum()
+    }
+
+    pub fn longest_observed_span(&self) -> Option<Tick> {
+        self.edges
+            .iter()
+            .map(|edge| {
+                edge.last_observed_tick()
+                    .saturating_sub(edge.first_observed_tick())
+            })
+            .max()
+    }
+
+    pub const fn first_observed_tick(&self) -> Option<Tick> {
+        self.first_observed_tick
+    }
+
+    pub const fn last_observed_tick(&self) -> Option<Tick> {
+        self.last_observed_tick
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WaitForGraphError {
     EmptyNodeLabel,
@@ -254,6 +382,14 @@ impl WaitForGraph {
             .filter(|(key, _)| &key.target == target)
             .map(|(_, edge)| edge.clone())
             .collect()
+    }
+
+    pub fn edges(&self) -> Vec<WaitForEdge> {
+        self.edges.values().cloned().collect()
+    }
+
+    pub fn snapshot(&self) -> WaitForGraphSnapshot {
+        WaitForGraphSnapshot::new(self.edges(), self.deadlock_diagnostic())
     }
 
     pub fn blocked_nodes(&self) -> Vec<WaitForNode> {

@@ -24,8 +24,8 @@ use crate::summary::CoherenceResourceActivityWindow;
 use crate::wait_for::CoherenceWaitFor;
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunSummary,
-    PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
-    PartitionedRouteHopConfig, SubmitKind,
+    ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
+    PartitionedMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
 };
 
 use super::{
@@ -714,6 +714,7 @@ impl PartitionedMesiDirectoryLineHarness {
         let dram_accesses_before = self.dram_accesses.lock().expect("dram access lock").len();
         let resource_window =
             CoherenceResourceActivityWindow::mark(&self.transport, self.dram_memory.as_ref());
+        let wait_for_graph_before = self.wait_for.graph();
 
         let scheduler_run = self
             .scheduler
@@ -748,6 +749,7 @@ impl PartitionedMesiDirectoryLineHarness {
             dram_access_count,
             fabric_activity,
             dram_activity,
+            ParallelCoherenceWaitForGraphs::new(wait_for_graph_before, self.wait_for.graph()),
         ))
     }
 
