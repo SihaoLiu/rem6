@@ -7,6 +7,7 @@ use rem6_dram::DramMemoryController;
 use rem6_fabric::{FabricError, FabricModel, FabricPacket, FabricPacketId};
 use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext, Tick};
 use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse};
+use rem6_protocol_msi::MsiLineId;
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
     TargetOutcome, TransportEndpointId, TransportError,
@@ -17,6 +18,7 @@ use super::{
     HarnessError, LineBackingStore,
 };
 use crate::snoop::{schedule_directory_snoops, schedule_directory_snoops_parallel, SnoopRoute};
+use crate::wait_for::CoherenceWaitFor;
 
 #[derive(Clone)]
 pub(super) struct DeferredMemoryPath {
@@ -38,6 +40,24 @@ pub(super) struct DeferredMemoryWork {
     pub(super) responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     pub(super) decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
     pub(super) dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    pub(super) wait_for: Option<DeferredWaitFor>,
+}
+
+#[derive(Clone)]
+pub(super) struct DeferredWaitFor {
+    wait_for: CoherenceWaitFor,
+    line: MsiLineId,
+}
+
+impl DeferredWaitFor {
+    pub(super) fn new(wait_for: CoherenceWaitFor, line: MsiLineId) -> Self {
+        Self { wait_for, line }
+    }
+
+    fn clear_cache_line(&self, request: MemoryRequestId) -> usize {
+        self.wait_for
+            .clear_cache_line(request.agent(), self.line.address().get())
+    }
 }
 
 impl DeferredMemoryWork {
@@ -81,6 +101,7 @@ impl DeferredMemoryWork {
             response_cache: self.response_cache,
             responses: self.responses,
             dram_accesses: self.dram_accesses,
+            wait_for: self.wait_for,
         };
         request_work.schedule_hop(context, 0, request);
 
@@ -127,6 +148,7 @@ impl DeferredMemoryWork {
             response_cache: self.response_cache,
             responses: self.responses,
             dram_accesses: self.dram_accesses,
+            wait_for: self.wait_for,
         };
         request_work.schedule_hop_parallel(context, 0, request);
 
@@ -144,6 +166,7 @@ struct DeferredMemoryRequestWork {
     response_cache: Arc<Mutex<MsiCacheController>>,
     responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    wait_for: Option<DeferredWaitFor>,
 }
 
 impl DeferredMemoryRequestWork {
@@ -230,6 +253,7 @@ impl DeferredMemoryRequestWork {
             response_cache,
             responses,
             dram_accesses,
+            wait_for,
         } = self;
         let response_work = DeferredMemoryResponseWork {
             path,
@@ -238,6 +262,7 @@ impl DeferredMemoryRequestWork {
             trace,
             response_cache,
             responses,
+            wait_for,
         };
 
         if let Some(dram_memory) = dram_memory {
@@ -298,6 +323,7 @@ impl DeferredMemoryRequestWork {
             response_cache,
             responses,
             dram_accesses,
+            wait_for,
         } = self;
         let response_work = DeferredMemoryResponseWork {
             path,
@@ -306,6 +332,7 @@ impl DeferredMemoryRequestWork {
             trace,
             response_cache,
             responses,
+            wait_for,
         };
 
         if let Some(dram_memory) = dram_memory {
@@ -359,6 +386,7 @@ struct DeferredMemoryResponseWork {
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MsiCacheController>>,
     responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
+    wait_for: Option<DeferredWaitFor>,
 }
 
 impl DeferredMemoryResponseWork {
@@ -555,12 +583,16 @@ impl DeferredMemoryResponseWork {
                 ));
 
                 if hop_index == 0 {
+                    let response_request = response.request_id();
                     let result = self
                         .response_cache
                         .lock()
                         .expect("cache lock")
                         .accept_fill(response)
                         .expect("cache fill");
+                    if let Some(wait_for) = &self.wait_for {
+                        wait_for.clear_cache_line(response_request);
+                    }
                     if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
                         self.responses
                             .lock()

@@ -33,6 +33,7 @@ mod partitioned_snapshot;
 mod snoop;
 mod summary;
 mod topology;
+mod wait_for;
 
 use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 use snoop::{DirectorySnoopWork, SnoopRoute};
@@ -946,6 +947,7 @@ pub struct PartitionedDirectoryLineHarness {
     cpu_responses: Arc<Mutex<Vec<CpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<DirectoryDecisionRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    wait_for: wait_for::CoherenceWaitFor,
 }
 
 impl PartitionedDirectoryLineHarness {
@@ -1188,6 +1190,7 @@ impl PartitionedDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            wait_for: wait_for::CoherenceWaitFor::new(),
         })
     }
 
@@ -1272,6 +1275,7 @@ impl PartitionedDirectoryLineHarness {
             responses: Arc::clone(&responses),
             decisions: Arc::clone(&decisions),
             dram_accesses: Arc::clone(&dram_accesses),
+            wait_for: None,
         });
         let response_cache_for_snoop = Arc::clone(&response_cache);
         let responses_for_snoop = Arc::clone(&responses);

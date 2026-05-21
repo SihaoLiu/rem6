@@ -154,6 +154,103 @@ The invariants below apply to production components in the workspace.
     import it, invoke it, depend on its build outputs, or mention it as a
     runtime prerequisite.
 
+## Wait-For Graph Policy
+
+Parallel full-system simulation cannot treat a blocked model as an opaque lack
+of ready events. A blocked cache, directory bank, fabric lane, DRAM bank, device
+queue, interrupt target, or host-control action must name what it is waiting
+for. The runtime can then distinguish valid contention from a cycle that will
+never resolve.
+
+The wait-for graph is not a string log. It is typed diagnostic state with nodes,
+edge kinds, observed ticks, and repeated-observation counts. The graph must be
+small enough to keep during normal tests and structured enough to expose through
+run summaries.
+
+Node categories:
+
+- transactions, such as memory requests, DMA commands, interrupt deliveries, or
+  host-control actions;
+- resources, such as cache lines, MSHRs, directory entries, virtual networks,
+  DRAM banks, device queues, or checkpoint barriers;
+- components, such as cores, cache controllers, directory banks, memory
+  controllers, fabric routers, and device engines.
+
+Edge kinds:
+
+- queue wait, used when a request cannot enter or advance in a bounded queue;
+- resource wait, used when a request depends on ownership, credits, bank state,
+  or an in-flight fill;
+- message wait, used when a component is waiting for a response, snoop,
+  invalidation acknowledgement, interrupt acknowledgement, or host reply;
+- barrier wait, used when a partition must wait for a checkpoint,
+  synchronization, mode switch, or externally requested quiescence.
+
+A blocking site must record a wait-for edge at the boundary where the model
+returns a structured busy result. It should not wait until a scheduler timeout,
+because the scheduler may be making valid progress elsewhere. The edge source
+should be the blocked transaction when one exists. The target should be the
+resource or component that must become ready before the transaction can
+continue.
+
+Repeated blocking on the same source, target, and edge kind updates the existing
+edge instead of appending duplicate records. The first-observed tick preserves
+when the stall became visible. The last-observed tick and observation count show
+whether the same dependency keeps recurring.
+
+A resolving event must clear the matching dependency at the same semantic
+boundary that makes the blocked work retryable. Examples:
+
+- a cache fill clears waits targeting the cache line for that requester;
+- a snoop acknowledgement clears waits targeting the acknowledgement resource;
+- a DRAM bank completion clears waits targeting that bank request slot;
+- a fabric credit return clears waits targeting the credit resource;
+- a checkpoint barrier release clears waits targeting the barrier resource.
+
+The clear operation should be scoped. Clearing every wait in the graph hides
+unrelated problems. Clearing only by transaction can miss multiple requests that
+were blocked by one shared resource. Resource-scoped clearing is preferred when
+one fill, credit, or bank completion can unblock several transactions.
+
+The graph is diagnostic state, not a scheduling mechanism. The scheduler should
+not use it to decide which event is legal to execute. Scheduling legality still
+comes from conservative frontiers, lookahead, event ticks, and message delays.
+The graph explains why work is blocked and gives deadlock detection a bounded
+input.
+
+Deadlock detection runs over the graph and reports a cycle as typed data. A
+diagnostic should include:
+
+- nodes in the cycle;
+- edge kinds in traversal order;
+- first and last observed ticks;
+- observation counts;
+- partition or component identity when available.
+
+Normal contention must not be reported as deadlock. A miss waiting on a cache
+line while an earlier fill is in flight is a valid queue wait. It becomes
+suspicious only when the dependency graph cycles or when a policy-specific
+livelock monitor observes repeated transitions without useful work.
+
+Tests for each integration layer should cover both outcomes:
+
+- a normal blocked request records a wait-for edge and clears it after the
+  resolving event;
+- repeated blocking on the same dependency updates observation counts;
+- an injected dependency cycle reports a deadlock diagnostic;
+- unrelated dependencies remain in the graph when one resource resolves.
+
+Run summaries should include wait-for diagnostics only when useful. A normal
+completed run can report zero remaining edges. A stopped, timed-out, or
+diagnostic run should expose the graph snapshot or the bounded diagnostic that
+explains why forward movement stopped.
+
+The policy applies to CPU, GPU, accelerator, DMA, interrupt, timer, and host
+traffic. Heterogeneous models must not bypass it by reporting only device-local
+busy flags. If a device engine blocks on memory, credits, command queue space,
+or host action, that dependency belongs in the same wait-for vocabulary as CPU
+coherence traffic.
+
 ## Workspace Responsibilities
 
 The workspace keeps one crate per subsystem. The boundary rule is that each

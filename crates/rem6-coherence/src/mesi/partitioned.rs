@@ -7,8 +7,8 @@ use rem6_directory::{
 };
 use rem6_dram::DramMemoryController;
 use rem6_kernel::{
-    ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
-    SchedulerContext, SchedulerError, Tick,
+    ConservativeRunSummary, DeadlockDiagnostic, ParallelSchedulerContext, PartitionId,
+    PartitionedScheduler, SchedulerContext, SchedulerError, Tick, WaitForGraph,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
@@ -21,6 +21,7 @@ use rem6_transport::{
 };
 
 use crate::summary::CoherenceResourceActivityWindow;
+use crate::wait_for::CoherenceWaitFor;
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunSummary,
     PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedMemoryConfig,
@@ -67,6 +68,7 @@ pub struct PartitionedMesiDirectoryLineHarness {
     cpu_responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<MesiDirectoryDecisionRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    wait_for: CoherenceWaitFor,
 }
 
 impl PartitionedMesiDirectoryLineHarness {
@@ -154,6 +156,7 @@ impl PartitionedMesiDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            wait_for: CoherenceWaitFor::new(),
         })
     }
 
@@ -264,6 +267,7 @@ impl PartitionedMesiDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            wait_for: CoherenceWaitFor::new(),
         })
     }
 
@@ -370,6 +374,7 @@ impl PartitionedMesiDirectoryLineHarness {
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
             dram_accesses: Arc::new(Mutex::new(Vec::new())),
+            wait_for: CoherenceWaitFor::new(),
         })
     }
 
@@ -525,11 +530,24 @@ impl PartitionedMesiDirectoryLineHarness {
         request: MemoryRequest,
     ) -> Result<MesiSubmitResult, MesiHarnessError> {
         let cache = self.cache_arc(agent)?;
-        let result = cache
+        let request_id = request.id();
+        let result = match cache
             .lock()
             .expect("cache lock")
             .accept_cpu_request(request)
-            .map_err(map_mesi_cache_error)?;
+        {
+            Ok(result) => result,
+            Err(MesiCacheControllerError::LineBusy { state }) => {
+                self.wait_for.record_cache_busy(
+                    agent,
+                    self.line.address().get(),
+                    request_id,
+                    self.scheduler.now(),
+                );
+                return Err(MesiHarnessError::LineBusy { state });
+            }
+            Err(error) => return Err(map_mesi_cache_error(error)),
+        };
         let cache_result = result.kind();
 
         if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
@@ -569,6 +587,8 @@ impl PartitionedMesiDirectoryLineHarness {
         let responses = Arc::clone(&self.cpu_responses);
         let decisions = Arc::clone(&self.directory_decisions);
         let dram_accesses = Arc::clone(&self.dram_accesses);
+        let wait_for = self.wait_for.clone();
+        let line = self.line;
 
         self.transport
             .submit_parallel(
@@ -612,6 +632,8 @@ impl PartitionedMesiDirectoryLineHarness {
                             response_cache,
                             responses,
                             dram_accesses,
+                            wait_for,
+                            line,
                             snoop_delay,
                         )
                         .expect("scheduled memory response");
@@ -650,6 +672,8 @@ impl PartitionedMesiDirectoryLineHarness {
                         trace,
                         response_cache,
                         responses,
+                        wait_for,
+                        line,
                     )
                     .expect("scheduled cache response");
 
@@ -770,6 +794,14 @@ impl PartitionedMesiDirectoryLineHarness {
 
     pub const fn line(&self) -> MesiLineId {
         self.line
+    }
+
+    pub fn wait_for_graph(&self) -> WaitForGraph {
+        self.wait_for.graph()
+    }
+
+    pub fn deadlock_diagnostic(&self) -> Option<DeadlockDiagnostic> {
+        self.wait_for.deadlock_diagnostic()
     }
 
     fn cache_arc(

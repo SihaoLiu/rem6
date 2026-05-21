@@ -4,11 +4,12 @@ use rem6_cache::MesiCacheController;
 use rem6_dram::DramMemoryController;
 use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext};
 use rem6_memory::{MemoryError, MemoryRequest, MemoryResponse};
-use rem6_protocol_mesi::MesiEvent;
+use rem6_protocol_mesi::{MesiEvent, MesiLineId};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, TargetOutcome, TransportEndpointId,
 };
 
+use crate::wait_for::CoherenceWaitFor;
 use crate::{DramMemoryAccessRecord, LineBackingStore};
 
 use super::{mesi_response_record, MesiCpuResponseRecord, MesiHarnessError, PartitionedMesiRoute};
@@ -78,6 +79,8 @@ pub(super) fn schedule_partitioned_mesi_memory_response_parallel(
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    wait_for: CoherenceWaitFor,
+    line: MesiLineId,
     snoop_delay: u64,
 ) -> Result<(), MesiHarnessError> {
     ParallelMesiMemoryResponseWork {
@@ -91,6 +94,8 @@ pub(super) fn schedule_partitioned_mesi_memory_response_parallel(
         response_cache,
         responses,
         dram_accesses,
+        wait_for,
+        line,
         snoop_delay,
     }
     .schedule(context, request)
@@ -106,6 +111,8 @@ pub(super) fn schedule_partitioned_mesi_cache_response_parallel(
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
+    wait_for: CoherenceWaitFor,
+    line: MesiLineId,
 ) -> Result<(), MesiHarnessError> {
     ParallelMesiCacheResponseWork {
         requester_route,
@@ -113,6 +120,8 @@ pub(super) fn schedule_partitioned_mesi_cache_response_parallel(
         trace,
         response_cache,
         responses,
+        wait_for,
+        line,
     }
     .schedule(context, pre_response_delay, response)
 }
@@ -330,6 +339,8 @@ struct ParallelMesiMemoryResponseWork {
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
     dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    wait_for: CoherenceWaitFor,
+    line: MesiLineId,
     snoop_delay: u64,
 }
 
@@ -436,6 +447,8 @@ impl ParallelMesiMemoryResponseWork {
                         self.trace,
                         self.response_cache,
                         self.responses,
+                        self.wait_for,
+                        self.line,
                     )
                     .expect("scheduled cache response");
                 } else {
@@ -454,6 +467,8 @@ struct ParallelMesiCacheResponseWork {
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
+    wait_for: CoherenceWaitFor,
+    line: MesiLineId,
 }
 
 impl ParallelMesiCacheResponseWork {
@@ -499,12 +514,15 @@ impl ParallelMesiCacheResponseWork {
                 ));
 
                 if hop_index == 0 {
+                    let response_request = response.request_id();
                     let result = self
                         .response_cache
                         .lock()
                         .expect("cache lock")
                         .accept_fill(response, self.fill_event)
                         .expect("cache fill");
+                    self.wait_for
+                        .clear_cache_line(response_request.agent(), self.line.address().get());
                     if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
                         self.responses
                             .lock()

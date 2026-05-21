@@ -4,7 +4,7 @@ use std::sync::Arc;
 use rem6_cache::CacheControllerError;
 use rem6_transport::{TargetOutcome, TransportError};
 
-use super::deferred::{DeferredMemoryPath, DeferredMemoryWork};
+use super::deferred::{DeferredMemoryPath, DeferredMemoryWork, DeferredWaitFor};
 use super::snoop::{DirectorySnoopWork, SnoopRoute};
 use super::{
     decision_uses_backing_memory, map_cache_error, partitioned_directory_response, response_record,
@@ -20,11 +20,24 @@ impl PartitionedDirectoryLineHarness {
         request: MemoryRequest,
     ) -> Result<SubmitResult, HarnessError> {
         let cache = self.cache_arc(agent)?;
-        let result = cache
+        let request_id = request.id();
+        let result = match cache
             .lock()
             .expect("cache lock")
             .accept_cpu_request(request)
-            .map_err(map_cache_error)?;
+        {
+            Ok(result) => result,
+            Err(CacheControllerError::LineBusy { state }) => {
+                self.wait_for.record_cache_busy(
+                    agent,
+                    self.line.address().get(),
+                    request_id,
+                    self.scheduler.now(),
+                );
+                return Err(HarnessError::LineBusy { state });
+            }
+            Err(error) => return Err(map_cache_error(error)),
+        };
         let cache_result = result.kind();
 
         if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
@@ -76,6 +89,8 @@ impl PartitionedDirectoryLineHarness {
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
+        let wait_for = self.wait_for.clone();
+        let line = self.line;
         let memory_path = self.memory_route.zip(self.memory_route_info.clone()).map(
             |(memory_route, memory_route_info)| DeferredMemoryPath {
                 cache_route_id: route,
@@ -96,6 +111,7 @@ impl PartitionedDirectoryLineHarness {
             responses: Arc::clone(&responses),
             decisions: Arc::clone(&decisions),
             dram_accesses: Arc::clone(&dram_accesses),
+            wait_for: Some(DeferredWaitFor::new(wait_for.clone(), line)),
         });
         let response_cache_for_snoop = Arc::clone(&response_cache);
         let responses_for_snoop = Arc::clone(&responses);
@@ -155,11 +171,13 @@ impl PartitionedDirectoryLineHarness {
                     TargetOutcome::Respond(response)
                 },
                 move |delivery| {
+                    let response_request = delivery.response().request_id();
                     let result = response_cache
                         .lock()
                         .expect("cache lock")
                         .accept_fill(delivery.response().clone())
                         .expect("cache fill");
+                    wait_for.clear_cache_line(response_request.agent(), line.address().get());
                     if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
                         responses
                             .lock()
