@@ -43,9 +43,10 @@ mod workload_replay_dma;
 use self::cache_response::{cached_memory_response, data_cache_agents};
 use self::workload_replay_dma::{run_accelerator_dma_copies, WorkloadAcceleratorDmaActivity};
 use crate::workload_replay_heterogeneous::{
-    accelerator_snapshots, build_accelerator_devices, build_gpu_devices, gpu_snapshots,
-    schedule_accelerator_commands, schedule_gpu_kernel_launches, WorkloadAcceleratorActivity,
-    WorkloadGpuActivity, WorkloadGpuRuntime,
+    accelerator_snapshots, accelerator_wait_for_graph_since, accelerator_wait_for_markers,
+    build_accelerator_devices, build_gpu_devices, gpu_snapshots, gpu_wait_for_graph_since,
+    gpu_wait_for_markers, schedule_accelerator_commands, schedule_gpu_kernel_launches,
+    WorkloadAcceleratorActivity, WorkloadGpuActivity, WorkloadGpuRuntime,
 };
 use crate::{
     GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
@@ -737,6 +738,8 @@ impl RiscvWorkloadReplay {
             &data_cache,
         )?;
         let accelerator_before = accelerator_snapshots(&accelerator_devices);
+        let gpu_wait_for_start = gpu_wait_for_markers(&gpu_devices);
+        let accelerator_wait_for_start = accelerator_wait_for_markers(&accelerator_devices);
         let cluster = self.build_cluster(&route_map)?;
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
@@ -823,14 +826,19 @@ impl RiscvWorkloadReplay {
         }
         run = run.with_dram_wait_for(memory.dram_wait_for_since(dram_wait_for_start));
         let gpu_snapshots = gpu_snapshots(&gpu_devices);
+        let gpu_wait_for = gpu_wait_for_graph_since(&gpu_devices, &gpu_wait_for_start);
         let gpu_activity =
-            WorkloadGpuActivity::from_snapshots(gpu_launch_count, &gpu_before, &gpu_snapshots);
+            WorkloadGpuActivity::from_snapshots(gpu_launch_count, &gpu_before, &gpu_snapshots)
+                .with_wait_for_graph(gpu_wait_for);
         let accelerator_snapshots = accelerator_snapshots(&accelerator_devices);
+        let accelerator_wait_for =
+            accelerator_wait_for_graph_since(&accelerator_devices, &accelerator_wait_for_start);
         let accelerator_activity = WorkloadAcceleratorActivity::from_snapshots(
             accelerator_command_count,
             &accelerator_before,
             &accelerator_snapshots,
-        );
+        )
+        .with_wait_for_graph(accelerator_wait_for);
         let (result, host_action_outcomes) = self.result_from_run(
             &run,
             &controller,
@@ -1466,6 +1474,10 @@ fn parallel_execution_summary(
             activities.gpu.workgroup_completion_count,
             activities.gpu.active_device_count,
         )
+        .with_gpu_compute_diagnostics(
+            activities.gpu.wait_for_edge_count,
+            activities.gpu.deadlock_diagnostic_count,
+        )
         .with_gpu_dma_counts(
             activities.gpu_dma.copy_count,
             activities.gpu_dma.completion_count,
@@ -1476,6 +1488,10 @@ fn parallel_execution_summary(
             activities.accelerator.trace_event_count,
             activities.accelerator.completion_count,
             activities.accelerator.active_device_count,
+        )
+        .with_accelerator_compute_diagnostics(
+            activities.accelerator.wait_for_edge_count,
+            activities.accelerator.deadlock_diagnostic_count,
         )
         .with_accelerator_dma_counts(
             activities.accelerator_dma.copy_count,

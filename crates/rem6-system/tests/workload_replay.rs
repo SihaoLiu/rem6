@@ -446,6 +446,91 @@ fn replay_topology_with_accelerator_command() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_contended_compute() -> WorkloadTopology {
+    WorkloadTopology::new(6, 2, 4, WorkloadHostPlacement::new(5, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 3, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("gpu0.command"),
+                "cpu0.gpu",
+                0,
+                "gpu0.control",
+                3,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("accelerator0.command"),
+                "cpu0.accelerator",
+                0,
+                "accelerator0.control",
+                4,
+                2,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 1, 1, route_id("gpu0.command")).unwrap())
+        .unwrap()
+        .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 3, 4).unwrap())
+        .unwrap()
+        .add_accelerator_device(
+            WorkloadAcceleratorDevice::new(22, 4, 1, route_id("accelerator0.command")).unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_command(
+            WorkloadAcceleratorCommand::new(
+                22,
+                120,
+                WorkloadAcceleratorCommandKind::NpuInference { tiles: 4 },
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_accelerator_command(
+            WorkloadAcceleratorCommand::new(
+                22,
+                121,
+                WorkloadAcceleratorCommandKind::NpuInference { tiles: 5 },
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_accelerator_dma_copy() -> WorkloadTopology {
     WorkloadTopology::new(5, 2, 4, WorkloadHostPlacement::new(4, 2, 51).unwrap())
         .unwrap()
@@ -825,6 +910,22 @@ fn replay_manifest_with_accelerator_command() -> WorkloadManifest {
     .unwrap()
 }
 
+fn replay_manifest_with_contended_compute() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-contended-compute"), boot_image())
+        .with_topology(replay_topology_with_contended_compute())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_accelerator_dma_copy() -> WorkloadManifest {
     WorkloadManifest::builder(
         workload_id("riscv-replay-accelerator-dma-copy"),
@@ -1134,7 +1235,9 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     );
     assert_eq!(
         summary.full_system_wait_for_edge_count(),
-        summary.resource_wait_for_edge_count() + summary.data_cache_wait_for_edge_count(),
+        summary.resource_wait_for_edge_count()
+            + summary.data_cache_wait_for_edge_count()
+            + summary.compute_wait_for_edge_count(),
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_dispatch_count(),
@@ -1198,15 +1301,58 @@ fn workload_replay_summary_reports_resource_wait_diagnostics() {
     );
     assert_eq!(
         summary.full_system_wait_for_edge_count(),
-        summary.resource_wait_for_edge_count() + summary.data_cache_wait_for_edge_count(),
+        summary.resource_wait_for_edge_count()
+            + summary.data_cache_wait_for_edge_count()
+            + summary.compute_wait_for_edge_count(),
     );
     assert_eq!(
         summary.full_system_deadlock_diagnostic_count(),
         summary.resource_deadlock_diagnostic_count()
-            + summary.data_cache_deadlock_diagnostic_count(),
+            + summary.data_cache_deadlock_diagnostic_count()
+            + summary.compute_deadlock_diagnostic_count(),
     );
     assert!(summary.has_dram_diagnostics());
     assert!(summary.has_resource_diagnostics());
+    assert!(summary.has_full_system_diagnostics());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_summary_reports_compute_wait_diagnostics() {
+    let manifest = replay_manifest_with_contended_compute();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(64)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(summary.gpu_kernel_launch_count(), 1);
+    assert!(summary.gpu_workgroup_completion_count() >= 1);
+    assert_eq!(summary.accelerator_command_count(), 2);
+    assert!(summary.accelerator_completion_count() >= 1);
+    assert!(summary.gpu_compute_wait_for_edge_count() >= 1);
+    assert!(summary.accelerator_compute_wait_for_edge_count() >= 1);
+    assert_eq!(
+        summary.compute_wait_for_edge_count(),
+        summary.gpu_compute_wait_for_edge_count()
+            + summary.accelerator_compute_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.compute_deadlock_diagnostic_count(),
+        summary.gpu_compute_deadlock_diagnostic_count()
+            + summary.accelerator_compute_deadlock_diagnostic_count(),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count(),
+        summary.resource_wait_for_edge_count()
+            + summary.data_cache_wait_for_edge_count()
+            + summary.compute_wait_for_edge_count(),
+    );
+    assert!(summary.has_gpu_compute_diagnostics());
+    assert!(summary.has_accelerator_compute_diagnostics());
+    assert!(summary.has_compute_diagnostics());
     assert!(summary.has_full_system_diagnostics());
     plan.verify_result(outcome.result()).unwrap();
 }

@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorEngine,
     AcceleratorEngineConfig, AcceleratorEngineId, AcceleratorEngineSnapshot,
+    AcceleratorWaitForMarker,
 };
 use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuKernelId, GpuKernelLaunch,
+    GpuWaitForMarker,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForGraph};
 use rem6_workload::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadError, WorkloadGpuDevice, WorkloadMemoryRoute, WorkloadTopology,
@@ -38,6 +40,8 @@ pub(crate) struct WorkloadGpuActivity {
     pub(crate) trace_event_count: usize,
     pub(crate) workgroup_completion_count: usize,
     pub(crate) active_device_count: usize,
+    pub(crate) wait_for_edge_count: usize,
+    pub(crate) deadlock_diagnostic_count: usize,
 }
 
 impl WorkloadGpuActivity {
@@ -69,6 +73,12 @@ impl WorkloadGpuActivity {
 
         activity
     }
+
+    pub(crate) fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
+        self.wait_for_edge_count = wait_for.edge_count();
+        self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -98,6 +108,8 @@ pub(crate) struct WorkloadAcceleratorActivity {
     pub(crate) trace_event_count: usize,
     pub(crate) completion_count: usize,
     pub(crate) active_device_count: usize,
+    pub(crate) wait_for_edge_count: usize,
+    pub(crate) deadlock_diagnostic_count: usize,
 }
 
 impl WorkloadAcceleratorActivity {
@@ -128,6 +140,12 @@ impl WorkloadAcceleratorActivity {
         }
 
         activity
+    }
+
+    pub(crate) fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
+        self.wait_for_edge_count = wait_for.edge_count();
+        self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
+        self
     }
 }
 
@@ -201,6 +219,29 @@ pub(crate) fn gpu_snapshots(
         .collect()
 }
 
+pub(crate) fn gpu_wait_for_markers(
+    devices: &BTreeMap<GpuDeviceId, WorkloadGpuRuntime>,
+) -> BTreeMap<GpuDeviceId, GpuWaitForMarker> {
+    devices
+        .iter()
+        .map(|(device, runtime)| (*device, runtime.gpu.mark_wait_for()))
+        .collect()
+}
+
+pub(crate) fn gpu_wait_for_graph_since(
+    devices: &BTreeMap<GpuDeviceId, WorkloadGpuRuntime>,
+    markers: &BTreeMap<GpuDeviceId, GpuWaitForMarker>,
+) -> WaitForGraph {
+    let mut graph = WaitForGraph::new();
+    for (device, marker) in markers {
+        let Some(runtime) = devices.get(device) else {
+            continue;
+        };
+        merge_wait_for_graph(&mut graph, runtime.gpu.wait_for_graph_since(*marker));
+    }
+    graph
+}
+
 pub(crate) fn build_accelerator_devices(
     topology: &WorkloadTopology,
 ) -> Result<BTreeMap<AcceleratorEngineId, WorkloadAcceleratorRuntime>, RiscvWorkloadReplayError> {
@@ -265,6 +306,29 @@ pub(crate) fn accelerator_snapshots(
         .collect()
 }
 
+pub(crate) fn accelerator_wait_for_markers(
+    devices: &BTreeMap<AcceleratorEngineId, WorkloadAcceleratorRuntime>,
+) -> BTreeMap<AcceleratorEngineId, AcceleratorWaitForMarker> {
+    devices
+        .iter()
+        .map(|(engine, runtime)| (*engine, runtime.engine.mark_wait_for()))
+        .collect()
+}
+
+pub(crate) fn accelerator_wait_for_graph_since(
+    devices: &BTreeMap<AcceleratorEngineId, WorkloadAcceleratorRuntime>,
+    markers: &BTreeMap<AcceleratorEngineId, AcceleratorWaitForMarker>,
+) -> WaitForGraph {
+    let mut graph = WaitForGraph::new();
+    for (engine, marker) in markers {
+        let Some(runtime) = devices.get(engine) else {
+            continue;
+        };
+        merge_wait_for_graph(&mut graph, runtime.engine.wait_for_graph_since(*marker));
+    }
+    graph
+}
+
 fn gpu_command_route<'a>(
     topology: &'a WorkloadTopology,
     device: &WorkloadGpuDevice,
@@ -320,6 +384,29 @@ fn accelerator_command_kind(kind: &WorkloadAcceleratorCommandKind) -> Accelerato
         }
         WorkloadAcceleratorCommandKind::DmaCopy { bytes } => {
             AcceleratorCommandKind::DmaCopy { bytes: *bytes }
+        }
+    }
+}
+
+fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
+    for edge in source.edges() {
+        target
+            .record_wait(
+                edge.source().clone(),
+                edge.target().clone(),
+                edge.kind(),
+                edge.first_observed_tick(),
+            )
+            .expect("merged compute wait-for graph already contains valid labels");
+        if edge.last_observed_tick() != edge.first_observed_tick() {
+            target
+                .record_wait(
+                    edge.source().clone(),
+                    edge.target().clone(),
+                    edge.kind(),
+                    edge.last_observed_tick(),
+                )
+                .expect("merged compute wait-for graph already contains valid labels");
         }
     }
 }
