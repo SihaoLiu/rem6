@@ -17,13 +17,13 @@ use rem6_memory::{
 use rem6_mmio::{MmioRequest, MmioRequestId};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
-    DramMemoryCheckpointBank, DramMemoryCheckpointPort, GuestEvent, GuestEventDelivery,
-    GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
-    InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
-    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
-    RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
-    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    DramMemoryCheckpointBank, DramMemoryCheckpointPort, ExecutionMode, ExecutionModeTarget,
+    GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
+    HostActionRecord, HostEventPolicy, InterruptControllerCheckpointBank,
+    InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
+    RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor,
+    SystemActionOutcome, SystemHostController, SystemHostEventPort, SystemRunController,
+    TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 use rem6_timer::{
     ProgrammableTimer, TimerArm, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
@@ -1189,6 +1189,107 @@ fn system_run_controller_executes_delivered_stats_events() {
                 40,
                 vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
             )),
+        ]
+    );
+}
+
+#[test]
+fn system_run_controller_executes_delivered_execution_mode_switches() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(12);
+    let target = ExecutionModeTarget::new("cpu0");
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    let mut controller = SystemRunController::new(HostEventPolicy);
+
+    let first = controller
+        .execute_delivery(
+            GuestEventDelivery::new(
+                52,
+                guest,
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(10),
+                    source,
+                    GuestEventKind::ExecutionModeSwitch {
+                        target: target.clone(),
+                        mode: ExecutionMode::Functional,
+                    },
+                ),
+            ),
+            &mut executor,
+        )
+        .unwrap();
+
+    assert_eq!(
+        first,
+        vec![SystemActionOutcome::ExecutionModeSwitched {
+            tick: 52,
+            event: GuestEventId::new(10),
+            source,
+            target: target.clone(),
+            previous_mode: None,
+            mode: ExecutionMode::Functional,
+        }]
+    );
+    assert_eq!(
+        executor.execution_mode(&target),
+        Some(ExecutionMode::Functional)
+    );
+
+    let second = controller
+        .execute_delivery(
+            GuestEventDelivery::new(
+                60,
+                guest,
+                host,
+                GuestEvent::new(
+                    GuestEventId::new(11),
+                    source,
+                    GuestEventKind::ExecutionModeSwitch {
+                        target: target.clone(),
+                        mode: ExecutionMode::Detailed,
+                    },
+                ),
+            ),
+            &mut executor,
+        )
+        .unwrap();
+
+    assert_eq!(
+        second,
+        vec![SystemActionOutcome::ExecutionModeSwitched {
+            tick: 60,
+            event: GuestEventId::new(11),
+            source,
+            target: target.clone(),
+            previous_mode: Some(ExecutionMode::Functional),
+            mode: ExecutionMode::Detailed,
+        }]
+    );
+    assert_eq!(
+        executor.execution_mode(&target),
+        Some(ExecutionMode::Detailed)
+    );
+    assert_eq!(
+        controller.action_outcomes(),
+        &[
+            SystemActionOutcome::ExecutionModeSwitched {
+                tick: 52,
+                event: GuestEventId::new(10),
+                source,
+                target: target.clone(),
+                previous_mode: None,
+                mode: ExecutionMode::Functional,
+            },
+            SystemActionOutcome::ExecutionModeSwitched {
+                tick: 60,
+                event: GuestEventId::new(11),
+                source,
+                target,
+                previous_mode: Some(ExecutionMode::Functional),
+                mode: ExecutionMode::Detailed,
+            },
         ]
     );
 }

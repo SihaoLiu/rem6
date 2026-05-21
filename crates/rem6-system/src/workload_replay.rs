@@ -49,10 +49,11 @@ use crate::workload_replay_heterogeneous::{
     WorkloadGpuRuntime,
 };
 use crate::{
-    GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostEventPolicy,
-    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvInstructionStats, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort,
+    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
+    GuestEventKind, GuestSourceId, HostEventPolicy, RiscvDataCacheProtocol,
+    RiscvDataCacheRunRecord, RiscvInstructionStats, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
+    SystemHostEventPort,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -1464,6 +1465,12 @@ fn planned_host_guest_event(
         HostEventIntent::RoiEnd { .. } => GuestEventKind::RoiEnd,
         HostEventIntent::StatsReset { .. } => GuestEventKind::StatsReset,
         HostEventIntent::StatsDump { .. } => GuestEventKind::StatsDump,
+        HostEventIntent::SwitchExecutionMode { target, mode } => {
+            GuestEventKind::ExecutionModeSwitch {
+                target: ExecutionModeTarget::new(target.clone()),
+                mode: workload_execution_mode(mode),
+            }
+        }
         HostEventIntent::Checkpoint { label } => GuestEventKind::Checkpoint {
             label: label.clone(),
         },
@@ -1474,6 +1481,14 @@ fn planned_host_guest_event(
         source,
         kind,
     ))
+}
+
+fn workload_execution_mode(mode: &rem6_workload::WorkloadExecutionMode) -> ExecutionMode {
+    match mode {
+        rem6_workload::WorkloadExecutionMode::Functional => ExecutionMode::Functional,
+        rem6_workload::WorkloadExecutionMode::Timing => ExecutionMode::Timing,
+        rem6_workload::WorkloadExecutionMode::Detailed => ExecutionMode::Detailed,
+    }
 }
 
 #[derive(Clone, Debug)]

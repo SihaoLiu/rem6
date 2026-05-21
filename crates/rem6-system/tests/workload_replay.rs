@@ -6,16 +6,17 @@ use rem6_gpu::GpuDeviceId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{
-    RiscvSystemRunStopReason, RiscvWorkloadReplay, RiscvWorkloadReplayError, SystemActionOutcome,
+    ExecutionMode, ExecutionModeTarget, RiscvSystemRunStopReason, RiscvWorkloadReplay,
+    RiscvWorkloadReplayError, SystemActionOutcome,
 };
 use rem6_workload::{
     HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
-    WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent,
-    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadTopology,
+    WorkloadExecutionMode, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
+    WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric,
+    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -1415,6 +1416,13 @@ fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
         ))
         .add_host_event(WorkloadHostEvent::new(
             2,
+            HostEventIntent::SwitchExecutionMode {
+                target: "cpu0".to_string(),
+                mode: WorkloadExecutionMode::Functional,
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            2,
             HostEventIntent::RoiEnd {
                 label: "roi".to_string(),
             },
@@ -2010,6 +2018,22 @@ fn workload_replay_executes_planned_host_actions() {
                 && event.get() == 10_002
                 && source.get() == 51
                 && manifest.label() == "after-boot"
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::ExecutionModeSwitched {
+            tick,
+            event,
+            source,
+            target,
+            previous_mode,
+            mode
+        } if *tick == 2
+            && event.get() == 10_004
+            && source.get() == 51
+            && target == &ExecutionModeTarget::new("cpu0")
+            && previous_mode.is_none()
+            && *mode == ExecutionMode::Functional
     )));
     plan.verify_result(outcome.result()).unwrap();
 }

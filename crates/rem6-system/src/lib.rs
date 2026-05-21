@@ -145,15 +145,49 @@ impl GuestEvent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuestEventKind {
-    BootMilestone { name: String },
-    Command { command: String },
+    BootMilestone {
+        name: String,
+    },
+    Command {
+        command: String,
+    },
     RoiBegin,
     RoiEnd,
     StatsReset,
     StatsDump,
-    Checkpoint { label: String },
-    Trap { trap: GuestTrap },
-    Terminate { code: i32 },
+    ExecutionModeSwitch {
+        target: ExecutionModeTarget,
+        mode: ExecutionMode,
+    },
+    Checkpoint {
+        label: String,
+    },
+    Trap {
+        trap: GuestTrap,
+    },
+    Terminate {
+        code: i32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ExecutionMode {
+    Functional,
+    Timing,
+    Detailed,
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ExecutionModeTarget(String);
+
+impl ExecutionModeTarget {
+    pub fn new(target: impl Into<String>) -> Self {
+        Self(target.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -306,12 +340,24 @@ impl GuestEventChannel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostAction {
-    InjectCommand { command: String },
+    InjectCommand {
+        command: String,
+    },
     ResetStats,
     DumpStats,
-    Checkpoint { label: String },
-    RestoreCheckpoint { manifest: CheckpointManifest },
-    Stop { code: i32 },
+    SwitchExecutionMode {
+        target: ExecutionModeTarget,
+        mode: ExecutionMode,
+    },
+    Checkpoint {
+        label: String,
+    },
+    RestoreCheckpoint {
+        manifest: CheckpointManifest,
+    },
+    Stop {
+        code: i32,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -382,6 +428,12 @@ impl HostEventPolicy {
                 vec![HostAction::ResetStats]
             }
             GuestEventKind::RoiEnd | GuestEventKind::StatsDump => vec![HostAction::DumpStats],
+            GuestEventKind::ExecutionModeSwitch { target, mode } => {
+                vec![HostAction::SwitchExecutionMode {
+                    target: target.clone(),
+                    mode: *mode,
+                }]
+            }
             GuestEventKind::Checkpoint { label } => vec![HostAction::Checkpoint {
                 label: label.clone(),
             }],

@@ -1,13 +1,15 @@
+use std::collections::BTreeMap;
+
 use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
 use rem6_kernel::Tick;
 use rem6_stats::{StatSnapshot, StatsRegistry, StatsResetRecord};
 
 use crate::{
-    AcceleratorCheckpointBank, DramMemoryCheckpointBank, FabricCheckpointBank, GpuCheckpointBank,
-    GuestEventDelivery, GuestEventId, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
-    InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
-    RiscvCoreCheckpointBank, SchedulerCheckpointBank, StopRequest, SystemError,
-    TimerCheckpointBank, UartCheckpointBank,
+    AcceleratorCheckpointBank, DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget,
+    FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestSourceId,
+    HostAction, HostActionRecord, HostEventPolicy, InterruptControllerCheckpointBank,
+    MemoryStoreCheckpointBank, MsiBankCheckpointBank, RiscvCoreCheckpointBank,
+    SchedulerCheckpointBank, StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,6 +34,14 @@ pub enum SystemActionOutcome {
         source: GuestSourceId,
         manifest: CheckpointManifest,
     },
+    ExecutionModeSwitched {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        target: ExecutionModeTarget,
+        previous_mode: Option<ExecutionMode>,
+        mode: ExecutionMode,
+    },
     Stop(StopRequest),
 }
 
@@ -50,6 +60,7 @@ pub struct SystemActionExecutor {
     interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
+    execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
 }
 
 impl SystemActionExecutor {
@@ -72,6 +83,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -94,6 +106,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -116,6 +129,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -138,6 +152,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -160,6 +175,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -182,6 +198,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -205,6 +222,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -228,6 +246,7 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            execution_modes: BTreeMap::new(),
         }
     }
 
@@ -245,6 +264,14 @@ impl SystemActionExecutor {
 
     pub const fn checkpoints_mut(&mut self) -> &mut CheckpointRegistry {
         &mut self.checkpoints
+    }
+
+    pub fn execution_mode(&self, target: &ExecutionModeTarget) -> Option<ExecutionMode> {
+        self.execution_modes.get(target).copied()
+    }
+
+    pub fn execution_modes(&self) -> &BTreeMap<ExecutionModeTarget, ExecutionMode> {
+        &self.execution_modes
     }
 
     pub fn attach_memory_checkpoint_bank(
@@ -408,6 +435,17 @@ impl SystemActionExecutor {
                 .try_snapshot(record.tick())
                 .map(SystemActionOutcome::StatsSnapshot)
                 .map_err(SystemError::Stats),
+            HostAction::SwitchExecutionMode { target, mode } => {
+                let previous_mode = self.execution_modes.insert(target.clone(), *mode);
+                Ok(SystemActionOutcome::ExecutionModeSwitched {
+                    tick: record.tick(),
+                    event: record.event(),
+                    source: record.source(),
+                    target: target.clone(),
+                    previous_mode,
+                    mode: *mode,
+                })
+            }
             HostAction::Checkpoint { label } => {
                 if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
                     accelerator_checkpoints

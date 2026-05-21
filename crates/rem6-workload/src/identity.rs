@@ -281,6 +281,11 @@ fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
             hash_str(hash, "stats_dump");
             hash_str(hash, label);
         }
+        HostEventIntent::SwitchExecutionMode { target, mode } => {
+            hash_str(hash, "execution_mode");
+            hash_str(hash, target);
+            hash_str(hash, mode.as_str());
+        }
         HostEventIntent::Checkpoint { label } => {
             hash_str(hash, "checkpoint");
             hash_str(hash, label);

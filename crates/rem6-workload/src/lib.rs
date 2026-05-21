@@ -1146,13 +1146,46 @@ impl WorkloadBootSegment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkloadExecutionMode {
+    Functional,
+    Timing,
+    Detailed,
+}
+
+impl WorkloadExecutionMode {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Functional => "functional",
+            Self::Timing => "timing",
+            Self::Detailed => "detailed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostEventIntent {
-    RoiBegin { label: String },
-    RoiEnd { label: String },
-    StatsReset { label: String },
-    StatsDump { label: String },
-    Checkpoint { label: String },
-    Stop { reason: String },
+    RoiBegin {
+        label: String,
+    },
+    RoiEnd {
+        label: String,
+    },
+    StatsReset {
+        label: String,
+    },
+    StatsDump {
+        label: String,
+    },
+    SwitchExecutionMode {
+        target: String,
+        mode: WorkloadExecutionMode,
+    },
+    Checkpoint {
+        label: String,
+    },
+    Stop {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1822,8 +1855,9 @@ fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
         HostEventIntent::RoiEnd { label } => (1, label.as_str()),
         HostEventIntent::StatsReset { label } => (2, label.as_str()),
         HostEventIntent::StatsDump { label } => (3, label.as_str()),
-        HostEventIntent::Checkpoint { label } => (4, label.as_str()),
-        HostEventIntent::Stop { reason } => (5, reason.as_str()),
+        HostEventIntent::SwitchExecutionMode { target, .. } => (4, target.as_str()),
+        HostEventIntent::Checkpoint { label } => (5, label.as_str()),
+        HostEventIntent::Stop { reason } => (6, reason.as_str()),
     };
     (event.tick(), rank, label.to_string())
 }

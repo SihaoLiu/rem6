@@ -8,11 +8,12 @@ use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
-    WorkloadDataCacheProtocolCount, WorkloadError, WorkloadGpuDevice, WorkloadGpuDmaCopy,
-    WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadDataCacheProtocolCount, WorkloadError, WorkloadExecutionMode, WorkloadGpuDevice,
+    WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent, WorkloadHostPlacement,
+    WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1226,6 +1227,13 @@ fn workload_manifest_reconstructs_boot_image_and_replay_plan() {
                 label: "main".to_string(),
             },
         ))
+        .add_host_event(WorkloadHostEvent::new(
+            40,
+            HostEventIntent::SwitchExecutionMode {
+                target: "cpu0".to_string(),
+                mode: WorkloadExecutionMode::Functional,
+            },
+        ))
         .with_checkpoint_lineage(CheckpointLineage::CreatedByWorkload {
             label: "cold-boot".to_string(),
         })
@@ -1245,9 +1253,16 @@ fn workload_manifest_reconstructs_boot_image_and_replay_plan() {
         WorkloadResourceKind::DiskImage
     );
     assert_eq!(plan.required_resources()[1].id().as_str(), "kernel");
-    assert_eq!(plan.host_events().len(), 2);
+    assert_eq!(plan.host_events().len(), 3);
     assert_eq!(plan.host_events()[0].tick(), 20);
-    assert_eq!(plan.host_events()[1].tick(), 80);
+    assert_eq!(
+        plan.host_events()[1].intent(),
+        &HostEventIntent::SwitchExecutionMode {
+            target: "cpu0".to_string(),
+            mode: WorkloadExecutionMode::Functional,
+        },
+    );
+    assert_eq!(plan.host_events()[2].tick(), 80);
     assert_eq!(
         plan.checkpoint_lineage().unwrap(),
         &CheckpointLineage::CreatedByWorkload {

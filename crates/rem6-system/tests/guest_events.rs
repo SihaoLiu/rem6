@@ -9,10 +9,11 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
-    GuestTrap, GuestTrapKind, HostAction, HostActionRecord, HostEventPolicy, RiscvTrapEventPort,
-    ScheduledRiscvTrap, StopRequest, SystemActionOutcome, SystemError, SystemEventPort,
-    SystemHostController, SystemHostEventPort, SystemRunController,
+    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventChannel, GuestEventDelivery,
+    GuestEventId, GuestEventKind, GuestSourceId, GuestTrap, GuestTrapKind, HostAction,
+    HostActionRecord, HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap, StopRequest,
+    SystemActionOutcome, SystemError, SystemEventPort, SystemHostController, SystemHostEventPort,
+    SystemRunController,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -296,6 +297,20 @@ fn host_event_policy_maps_structured_events_to_actions() {
             GuestEventKind::Terminate { code: 12 },
         )),
         vec![HostAction::Stop { code: 12 }]
+    );
+    assert_eq!(
+        policy.actions_for(&GuestEvent::new(
+            GuestEventId::new(5),
+            GuestSourceId::new(3),
+            GuestEventKind::ExecutionModeSwitch {
+                target: ExecutionModeTarget::new("cpu0"),
+                mode: ExecutionMode::Functional,
+            },
+        )),
+        vec![HostAction::SwitchExecutionMode {
+            target: ExecutionModeTarget::new("cpu0"),
+            mode: ExecutionMode::Functional,
+        }]
     );
 }
 
