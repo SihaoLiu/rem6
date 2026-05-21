@@ -836,6 +836,139 @@ fn scheduler_recorded_parallel_epoch_reports_canonical_dispatch_order() {
 }
 
 #[test]
+fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 4).unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+
+    let core0_barrier = Arc::clone(&barrier);
+    scheduler
+        .schedule_parallel_at(core0, 0, move |context| {
+            core0_barrier.wait();
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    let core1_barrier = Arc::clone(&barrier);
+    scheduler
+        .schedule_parallel_at(core1, 0, move |context| {
+            core1_barrier.wait();
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(epoch.summary().executed_events(), 4);
+    assert_eq!(epoch.summary().final_tick(), 4);
+    assert_eq!(epoch.batch_count(), 2);
+    assert_eq!(epoch.max_parallel_workers(), 2);
+    assert_eq!(epoch.total_parallel_workers(), 3);
+    assert!(epoch.has_parallel_work());
+    assert_eq!(
+        epoch.parallel_worker_partitions(),
+        vec![core0, core1, memory]
+    );
+
+    let batches = epoch.batches();
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[0].horizon(), 4);
+    assert_eq!(batches[0].worker_count(), 2);
+    assert!(batches[0].contains_worker(core0));
+    assert!(batches[0].contains_worker(core1));
+    assert!(!batches[0].contains_worker(memory));
+    assert_eq!(batches[0].worker_partitions(), vec![core0, core1]);
+    assert_eq!(
+        batches[0]
+            .workers()
+            .iter()
+            .map(|worker| worker.partition())
+            .collect::<Vec<_>>(),
+        vec![core0, core1]
+    );
+    assert!(batches[0]
+        .workers()
+        .iter()
+        .all(|worker| worker.start_tick() == 0
+            && worker.safe_until() == 4
+            && worker.next_tick() == Some(0)
+            && worker.pending_events() == 1));
+    assert_eq!(
+        batches[0].dispatches(),
+        &[
+            SchedulerDispatchRecord::new(
+                PartitionEventId::new(core0, 0),
+                0,
+                ScheduledEventKind::Parallel,
+            ),
+            SchedulerDispatchRecord::new(
+                PartitionEventId::new(core1, 0),
+                0,
+                ScheduledEventKind::Parallel,
+            ),
+        ]
+    );
+    assert_eq!(batches[0].dispatch_count_for_partition(core0), 1);
+    assert_eq!(batches[0].dispatch_count_for_partition(memory), 0);
+
+    assert_eq!(batches[1].horizon(), 4);
+    assert_eq!(batches[1].worker_count(), 1);
+    assert_eq!(batches[1].worker_partitions(), vec![memory]);
+    assert_eq!(batches[1].workers()[0].partition(), memory);
+    assert_eq!(batches[1].workers()[0].start_tick(), 0);
+    assert_eq!(batches[1].workers()[0].safe_until(), 4);
+    assert_eq!(batches[1].workers()[0].next_tick(), Some(4));
+    assert_eq!(batches[1].workers()[0].pending_events(), 2);
+    assert_eq!(
+        batches[1].dispatches(),
+        &[
+            SchedulerDispatchRecord::new(
+                PartitionEventId::new(memory, 0),
+                4,
+                ScheduledEventKind::Parallel,
+            ),
+            SchedulerDispatchRecord::new(
+                PartitionEventId::new(memory, 1),
+                4,
+                ScheduledEventKind::Parallel,
+            ),
+        ]
+    );
+    assert_eq!(batches[1].dispatch_count(), 2);
+    assert_eq!(batches[1].dispatch_count_for_partition(memory), 2);
+    assert_eq!(
+        batches[1].dispatches_for_partition(memory),
+        batches[1].dispatches().to_vec()
+    );
+    assert_eq!(scheduler.now(), 4);
+    assert!(scheduler.is_idle());
+}
+
+#[test]
+fn scheduler_recorded_parallel_epoch_reports_empty_batches_without_ready_workers() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
+
+    let core = PartitionId::new(0);
+
+    scheduler.schedule_parallel_at(core, 7, |_| {}).unwrap();
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(epoch.summary().executed_events(), 0);
+    assert_eq!(epoch.summary().final_tick(), 4);
+    assert!(epoch.dispatches().is_empty());
+    assert!(epoch.batches().is_empty());
+    assert_eq!(epoch.batch_count(), 0);
+    assert_eq!(epoch.max_parallel_workers(), 0);
+    assert_eq!(epoch.total_parallel_workers(), 0);
+    assert!(!epoch.has_parallel_work());
+    assert!(epoch.parallel_worker_partitions().is_empty());
+    assert_eq!(scheduler.next_pending_tick(core).unwrap(), Some(7));
+}
+
+#[test]
 fn scheduler_parallel_plan_exposes_frontiers_and_serial_blockers_without_dispatching() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();

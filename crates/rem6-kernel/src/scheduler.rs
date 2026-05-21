@@ -11,9 +11,9 @@ use crate::Tick;
 mod state;
 
 pub use state::{
-    EpochPlan, ParallelEpochPlan, PartitionFrontier, PartitionSnapshot, PendingEventSnapshot,
-    ReadyPartition, RecordedRunSummary, ScheduledEventKind, SchedulerDispatchRecord,
-    SchedulerSnapshot,
+    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelWorkerRecord,
+    PartitionFrontier, PartitionSnapshot, PendingEventSnapshot, ReadyPartition, RecordedRunSummary,
+    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -473,6 +473,7 @@ impl PartitionedScheduler {
                     final_tick: self.now,
                 },
                 dispatches: Vec::new(),
+                batches: Vec::new(),
             });
         };
         let horizon = plan.horizon();
@@ -492,10 +493,12 @@ impl PartitionedScheduler {
 
         let mut executed_events = 0;
         let mut dispatches = Vec::new();
+        let mut batches = Vec::new();
         while !ready_partitions.is_empty() {
             let batch = self.run_parallel_batch(horizon, ready_partitions)?;
             executed_events += batch.executed_events;
             dispatches.extend(batch.dispatches);
+            batches.push(batch.record);
             self.merge_remote_parallel_events(batch.remote_events)?;
 
             if let Some((partition, tick)) = self.first_serial_event_at_or_before(horizon) {
@@ -514,6 +517,7 @@ impl PartitionedScheduler {
                 final_tick: self.now,
             },
             dispatches,
+            batches,
         })
     }
 
@@ -728,10 +732,25 @@ impl PartitionedScheduler {
         let min_remote_delay = self.min_remote_delay;
         let remote_events = Arc::new(Mutex::new(Vec::new()));
         let mut partition_queues = Vec::with_capacity(ready_partitions.len());
+        let mut workers = Vec::with_capacity(ready_partitions.len());
 
         for partition in ready_partitions {
             let index = partition.index() as usize;
             let queue = mem::replace(&mut self.partitions[index], PartitionQueue::new());
+            let safe_until = queue.now.checked_add(min_remote_delay).ok_or(
+                SchedulerError::EpochHorizonOverflow {
+                    partition,
+                    now: queue.now,
+                    delay: min_remote_delay,
+                },
+            )?;
+            workers.push(ParallelWorkerRecord::new(
+                partition,
+                queue.now,
+                safe_until,
+                queue.peek_tick(),
+                queue.pending_event_count(),
+            ));
             partition_queues.push((index, partition, queue));
         }
 
@@ -766,6 +785,8 @@ impl PartitionedScheduler {
             dispatches.extend(result.dispatches);
             self.partitions[result.index] = result.queue;
         }
+        dispatches.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
+        let record = ParallelEpochBatchRecord::new(horizon, workers, dispatches.clone());
 
         let mut remote_events = remote_events.lock().expect("remote event outbox poisoned");
         let remote_events = remote_events.drain(..).collect();
@@ -773,6 +794,7 @@ impl PartitionedScheduler {
             executed_events,
             remote_events,
             dispatches,
+            record,
         })
     }
 
@@ -1023,6 +1045,7 @@ struct ParallelBatchResult {
     executed_events: usize,
     remote_events: Vec<RemoteScheduledEvent>,
     dispatches: Vec<SchedulerDispatchRecord>,
+    record: ParallelEpochBatchRecord,
 }
 
 struct RemoteScheduledEvent {

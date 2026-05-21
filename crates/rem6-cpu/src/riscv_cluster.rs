@@ -3,9 +3,10 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_kernel::{
-    ParallelEpochPlan, ParallelSchedulerContext, PartitionFrontier, PartitionId,
-    PartitionedScheduler, ReadyPartition, RecordedRunSummary, RunSummary, ScheduledEventKind,
-    SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
+    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelSchedulerContext, ParallelWorkerRecord,
+    PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition, RecordedRunSummary,
+    RunSummary, ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord, SchedulerError,
+    Tick,
 };
 use rem6_memory::AgentId;
 use rem6_mmio::MmioBus;
@@ -825,6 +826,7 @@ pub struct RiscvClusterSchedulerEpoch {
     plan: ParallelEpochPlan,
     summary: RunSummary,
     dispatches: Vec<SchedulerDispatchRecord>,
+    batches: Vec<ParallelEpochBatchRecord>,
 }
 
 impl RiscvClusterSchedulerEpoch {
@@ -833,6 +835,7 @@ impl RiscvClusterSchedulerEpoch {
             plan,
             summary: recorded.summary(),
             dispatches: recorded.dispatches().to_vec(),
+            batches: recorded.batches().to_vec(),
         }
     }
 
@@ -886,6 +889,47 @@ impl RiscvClusterSchedulerEpoch {
 
     pub fn dispatches(&self) -> &[SchedulerDispatchRecord] {
         &self.dispatches
+    }
+
+    pub fn batches(&self) -> &[ParallelEpochBatchRecord] {
+        &self.batches
+    }
+
+    pub fn batch_count(&self) -> usize {
+        self.batches.len()
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::worker_count)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn total_parallel_workers(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::worker_count)
+            .sum()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.total_parallel_workers() != 0
+    }
+
+    pub fn parallel_worker_partitions(&self) -> Vec<PartitionId> {
+        self.batches
+            .iter()
+            .flat_map(ParallelEpochBatchRecord::worker_partitions)
+            .collect()
+    }
+
+    pub fn workers(&self) -> Vec<ParallelWorkerRecord> {
+        self.batches
+            .iter()
+            .flat_map(|batch| batch.workers().iter().copied())
+            .collect()
     }
 
     pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
@@ -951,6 +995,35 @@ impl RiscvClusterRun {
             .into_iter()
             .flat_map(|epoch| epoch.dispatches().iter().copied())
             .collect()
+    }
+
+    pub fn parallel_scheduler_batches(&self) -> Vec<ParallelEpochBatchRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.batches().iter().cloned())
+            .collect()
+    }
+
+    pub fn parallel_scheduler_workers(&self) -> Vec<ParallelWorkerRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(RiscvClusterSchedulerEpoch::workers)
+            .collect()
+    }
+
+    pub fn parallel_scheduler_worker_partitions(&self) -> Vec<PartitionId> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(RiscvClusterSchedulerEpoch::parallel_worker_partitions)
+            .collect()
+    }
+
+    pub fn max_parallel_scheduler_workers(&self) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(RiscvClusterSchedulerEpoch::max_parallel_workers)
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn parallel_scheduler_dispatches_for_partition(

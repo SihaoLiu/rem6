@@ -515,6 +515,25 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
             .sum::<usize>()
     );
     assert_eq!(
+        run.parallel_scheduler_batches().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.batches().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_workers().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.total_parallel_workers())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_worker_partitions().len(),
+        run.parallel_scheduler_workers().len()
+    );
+    assert!(run.max_parallel_scheduler_workers() >= 1);
+    assert_eq!(
         run.parallel_scheduler_frontiers().len(),
         parallel_epochs
             .iter()
@@ -770,6 +789,18 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
             .map(|epoch| epoch.frontiers().len())
             .sum::<usize>()
     );
+    assert_eq!(
+        run.parallel_scheduler_batches().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.batches().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_worker_partitions().len(),
+        run.parallel_scheduler_workers().len()
+    );
+    assert!(run.max_parallel_scheduler_workers() >= 1);
     assert!(run
         .parallel_scheduler_dispatches()
         .iter()

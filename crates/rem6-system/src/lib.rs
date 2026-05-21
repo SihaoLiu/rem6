@@ -10,9 +10,9 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionEventId, PartitionFrontier, PartitionId,
-    PartitionedScheduler, ReadyPartition, SchedulerContext, SchedulerDispatchRecord,
-    SchedulerError, Tick,
+    ParallelEpochBatchRecord, ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId,
+    PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition, SchedulerContext,
+    SchedulerDispatchRecord, SchedulerError, Tick,
 };
 use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
@@ -640,6 +640,35 @@ impl RiscvSystemRun {
             .into_iter()
             .flat_map(|epoch| epoch.dispatches().iter().copied())
             .collect()
+    }
+
+    pub fn parallel_scheduler_batches(&self) -> Vec<ParallelEpochBatchRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.batches().iter().cloned())
+            .collect()
+    }
+
+    pub fn parallel_scheduler_workers(&self) -> Vec<ParallelWorkerRecord> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(RiscvClusterSchedulerEpoch::workers)
+            .collect()
+    }
+
+    pub fn parallel_scheduler_worker_partitions(&self) -> Vec<PartitionId> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(RiscvClusterSchedulerEpoch::parallel_worker_partitions)
+            .collect()
+    }
+
+    pub fn max_parallel_scheduler_workers(&self) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(RiscvClusterSchedulerEpoch::max_parallel_workers)
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn parallel_scheduler_dispatches_for_partition(

@@ -84,6 +84,119 @@ impl ParallelEpochPlan {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParallelEpochBatchRecord {
+    horizon: Tick,
+    workers: Vec<ParallelWorkerRecord>,
+    dispatches: Vec<SchedulerDispatchRecord>,
+}
+
+impl ParallelEpochBatchRecord {
+    pub fn new(
+        horizon: Tick,
+        workers: Vec<ParallelWorkerRecord>,
+        dispatches: Vec<SchedulerDispatchRecord>,
+    ) -> Self {
+        Self {
+            horizon,
+            workers,
+            dispatches,
+        }
+    }
+
+    pub fn horizon(&self) -> Tick {
+        self.horizon
+    }
+
+    pub fn workers(&self) -> &[ParallelWorkerRecord] {
+        &self.workers
+    }
+
+    pub fn worker_count(&self) -> usize {
+        self.workers.len()
+    }
+
+    pub fn worker_partitions(&self) -> Vec<PartitionId> {
+        self.workers
+            .iter()
+            .map(|worker| worker.partition())
+            .collect()
+    }
+
+    pub fn contains_worker(&self, partition: PartitionId) -> bool {
+        self.workers
+            .iter()
+            .any(|worker| worker.partition() == partition)
+    }
+
+    pub fn dispatches(&self) -> &[SchedulerDispatchRecord] {
+        &self.dispatches
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.dispatches.len()
+    }
+
+    pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
+        self.dispatches
+            .iter()
+            .copied()
+            .filter(|record| record.partition() == partition)
+            .collect()
+    }
+
+    pub fn dispatch_count_for_partition(&self, partition: PartitionId) -> usize {
+        self.dispatches_for_partition(partition).len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ParallelWorkerRecord {
+    partition: PartitionId,
+    start_tick: Tick,
+    safe_until: Tick,
+    next_tick: Option<Tick>,
+    pending_events: usize,
+}
+
+impl ParallelWorkerRecord {
+    pub const fn new(
+        partition: PartitionId,
+        start_tick: Tick,
+        safe_until: Tick,
+        next_tick: Option<Tick>,
+        pending_events: usize,
+    ) -> Self {
+        Self {
+            partition,
+            start_tick,
+            safe_until,
+            next_tick,
+            pending_events,
+        }
+    }
+
+    pub const fn partition(self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn start_tick(self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn safe_until(self) -> Tick {
+        self.safe_until
+    }
+
+    pub const fn next_tick(self) -> Option<Tick> {
+        self.next_tick
+    }
+
+    pub const fn pending_events(self) -> usize {
+        self.pending_events
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PartitionFrontier {
     partition: PartitionId,
@@ -292,6 +405,7 @@ impl SchedulerDispatchRecord {
 pub struct RecordedRunSummary {
     pub(super) summary: RunSummary,
     pub(super) dispatches: Vec<SchedulerDispatchRecord>,
+    pub(super) batches: Vec<ParallelEpochBatchRecord>,
 }
 
 impl RecordedRunSummary {
@@ -301,5 +415,39 @@ impl RecordedRunSummary {
 
     pub fn dispatches(&self) -> &[SchedulerDispatchRecord] {
         &self.dispatches
+    }
+
+    pub fn batches(&self) -> &[ParallelEpochBatchRecord] {
+        &self.batches
+    }
+
+    pub fn batch_count(&self) -> usize {
+        self.batches.len()
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::worker_count)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn total_parallel_workers(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::worker_count)
+            .sum()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.total_parallel_workers() != 0
+    }
+
+    pub fn parallel_worker_partitions(&self) -> Vec<PartitionId> {
+        self.batches
+            .iter()
+            .flat_map(ParallelEpochBatchRecord::worker_partitions)
+            .collect()
     }
 }

@@ -855,6 +855,37 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
         .any(|record| record.kind() == ScheduledEventKind::Parallel)));
     for epoch in &parallel_epochs {
         assert_eq!(epoch.horizon(), epoch.plan().horizon());
+        assert_eq!(epoch.batch_count(), epoch.batches().len());
+        assert_eq!(
+            epoch.total_parallel_workers(),
+            epoch
+                .batches()
+                .iter()
+                .map(|batch| batch.worker_count())
+                .sum::<usize>()
+        );
+        assert_eq!(
+            epoch.dispatches().len(),
+            epoch
+                .batches()
+                .iter()
+                .map(|batch| batch.dispatches().len())
+                .sum::<usize>()
+        );
+        if epoch.dispatches().is_empty() {
+            assert_eq!(epoch.max_parallel_workers(), 0);
+            assert_eq!(epoch.batch_count(), 0);
+            assert!(!epoch.has_parallel_work());
+            assert!(epoch.parallel_worker_partitions().is_empty());
+        } else {
+            assert!(epoch.max_parallel_workers() >= 1);
+            assert!(epoch.has_parallel_work());
+            assert!(!epoch.parallel_worker_partitions().is_empty());
+        }
+        assert_eq!(
+            epoch.parallel_worker_partitions().len(),
+            epoch.total_parallel_workers()
+        );
         assert_eq!(
             epoch.ready_partition_count(),
             epoch.plan().ready_partition_count()
@@ -882,6 +913,9 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
             .iter()
             .all(|record| record.tick() <= epoch.plan().horizon()));
     }
+    assert!(parallel_epochs
+        .iter()
+        .any(|epoch| epoch.max_parallel_workers() >= 1));
     assert_eq!(
         executed
             .core_events()
@@ -1012,6 +1046,25 @@ fn riscv_cluster_run_collects_parallel_epoch_records() {
             .map(|epoch| epoch.dispatches().len())
             .sum::<usize>()
     );
+    assert_eq!(
+        run.parallel_scheduler_batches().len(),
+        epochs
+            .iter()
+            .map(|epoch| epoch.batches().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_workers().len(),
+        epochs
+            .iter()
+            .map(|epoch| epoch.total_parallel_workers())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_worker_partitions().len(),
+        run.parallel_scheduler_workers().len()
+    );
+    assert!(run.max_parallel_scheduler_workers() >= 1);
     assert_eq!(
         run.parallel_scheduler_frontiers().len(),
         epochs
