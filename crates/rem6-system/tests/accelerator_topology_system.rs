@@ -3,7 +3,12 @@ use rem6_accelerator::{
     AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig, AcceleratorEngineId,
     AcceleratorError, AcceleratorTopologyConfig, AcceleratorTraceEvent, AcceleratorTraceKind,
 };
+use rem6_coherence::{
+    PartitionedDirectoryLineHarness, TopologyCacheAgentConfig, TopologyDirectoryConfig,
+    TopologyDirectoryHarnessConfig, TopologyDramMemoryConfig,
+};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
+use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
@@ -116,7 +121,111 @@ fn topology_with_accelerator() -> Topology {
         .unwrap()
 }
 
+fn topology_with_coherent_accelerator() -> Topology {
+    TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("accelerator0"),
+                kind("accelerator"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("dma"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "ifetch"),
+            endpoint("mem0", "requests"),
+            2,
+            2,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("mem0", "requests"), 2, 2)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("accelerator0", "dma"),
+            endpoint("mem0", "requests"),
+            3,
+            5,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("accelerator0", "dma"),
+            endpoint("dir0", "cache_side"),
+            2,
+            4,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("dir0", "mem_side"),
+            endpoint("mem0", "requests"),
+            4,
+            5,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn core_config() -> RiscvCoreTopologyConfig {
+    RiscvCoreTopologyConfig::new(
+        CpuResetState::new(
+            CpuId::new(0),
+            PartitionId::new(0),
+            AgentId::new(7),
+            Address::new(0x8000),
+        ),
+        endpoint("cpu0", "ifetch"),
+        endpoint("mem0", "requests"),
+        layout(),
+        AccessSize::new(4).unwrap(),
+    )
+    .with_data(
+        endpoint("cpu0", "dmem"),
+        endpoint("mem0", "requests"),
+        layout(),
+    )
+}
+
+fn coherent_core_config() -> RiscvCoreTopologyConfig {
     RiscvCoreTopologyConfig::new(
         CpuResetState::new(
             CpuId::new(0),
@@ -159,7 +268,87 @@ fn memory_store() -> PartitionedMemoryStore {
     store
 }
 
+fn coherent_memory_store() -> PartitionedMemoryStore {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x3000).unwrap(),
+        )
+        .unwrap();
+
+    let mut stale_source = vec![0; 16];
+    stale_source[4..8].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+    store
+        .insert_line(target, Address::new(0x1000), stale_source)
+        .unwrap();
+    store
+        .insert_line(target, Address::new(0x3000), vec![0; 16])
+        .unwrap();
+    store
+}
+
+fn coherent_data_dram_memory() -> DramMemoryController {
+    let target = MemoryTargetId::new(7);
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(4, 64, 16).unwrap(),
+            DramTiming::new(3, 5, 9, 2, 2).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+
+    let mut cached_source = vec![0; 16];
+    cached_source[4..8].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    memory
+        .insert_line(target, Address::new(0x1000), cached_source)
+        .unwrap();
+    memory
+}
+
+fn coherent_accelerator_data_harness(topology: &Topology) -> PartitionedDirectoryLineHarness {
+    PartitionedDirectoryLineHarness::new_with_topology(
+        topology,
+        TopologyDirectoryHarnessConfig::new(
+            layout(),
+            Address::new(0x1000),
+            TopologyDirectoryConfig::new(component("dir0"), port("cache_side"), port("mem_side")),
+            TopologyDramMemoryConfig::new(
+                component("mem0"),
+                port("requests"),
+                coherent_data_dram_memory(),
+            ),
+            [TopologyCacheAgentConfig::new(
+                AgentId::new(44),
+                component("accelerator0"),
+                port("dma"),
+            )],
+        ),
+    )
+    .unwrap()
+}
+
 fn accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig {
+    AcceleratorTopologyConfig::new(
+        AcceleratorEngineConfig::new(engine, PartitionId::new(1), 2).unwrap(),
+        endpoint("accelerator0", "dma"),
+        endpoint("mem0", "requests"),
+    )
+}
+
+fn coherent_accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig {
     AcceleratorTopologyConfig::new(
         AcceleratorEngineConfig::new(engine, PartitionId::new(1), 2).unwrap(),
         endpoint("accelerator0", "dma"),
@@ -298,6 +487,46 @@ fn topology_system_runs_accelerator_dma_copy_on_parallel_memory_backend() {
             ),
         ],
     );
+}
+
+#[test]
+fn topology_system_routes_accelerator_dma_read_through_msi_data_cache() {
+    let accelerator_id = AcceleratorEngineId::new(46);
+    let topology = topology_with_coherent_accelerator();
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology.clone(),
+        RiscvClusterTopologyConfig::new([coherent_core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(coherent_memory_store())
+    .unwrap()
+    .with_accelerator(coherent_accelerator_config(accelerator_id))
+    .unwrap()
+    .with_msi_data_cache(coherent_accelerator_data_harness(&topology))
+    .unwrap();
+    let route = system.accelerator(accelerator_id).unwrap().dma_route();
+
+    let summary = system
+        .run_accelerator_dma_copy_parallel_recorded(
+            accelerator_id,
+            dma_copy(route, 96),
+            MemoryTrace::new(),
+        )
+        .unwrap();
+
+    let destination = system
+        .memory_store()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x3000))
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0xaa, 0xbb, 0xcc, 0xdd]);
+    assert_eq!(system.msi_data_cache_runs().len(), 1);
+    assert_eq!(summary.read().dram_access_count(), 1);
+    assert_eq!(summary.write().dram_access_count(), 0);
+    assert_eq!(summary.dram_access_count(), 1);
 }
 
 #[test]

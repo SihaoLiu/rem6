@@ -6,7 +6,7 @@ use rem6_coherence::{
     PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_dram::DramTargetActivity;
-use rem6_memory::{MemoryRequest, MemoryResponse, ResponseStatus};
+use rem6_memory::{Address, MemoryRequest, MemoryResponse, ResponseStatus};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
@@ -37,6 +37,14 @@ impl RiscvTopologyMsiDataCache {
 
     pub(super) fn mark_runs(&self) -> usize {
         self.runs.lock().expect("MSI data cache run lock").len()
+    }
+
+    pub(super) fn line_address(&self) -> Address {
+        self.harness
+            .lock()
+            .expect("MSI data cache lock")
+            .line()
+            .address()
     }
 
     fn runs_since(&self, marker: usize) -> Vec<ParallelCoherenceRunSummary> {
@@ -77,6 +85,14 @@ impl RiscvTopologyMesiDataCache {
 
     pub(super) fn mark_runs(&self) -> usize {
         self.runs.lock().expect("MESI data cache run lock").len()
+    }
+
+    pub(super) fn line_address(&self) -> Address {
+        self.harness
+            .lock()
+            .expect("MESI data cache lock")
+            .line()
+            .address()
     }
 
     fn runs_since(&self, marker: usize) -> Vec<ParallelCoherenceRunSummary> {
@@ -120,6 +136,14 @@ impl RiscvTopologyMoesiDataCache {
 
     pub(super) fn mark_runs(&self) -> usize {
         self.runs.lock().expect("MOESI data cache run lock").len()
+    }
+
+    pub(super) fn line_address(&self) -> Address {
+        self.harness
+            .lock()
+            .expect("MOESI data cache lock")
+            .line()
+            .address()
     }
 
     fn runs_since(&self, marker: usize) -> Vec<ParallelCoherenceRunSummary> {
@@ -223,6 +247,26 @@ fn topology_mesi_data_response_result(
     cache.record_run(run);
 
     data_cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)
+}
+
+pub(super) fn topology_data_cache_response(
+    msi_data_cache: Option<&RiscvTopologyMsiDataCache>,
+    mesi_data_cache: Option<&RiscvTopologyMesiDataCache>,
+    moesi_data_cache: Option<&RiscvTopologyMoesiDataCache>,
+    memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
+    delivery: &RequestDelivery,
+) -> Option<TargetOutcome> {
+    let line_address = delivery.request().line_address();
+    if let Some(cache) = moesi_data_cache.filter(|cache| cache.line_address() == line_address) {
+        Some(topology_moesi_data_response(cache, memory_error, delivery))
+    } else if let Some(cache) = mesi_data_cache.filter(|cache| cache.line_address() == line_address)
+    {
+        Some(topology_mesi_data_response(cache, memory_error, delivery))
+    } else {
+        msi_data_cache
+            .filter(|cache| cache.line_address() == line_address)
+            .map(|cache| topology_msi_data_response(cache, memory_error, delivery))
+    }
 }
 
 pub(super) fn topology_moesi_data_response(
