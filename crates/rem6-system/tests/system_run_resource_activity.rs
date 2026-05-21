@@ -1,5 +1,7 @@
 use rem6_boot::BootImage;
-use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
+use rem6_coherence::{
+    ParallelCoherenceRunHistory, ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
+};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_isa_riscv::Register;
@@ -10,9 +12,9 @@ use rem6_kernel::{
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvSystemRun,
-    RiscvSystemRunStopReason, RiscvTopologyDramConfig, RiscvTopologyHostConfig,
-    RiscvTopologyMemoryConfig, RiscvTopologySystem, StopRequest,
+    GuestEventId, GuestSourceId, RiscvDataCacheProtocol, RiscvDataCacheRunHistoryRecord,
+    RiscvDataCacheRunRecord, RiscvSystemRun, RiscvSystemRunStopReason, RiscvTopologyDramConfig,
+    RiscvTopologyHostConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem, StopRequest,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, FabricConnectionConfig, PortDirection,
@@ -286,6 +288,33 @@ fn system_run_starts_without_resource_activity() {
         run.data_cache_parallel_scheduler_profile(),
         ParallelRunProfile::default()
     );
+    assert_eq!(
+        run.data_cache_parallel_run_history(),
+        ParallelCoherenceRunHistory::default()
+    );
+    assert!(run
+        .data_cache_parallel_run_histories_by_protocol()
+        .is_empty());
+    assert!(run.data_cache_parallel_run_history_records().is_empty());
+    assert_eq!(
+        run.attributed_data_cache_parallel_run_history(),
+        ParallelCoherenceRunHistory::default()
+    );
+    assert_eq!(
+        run.unattributed_data_cache_parallel_run_history(),
+        ParallelCoherenceRunHistory::default()
+    );
+    assert_eq!(run.attributed_data_cache_parallel_run_count(), 0);
+    assert_eq!(run.unattributed_data_cache_parallel_run_count(), 0);
+    assert_eq!(
+        run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
+        0,
+    );
+    assert!(!run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi));
+    assert_eq!(
+        run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi),
+        ParallelCoherenceRunHistory::default()
+    );
     assert_eq!(run.data_cache_parallel_scheduler_epoch_count(), 0);
     assert_eq!(run.data_cache_parallel_scheduler_dispatch_count(), 0);
     assert_eq!(run.data_cache_parallel_scheduler_batch_count(), 0);
@@ -344,6 +373,19 @@ fn system_run_aggregates_data_cache_wait_for_diagnostics() {
         run.data_cache_parallel_scheduler_profile(),
         ParallelRunProfile::default()
     );
+    assert_eq!(run.data_cache_parallel_run_history().run_count(), 1);
+    assert!(run.data_cache_parallel_run_history().has_wait_for_edges());
+    assert_eq!(
+        run.unattributed_data_cache_parallel_run_history(),
+        run.data_cache_parallel_run_history()
+    );
+    assert_eq!(
+        run.attributed_data_cache_parallel_run_history(),
+        ParallelCoherenceRunHistory::default()
+    );
+    assert_eq!(run.unattributed_data_cache_parallel_run_count(), 1);
+    assert_eq!(run.attributed_data_cache_parallel_run_count(), 0);
+    assert!(!run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi));
     assert_eq!(
         run.full_system_parallel_scheduler_profile(),
         run.parallel_scheduler_profile()
@@ -528,6 +570,100 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         run.data_cache_runs_for_protocol(RiscvDataCacheProtocol::Moesi),
         vec![moesi_run],
     );
+    assert_eq!(run.data_cache_parallel_run_history().run_count(), 3);
+    assert_eq!(
+        run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi)
+            .run_count(),
+        1,
+    );
+    assert_eq!(
+        run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Mesi)
+            .run_count(),
+        1,
+    );
+    assert_eq!(
+        run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi)
+            .run_count(),
+        1,
+    );
+    assert_eq!(
+        run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
+        1,
+    );
+    assert_eq!(
+        run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Mesi),
+        1,
+    );
+    assert_eq!(
+        run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Moesi),
+        1,
+    );
+    assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi));
+    assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Mesi));
+    assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi));
+    assert!(run
+        .data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi)
+        .has_wait_for_edges());
+    assert_eq!(
+        run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi)
+            .total_cpu_responses(),
+        0,
+    );
+    let histories = run.data_cache_parallel_run_histories_by_protocol();
+    assert_eq!(
+        histories
+            .get(&RiscvDataCacheProtocol::Msi)
+            .unwrap()
+            .run_count(),
+        1,
+    );
+    assert_eq!(
+        histories
+            .get(&RiscvDataCacheProtocol::Mesi)
+            .unwrap()
+            .run_count(),
+        1,
+    );
+    assert_eq!(
+        histories
+            .get(&RiscvDataCacheProtocol::Moesi)
+            .unwrap()
+            .run_count(),
+        1,
+    );
+    assert_eq!(histories.len(), 3);
+    let history_records = run.data_cache_parallel_run_history_records();
+    assert_eq!(
+        history_records,
+        vec![
+            RiscvDataCacheRunHistoryRecord::new(
+                RiscvDataCacheProtocol::Msi,
+                run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi),
+            ),
+            RiscvDataCacheRunHistoryRecord::new(
+                RiscvDataCacheProtocol::Mesi,
+                run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Mesi),
+            ),
+            RiscvDataCacheRunHistoryRecord::new(
+                RiscvDataCacheProtocol::Moesi,
+                run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi),
+            ),
+        ],
+    );
+    assert_eq!(
+        run.data_cache_parallel_run_history_record(RiscvDataCacheProtocol::Msi),
+        Some(history_records[0].clone()),
+    );
+    assert_eq!(
+        run.attributed_data_cache_parallel_run_history(),
+        run.data_cache_parallel_run_history()
+    );
+    assert_eq!(
+        run.unattributed_data_cache_parallel_run_history(),
+        ParallelCoherenceRunHistory::default()
+    );
+    assert_eq!(run.attributed_data_cache_parallel_run_count(), 3);
+    assert_eq!(run.unattributed_data_cache_parallel_run_count(), 0);
 }
 
 #[test]

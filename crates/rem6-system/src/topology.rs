@@ -1,4 +1,5 @@
 mod coherence_data;
+mod data_cache_history;
 mod dma_run;
 mod heterogeneous_run;
 mod host_checkpoint;

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_coherence::ParallelCoherenceRunSummary;
+use rem6_coherence::{ParallelCoherenceRunHistory, ParallelCoherenceRunSummary};
 use rem6_kernel::{
     DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
     PartitionId, RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind,
@@ -20,6 +20,12 @@ pub enum RiscvDataCacheProtocol {
 pub struct RiscvDataCacheRunRecord {
     protocol: Option<RiscvDataCacheProtocol>,
     summary: ParallelCoherenceRunSummary,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvDataCacheRunHistoryRecord {
+    protocol: RiscvDataCacheProtocol,
+    history: ParallelCoherenceRunHistory,
 }
 
 impl RiscvDataCacheRunRecord {
@@ -50,6 +56,24 @@ impl RiscvDataCacheRunRecord {
 
     pub fn into_summary(self) -> ParallelCoherenceRunSummary {
         self.summary
+    }
+}
+
+impl RiscvDataCacheRunHistoryRecord {
+    pub fn new(protocol: RiscvDataCacheProtocol, history: ParallelCoherenceRunHistory) -> Self {
+        Self { protocol, history }
+    }
+
+    pub const fn protocol(&self) -> RiscvDataCacheProtocol {
+        self.protocol
+    }
+
+    pub const fn history(&self) -> &ParallelCoherenceRunHistory {
+        &self.history
+    }
+
+    pub fn into_history(self) -> ParallelCoherenceRunHistory {
+        self.history
     }
 }
 
@@ -151,6 +175,93 @@ impl RiscvSystemRun {
             .fold(ParallelRunProfile::default(), |profile, run| {
                 profile.merge(run.profile())
             })
+    }
+
+    pub fn data_cache_parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.data_cache_runs)
+    }
+
+    pub fn attributed_data_cache_parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_histories(
+            self.data_cache_parallel_run_history_records()
+                .into_iter()
+                .map(RiscvDataCacheRunHistoryRecord::into_history),
+        )
+    }
+
+    pub fn attributed_data_cache_parallel_run_count(&self) -> usize {
+        self.attributed_data_cache_parallel_run_history()
+            .run_count()
+    }
+
+    pub fn unattributed_data_cache_parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        let runs: Vec<_> = self
+            .data_cache_run_records()
+            .into_iter()
+            .filter(|record| record.protocol().is_none())
+            .map(RiscvDataCacheRunRecord::into_summary)
+            .collect();
+        ParallelCoherenceRunHistory::from_runs(&runs)
+    }
+
+    pub fn unattributed_data_cache_parallel_run_count(&self) -> usize {
+        self.unattributed_data_cache_parallel_run_history()
+            .run_count()
+    }
+
+    pub fn data_cache_parallel_run_history_for_protocol(
+        &self,
+        protocol: RiscvDataCacheProtocol,
+    ) -> ParallelCoherenceRunHistory {
+        let runs = self.data_cache_runs_for_protocol(protocol);
+        ParallelCoherenceRunHistory::from_runs(&runs)
+    }
+
+    pub fn data_cache_parallel_run_count_for_protocol(
+        &self,
+        protocol: RiscvDataCacheProtocol,
+    ) -> usize {
+        self.data_cache_parallel_run_history_for_protocol(protocol)
+            .run_count()
+    }
+
+    pub fn has_data_cache_parallel_run_history_for_protocol(
+        &self,
+        protocol: RiscvDataCacheProtocol,
+    ) -> bool {
+        self.data_cache_parallel_run_count_for_protocol(protocol) != 0
+    }
+
+    pub fn data_cache_parallel_run_histories_by_protocol(
+        &self,
+    ) -> BTreeMap<RiscvDataCacheProtocol, ParallelCoherenceRunHistory> {
+        let mut histories = BTreeMap::new();
+        for protocol in [
+            RiscvDataCacheProtocol::Msi,
+            RiscvDataCacheProtocol::Mesi,
+            RiscvDataCacheProtocol::Moesi,
+        ] {
+            let history = self.data_cache_parallel_run_history_for_protocol(protocol);
+            if !history.is_empty() {
+                histories.insert(protocol, history);
+            }
+        }
+        histories
+    }
+
+    pub fn data_cache_parallel_run_history_record(
+        &self,
+        protocol: RiscvDataCacheProtocol,
+    ) -> Option<RiscvDataCacheRunHistoryRecord> {
+        let history = self.data_cache_parallel_run_history_for_protocol(protocol);
+        (!history.is_empty()).then(|| RiscvDataCacheRunHistoryRecord::new(protocol, history))
+    }
+
+    pub fn data_cache_parallel_run_history_records(&self) -> Vec<RiscvDataCacheRunHistoryRecord> {
+        self.data_cache_parallel_run_histories_by_protocol()
+            .into_iter()
+            .map(|(protocol, history)| RiscvDataCacheRunHistoryRecord::new(protocol, history))
+            .collect()
     }
 
     pub fn data_cache_parallel_scheduler_epoch_count(&self) -> usize {

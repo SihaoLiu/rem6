@@ -41,7 +41,9 @@ mod workload_replay;
 pub use coherence_checkpoint::{
     MsiBankCheckpointBank, MsiBankCheckpointError, MsiBankCheckpointPort, MsiBankCheckpointRecord,
 };
-pub use data_cache_run::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
+pub use data_cache_run::{
+    RiscvDataCacheProtocol, RiscvDataCacheRunHistoryRecord, RiscvDataCacheRunRecord,
+};
 pub use fabric_checkpoint::{
     FabricCheckpointBank, FabricCheckpointError, FabricCheckpointPort, FabricCheckpointRecord,
 };
