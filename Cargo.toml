@@ -25,6 +25,7 @@ members = [
     "crates/rem6-topology",
     "crates/rem6-transport",
     "crates/rem6-uart",
+    "crates/rem6-workload",
 ]
 resolver = "2"
 
