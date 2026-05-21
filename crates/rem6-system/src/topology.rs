@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorDmaCopy, AcceleratorDmaIssueRecord, AcceleratorDmaWriteRollback,
-    AcceleratorEngineId, AcceleratorError, AcceleratorTopologyConfig, AcceleratorTopologyDevice,
+    AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError, AcceleratorTopologyConfig,
+    AcceleratorTopologyDevice,
 };
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
@@ -18,12 +19,12 @@ use rem6_dram::{
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{
-    GpuDeviceId, GpuDmaCopy, GpuDmaIssueRecord, GpuDmaWriteRollback, GpuError, GpuKernelLaunch,
-    GpuTopologyConfig, GpuTopologyDevice,
+    GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaIssueRecord, GpuDmaWriteRollback, GpuError,
+    GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice,
 };
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
-    Tick,
+    ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
+    PartitionedScheduler, RecordedConservativeRunSummary, SchedulerError, Tick,
 };
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryResponse, MemoryTargetId,
@@ -77,6 +78,173 @@ impl RiscvTopologyDmaCopy {
     pub const fn gpu(device: GpuDeviceId, copy: GpuDmaCopy) -> Self {
         Self::Gpu { device, copy }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvTopologyDmaStageRunSummary {
+    events: Vec<PartitionEventId>,
+    scheduler_run: RecordedConservativeRunSummary,
+    trace_event_count: usize,
+    pending_dma_write_count: usize,
+    dma_completion_count: usize,
+}
+
+impl RiscvTopologyDmaStageRunSummary {
+    pub fn new(
+        events: Vec<PartitionEventId>,
+        scheduler_run: RecordedConservativeRunSummary,
+        trace_event_count: usize,
+        pending_dma_write_count: usize,
+        dma_completion_count: usize,
+    ) -> Self {
+        Self {
+            events,
+            scheduler_run,
+            trace_event_count,
+            pending_dma_write_count,
+            dma_completion_count,
+        }
+    }
+
+    pub fn events(&self) -> &[PartitionEventId] {
+        &self.events
+    }
+
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    pub const fn scheduler_run(&self) -> &RecordedConservativeRunSummary {
+        &self.scheduler_run
+    }
+
+    pub fn profile(&self) -> ParallelRunProfile {
+        self.scheduler_run.profile()
+    }
+
+    pub fn epoch_count(&self) -> usize {
+        self.scheduler_run.epoch_count()
+    }
+
+    pub fn empty_epoch_count(&self) -> usize {
+        self.scheduler_run.empty_epoch_count()
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.scheduler_run.dispatch_count()
+    }
+
+    pub fn batch_count(&self) -> usize {
+        self.scheduler_run.batch_count()
+    }
+
+    pub fn total_parallel_workers(&self) -> usize {
+        self.scheduler_run.total_parallel_workers()
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.scheduler_run.max_parallel_workers()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.scheduler_run.has_parallel_work()
+    }
+
+    pub fn final_tick(&self) -> Tick {
+        self.scheduler_run.summary().final_tick()
+    }
+
+    pub const fn trace_event_count(&self) -> usize {
+        self.trace_event_count
+    }
+
+    pub const fn pending_dma_write_count(&self) -> usize {
+        self.pending_dma_write_count
+    }
+
+    pub const fn dma_completion_count(&self) -> usize {
+        self.dma_completion_count
+    }
+
+    pub const fn device_activity_count(&self) -> usize {
+        self.trace_event_count + self.pending_dma_write_count + self.dma_completion_count
+    }
+
+    pub const fn has_dma_activity(&self) -> bool {
+        self.device_activity_count() != 0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvTopologyDmaRunSummary {
+    read: RiscvTopologyDmaStageRunSummary,
+    write: RiscvTopologyDmaStageRunSummary,
+}
+
+impl RiscvTopologyDmaRunSummary {
+    pub const fn new(
+        read: RiscvTopologyDmaStageRunSummary,
+        write: RiscvTopologyDmaStageRunSummary,
+    ) -> Self {
+        Self { read, write }
+    }
+
+    pub const fn read(&self) -> &RiscvTopologyDmaStageRunSummary {
+        &self.read
+    }
+
+    pub const fn write(&self) -> &RiscvTopologyDmaStageRunSummary {
+        &self.write
+    }
+
+    pub fn profile(&self) -> ParallelRunProfile {
+        self.read.profile().merge(self.write.profile())
+    }
+
+    pub fn event_count(&self) -> usize {
+        self.read.event_count() + self.write.event_count()
+    }
+
+    pub const fn trace_event_count(&self) -> usize {
+        self.read.trace_event_count() + self.write.trace_event_count()
+    }
+
+    pub const fn pending_dma_write_count(&self) -> usize {
+        self.write.pending_dma_write_count()
+    }
+
+    pub const fn dma_completion_count(&self) -> usize {
+        self.read.dma_completion_count() + self.write.dma_completion_count()
+    }
+
+    pub const fn device_activity_count(&self) -> usize {
+        self.read.device_activity_count() + self.write.device_activity_count()
+    }
+
+    pub const fn has_dma_activity(&self) -> bool {
+        self.device_activity_count() != 0
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.read.has_parallel_work() || self.write.has_parallel_work()
+    }
+
+    pub fn final_tick(&self) -> Tick {
+        self.write.final_tick()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RiscvTopologyDmaDeviceSnapshots {
+    accelerators: BTreeMap<AcceleratorEngineId, AcceleratorEngineSnapshot>,
+    gpus: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RiscvTopologyDmaActivityCounts {
+    trace_event_count: usize,
+    pending_dma_write_count: usize,
+    dma_completion_count: usize,
 }
 
 enum RiscvTopologyDmaIssueRecord {
@@ -809,63 +977,20 @@ impl RiscvTopologySystem {
         copy: AcceleratorDmaCopy,
         trace: MemoryTrace,
     ) -> Result<(), RiscvTopologySystemError> {
-        let accelerator = self
-            .accelerators
-            .get(&engine)
-            .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine })?
-            .engine()
-            .clone();
-        let memory = self
-            .memory
-            .as_ref()
-            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
-            .clone();
-        let memory_error = Arc::new(Mutex::new(None));
+        self.run_accelerator_dma_copy_parallel_recorded(engine, copy, trace)
+            .map(|_| ())
+    }
 
-        let read_memory = memory.clone();
-        let read_error = Arc::clone(&memory_error);
-        let mut scheduler = self.lock_scheduler();
-        accelerator
-            .submit_dma_copy_read(
-                &mut scheduler,
-                &self.transport,
-                copy,
-                trace.clone(),
-                move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
-                    topology_memory_response(&read_memory, &read_error, &delivery)
-                },
-            )
-            .map_err(RiscvTopologySystemError::Accelerator)?;
-        scheduler
-            .run_until_idle_parallel()
-            .map_err(RiscvTopologySystemError::Scheduler)?;
-        if let Some(error) = take_memory_error(&memory_error) {
-            return Err(error);
-        }
-
-        let write_memory = memory.clone();
-        let write_error = Arc::clone(&memory_error);
-        let Some(_event) = accelerator
-            .issue_next_dma_write(
-                &mut scheduler,
-                &self.transport,
-                trace,
-                move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
-                    topology_memory_response(&write_memory, &write_error, &delivery)
-                },
-            )
-            .map_err(RiscvTopologySystemError::Accelerator)?
-        else {
-            return Err(RiscvTopologySystemError::AcceleratorDmaWriteNotReady { engine });
-        };
-        scheduler
-            .run_until_idle_parallel()
-            .map_err(RiscvTopologySystemError::Scheduler)?;
-        if let Some(error) = take_memory_error(&memory_error) {
-            return Err(error);
-        }
-
-        Ok(())
+    pub fn run_accelerator_dma_copy_parallel_recorded(
+        &mut self,
+        engine: AcceleratorEngineId,
+        copy: AcceleratorDmaCopy,
+        trace: MemoryTrace,
+    ) -> Result<RiscvTopologyDmaRunSummary, RiscvTopologySystemError> {
+        self.run_dma_copies_parallel_recorded(
+            [RiscvTopologyDmaCopy::accelerator(engine, copy)],
+            trace,
+        )
     }
 
     pub fn submit_accelerator_command_parallel(
@@ -903,62 +1028,17 @@ impl RiscvTopologySystem {
         copy: GpuDmaCopy,
         trace: MemoryTrace,
     ) -> Result<(), RiscvTopologySystemError> {
-        let gpu = self
-            .gpus
-            .get(&device)
-            .ok_or(RiscvTopologySystemError::UnknownGpu { device })?
-            .gpu()
-            .clone();
-        let memory = self
-            .memory
-            .as_ref()
-            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
-            .clone();
-        let memory_error = Arc::new(Mutex::new(None));
+        self.run_gpu_dma_copy_parallel_recorded(device, copy, trace)
+            .map(|_| ())
+    }
 
-        let read_memory = memory.clone();
-        let read_error = Arc::clone(&memory_error);
-        let mut scheduler = self.lock_scheduler();
-        gpu.submit_dma_copy_read(
-            &mut scheduler,
-            &self.transport,
-            copy,
-            trace.clone(),
-            move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
-                topology_memory_response(&read_memory, &read_error, &delivery)
-            },
-        )
-        .map_err(RiscvTopologySystemError::Gpu)?;
-        scheduler
-            .run_until_idle_parallel()
-            .map_err(RiscvTopologySystemError::Scheduler)?;
-        if let Some(error) = take_memory_error(&memory_error) {
-            return Err(error);
-        }
-
-        let write_memory = memory.clone();
-        let write_error = Arc::clone(&memory_error);
-        let Some(_event) = gpu
-            .issue_next_dma_write(
-                &mut scheduler,
-                &self.transport,
-                trace,
-                move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
-                    topology_memory_response(&write_memory, &write_error, &delivery)
-                },
-            )
-            .map_err(RiscvTopologySystemError::Gpu)?
-        else {
-            return Err(RiscvTopologySystemError::GpuDmaWriteNotReady { device });
-        };
-        scheduler
-            .run_until_idle_parallel()
-            .map_err(RiscvTopologySystemError::Scheduler)?;
-        if let Some(error) = take_memory_error(&memory_error) {
-            return Err(error);
-        }
-
-        Ok(())
+    pub fn run_gpu_dma_copy_parallel_recorded(
+        &mut self,
+        device: GpuDeviceId,
+        copy: GpuDmaCopy,
+        trace: MemoryTrace,
+    ) -> Result<RiscvTopologyDmaRunSummary, RiscvTopologySystemError> {
+        self.run_dma_copies_parallel_recorded([RiscvTopologyDmaCopy::gpu(device, copy)], trace)
     }
 
     pub fn run_dma_copy_reads_parallel<I>(
@@ -974,12 +1054,30 @@ impl RiscvTopologySystem {
             return Ok(Vec::new());
         }
 
+        self.run_dma_copy_reads_parallel_recorded(copies, trace)
+            .map(|summary| summary.events().to_vec())
+    }
+
+    pub fn run_dma_copy_reads_parallel_recorded<I>(
+        &mut self,
+        copies: I,
+        trace: MemoryTrace,
+    ) -> Result<RiscvTopologyDmaStageRunSummary, RiscvTopologySystemError>
+    where
+        I: IntoIterator<Item = RiscvTopologyDmaCopy>,
+    {
+        let copies: Vec<_> = copies.into_iter().collect();
+        if copies.is_empty() {
+            return Ok(self.empty_dma_stage_run_summary());
+        }
+
         let memory = self
             .memory
             .as_ref()
             .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
+        let before = self.dma_device_snapshots(&copies)?;
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let mut issue_records = Vec::new();
@@ -1039,14 +1137,22 @@ impl RiscvTopologySystem {
         for issue in issue_records {
             issue.record();
         }
-        scheduler
-            .run_until_idle_parallel()
+        let scheduler_run = scheduler
+            .run_until_idle_parallel_recorded()
             .map_err(RiscvTopologySystemError::Scheduler)?;
+        drop(scheduler);
         if let Some(error) = take_memory_error(&memory_error) {
             return Err(error);
         }
+        let activity = self.dma_activity_since(&before)?;
 
-        Ok(events)
+        Ok(RiscvTopologyDmaStageRunSummary::new(
+            events,
+            scheduler_run,
+            activity.trace_event_count,
+            activity.pending_dma_write_count,
+            activity.dma_completion_count,
+        ))
     }
 
     pub fn run_dma_copies_parallel<I>(
@@ -1062,22 +1168,40 @@ impl RiscvTopologySystem {
             return Ok(());
         }
 
-        self.run_dma_copy_reads_parallel(copies.clone(), trace.clone())?;
-        self.run_dma_copy_writes_parallel(copies, trace)?;
-        Ok(())
+        self.run_dma_copies_parallel_recorded(copies, trace)
+            .map(|_| ())
     }
 
-    fn run_dma_copy_writes_parallel(
+    pub fn run_dma_copies_parallel_recorded<I>(
+        &mut self,
+        copies: I,
+        trace: MemoryTrace,
+    ) -> Result<RiscvTopologyDmaRunSummary, RiscvTopologySystemError>
+    where
+        I: IntoIterator<Item = RiscvTopologyDmaCopy>,
+    {
+        let copies: Vec<_> = copies.into_iter().collect();
+        let read = self.run_dma_copy_reads_parallel_recorded(copies.clone(), trace.clone())?;
+        let write = self.run_dma_copy_writes_parallel_recorded(copies, trace)?;
+        Ok(RiscvTopologyDmaRunSummary::new(read, write))
+    }
+
+    fn run_dma_copy_writes_parallel_recorded(
         &mut self,
         copies: Vec<RiscvTopologyDmaCopy>,
         trace: MemoryTrace,
-    ) -> Result<Vec<PartitionEventId>, RiscvTopologySystemError> {
+    ) -> Result<RiscvTopologyDmaStageRunSummary, RiscvTopologySystemError> {
+        if copies.is_empty() {
+            return Ok(self.empty_dma_stage_run_summary());
+        }
+
         let memory = self
             .memory
             .as_ref()
             .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
+        let before = self.dma_device_snapshots(&copies)?;
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let mut issue_records = Vec::new();
@@ -1158,14 +1282,111 @@ impl RiscvTopologySystem {
         for issue in issue_records {
             issue.record();
         }
-        scheduler
-            .run_until_idle_parallel()
+        let scheduler_run = scheduler
+            .run_until_idle_parallel_recorded()
             .map_err(RiscvTopologySystemError::Scheduler)?;
+        drop(scheduler);
         if let Some(error) = take_memory_error(&memory_error) {
             return Err(error);
         }
+        let activity = self.dma_activity_since(&before)?;
 
-        Ok(events)
+        Ok(RiscvTopologyDmaStageRunSummary::new(
+            events,
+            scheduler_run,
+            activity.trace_event_count,
+            activity.pending_dma_write_count,
+            activity.dma_completion_count,
+        ))
+    }
+
+    fn dma_device_snapshots(
+        &self,
+        copies: &[RiscvTopologyDmaCopy],
+    ) -> Result<RiscvTopologyDmaDeviceSnapshots, RiscvTopologySystemError> {
+        let mut accelerators = BTreeMap::new();
+        let mut gpus = BTreeMap::new();
+
+        for copy in copies {
+            match copy {
+                RiscvTopologyDmaCopy::Accelerator { engine, .. } => {
+                    if !accelerators.contains_key(engine) {
+                        let snapshot = self
+                            .accelerators
+                            .get(engine)
+                            .ok_or(RiscvTopologySystemError::UnknownAccelerator {
+                                engine: *engine,
+                            })?
+                            .engine()
+                            .snapshot();
+                        accelerators.insert(*engine, snapshot);
+                    }
+                }
+                RiscvTopologyDmaCopy::Gpu { device, .. } => {
+                    if !gpus.contains_key(device) {
+                        let snapshot = self
+                            .gpus
+                            .get(device)
+                            .ok_or(RiscvTopologySystemError::UnknownGpu { device: *device })?
+                            .gpu()
+                            .snapshot();
+                        gpus.insert(*device, snapshot);
+                    }
+                }
+            }
+        }
+
+        Ok(RiscvTopologyDmaDeviceSnapshots { accelerators, gpus })
+    }
+
+    fn empty_dma_stage_run_summary(&self) -> RiscvTopologyDmaStageRunSummary {
+        let final_tick = self.scheduler().now();
+        RiscvTopologyDmaStageRunSummary::new(
+            Vec::new(),
+            RecordedConservativeRunSummary::empty(final_tick),
+            0,
+            0,
+            0,
+        )
+    }
+
+    fn dma_activity_since(
+        &self,
+        before: &RiscvTopologyDmaDeviceSnapshots,
+    ) -> Result<RiscvTopologyDmaActivityCounts, RiscvTopologySystemError> {
+        let mut activity = RiscvTopologyDmaActivityCounts::default();
+
+        for (engine, before) in &before.accelerators {
+            let after = self
+                .accelerators
+                .get(engine)
+                .ok_or(RiscvTopologySystemError::UnknownAccelerator { engine: *engine })?
+                .engine()
+                .snapshot();
+            activity.trace_event_count += after.trace().len().saturating_sub(before.trace().len());
+            activity.pending_dma_write_count += after.pending_dma_writes().len();
+            activity.dma_completion_count += after
+                .dma_completions()
+                .len()
+                .saturating_sub(before.dma_completions().len());
+        }
+
+        for (device, before) in &before.gpus {
+            let after = self
+                .gpus
+                .get(device)
+                .ok_or(RiscvTopologySystemError::UnknownGpu { device: *device })?
+                .gpu()
+                .snapshot();
+            activity.trace_event_count += after.trace().len().saturating_sub(before.trace().len());
+            activity.pending_dma_write_count += after.pending_dma_writes().len();
+            activity.dma_completion_count += after
+                .dma_completions()
+                .len()
+                .saturating_sub(before.dma_completions().len());
+        }
+
+        Ok(activity)
     }
 
     pub fn drive_until_host_stop_parallel<E>(

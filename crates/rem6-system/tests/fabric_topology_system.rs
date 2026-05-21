@@ -15,7 +15,7 @@ use rem6_gpu::{
     GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuPendingDmaWrite,
     GpuTopologyConfig,
 };
-use rem6_kernel::{ClockDomain, PartitionId};
+use rem6_kernel::{ClockDomain, ParallelRunProfile, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore, ResponseStatus,
@@ -1055,8 +1055,8 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
     let gpu_route = system.gpu(gpu_id).unwrap().memory_route().unwrap();
     let trace = MemoryTrace::new();
 
-    system
-        .run_dma_copies_parallel(
+    let summary = system
+        .run_dma_copies_parallel_recorded(
             [
                 RiscvTopologyDmaCopy::gpu(gpu_id, gpu_dma_copy(gpu_route, 410, 0x100c)),
                 RiscvTopologyDmaCopy::accelerator(
@@ -1067,6 +1067,39 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
             trace.clone(),
         )
         .unwrap();
+
+    assert_eq!(summary.read().event_count(), 2);
+    assert_eq!(summary.read().trace_event_count(), 4);
+    assert_eq!(summary.read().pending_dma_write_count(), 2);
+    assert_eq!(summary.read().dma_completion_count(), 0);
+    assert_eq!(summary.read().final_tick(), 12);
+    assert_eq!(
+        summary.read().profile(),
+        ParallelRunProfile::new(
+            summary.read().epoch_count(),
+            summary.read().empty_epoch_count(),
+            summary.read().batch_count(),
+            summary.read().dispatch_count(),
+            summary.read().total_parallel_workers(),
+            summary.read().max_parallel_workers(),
+        )
+    );
+    assert_eq!(summary.write().event_count(), 2);
+    assert_eq!(summary.write().trace_event_count(), 4);
+    assert_eq!(summary.write().pending_dma_write_count(), 0);
+    assert_eq!(summary.write().dma_completion_count(), 2);
+    assert_eq!(summary.write().final_tick(), 24);
+    assert_eq!(
+        summary.profile(),
+        summary.read().profile().merge(summary.write().profile()),
+    );
+    assert_eq!(summary.event_count(), 4);
+    assert_eq!(summary.trace_event_count(), 8);
+    assert_eq!(summary.dma_completion_count(), 2);
+    assert_eq!(summary.pending_dma_write_count(), 0);
+    assert_eq!(summary.final_tick(), 24);
+    assert!(summary.has_parallel_work());
+    assert!(summary.has_dma_activity());
 
     let destination = system
         .memory_store()
@@ -1248,6 +1281,68 @@ fn topology_system_treats_empty_dma_read_batch_as_noop_without_memory_backend() 
         .gpu()
         .trace()
         .is_empty());
+}
+
+#[test]
+fn topology_system_empty_dma_read_batch_does_not_drive_pending_scheduler_work() {
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 81, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config(AcceleratorEngineId::new(81)))
+    .unwrap()
+    .with_gpu(gpu_config(GpuDeviceId::new(82)))
+    .unwrap();
+    system
+        .scheduler_mut()
+        .schedule_parallel_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+    let trace = MemoryTrace::new();
+
+    let events = system
+        .run_dma_copy_reads_parallel(std::iter::empty::<RiscvTopologyDmaCopy>(), trace.clone())
+        .unwrap();
+
+    assert!(events.is_empty());
+    assert!(trace.is_empty());
+    assert_eq!(system.scheduler().now(), 0);
+    assert!(!system.scheduler().is_idle());
+}
+
+#[test]
+fn topology_system_empty_recorded_dma_copy_batch_does_not_drive_pending_scheduler_work() {
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        heterogeneous_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 83, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_accelerator(accelerator_config(AcceleratorEngineId::new(83)))
+    .unwrap()
+    .with_gpu(gpu_config(GpuDeviceId::new(84)))
+    .unwrap();
+    system
+        .scheduler_mut()
+        .schedule_parallel_at(PartitionId::new(0), 5, |_| {})
+        .unwrap();
+    let trace = MemoryTrace::new();
+
+    let summary = system
+        .run_dma_copies_parallel_recorded(std::iter::empty::<RiscvTopologyDmaCopy>(), trace.clone())
+        .unwrap();
+
+    assert_eq!(summary.event_count(), 0);
+    assert_eq!(summary.trace_event_count(), 0);
+    assert_eq!(summary.dma_completion_count(), 0);
+    assert_eq!(summary.pending_dma_write_count(), 0);
+    assert_eq!(summary.final_tick(), 0);
+    assert!(!summary.has_parallel_work());
+    assert!(!summary.has_dma_activity());
+    assert!(trace.is_empty());
+    assert_eq!(system.scheduler().now(), 0);
+    assert!(!system.scheduler().is_idle());
 }
 
 #[test]

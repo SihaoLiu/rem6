@@ -576,6 +576,18 @@ pub struct RecordedConservativeRunSummary {
 }
 
 impl RecordedConservativeRunSummary {
+    pub fn empty(final_tick: Tick) -> Self {
+        Self {
+            summary: ConservativeRunSummary {
+                epochs: 0,
+                executed_events: 0,
+                final_tick,
+            },
+            epochs: Vec::new(),
+            profile: ParallelRunProfile::default(),
+        }
+    }
+
     pub fn summary(&self) -> ConservativeRunSummary {
         self.summary
     }
