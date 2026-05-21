@@ -8,6 +8,7 @@ use rem6_directory::{
     MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,
     MoesiDirectoryGrant, MoesiDirectoryLineState,
 };
+use rem6_dram::{DramMemoryController, DramMemoryError};
 use rem6_kernel::{
     ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
     SchedulerError,
@@ -17,14 +18,15 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_protocol_moesi::{MoesiEvent, MoesiLineId, MoesiState};
+use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::{
-    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, TargetOutcome,
-    TransportEndpointId, TransportError,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
+    TargetOutcome, TransportEndpointId, TransportError,
 };
 
 use crate::{
-    HarnessError, LineBackingStore, PartitionedCacheAgentConfig, PartitionedRouteHopConfig,
-    SubmitKind,
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, PartitionedCacheAgentConfig,
+    PartitionedDramMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,13 +34,16 @@ pub enum MoesiHarnessError {
     LineBusy { state: MoesiState },
     UnknownCache { agent: AgentId },
     DuplicateCache { agent: AgentId },
+    MissingTopologyConnection { from: Endpoint, to: Endpoint },
     MissingDirectoryGrant { request: MemoryRequestId },
     GrantDataUnavailable { agent: AgentId, line: MoesiLineId },
     UnexpectedGrantState { state: MoesiState },
     Cache(MoesiCacheControllerError),
     Directory(MoesiDirectoryError),
     Memory(MemoryError),
+    Dram(DramMemoryError),
     Scheduler(SchedulerError),
+    Topology(TopologyError),
     Transport(TransportError),
     Backing(HarnessError),
 }
@@ -57,6 +62,14 @@ impl fmt::Display for MoesiHarnessError {
                     agent.get()
                 )
             }
+            Self::MissingTopologyConnection { from, to } => write!(
+                formatter,
+                "topology connection {}.{} to {}.{} is not declared",
+                from.component().as_str(),
+                from.port().as_str(),
+                to.component().as_str(),
+                to.port().as_str()
+            ),
             Self::MissingDirectoryGrant { request } => write!(
                 formatter,
                 "directory did not grant request {} from agent {}",
@@ -75,7 +88,9 @@ impl fmt::Display for MoesiHarnessError {
             Self::Cache(error) => write!(formatter, "{error}"),
             Self::Directory(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Dram(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),
         }
@@ -88,7 +103,9 @@ impl Error for MoesiHarnessError {
             Self::Cache(error) => Some(error),
             Self::Directory(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::Dram(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            Self::Topology(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Backing(error) => Some(error),
             _ => None,
@@ -234,10 +251,13 @@ pub struct PartitionedMoesiDirectoryLineHarness {
     directory: Arc<Mutex<MoesiDirectory>>,
     caches: BTreeMap<AgentId, Arc<Mutex<MoesiCacheController>>>,
     routes: BTreeMap<AgentId, PartitionedMoesiRoute>,
+    memory_route: Option<PartitionedMoesiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<MoesiDirectoryDecisionRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
 }
 
 impl MoesiDirectoryLineHarness {
@@ -509,10 +529,119 @@ impl PartitionedMoesiDirectoryLineHarness {
             directory: Arc::new(Mutex::new(MoesiDirectory::new())),
             caches,
             routes,
+            memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
+            dram_memory: None,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            dram_accesses: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn new_with_dram_memory<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        memory: PartitionedDramMemoryConfig,
+        agents: I,
+    ) -> Result<Self, MoesiHarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        let line_address = layout.line_address(line_address);
+
+        let mut partition_count = directory_partition
+            .index()
+            .checked_add(1)
+            .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?;
+        partition_count = partition_count.max(
+            memory
+                .partition()
+                .index()
+                .checked_add(1)
+                .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+        );
+        expand_partition_count_for_moesi_hops(&mut partition_count, memory.route_hops())?;
+        let mut transport = rem6_transport::MemoryTransport::new();
+        let memory_route = moesi_route_from_config(
+            directory_endpoint.clone(),
+            directory_partition,
+            memory.endpoint().clone(),
+            memory.partition(),
+            memory.request_latency(),
+            memory.response_latency(),
+            memory.request_virtual_network(),
+            memory.response_virtual_network(),
+            memory.route_hops(),
+        )?;
+        let memory_route_id = transport
+            .add_route(memory_route.clone())
+            .map_err(MoesiHarnessError::Transport)?;
+        let mut caches = BTreeMap::new();
+        let mut routes = BTreeMap::new();
+
+        for config in agents {
+            partition_count = partition_count.max(
+                config
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(MoesiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            expand_partition_count_for_moesi_hops(&mut partition_count, config.route_hops())?;
+            if caches
+                .insert(
+                    config.agent(),
+                    Arc::new(Mutex::new(MoesiCacheController::new(
+                        config.agent(),
+                        layout,
+                        line_address,
+                    ))),
+                )
+                .is_some()
+            {
+                return Err(MoesiHarnessError::DuplicateCache {
+                    agent: config.agent(),
+                });
+            }
+
+            let route = moesi_route_from_config(
+                config.endpoint().clone(),
+                config.partition(),
+                directory_endpoint.clone(),
+                directory_partition,
+                config.request_latency(),
+                config.response_latency(),
+                config.request_virtual_network(),
+                config.response_virtual_network(),
+                config.route_hops(),
+            )?;
+            let route_id = transport
+                .add_route(route.clone())
+                .map_err(MoesiHarnessError::Transport)?;
+            routes.insert(config.agent(), PartitionedMoesiRoute::new(route_id, route));
+        }
+
+        let dram_controller = memory.into_controller();
+        let backing = line_backing_from_moesi_dram_memory(layout, line_address, &dram_controller)?;
+
+        Ok(Self {
+            scheduler: PartitionedScheduler::with_min_remote_delay(partition_count, 1)
+                .map_err(MoesiHarnessError::Scheduler)?,
+            transport,
+            line: MoesiLineId::new(line_address),
+            directory: Arc::new(Mutex::new(MoesiDirectory::new())),
+            caches,
+            routes,
+            memory_route: Some(PartitionedMoesiRoute::new(memory_route_id, memory_route)),
+            backing: Arc::new(Mutex::new(backing)),
+            dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
+            trace: MemoryTrace::new(),
+            cpu_responses: Arc::new(Mutex::new(Vec::new())),
+            directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            dram_accesses: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -558,11 +687,14 @@ impl PartitionedMoesiDirectoryLineHarness {
         let directory = Arc::clone(&self.directory);
         let caches = self.caches.clone();
         let cache_routes = self.routes.clone();
+        let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
+        let dram_memory = self.dram_memory.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
         let decisions = Arc::clone(&self.directory_decisions);
+        let dram_accesses = Arc::clone(&self.dram_accesses);
 
         self.transport
             .submit_parallel(
@@ -578,6 +710,40 @@ impl PartitionedMoesiDirectoryLineHarness {
                         .expect("directory decision");
                     let fill_event =
                         moesi_fill_event(&decision).expect("directory grant fill event");
+                    if let Some(memory_route) =
+                        memory_route.filter(|_| decision_uses_moesi_backing_memory(&decision))
+                    {
+                        decisions.lock().expect("decision lock").push(
+                            MoesiDirectoryDecisionRecord::new(
+                                delivery.tick(),
+                                delivery.request().id().agent(),
+                                decision.clone(),
+                            ),
+                        );
+                        let snoop_delay = schedule_partitioned_moesi_snoops_parallel(
+                            context,
+                            &decision,
+                            &cache_routes,
+                            &caches,
+                        )
+                        .expect("scheduled directory snoops");
+                        schedule_partitioned_moesi_memory_response_parallel(
+                            context,
+                            delivery.request().clone(),
+                            fill_event,
+                            requester_route,
+                            memory_route,
+                            backing,
+                            dram_memory,
+                            trace.clone(),
+                            response_cache,
+                            responses,
+                            dram_accesses,
+                            snoop_delay,
+                        )
+                        .expect("scheduled memory response");
+                        return TargetOutcome::NoResponse;
+                    }
                     let response = partitioned_moesi_directory_response(
                         delivery.request(),
                         &decision,
@@ -643,6 +809,17 @@ impl PartitionedMoesiDirectoryLineHarness {
             .line_state(self.line)
     }
 
+    pub fn route(&self, agent: AgentId) -> Result<MemoryRouteId, MoesiHarnessError> {
+        self.routes
+            .get(&agent)
+            .map(|route| route.id)
+            .ok_or(MoesiHarnessError::UnknownCache { agent })
+    }
+
+    pub fn memory_route(&self) -> Option<MemoryRouteId> {
+        self.memory_route.as_ref().map(|route| route.id)
+    }
+
     pub fn trace(&self) -> Vec<MemoryTraceEvent> {
         self.trace.snapshot()
     }
@@ -656,6 +833,10 @@ impl PartitionedMoesiDirectoryLineHarness {
             .lock()
             .expect("decision lock")
             .clone()
+    }
+
+    pub fn dram_memory_accesses(&self) -> Vec<DramMemoryAccessRecord> {
+        self.dram_accesses.lock().expect("DRAM access lock").clone()
     }
 
     pub const fn line(&self) -> MoesiLineId {
@@ -813,6 +994,244 @@ fn partitioned_moesi_source_data(
             )
         }
     })
+}
+
+fn decision_uses_moesi_backing_memory(decision: &MoesiDirectoryDecision) -> bool {
+    decision
+        .grant()
+        .is_some_and(|grant| matches!(grant.data_source(), MoesiDirectoryDataSource::BackingMemory))
+}
+
+fn line_backing_from_moesi_dram_memory(
+    layout: CacheLineLayout,
+    line_address: Address,
+    controller: &DramMemoryController,
+) -> Result<LineBackingStore, MoesiHarnessError> {
+    let request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 0),
+        line_address,
+        rem6_memory::AccessSize::new(layout.bytes()).map_err(MoesiHarnessError::Memory)?,
+        layout,
+    )
+    .map_err(MoesiHarnessError::Memory)?;
+    let mut probe = controller.clone();
+    let outcome = probe.accept(0, &request).map_err(MoesiHarnessError::Dram)?;
+    let data = outcome
+        .response()
+        .and_then(MemoryResponse::data)
+        .map(<[u8]>::to_vec)
+        .ok_or(MoesiHarnessError::Memory(
+            MemoryError::MissingResponseData {
+                request: request.id(),
+            },
+        ))?;
+
+    LineBackingStore::new(layout, line_address, data).map_err(MoesiHarnessError::Backing)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_partitioned_moesi_memory_response_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
+    request: MemoryRequest,
+    fill_event: MoesiEvent,
+    requester_route: PartitionedMoesiRoute,
+    memory_route: PartitionedMoesiRoute,
+    backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<MoesiCacheController>>,
+    responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    snoop_delay: u64,
+) -> Result<(), MoesiHarnessError> {
+    PartitionedMoesiMemoryResponseWork {
+        directory_tick: context.now(),
+        fill_event,
+        requester_route,
+        memory_route,
+        backing,
+        dram_memory,
+        trace,
+        response_cache,
+        responses,
+        dram_accesses,
+        snoop_delay,
+    }
+    .schedule(context, request)
+}
+
+struct PartitionedMoesiMemoryResponseWork {
+    directory_tick: u64,
+    fill_event: MoesiEvent,
+    requester_route: PartitionedMoesiRoute,
+    memory_route: PartitionedMoesiRoute,
+    backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<MoesiCacheController>>,
+    responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
+    dram_accesses: Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+    snoop_delay: u64,
+}
+
+impl PartitionedMoesiMemoryResponseWork {
+    fn schedule(
+        self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: MemoryRequest,
+    ) -> Result<(), MoesiHarnessError> {
+        self.trace.record(MemoryTraceEvent::request(
+            context.now(),
+            self.memory_route.id,
+            self.memory_route.route.source().clone(),
+            MemoryTraceKind::RequestSent,
+            request.id(),
+        ));
+        self.schedule_request_hop(context, 0, request)
+    }
+
+    fn schedule_request_hop(
+        self,
+        context: &mut ParallelSchedulerContext<'_>,
+        hop_index: usize,
+        request: MemoryRequest,
+    ) -> Result<(), MoesiHarnessError> {
+        let hop = self.memory_route.route.hops()[hop_index].clone();
+        let route_id = self.memory_route.id;
+        context
+            .schedule_remote_after(hop.partition(), hop.request_latency(), move |context| {
+                self.trace.record(MemoryTraceEvent::request(
+                    context.now(),
+                    route_id,
+                    hop.endpoint().clone(),
+                    MemoryTraceKind::RequestArrived,
+                    request.id(),
+                ));
+
+                if hop_index + 1 == self.memory_route.route.hops().len() {
+                    self.complete_target(context, request);
+                } else {
+                    self.schedule_request_hop(context, hop_index + 1, request)
+                        .expect("scheduled memory request hop");
+                }
+            })
+            .map(|_| ())
+            .map_err(MoesiHarnessError::Scheduler)
+    }
+
+    fn complete_target(self, context: &mut ParallelSchedulerContext<'_>, request: MemoryRequest) {
+        let (ready_tick, response) = complete_partitioned_moesi_memory_request(
+            context.now(),
+            &request,
+            &self.backing,
+            self.dram_memory.as_ref(),
+            &self.dram_accesses,
+        )
+        .expect("memory response");
+        context
+            .schedule_local_after(
+                ready_tick
+                    .checked_sub(context.now())
+                    .expect("DRAM ready tick is not in the past"),
+                move |context| {
+                    let last_hop = self.memory_route.route.hops().len() - 1;
+                    self.schedule_response_hop(context, last_hop, response)
+                        .expect("scheduled memory response hop");
+                },
+            )
+            .expect("validated DRAM ready latency");
+    }
+
+    fn schedule_response_hop(
+        self,
+        context: &mut ParallelSchedulerContext<'_>,
+        hop_index: usize,
+        response: MemoryResponse,
+    ) -> Result<(), MoesiHarnessError> {
+        let hop = self.memory_route.route.hops()[hop_index].clone();
+        let (endpoint, partition) =
+            moesi_route_response_destination(&self.memory_route.route, hop_index);
+        let route_id = self.memory_route.id;
+        context
+            .schedule_remote_after(partition, hop.response_latency(), move |context| {
+                self.trace.record(MemoryTraceEvent::response(
+                    context.now(),
+                    route_id,
+                    endpoint,
+                    response.request_id(),
+                    response.status(),
+                ));
+
+                if hop_index == 0 {
+                    let elapsed = context
+                        .now()
+                        .checked_sub(self.directory_tick)
+                        .expect("memory response is after directory request");
+                    let wait_for_snoops = self.snoop_delay.saturating_sub(elapsed);
+                    schedule_partitioned_moesi_cache_response_parallel(
+                        context,
+                        wait_for_snoops,
+                        self.requester_route,
+                        response,
+                        self.fill_event,
+                        self.trace,
+                        self.response_cache,
+                        self.responses,
+                    )
+                    .expect("scheduled cache response");
+                } else {
+                    self.schedule_response_hop(context, hop_index - 1, response)
+                        .expect("scheduled memory response hop");
+                }
+            })
+            .map(|_| ())
+            .map_err(MoesiHarnessError::Scheduler)
+    }
+}
+
+fn complete_partitioned_moesi_memory_request(
+    now: u64,
+    request: &MemoryRequest,
+    backing: &Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<&Arc<Mutex<DramMemoryController>>>,
+    dram_accesses: &Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
+) -> Result<(u64, MemoryResponse), MoesiHarnessError> {
+    let Some(dram_memory) = dram_memory else {
+        let response = backing
+            .lock()
+            .expect("backing lock")
+            .respond(request)
+            .map_err(MoesiHarnessError::Backing)?;
+        return Ok((now, response));
+    };
+
+    let outcome = dram_memory
+        .lock()
+        .expect("DRAM memory lock")
+        .accept(now, request)
+        .map_err(MoesiHarnessError::Dram)?;
+    dram_accesses
+        .lock()
+        .expect("DRAM access lock")
+        .push(DramMemoryAccessRecord::new(
+            now,
+            outcome.target(),
+            outcome.dram_access().request(),
+            outcome.dram_access().bank(),
+            outcome.dram_access().row(),
+            outcome.dram_access().row_hit(),
+            outcome.ready_cycle(),
+        ));
+    let response = outcome
+        .response()
+        .cloned()
+        .ok_or(MoesiHarnessError::Memory(
+            MemoryError::MissingResponseData {
+                request: request.id(),
+            },
+        ))?;
+
+    Ok((outcome.ready_cycle(), response))
 }
 
 fn schedule_partitioned_moesi_snoops_parallel(
