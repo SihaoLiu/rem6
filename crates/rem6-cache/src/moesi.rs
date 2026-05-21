@@ -24,6 +24,14 @@ pub enum MoesiCacheControllerError {
         expected: MoesiLineId,
         actual: MoesiLineId,
     },
+    SnapshotIdentityMismatch {
+        expected_agent: AgentId,
+        actual_agent: AgentId,
+        expected_line: MoesiLineId,
+        actual_line: MoesiLineId,
+        expected_layout: CacheLineLayout,
+        actual_layout: CacheLineLayout,
+    },
     LineBusy {
         state: MoesiState,
     },
@@ -59,6 +67,23 @@ impl fmt::Display for MoesiCacheControllerError {
                 "request for line {:#x} reached controller for line {:#x}",
                 actual.address().get(),
                 expected.address().get()
+            ),
+            Self::SnapshotIdentityMismatch {
+                expected_agent,
+                actual_agent,
+                expected_line,
+                actual_line,
+                expected_layout,
+                actual_layout,
+            } => write!(
+                formatter,
+                "snapshot for agent {:?}, line {:#x}, line size {} cannot restore controller for agent {:?}, line {:#x}, line size {}",
+                actual_agent,
+                actual_line.address().get(),
+                actual_layout.bytes(),
+                expected_agent,
+                expected_line.address().get(),
+                expected_layout.bytes()
             ),
             Self::LineBusy { state } => write!(formatter, "cache line is busy in {state:?}"),
             Self::NoPendingMiss => write!(formatter, "cache line has no pending miss"),
@@ -161,6 +186,101 @@ struct PendingMoesiMiss {
     downstream: MemoryRequestId,
 }
 
+impl PendingMoesiMiss {
+    fn snapshot(&self) -> MoesiPendingMissSnapshot {
+        MoesiPendingMissSnapshot::new(self.original.clone(), self.downstream)
+    }
+
+    fn from_snapshot(snapshot: &MoesiPendingMissSnapshot) -> Self {
+        Self {
+            original: snapshot.original.clone(),
+            downstream: snapshot.downstream,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MoesiPendingMissSnapshot {
+    original: MemoryRequest,
+    downstream: MemoryRequestId,
+}
+
+impl MoesiPendingMissSnapshot {
+    pub fn new(original: MemoryRequest, downstream: MemoryRequestId) -> Self {
+        Self {
+            original,
+            downstream,
+        }
+    }
+
+    pub const fn original(&self) -> &MemoryRequest {
+        &self.original
+    }
+
+    pub const fn downstream(&self) -> MemoryRequestId {
+        self.downstream
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MoesiCacheControllerSnapshot {
+    line: MoesiCacheLine,
+    layout: CacheLineLayout,
+    next_sequence: u64,
+    data: Option<Vec<u8>>,
+    pending: Option<MoesiPendingMissSnapshot>,
+}
+
+impl MoesiCacheControllerSnapshot {
+    pub fn new(
+        line: MoesiCacheLine,
+        layout: CacheLineLayout,
+        next_sequence: u64,
+        data: Option<Vec<u8>>,
+        pending: Option<MoesiPendingMissSnapshot>,
+    ) -> Self {
+        Self {
+            line,
+            layout,
+            next_sequence,
+            data,
+            pending,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.line.agent()
+    }
+
+    pub const fn line(&self) -> MoesiLineId {
+        self.line.line()
+    }
+
+    pub const fn state(&self) -> MoesiState {
+        self.line.state()
+    }
+
+    pub fn line_state(&self) -> &MoesiCacheLine {
+        &self.line
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn cached_data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    pub fn pending(&self) -> Option<&MoesiPendingMissSnapshot> {
+        self.pending.as_ref()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MoesiCacheController {
     agent: AgentId,
@@ -193,6 +313,32 @@ impl MoesiCacheController {
 
     pub fn cached_data(&self) -> Option<&[u8]> {
         self.data.as_deref()
+    }
+
+    pub fn snapshot(&self) -> MoesiCacheControllerSnapshot {
+        MoesiCacheControllerSnapshot::new(
+            self.line.clone(),
+            self.layout,
+            self.next_sequence,
+            self.data.clone(),
+            self.pending.as_ref().map(PendingMoesiMiss::snapshot),
+        )
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MoesiCacheControllerSnapshot,
+    ) -> Result<(), MoesiCacheControllerError> {
+        self.validate_snapshot_identity(snapshot)?;
+        self.validate_snapshot_data(snapshot)?;
+        self.line = snapshot.line.clone();
+        self.next_sequence = snapshot.next_sequence;
+        self.data = snapshot.data.clone();
+        self.pending = snapshot
+            .pending
+            .as_ref()
+            .map(PendingMoesiMiss::from_snapshot);
+        Ok(())
     }
 
     pub fn install_shared(&mut self, data: Vec<u8>) -> Result<(), MoesiCacheControllerError> {
@@ -444,6 +590,43 @@ impl MoesiCacheController {
         }
 
         Ok(offset)
+    }
+
+    fn validate_snapshot_identity(
+        &self,
+        snapshot: &MoesiCacheControllerSnapshot,
+    ) -> Result<(), MoesiCacheControllerError> {
+        if self.agent == snapshot.agent()
+            && self.line() == snapshot.line()
+            && self.layout == snapshot.layout()
+        {
+            return Ok(());
+        }
+
+        Err(MoesiCacheControllerError::SnapshotIdentityMismatch {
+            expected_agent: self.agent,
+            actual_agent: snapshot.agent(),
+            expected_line: self.line(),
+            actual_line: snapshot.line(),
+            expected_layout: self.layout,
+            actual_layout: snapshot.layout(),
+        })
+    }
+
+    fn validate_snapshot_data(
+        &self,
+        snapshot: &MoesiCacheControllerSnapshot,
+    ) -> Result<(), MoesiCacheControllerError> {
+        if let Some(data) = snapshot.cached_data() {
+            if data.len() as u64 != self.layout.bytes() {
+                return Err(MoesiCacheControllerError::LineDataSizeMismatch {
+                    expected: self.layout.bytes(),
+                    actual: data.len() as u64,
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 

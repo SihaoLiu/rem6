@@ -15,7 +15,7 @@ mod moesi;
 
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
-    MoesiCacheControllerResultKind,
+    MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MoesiPendingMissSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,6 +31,14 @@ pub enum CacheControllerError {
     WrongLine {
         expected: MsiLineId,
         actual: MsiLineId,
+    },
+    SnapshotIdentityMismatch {
+        expected_agent: AgentId,
+        actual_agent: AgentId,
+        expected_line: MsiLineId,
+        actual_line: MsiLineId,
+        expected_layout: CacheLineLayout,
+        actual_layout: CacheLineLayout,
     },
     LineBusy {
         state: MsiState,
@@ -64,6 +72,23 @@ impl fmt::Display for CacheControllerError {
                 "request for line {:#x} reached controller for line {:#x}",
                 actual.address().get(),
                 expected.address().get()
+            ),
+            Self::SnapshotIdentityMismatch {
+                expected_agent,
+                actual_agent,
+                expected_line,
+                actual_line,
+                expected_layout,
+                actual_layout,
+            } => write!(
+                formatter,
+                "snapshot for agent {:?}, line {:#x}, line size {} cannot restore controller for agent {:?}, line {:#x}, line size {}",
+                actual_agent,
+                actual_line.address().get(),
+                actual_layout.bytes(),
+                expected_agent,
+                expected_line.address().get(),
+                expected_layout.bytes()
             ),
             Self::LineBusy { state } => write!(formatter, "cache line is busy in {state:?}"),
             Self::NoPendingMiss => write!(formatter, "cache line has no pending miss"),
@@ -164,6 +189,108 @@ struct PendingMiss {
     fill_event: MsiEvent,
 }
 
+impl PendingMiss {
+    fn snapshot(&self) -> MsiPendingMissSnapshot {
+        MsiPendingMissSnapshot::new(self.original.clone(), self.downstream, self.fill_event)
+    }
+
+    fn from_snapshot(snapshot: &MsiPendingMissSnapshot) -> Self {
+        Self {
+            original: snapshot.original.clone(),
+            downstream: snapshot.downstream,
+            fill_event: snapshot.fill_event,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiPendingMissSnapshot {
+    original: MemoryRequest,
+    downstream: MemoryRequestId,
+    fill_event: MsiEvent,
+}
+
+impl MsiPendingMissSnapshot {
+    pub fn new(original: MemoryRequest, downstream: MemoryRequestId, fill_event: MsiEvent) -> Self {
+        Self {
+            original,
+            downstream,
+            fill_event,
+        }
+    }
+
+    pub const fn original(&self) -> &MemoryRequest {
+        &self.original
+    }
+
+    pub const fn downstream(&self) -> MemoryRequestId {
+        self.downstream
+    }
+
+    pub const fn fill_event(&self) -> MsiEvent {
+        self.fill_event
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiCacheControllerSnapshot {
+    line: MsiCacheLine,
+    layout: CacheLineLayout,
+    next_sequence: u64,
+    data: Option<Vec<u8>>,
+    pending: Option<MsiPendingMissSnapshot>,
+}
+
+impl MsiCacheControllerSnapshot {
+    pub fn new(
+        line: MsiCacheLine,
+        layout: CacheLineLayout,
+        next_sequence: u64,
+        data: Option<Vec<u8>>,
+        pending: Option<MsiPendingMissSnapshot>,
+    ) -> Self {
+        Self {
+            line,
+            layout,
+            next_sequence,
+            data,
+            pending,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.line.agent()
+    }
+
+    pub const fn line(&self) -> MsiLineId {
+        self.line.line()
+    }
+
+    pub const fn state(&self) -> MsiState {
+        self.line.state()
+    }
+
+    pub fn line_state(&self) -> &MsiCacheLine {
+        &self.line
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn cached_data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    pub fn pending(&self) -> Option<&MsiPendingMissSnapshot> {
+        self.pending.as_ref()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MsiCacheController {
     agent: AgentId,
@@ -196,6 +323,29 @@ impl MsiCacheController {
 
     pub fn cached_data(&self) -> Option<&[u8]> {
         self.data.as_deref()
+    }
+
+    pub fn snapshot(&self) -> MsiCacheControllerSnapshot {
+        MsiCacheControllerSnapshot::new(
+            self.line.clone(),
+            self.layout,
+            self.next_sequence,
+            self.data.clone(),
+            self.pending.as_ref().map(PendingMiss::snapshot),
+        )
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MsiCacheControllerSnapshot,
+    ) -> Result<(), CacheControllerError> {
+        self.validate_snapshot_identity(snapshot)?;
+        self.validate_snapshot_data(snapshot)?;
+        self.line = snapshot.line.clone();
+        self.next_sequence = snapshot.next_sequence;
+        self.data = snapshot.data.clone();
+        self.pending = snapshot.pending.as_ref().map(PendingMiss::from_snapshot);
+        Ok(())
     }
 
     pub fn install_shared(&mut self, data: Vec<u8>) -> Result<(), CacheControllerError> {
@@ -439,6 +589,43 @@ impl MsiCacheController {
 
         Ok(offset)
     }
+
+    fn validate_snapshot_identity(
+        &self,
+        snapshot: &MsiCacheControllerSnapshot,
+    ) -> Result<(), CacheControllerError> {
+        if self.agent == snapshot.agent()
+            && self.line() == snapshot.line()
+            && self.layout == snapshot.layout()
+        {
+            return Ok(());
+        }
+
+        Err(CacheControllerError::SnapshotIdentityMismatch {
+            expected_agent: self.agent,
+            actual_agent: snapshot.agent(),
+            expected_line: self.line(),
+            actual_line: snapshot.line(),
+            expected_layout: self.layout,
+            actual_layout: snapshot.layout(),
+        })
+    }
+
+    fn validate_snapshot_data(
+        &self,
+        snapshot: &MsiCacheControllerSnapshot,
+    ) -> Result<(), CacheControllerError> {
+        if let Some(data) = snapshot.cached_data() {
+            if data.len() as u64 != self.layout.bytes() {
+                return Err(CacheControllerError::LineDataSizeMismatch {
+                    expected: self.layout.bytes(),
+                    actual: data.len() as u64,
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn cpu_event(request: &MemoryRequest) -> MsiEvent {
@@ -470,6 +657,14 @@ pub enum MesiCacheControllerError {
     WrongLine {
         expected: MesiLineId,
         actual: MesiLineId,
+    },
+    SnapshotIdentityMismatch {
+        expected_agent: AgentId,
+        actual_agent: AgentId,
+        expected_line: MesiLineId,
+        actual_line: MesiLineId,
+        expected_layout: CacheLineLayout,
+        actual_layout: CacheLineLayout,
     },
     LineBusy {
         state: MesiState,
@@ -506,6 +701,23 @@ impl fmt::Display for MesiCacheControllerError {
                 "request for line {:#x} reached controller for line {:#x}",
                 actual.address().get(),
                 expected.address().get()
+            ),
+            Self::SnapshotIdentityMismatch {
+                expected_agent,
+                actual_agent,
+                expected_line,
+                actual_line,
+                expected_layout,
+                actual_layout,
+            } => write!(
+                formatter,
+                "snapshot for agent {:?}, line {:#x}, line size {} cannot restore controller for agent {:?}, line {:#x}, line size {}",
+                actual_agent,
+                actual_line.address().get(),
+                actual_layout.bytes(),
+                expected_agent,
+                expected_line.address().get(),
+                expected_layout.bytes()
             ),
             Self::LineBusy { state } => write!(formatter, "cache line is busy in {state:?}"),
             Self::NoPendingMiss => write!(formatter, "cache line has no pending miss"),
@@ -608,6 +820,101 @@ struct PendingMesiMiss {
     downstream: MemoryRequestId,
 }
 
+impl PendingMesiMiss {
+    fn snapshot(&self) -> MesiPendingMissSnapshot {
+        MesiPendingMissSnapshot::new(self.original.clone(), self.downstream)
+    }
+
+    fn from_snapshot(snapshot: &MesiPendingMissSnapshot) -> Self {
+        Self {
+            original: snapshot.original.clone(),
+            downstream: snapshot.downstream,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MesiPendingMissSnapshot {
+    original: MemoryRequest,
+    downstream: MemoryRequestId,
+}
+
+impl MesiPendingMissSnapshot {
+    pub fn new(original: MemoryRequest, downstream: MemoryRequestId) -> Self {
+        Self {
+            original,
+            downstream,
+        }
+    }
+
+    pub const fn original(&self) -> &MemoryRequest {
+        &self.original
+    }
+
+    pub const fn downstream(&self) -> MemoryRequestId {
+        self.downstream
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MesiCacheControllerSnapshot {
+    line: MesiCacheLine,
+    layout: CacheLineLayout,
+    next_sequence: u64,
+    data: Option<Vec<u8>>,
+    pending: Option<MesiPendingMissSnapshot>,
+}
+
+impl MesiCacheControllerSnapshot {
+    pub fn new(
+        line: MesiCacheLine,
+        layout: CacheLineLayout,
+        next_sequence: u64,
+        data: Option<Vec<u8>>,
+        pending: Option<MesiPendingMissSnapshot>,
+    ) -> Self {
+        Self {
+            line,
+            layout,
+            next_sequence,
+            data,
+            pending,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.line.agent()
+    }
+
+    pub const fn line(&self) -> MesiLineId {
+        self.line.line()
+    }
+
+    pub const fn state(&self) -> MesiState {
+        self.line.state()
+    }
+
+    pub fn line_state(&self) -> &MesiCacheLine {
+        &self.line
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn cached_data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    pub fn pending(&self) -> Option<&MesiPendingMissSnapshot> {
+        self.pending.as_ref()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MesiCacheController {
     agent: AgentId,
@@ -640,6 +947,32 @@ impl MesiCacheController {
 
     pub fn cached_data(&self) -> Option<&[u8]> {
         self.data.as_deref()
+    }
+
+    pub fn snapshot(&self) -> MesiCacheControllerSnapshot {
+        MesiCacheControllerSnapshot::new(
+            self.line.clone(),
+            self.layout,
+            self.next_sequence,
+            self.data.clone(),
+            self.pending.as_ref().map(PendingMesiMiss::snapshot),
+        )
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MesiCacheControllerSnapshot,
+    ) -> Result<(), MesiCacheControllerError> {
+        self.validate_snapshot_identity(snapshot)?;
+        self.validate_snapshot_data(snapshot)?;
+        self.line = snapshot.line.clone();
+        self.next_sequence = snapshot.next_sequence;
+        self.data = snapshot.data.clone();
+        self.pending = snapshot
+            .pending
+            .as_ref()
+            .map(PendingMesiMiss::from_snapshot);
+        Ok(())
     }
 
     pub fn install_shared(&mut self, data: Vec<u8>) -> Result<(), MesiCacheControllerError> {
@@ -885,6 +1218,43 @@ impl MesiCacheController {
         }
 
         Ok(offset)
+    }
+
+    fn validate_snapshot_identity(
+        &self,
+        snapshot: &MesiCacheControllerSnapshot,
+    ) -> Result<(), MesiCacheControllerError> {
+        if self.agent == snapshot.agent()
+            && self.line() == snapshot.line()
+            && self.layout == snapshot.layout()
+        {
+            return Ok(());
+        }
+
+        Err(MesiCacheControllerError::SnapshotIdentityMismatch {
+            expected_agent: self.agent,
+            actual_agent: snapshot.agent(),
+            expected_line: self.line(),
+            actual_line: snapshot.line(),
+            expected_layout: self.layout,
+            actual_layout: snapshot.layout(),
+        })
+    }
+
+    fn validate_snapshot_data(
+        &self,
+        snapshot: &MesiCacheControllerSnapshot,
+    ) -> Result<(), MesiCacheControllerError> {
+        if let Some(data) = snapshot.cached_data() {
+            if data.len() as u64 != self.layout.bytes() {
+                return Err(MesiCacheControllerError::LineDataSizeMismatch {
+                    expected: self.layout.bytes(),
+                    actual: data.len() as u64,
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 

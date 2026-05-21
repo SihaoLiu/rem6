@@ -1,4 +1,7 @@
-use rem6_cache::{MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResultKind};
+use rem6_cache::{
+    MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResultKind,
+    MoesiCacheControllerSnapshot,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse,
@@ -222,6 +225,115 @@ fn moesi_controller_rejects_requests_while_line_is_transient() {
             state: MoesiState::InvalidToExclusive,
         }
     );
+}
+
+#[test]
+fn moesi_controller_snapshot_restore_preserves_pending_miss_and_sequence() {
+    let mut source = controller();
+    source.install_owned(vec![0x11; 64]).unwrap();
+    let write = MemoryRequest::write(
+        request_id(10),
+        Address::new(0x4010),
+        AccessSize::new(1).unwrap(),
+        vec![0xee],
+        ByteMask::full(AccessSize::new(1).unwrap()).unwrap(),
+        layout(),
+    )
+    .unwrap();
+
+    let miss = source.accept_cpu_request(write.clone()).unwrap();
+    let downstream = miss.downstream_request().unwrap().clone();
+    let snapshot = source.snapshot();
+    let pending = snapshot.pending().unwrap();
+
+    assert_eq!(snapshot.agent(), AgentId::new(30));
+    assert_eq!(snapshot.layout(), layout());
+    assert_eq!(snapshot.line(), line());
+    assert_eq!(snapshot.state(), MoesiState::OwnedToModified);
+    assert_eq!(snapshot.next_sequence(), 1);
+    assert_eq!(snapshot.cached_data(), Some(vec![0x11; 64].as_slice()));
+    assert_eq!(pending.original(), &write);
+    assert_eq!(pending.downstream(), downstream.id());
+
+    let mut restored = controller();
+    restored.install_modified(vec![0xff; 64]).unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let fill = MemoryResponse::completed(&downstream, None).unwrap();
+    let completed = restored
+        .accept_fill(fill, MoesiEvent::DataModified)
+        .unwrap();
+
+    assert_eq!(completed.kind(), MoesiCacheControllerResultKind::Fill);
+    assert_eq!(restored.state(), MoesiState::Modified);
+    assert_eq!(restored.cached_data().unwrap()[0x10], 0xee);
+    assert_eq!(
+        completed.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&write, None).unwrap()
+        ))
+    );
+
+    restored.accept_snoop(MoesiEvent::SnoopWrite).unwrap();
+    let read = MemoryRequest::read_shared(
+        request_id(11),
+        Address::new(0x4000),
+        AccessSize::new(1).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let read_miss = restored.accept_cpu_request(read).unwrap();
+    assert_eq!(
+        read_miss.downstream_request().unwrap().id(),
+        MemoryRequestId::new(AgentId::new(30), 1)
+    );
+}
+
+#[test]
+fn moesi_controller_restore_rejects_foreign_snapshot() {
+    let mut source = controller();
+    source.install_exclusive(vec![0x33; 64]).unwrap();
+    let snapshot = source.snapshot();
+    let mut foreign = MoesiCacheController::new(AgentId::new(31), layout(), Address::new(0x4000));
+
+    assert_eq!(
+        foreign.restore(&snapshot).unwrap_err(),
+        MoesiCacheControllerError::SnapshotIdentityMismatch {
+            expected_agent: AgentId::new(31),
+            actual_agent: AgentId::new(30),
+            expected_line: line(),
+            actual_line: line(),
+            expected_layout: layout(),
+            actual_layout: layout(),
+        }
+    );
+    assert_eq!(foreign.state(), MoesiState::Invalid);
+}
+
+#[test]
+fn moesi_controller_restore_rejects_snapshot_with_bad_line_data() {
+    let mut source = controller();
+    source.install_exclusive(vec![0x33; 64]).unwrap();
+    let snapshot = source.snapshot();
+    let corrupt = MoesiCacheControllerSnapshot::new(
+        snapshot.line_state().clone(),
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        Some(vec![0; 63]),
+        snapshot.pending().cloned(),
+    );
+    let mut restored = controller();
+
+    assert_eq!(
+        restored.restore(&corrupt).unwrap_err(),
+        MoesiCacheControllerError::LineDataSizeMismatch {
+            expected: 64,
+            actual: 63,
+        }
+    );
+    assert_eq!(restored.state(), MoesiState::Invalid);
+    assert!(restored.cached_data().is_none());
 }
 
 #[test]

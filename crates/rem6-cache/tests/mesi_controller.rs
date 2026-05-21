@@ -1,4 +1,7 @@
-use rem6_cache::{MesiCacheController, MesiCacheControllerResultKind};
+use rem6_cache::{
+    MesiCacheController, MesiCacheControllerError, MesiCacheControllerResultKind,
+    MesiCacheControllerSnapshot,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse,
@@ -153,4 +156,108 @@ fn mesi_controller_shared_store_uses_upgrade_transaction() {
             MemoryResponse::completed(&write, None).unwrap()
         ))
     );
+}
+
+#[test]
+fn mesi_controller_snapshot_restore_preserves_pending_miss_and_sequence() {
+    let mut source = controller();
+    let read = MemoryRequest::read_shared(
+        request_id(6),
+        Address::new(0x2008),
+        AccessSize::new(4).unwrap(),
+        layout(),
+    )
+    .unwrap();
+
+    let miss = source.accept_cpu_request(read.clone()).unwrap();
+    let downstream = miss.downstream_request().unwrap().clone();
+    let snapshot = source.snapshot();
+    let pending = snapshot.pending().unwrap();
+
+    assert_eq!(snapshot.agent(), AgentId::new(20));
+    assert_eq!(snapshot.layout(), layout());
+    assert_eq!(snapshot.line(), MesiLineId::new(Address::new(0x2000)));
+    assert_eq!(snapshot.state(), MesiState::InvalidToExclusive);
+    assert_eq!(snapshot.next_sequence(), 1);
+    assert_eq!(pending.original(), &read);
+    assert_eq!(pending.downstream(), downstream.id());
+
+    let mut restored = controller();
+    restored.install_modified(vec![0xff; 64]).unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let fill_data: Vec<u8> = (0..64).collect();
+    let fill = MemoryResponse::completed(&downstream, Some(fill_data)).unwrap();
+    let completed = restored.accept_fill(fill, MesiEvent::DataShared).unwrap();
+
+    assert_eq!(completed.kind(), MesiCacheControllerResultKind::Fill);
+    assert_eq!(restored.state(), MesiState::Shared);
+    assert_eq!(
+        completed.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&read, Some(vec![8, 9, 10, 11])).unwrap()
+        ))
+    );
+
+    let write = MemoryRequest::write(
+        request_id(7),
+        Address::new(0x2010),
+        AccessSize::new(1).unwrap(),
+        vec![0xee],
+        ByteMask::full(AccessSize::new(1).unwrap()).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let upgrade = restored.accept_cpu_request(write).unwrap();
+    assert_eq!(
+        upgrade.downstream_request().unwrap().id(),
+        MemoryRequestId::new(AgentId::new(20), 1)
+    );
+}
+
+#[test]
+fn mesi_controller_restore_rejects_foreign_snapshot() {
+    let mut source = controller();
+    source.install_exclusive(vec![0x33; 64]).unwrap();
+    let snapshot = source.snapshot();
+    let mut foreign = MesiCacheController::new(AgentId::new(21), layout(), Address::new(0x2000));
+
+    assert_eq!(
+        foreign.restore(&snapshot).unwrap_err(),
+        MesiCacheControllerError::SnapshotIdentityMismatch {
+            expected_agent: AgentId::new(21),
+            actual_agent: AgentId::new(20),
+            expected_line: MesiLineId::new(Address::new(0x2000)),
+            actual_line: MesiLineId::new(Address::new(0x2000)),
+            expected_layout: layout(),
+            actual_layout: layout(),
+        }
+    );
+    assert_eq!(foreign.state(), MesiState::Invalid);
+}
+
+#[test]
+fn mesi_controller_restore_rejects_snapshot_with_bad_line_data() {
+    let mut source = controller();
+    source.install_exclusive(vec![0x33; 64]).unwrap();
+    let snapshot = source.snapshot();
+    let corrupt = MesiCacheControllerSnapshot::new(
+        snapshot.line_state().clone(),
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        Some(vec![0; 63]),
+        snapshot.pending().cloned(),
+    );
+    let mut restored = controller();
+
+    assert_eq!(
+        restored.restore(&corrupt).unwrap_err(),
+        MesiCacheControllerError::LineDataSizeMismatch {
+            expected: 64,
+            actual: 63,
+        }
+    );
+    assert_eq!(restored.state(), MesiState::Invalid);
+    assert!(restored.cached_data().is_none());
 }
