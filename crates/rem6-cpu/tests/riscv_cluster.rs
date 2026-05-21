@@ -9,7 +9,9 @@ use rem6_cpu::{
 };
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
 use rem6_isa_riscv::Register;
-use rem6_kernel::{PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext};
+use rem6_kernel::{
+    ParallelRunProfile, PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext,
+};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore,
@@ -1061,6 +1063,41 @@ fn riscv_cluster_run_collects_parallel_epoch_records() {
             .sum::<usize>()
     );
     assert_eq!(
+        run.parallel_scheduler_profile(),
+        ParallelRunProfile::new(
+            epochs.len(),
+            epochs
+                .iter()
+                .filter(|epoch| epoch.dispatches().is_empty())
+                .count(),
+            run.parallel_scheduler_batches().len(),
+            run.parallel_scheduler_dispatches().len(),
+            run.parallel_scheduler_workers().len(),
+            run.max_parallel_scheduler_workers(),
+        )
+    );
+    assert_eq!(
+        epochs
+            .iter()
+            .map(|epoch| epoch.dispatch_count())
+            .sum::<usize>(),
+        run.parallel_scheduler_profile().dispatch_count()
+    );
+    assert_eq!(
+        epochs
+            .iter()
+            .map(|epoch| epoch.empty_epoch_count())
+            .sum::<usize>(),
+        run.parallel_scheduler_profile().empty_epoch_count()
+    );
+    assert_eq!(
+        epochs.iter().filter(|epoch| epoch.is_empty_epoch()).count(),
+        run.parallel_scheduler_profile().empty_epoch_count()
+    );
+    assert!(epochs
+        .iter()
+        .all(|epoch| epoch.profile().epoch_count() == 1));
+    assert_eq!(
         run.parallel_scheduler_worker_partitions().len(),
         run.parallel_scheduler_workers().len()
     );
@@ -1196,6 +1233,11 @@ fn riscv_cluster_parallel_run_respects_scheduler_worker_limit() {
         .unwrap();
 
     assert_eq!(run.max_parallel_scheduler_workers(), 1);
+    assert_eq!(run.parallel_scheduler_profile().max_parallel_workers(), 1);
+    assert_eq!(
+        run.parallel_scheduler_profile().batch_count(),
+        run.parallel_scheduler_batches().len()
+    );
     assert!(run
         .parallel_scheduler_batches()
         .iter()

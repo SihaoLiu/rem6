@@ -10,9 +10,9 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
-    ParallelEpochBatchRecord, ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId,
-    PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition, SchedulerContext,
-    SchedulerDispatchRecord, SchedulerError, Tick,
+    ParallelEpochBatchRecord, ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord,
+    PartitionEventId, PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition,
+    SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
 };
 use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
@@ -669,6 +669,14 @@ impl RiscvSystemRun {
             .map(RiscvClusterSchedulerEpoch::max_parallel_workers)
             .max()
             .unwrap_or(0)
+    }
+
+    pub fn parallel_scheduler_profile(&self) -> ParallelRunProfile {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .fold(ParallelRunProfile::default(), |profile, epoch| {
+                profile.merge(epoch.profile())
+            })
     }
 
     pub fn parallel_scheduler_dispatches_for_partition(

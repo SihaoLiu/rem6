@@ -11,9 +11,10 @@ use crate::Tick;
 mod state;
 
 pub use state::{
-    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelWorkerRecord,
-    PartitionFrontier, PartitionSnapshot, PendingEventSnapshot, ReadyPartition, RecordedRunSummary,
-    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
+    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelRunProfile,
+    ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot, PendingEventSnapshot,
+    ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary, ScheduledEventKind,
+    SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -513,6 +514,7 @@ impl PartitionedScheduler {
                 },
                 dispatches: Vec::new(),
                 batches: Vec::new(),
+                profile: ParallelRunProfile::default(),
             });
         };
         let horizon = plan.horizon();
@@ -556,6 +558,7 @@ impl PartitionedScheduler {
 
         self.advance_partitions_to(horizon);
         dispatches.sort_by_key(|record| (record.tick, record.partition(), record.id.local()));
+        let profile = ParallelRunProfile::for_epoch(&batches, dispatches.len(), batches.is_empty());
 
         Ok(RecordedRunSummary {
             summary: RunSummary {
@@ -564,28 +567,43 @@ impl PartitionedScheduler {
             },
             dispatches,
             batches,
+            profile,
         })
     }
 
     pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, SchedulerError> {
-        let mut epochs = 0;
+        self.run_until_idle_parallel_recorded()
+            .map(|recorded| recorded.summary)
+    }
+
+    pub fn run_until_idle_parallel_recorded(
+        &mut self,
+    ) -> Result<RecordedConservativeRunSummary, SchedulerError> {
+        let mut recorded_epochs = Vec::new();
         let mut executed_events = 0;
+        let mut profile = ParallelRunProfile::default();
 
         while self.plan_next_parallel_epoch()?.is_some() {
             let before = self.now;
-            let summary = self.run_next_epoch_parallel()?;
-            epochs += 1;
+            let epoch = self.run_next_epoch_parallel_recorded()?;
+            let summary = epoch.summary();
             executed_events += summary.executed_events();
+            profile = profile.merge(epoch.profile());
+            recorded_epochs.push(epoch);
 
             if summary.final_tick() == before && summary.executed_events() == 0 {
                 break;
             }
         }
 
-        Ok(ConservativeRunSummary {
-            epochs,
-            executed_events,
-            final_tick: self.now,
+        Ok(RecordedConservativeRunSummary {
+            summary: ConservativeRunSummary {
+                epochs: recorded_epochs.len(),
+                executed_events,
+                final_tick: self.now,
+            },
+            epochs: recorded_epochs,
+            profile,
         })
     }
 

@@ -634,6 +634,11 @@ fn topology_system_drives_parallel_host_stop_with_worker_limit() {
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(180), source, 0);
     assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
     assert_eq!(run.max_parallel_scheduler_workers(), 1);
+    assert_eq!(run.parallel_scheduler_profile().max_parallel_workers(), 1);
+    assert_eq!(
+        run.parallel_scheduler_profile().batch_count(),
+        run.parallel_scheduler_batches().len()
+    );
     assert!(run
         .parallel_scheduler_batches()
         .iter()

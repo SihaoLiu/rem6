@@ -1,8 +1,8 @@
 use std::sync::{Arc, Barrier, Mutex};
 
 use rem6_kernel::{
-    PartitionEventId, PartitionId, PartitionSnapshot, PartitionedScheduler, ScheduledEventKind,
-    SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
+    ParallelRunProfile, PartitionEventId, PartitionId, PartitionSnapshot, PartitionedScheduler,
+    ScheduledEventKind, SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
 };
 
 #[test]
@@ -863,9 +863,13 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
 
     assert_eq!(epoch.summary().executed_events(), 4);
     assert_eq!(epoch.summary().final_tick(), 4);
+    assert_eq!(epoch.dispatch_count(), 4);
     assert_eq!(epoch.batch_count(), 2);
+    assert_eq!(epoch.empty_epoch_count(), 0);
+    assert!(!epoch.is_empty_epoch());
     assert_eq!(epoch.max_parallel_workers(), 2);
     assert_eq!(epoch.total_parallel_workers(), 3);
+    assert_eq!(epoch.profile(), ParallelRunProfile::new(1, 0, 2, 4, 3, 2));
     assert!(epoch.has_parallel_work());
     assert_eq!(
         epoch.parallel_worker_partitions(),
@@ -960,12 +964,115 @@ fn scheduler_recorded_parallel_epoch_reports_empty_batches_without_ready_workers
     assert_eq!(epoch.summary().final_tick(), 4);
     assert!(epoch.dispatches().is_empty());
     assert!(epoch.batches().is_empty());
+    assert_eq!(epoch.dispatch_count(), 0);
     assert_eq!(epoch.batch_count(), 0);
+    assert_eq!(epoch.empty_epoch_count(), 1);
+    assert!(epoch.is_empty_epoch());
     assert_eq!(epoch.max_parallel_workers(), 0);
     assert_eq!(epoch.total_parallel_workers(), 0);
+    assert_eq!(epoch.profile(), ParallelRunProfile::new(1, 1, 0, 0, 0, 0));
     assert!(!epoch.has_parallel_work());
     assert!(epoch.parallel_worker_partitions().is_empty());
     assert_eq!(scheduler.next_pending_tick(core).unwrap(), Some(7));
+}
+
+#[test]
+fn scheduler_recorded_parallel_runner_accumulates_profile() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
+
+    for index in 0..4 {
+        scheduler
+            .schedule_parallel_at(PartitionId::new(index), 0, |_| {})
+            .unwrap();
+    }
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.summary().epochs(), 1);
+    assert_eq!(run.summary().executed_events(), 4);
+    assert_eq!(run.summary().final_tick(), 4);
+    assert_eq!(run.epoch_count(), 1);
+    assert_eq!(run.empty_epoch_count(), 0);
+    assert_eq!(run.dispatch_count(), 4);
+    assert_eq!(run.batch_count(), 2);
+    assert_eq!(run.max_parallel_workers(), 2);
+    assert_eq!(run.total_parallel_workers(), 4);
+    assert_eq!(run.profile(), ParallelRunProfile::new(1, 0, 2, 4, 4, 2));
+    assert!(run.has_parallel_work());
+    assert_eq!(run.dispatches().len(), 4);
+    assert_eq!(run.batches().len(), 2);
+    assert_eq!(
+        run.parallel_worker_partitions(),
+        vec![
+            PartitionId::new(0),
+            PartitionId::new(1),
+            PartitionId::new(2),
+            PartitionId::new(3),
+        ]
+    );
+    assert_eq!(
+        run.epochs()[0].profile(),
+        ParallelRunProfile::new(1, 0, 2, 4, 4, 2)
+    );
+    assert!(scheduler.is_idle());
+}
+
+#[test]
+fn scheduler_recorded_parallel_runner_preserves_empty_epochs() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap();
+    let core = PartitionId::new(0);
+
+    scheduler.schedule_parallel_at(core, 7, |_| {}).unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.summary().epochs(), 2);
+    assert_eq!(run.summary().executed_events(), 1);
+    assert_eq!(run.summary().final_tick(), 8);
+    assert_eq!(run.epoch_count(), 2);
+    assert_eq!(run.empty_epoch_count(), 1);
+    assert_eq!(run.dispatch_count(), 1);
+    assert_eq!(run.batch_count(), 1);
+    assert_eq!(run.max_parallel_workers(), 1);
+    assert_eq!(run.total_parallel_workers(), 1);
+    assert_eq!(run.profile(), ParallelRunProfile::new(2, 1, 1, 1, 1, 1));
+    assert!(run.has_parallel_work());
+    assert!(run.epochs()[0].is_empty_epoch());
+    assert_eq!(
+        run.epochs()[0].profile(),
+        ParallelRunProfile::new(1, 1, 0, 0, 0, 0)
+    );
+    assert!(!run.epochs()[1].is_empty_epoch());
+    assert_eq!(
+        run.epochs()[1].profile(),
+        ParallelRunProfile::new(1, 0, 1, 1, 1, 1)
+    );
+    assert_eq!(run.parallel_worker_partitions(), vec![core]);
+    assert!(scheduler.is_idle());
+}
+
+#[test]
+fn scheduler_recorded_parallel_runner_reports_idle_profile() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.summary().epochs(), 0);
+    assert_eq!(run.summary().executed_events(), 0);
+    assert_eq!(run.summary().final_tick(), 0);
+    assert_eq!(run.epoch_count(), 0);
+    assert_eq!(run.empty_epoch_count(), 0);
+    assert_eq!(run.dispatch_count(), 0);
+    assert_eq!(run.batch_count(), 0);
+    assert_eq!(run.max_parallel_workers(), 0);
+    assert_eq!(run.total_parallel_workers(), 0);
+    assert_eq!(run.profile(), ParallelRunProfile::default());
+    assert!(!run.has_parallel_work());
+    assert!(run.epochs().is_empty());
+    assert!(run.dispatches().is_empty());
+    assert!(run.batches().is_empty());
+    assert!(run.parallel_worker_partitions().is_empty());
+    assert!(scheduler.is_idle());
 }
 
 #[test]

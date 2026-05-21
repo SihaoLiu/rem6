@@ -532,6 +532,31 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
         run.parallel_scheduler_worker_partitions().len(),
         run.parallel_scheduler_workers().len()
     );
+    let profile = run.parallel_scheduler_profile();
+    assert_eq!(profile.epoch_count(), parallel_epochs.len());
+    assert_eq!(
+        profile.empty_epoch_count(),
+        parallel_epochs
+            .iter()
+            .filter(|epoch| epoch.dispatches().is_empty())
+            .count()
+    );
+    assert_eq!(
+        profile.batch_count(),
+        run.parallel_scheduler_batches().len()
+    );
+    assert_eq!(
+        profile.dispatch_count(),
+        run.parallel_scheduler_dispatches().len()
+    );
+    assert_eq!(
+        profile.total_parallel_workers(),
+        run.parallel_scheduler_workers().len()
+    );
+    assert_eq!(
+        profile.max_parallel_workers(),
+        run.max_parallel_scheduler_workers()
+    );
     assert!(run.max_parallel_scheduler_workers() >= 1);
     assert_eq!(
         run.parallel_scheduler_frontiers().len(),
@@ -799,6 +824,20 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
     assert_eq!(
         run.parallel_scheduler_worker_partitions().len(),
         run.parallel_scheduler_workers().len()
+    );
+    let profile = run.parallel_scheduler_profile();
+    assert_eq!(profile.epoch_count(), parallel_epochs.len());
+    assert_eq!(
+        profile.batch_count(),
+        run.parallel_scheduler_batches().len()
+    );
+    assert_eq!(
+        profile.total_parallel_workers(),
+        run.parallel_scheduler_workers().len()
+    );
+    assert_eq!(
+        profile.max_parallel_workers(),
+        run.max_parallel_scheduler_workers()
     );
     assert!(run.max_parallel_scheduler_workers() >= 1);
     assert!(run

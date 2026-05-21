@@ -1,4 +1,4 @@
-use crate::scheduler::{PartitionEventId, PartitionId, RunSummary};
+use crate::scheduler::{ConservativeRunSummary, PartitionEventId, PartitionId, RunSummary};
 use crate::Tick;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -421,6 +421,7 @@ pub struct RecordedRunSummary {
     pub(super) summary: RunSummary,
     pub(super) dispatches: Vec<SchedulerDispatchRecord>,
     pub(super) batches: Vec<ParallelEpochBatchRecord>,
+    pub(super) profile: ParallelRunProfile,
 }
 
 impl RecordedRunSummary {
@@ -436,33 +437,203 @@ impl RecordedRunSummary {
         &self.batches
     }
 
+    pub fn profile(&self) -> ParallelRunProfile {
+        self.profile
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.profile.dispatch_count()
+    }
+
     pub fn batch_count(&self) -> usize {
-        self.batches.len()
+        self.profile.batch_count()
+    }
+
+    pub fn empty_epoch_count(&self) -> usize {
+        self.profile.empty_epoch_count()
+    }
+
+    pub fn is_empty_epoch(&self) -> bool {
+        self.profile.empty_epoch_count() != 0
     }
 
     pub fn max_parallel_workers(&self) -> usize {
-        self.batches
-            .iter()
-            .map(ParallelEpochBatchRecord::worker_count)
-            .max()
-            .unwrap_or(0)
+        self.profile.max_parallel_workers()
     }
 
     pub fn total_parallel_workers(&self) -> usize {
-        self.batches
-            .iter()
-            .map(ParallelEpochBatchRecord::worker_count)
-            .sum()
+        self.profile.total_parallel_workers()
     }
 
     pub fn has_parallel_work(&self) -> bool {
-        self.total_parallel_workers() != 0
+        self.profile.has_parallel_work()
     }
 
     pub fn parallel_worker_partitions(&self) -> Vec<PartitionId> {
         self.batches
             .iter()
             .flat_map(ParallelEpochBatchRecord::worker_partitions)
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct ParallelRunProfile {
+    epoch_count: usize,
+    empty_epoch_count: usize,
+    batch_count: usize,
+    dispatch_count: usize,
+    total_parallel_workers: usize,
+    max_parallel_workers: usize,
+}
+
+impl ParallelRunProfile {
+    pub const fn new(
+        epoch_count: usize,
+        empty_epoch_count: usize,
+        batch_count: usize,
+        dispatch_count: usize,
+        total_parallel_workers: usize,
+        max_parallel_workers: usize,
+    ) -> Self {
+        Self {
+            epoch_count,
+            empty_epoch_count,
+            batch_count,
+            dispatch_count,
+            total_parallel_workers,
+            max_parallel_workers,
+        }
+    }
+
+    pub fn for_epoch(
+        batches: &[ParallelEpochBatchRecord],
+        dispatch_count: usize,
+        empty_epoch: bool,
+    ) -> Self {
+        Self {
+            epoch_count: 1,
+            empty_epoch_count: usize::from(empty_epoch),
+            batch_count: batches.len(),
+            dispatch_count,
+            total_parallel_workers: batches
+                .iter()
+                .map(ParallelEpochBatchRecord::worker_count)
+                .sum(),
+            max_parallel_workers: batches
+                .iter()
+                .map(ParallelEpochBatchRecord::worker_count)
+                .max()
+                .unwrap_or(0),
+        }
+    }
+
+    pub const fn epoch_count(self) -> usize {
+        self.epoch_count
+    }
+
+    pub const fn empty_epoch_count(self) -> usize {
+        self.empty_epoch_count
+    }
+
+    pub const fn batch_count(self) -> usize {
+        self.batch_count
+    }
+
+    pub const fn dispatch_count(self) -> usize {
+        self.dispatch_count
+    }
+
+    pub const fn total_parallel_workers(self) -> usize {
+        self.total_parallel_workers
+    }
+
+    pub const fn max_parallel_workers(self) -> usize {
+        self.max_parallel_workers
+    }
+
+    pub const fn has_parallel_work(self) -> bool {
+        self.total_parallel_workers != 0
+    }
+
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            epoch_count: self.epoch_count + other.epoch_count,
+            empty_epoch_count: self.empty_epoch_count + other.empty_epoch_count,
+            batch_count: self.batch_count + other.batch_count,
+            dispatch_count: self.dispatch_count + other.dispatch_count,
+            total_parallel_workers: self.total_parallel_workers + other.total_parallel_workers,
+            max_parallel_workers: self.max_parallel_workers.max(other.max_parallel_workers),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecordedConservativeRunSummary {
+    pub(super) summary: ConservativeRunSummary,
+    pub(super) epochs: Vec<RecordedRunSummary>,
+    pub(super) profile: ParallelRunProfile,
+}
+
+impl RecordedConservativeRunSummary {
+    pub fn summary(&self) -> ConservativeRunSummary {
+        self.summary
+    }
+
+    pub fn epochs(&self) -> &[RecordedRunSummary] {
+        &self.epochs
+    }
+
+    pub fn epoch_count(&self) -> usize {
+        self.epochs.len()
+    }
+
+    pub fn profile(&self) -> ParallelRunProfile {
+        self.profile
+    }
+
+    pub fn dispatches(&self) -> Vec<SchedulerDispatchRecord> {
+        self.epochs
+            .iter()
+            .flat_map(|epoch| epoch.dispatches().iter().copied())
+            .collect()
+    }
+
+    pub fn batches(&self) -> Vec<ParallelEpochBatchRecord> {
+        self.epochs
+            .iter()
+            .flat_map(|epoch| epoch.batches().iter().cloned())
+            .collect()
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.profile.dispatch_count()
+    }
+
+    pub fn batch_count(&self) -> usize {
+        self.profile.batch_count()
+    }
+
+    pub fn empty_epoch_count(&self) -> usize {
+        self.profile.empty_epoch_count()
+    }
+
+    pub fn max_parallel_workers(&self) -> usize {
+        self.profile.max_parallel_workers()
+    }
+
+    pub fn total_parallel_workers(&self) -> usize {
+        self.profile.total_parallel_workers()
+    }
+
+    pub fn has_parallel_work(&self) -> bool {
+        self.profile.has_parallel_work()
+    }
+
+    pub fn parallel_worker_partitions(&self) -> Vec<PartitionId> {
+        self.epochs
+            .iter()
+            .flat_map(RecordedRunSummary::parallel_worker_partitions)
             .collect()
     }
 }
