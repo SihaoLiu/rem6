@@ -57,6 +57,37 @@ fn request(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
 }
 
 #[test]
+fn memory_trace_from_events_restores_existing_sequence() {
+    let route = MemoryRouteId::new(7);
+    let core = endpoint("core0");
+    let memory = endpoint("memory0");
+    let req = request(88, 0x1200, 4);
+    let mut events = vec![
+        MemoryTraceEvent::request(
+            1,
+            route,
+            core.clone(),
+            MemoryTraceKind::RequestSent,
+            req.id(),
+        ),
+        MemoryTraceEvent::response(9, route, core.clone(), req.id(), ResponseStatus::Completed),
+    ];
+
+    let trace = MemoryTrace::from_events(events.clone());
+    assert_eq!(trace.snapshot(), events);
+
+    events.push(MemoryTraceEvent::request(
+        11,
+        route,
+        memory,
+        MemoryTraceKind::RequestArrived,
+        req.id(),
+    ));
+    trace.record(events.last().unwrap().clone());
+    assert_eq!(trace.snapshot(), events);
+}
+
+#[test]
 fn transport_reserves_shared_fabric_links_for_request_hops() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::with_fabric(FabricModel::new());

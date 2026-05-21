@@ -2,11 +2,12 @@ use rem6_cache::CacheControllerResultKind;
 use rem6_coherence::{
     CpuResponseRecord, DirectoryDecisionRecord, DramMemoryAccessRecord, HarnessError,
     LineBackingStore, PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
-    PartitionedDramMemoryConfig, PartitionedMemoryConfig, SubmitKind,
+    PartitionedDramMemoryConfig, PartitionedMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
 };
 use rem6_directory::{DirectoryDataSource, DirectoryLineState, DirectorySnoop};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
-use rem6_kernel::PartitionId;
+use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop};
+use rem6_kernel::{PartitionId, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, ResponseStatus,
@@ -36,6 +37,17 @@ fn request_id(agent: u32, sequence: u64) -> MemoryRequestId {
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
+}
+
+fn fabric_link(name: &str) -> FabricLinkId {
+    FabricLinkId::new(name).unwrap()
+}
+
+fn fabric_path(name: &str, latency: u64, bandwidth_bytes_per_tick: u64) -> FabricPath {
+    FabricPath::new([
+        FabricPathHop::new(fabric_link(name), latency, bandwidth_bytes_per_tick).unwrap(),
+    ])
+    .unwrap()
 }
 
 fn line_data() -> Vec<u8> {
@@ -123,6 +135,42 @@ fn harness_with_slow_snoop_memory() -> PartitionedDirectoryLineHarness {
         [
             cache_config(1, 0, "l1d0", 3, 30),
             cache_config(2, 1, "l1d1", 3, 5),
+        ],
+    )
+    .unwrap()
+}
+
+fn harness_with_fabric_memory() -> PartitionedDirectoryLineHarness {
+    PartitionedDirectoryLineHarness::new_with_memory(
+        layout(),
+        Address::new(0x1000),
+        LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap(),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedMemoryConfig::new(PartitionId::new(4), endpoint("mem0"), 7, 11).with_route_hops(
+            [
+                PartitionedRouteHopConfig::new(PartitionId::new(4), endpoint("mem0"), 7, 11)
+                    .with_request_fabric_path(fabric_path("dir_mem_req", 2, 16))
+                    .with_response_fabric_path(fabric_path("mem_dir_rsp", 2, 16)),
+            ],
+        ),
+        [
+            cache_config(1, 0, "l1d0", 3, 5).with_route_hops([PartitionedRouteHopConfig::new(
+                PartitionId::new(2),
+                endpoint("dir0"),
+                3,
+                5,
+            )
+            .with_request_fabric_path(fabric_path("l1d0_dir_req", 2, 16))
+            .with_response_fabric_path(fabric_path("dir_l1d0_rsp", 2, 16))]),
+            cache_config(2, 1, "l1d1", 3, 5).with_route_hops([PartitionedRouteHopConfig::new(
+                PartitionId::new(2),
+                endpoint("dir0"),
+                3,
+                5,
+            )
+            .with_request_fabric_path(fabric_path("l1d1_dir_req", 2, 16))
+            .with_response_fabric_path(fabric_path("dir_l1d1_rsp", 2, 16))]),
         ],
     )
     .unwrap()
@@ -424,6 +472,167 @@ fn partitioned_directory_harness_routes_backing_read_with_dram_ready_cycle() {
         ]
     );
     assert_eq!(harness.directory_decisions()[0].tick(), 3);
+}
+
+#[test]
+fn partitioned_directory_harness_quiescent_snapshot_restores_state() {
+    let mut source = harness_with_memory();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    source.run_until_idle();
+    source
+        .submit_cpu_request(agent(2), read(2, 0, 0x1008, 4))
+        .unwrap();
+    source.run_until_idle();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = harness_with_memory();
+    restored
+        .submit_cpu_request(agent(1), write(1, 7, 0x1001, vec![0xee]))
+        .unwrap();
+    restored.run_until_idle();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+    assert_eq!(
+        restored.directory_state(),
+        DirectoryLineState::new(line())
+            .with_sharer(agent(1))
+            .with_sharer(agent(2))
+    );
+    assert_eq!(restored.trace(), snapshot.trace());
+    assert_eq!(restored.cpu_responses(), snapshot.cpu_responses());
+    assert_eq!(
+        restored.directory_decisions(),
+        snapshot.directory_decisions()
+    );
+
+    let hit = restored
+        .submit_cpu_request(agent(2), read(2, 9, 0x1008, 4))
+        .unwrap();
+    assert_eq!(hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            snapshot.scheduler().now(),
+            CacheControllerResultKind::Hit,
+            request_id(2, 9),
+            ResponseStatus::Completed,
+            Some(vec![8, 9, 10, 11]),
+        ))
+    );
+}
+
+#[test]
+fn partitioned_directory_harness_quiescent_snapshot_restores_dram_memory_state() {
+    let mut source = harness_with_dram_memory();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    source.run_until_idle();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    assert!(snapshot.backing().is_none());
+    assert!(snapshot.dram_memory().is_some());
+    assert_eq!(snapshot.dram_accesses(), source.dram_memory_accesses());
+
+    let mut expected = source;
+    expected
+        .submit_cpu_request(agent(2), read(2, 1, 0x1008, 4))
+        .unwrap();
+    expected.run_until_idle();
+
+    let mut restored = harness_with_dram_memory();
+    restored
+        .submit_cpu_request(agent(2), write(2, 7, 0x1001, vec![0xee]))
+        .unwrap();
+    restored.run_until_idle();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+    assert_eq!(restored.dram_memory_accesses(), snapshot.dram_accesses());
+
+    restored
+        .submit_cpu_request(agent(2), read(2, 1, 0x1008, 4))
+        .unwrap();
+    restored.run_until_idle();
+    assert_eq!(
+        restored.quiescent_snapshot().unwrap(),
+        expected.quiescent_snapshot().unwrap()
+    );
+}
+
+#[test]
+fn partitioned_directory_harness_quiescent_snapshot_restores_fabric_lane_state() {
+    let mut source = harness_with_fabric_memory();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    source.run_until_idle();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    let lanes = snapshot.fabric_lanes().unwrap();
+    assert!(!lanes.is_empty());
+
+    let mut expected = source;
+    expected
+        .submit_cpu_request(agent(2), read(2, 1, 0x1008, 4))
+        .unwrap();
+    expected.run_until_idle();
+
+    let mut restored = harness_with_fabric_memory();
+    restored
+        .submit_cpu_request(agent(2), read(2, 9, 0x100c, 4))
+        .unwrap();
+    restored.run_until_idle();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+    restored
+        .submit_cpu_request(agent(2), read(2, 1, 0x1008, 4))
+        .unwrap();
+    restored.run_until_idle();
+    assert_eq!(restored.trace(), expected.trace());
+    assert_eq!(restored.cpu_responses(), expected.cpu_responses());
+    assert_eq!(
+        restored.quiescent_snapshot().unwrap(),
+        expected.quiescent_snapshot().unwrap()
+    );
+}
+
+#[test]
+fn partitioned_directory_harness_quiescent_snapshot_rejects_resource_mismatch() {
+    let mut source = harness_with_dram_memory();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    source.run_until_idle();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = harness_with_memory();
+    assert_eq!(
+        restored.restore_quiescent(&snapshot).unwrap_err(),
+        HarnessError::SnapshotResourceMismatch {
+            resource: "backing"
+        }
+    );
+}
+
+#[test]
+fn partitioned_directory_harness_quiescent_snapshot_rejects_pending_events() {
+    let mut harness = harness();
+    harness
+        .submit_cpu_request(agent(1), read(1, 3, 0x1000, 4))
+        .unwrap();
+
+    assert_eq!(
+        harness.quiescent_snapshot().unwrap_err(),
+        HarnessError::Scheduler(SchedulerError::SnapshotContainsPendingEvents {
+            pending_events: 1
+        })
+    );
 }
 
 #[test]

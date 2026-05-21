@@ -8,8 +8,8 @@ use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryError, DirectoryGrant, DirectoryLineState,
     MsiDirectory,
 };
-use rem6_dram::DramMemoryController;
-use rem6_fabric::{FabricModel, FabricPath, VirtualNetworkId};
+use rem6_dram::{DramMemoryController, DramMemoryError};
+use rem6_fabric::{FabricError, FabricModel, FabricPath, VirtualNetworkId};
 use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -26,6 +26,7 @@ mod deferred;
 mod directory_snapshot;
 mod mesi;
 mod moesi;
+mod partitioned_snapshot;
 mod snoop;
 mod topology;
 
@@ -43,6 +44,7 @@ pub use moesi::{
     MoesiDirectoryLineHarnessSnapshot, MoesiHarnessError, MoesiSubmitResult,
     PartitionedMoesiDirectoryLineHarness,
 };
+pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
     TopologyDramMemoryConfig,
@@ -148,8 +150,11 @@ pub enum HarnessError {
     GrantDataUnavailable { agent: AgentId, line: MsiLineId },
     Cache(CacheControllerError),
     Directory(DirectoryError),
+    Dram(DramMemoryError),
+    Fabric(FabricError),
     Memory(MemoryError),
     Scheduler(SchedulerError),
+    SnapshotResourceMismatch { resource: &'static str },
     Topology(TopologyError),
     Transport(TransportError),
 }
@@ -203,8 +208,14 @@ impl fmt::Display for HarnessError {
             ),
             Self::Cache(error) => write!(formatter, "{error}"),
             Self::Directory(error) => write!(formatter, "{error}"),
+            Self::Dram(error) => write!(formatter, "{error}"),
+            Self::Fabric(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
+            Self::SnapshotResourceMismatch { resource } => write!(
+                formatter,
+                "snapshot resource {resource} does not match harness configuration"
+            ),
             Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
         }
@@ -216,6 +227,8 @@ impl Error for HarnessError {
         match self {
             Self::Cache(error) => Some(error),
             Self::Directory(error) => Some(error),
+            Self::Dram(error) => Some(error),
+            Self::Fabric(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Topology(error) => Some(error),

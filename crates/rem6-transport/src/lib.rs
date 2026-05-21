@@ -1503,6 +1503,12 @@ impl MemoryTrace {
         Self::default()
     }
 
+    pub fn from_events(events: Vec<MemoryTraceEvent>) -> Self {
+        Self {
+            events: Arc::new(Mutex::new(events)),
+        }
+    }
+
     pub fn record(&self, event: MemoryTraceEvent) {
         self.events.lock().expect("memory trace lock").push(event);
     }
