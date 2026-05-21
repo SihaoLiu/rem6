@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use rem6_boot::BootImage;
+use rem6_boot::{BootError, BootImage};
 use rem6_kernel::Tick;
 use rem6_memory::{Address, AddressRange};
 use rem6_stats::StatSnapshot;
@@ -133,6 +133,16 @@ impl WorkloadBootImage {
     pub fn segments(&self) -> &[WorkloadBootSegment] {
         &self.segments
     }
+
+    pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
+        let mut image = BootImage::new(self.entry);
+        for segment in &self.segments {
+            image = image
+                .add_segment(segment.range().start(), segment.data().to_vec())
+                .map_err(WorkloadError::Boot)?;
+        }
+        Ok(image)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -254,8 +264,25 @@ impl WorkloadManifest {
         &self.resources
     }
 
+    pub fn resource(&self, id: &WorkloadResourceId) -> Option<&WorkloadResource> {
+        self.resources.iter().find(|resource| resource.id() == id)
+    }
+
     pub fn required_resources(&self) -> &[WorkloadResourceId] {
         &self.required_resources
+    }
+
+    pub fn required_resource_details(&self) -> Result<Vec<WorkloadResource>, WorkloadError> {
+        self.required_resources
+            .iter()
+            .map(|id| {
+                self.resource(id)
+                    .cloned()
+                    .ok_or_else(|| WorkloadError::MissingRequiredResource {
+                        resource: id.clone(),
+                    })
+            })
+            .collect()
     }
 
     pub fn host_events(&self) -> &[WorkloadHostEvent] {
@@ -268,6 +295,10 @@ impl WorkloadManifest {
 
     pub fn identity(&self) -> WorkloadManifestIdentity {
         self.identity.clone()
+    }
+
+    pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
+        self.boot.to_boot_image()
     }
 }
 
@@ -351,6 +382,130 @@ impl WorkloadManifestBuilder {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadReplayPlan {
+    manifest_identity: WorkloadManifestIdentity,
+    boot: WorkloadBootImage,
+    required_resources: Vec<WorkloadResource>,
+    host_events: Vec<WorkloadHostEvent>,
+    planned_checkpoint_labels: Vec<String>,
+    planned_stop_reason: Option<String>,
+    checkpoint_lineage: Option<CheckpointLineage>,
+}
+
+impl WorkloadReplayPlan {
+    pub fn from_manifest(manifest: &WorkloadManifest) -> Result<Self, WorkloadError> {
+        let host_events = manifest.host_events().to_vec();
+        Ok(Self {
+            manifest_identity: manifest.identity(),
+            boot: manifest.boot().clone(),
+            required_resources: manifest.required_resource_details()?,
+            planned_checkpoint_labels: planned_checkpoint_labels(&host_events),
+            planned_stop_reason: planned_stop_reason(&host_events),
+            host_events,
+            checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
+        })
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+
+    pub const fn boot(&self) -> &WorkloadBootImage {
+        &self.boot
+    }
+
+    pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
+        self.boot.to_boot_image()
+    }
+
+    pub fn required_resources(&self) -> &[WorkloadResource] {
+        &self.required_resources
+    }
+
+    pub fn host_events(&self) -> &[WorkloadHostEvent] {
+        &self.host_events
+    }
+
+    pub fn planned_checkpoint_labels(&self) -> &[String] {
+        &self.planned_checkpoint_labels
+    }
+
+    pub fn planned_stop_reason(&self) -> Option<&str> {
+        self.planned_stop_reason.as_deref()
+    }
+
+    pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
+        self.checkpoint_lineage.as_ref()
+    }
+
+    pub fn verify_result(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
+        if result.manifest_identity != self.manifest_identity {
+            return Err(WorkloadError::ManifestIdentityMismatch {
+                expected: self.manifest_identity.clone(),
+                actual: result.manifest_identity.clone(),
+            });
+        }
+
+        result.verify_stats_timing()?;
+        self.verify_all_planned_events_reached(result.final_tick())?;
+        self.verify_checkpoint_labels(result)?;
+        self.verify_stop_reason(result)?;
+        Ok(())
+    }
+
+    fn verify_all_planned_events_reached(&self, final_tick: Tick) -> Result<(), WorkloadError> {
+        if let Some(event) = self
+            .host_events
+            .iter()
+            .find(|event| event.tick() > final_tick)
+        {
+            return Err(WorkloadError::PlannedHostEventAfterFinalTick {
+                event_tick: event.tick(),
+                final_tick,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn verify_checkpoint_labels(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
+        for label in result.checkpoint_labels() {
+            if !self
+                .planned_checkpoint_labels
+                .iter()
+                .any(|planned| planned == label)
+            {
+                return Err(WorkloadError::UnexpectedCheckpointLabel {
+                    label: label.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_stop_reason(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
+        let Some(expected) = &self.planned_stop_reason else {
+            return match result.stop_reason() {
+                Some(actual) => Err(WorkloadError::UnexpectedStopReason {
+                    actual: actual.to_string(),
+                }),
+                None => Ok(()),
+            };
+        };
+
+        if result.stop_reason() == Some(expected.as_str()) {
+            return Ok(());
+        }
+
+        Err(WorkloadError::StopReasonMismatch {
+            expected: expected.clone(),
+            actual: result.stop_reason().map(str::to_string),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResult {
     manifest_identity: WorkloadManifestIdentity,
     final_tick: Tick,
@@ -404,21 +559,80 @@ impl WorkloadResult {
     pub fn checkpoint_labels(&self) -> &[String] {
         &self.checkpoint_labels
     }
+
+    pub fn verify_manifest(&self, manifest: &WorkloadManifest) -> Result<(), WorkloadError> {
+        let expected = manifest.identity();
+        if self.manifest_identity != expected {
+            return Err(WorkloadError::ManifestIdentityMismatch {
+                expected,
+                actual: self.manifest_identity.clone(),
+            });
+        }
+
+        self.verify_stats_timing()
+    }
+
+    fn verify_stats_timing(&self) -> Result<(), WorkloadError> {
+        let Some(snapshot) = &self.stats_snapshot else {
+            return Ok(());
+        };
+
+        if snapshot.tick() <= self.final_tick {
+            return Ok(());
+        }
+
+        Err(WorkloadError::StatsAfterFinalTick {
+            stats_tick: snapshot.tick(),
+            final_tick: self.final_tick,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
+    Boot(BootError),
     EmptyWorkloadId,
     EmptyResourceId,
-    EmptyResourceDigest { resource: WorkloadResourceId },
-    EmptyResourceLocator { resource: WorkloadResourceId },
-    DuplicateResource { resource: WorkloadResourceId },
-    MissingRequiredResource { resource: WorkloadResourceId },
+    EmptyResourceDigest {
+        resource: WorkloadResourceId,
+    },
+    EmptyResourceLocator {
+        resource: WorkloadResourceId,
+    },
+    DuplicateResource {
+        resource: WorkloadResourceId,
+    },
+    MissingRequiredResource {
+        resource: WorkloadResourceId,
+    },
+    ManifestIdentityMismatch {
+        expected: WorkloadManifestIdentity,
+        actual: WorkloadManifestIdentity,
+    },
+    StatsAfterFinalTick {
+        stats_tick: Tick,
+        final_tick: Tick,
+    },
+    PlannedHostEventAfterFinalTick {
+        event_tick: Tick,
+        final_tick: Tick,
+    },
+    UnexpectedCheckpointLabel {
+        label: String,
+    },
+    StopReasonMismatch {
+        expected: String,
+        actual: Option<String>,
+    },
+    UnexpectedStopReason {
+        actual: String,
+    },
 }
 
 impl fmt::Display for WorkloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Boot(error) => write!(formatter, "{error}"),
             Self::EmptyWorkloadId => write!(formatter, "workload id must not be empty"),
             Self::EmptyResourceId => write!(formatter, "resource id must not be empty"),
             Self::EmptyResourceDigest { resource } => write!(
@@ -443,11 +657,51 @@ impl fmt::Display for WorkloadError {
                 "required resource {} is not defined",
                 resource.as_str()
             ),
+            Self::ManifestIdentityMismatch { expected, actual } => write!(
+                formatter,
+                "workload result belongs to manifest {}, expected {}",
+                actual.as_str(),
+                expected.as_str()
+            ),
+            Self::StatsAfterFinalTick {
+                stats_tick,
+                final_tick,
+            } => write!(
+                formatter,
+                "stats snapshot tick {stats_tick} is after final tick {final_tick}"
+            ),
+            Self::PlannedHostEventAfterFinalTick {
+                event_tick,
+                final_tick,
+            } => write!(
+                formatter,
+                "planned host event at tick {event_tick} is after final tick {final_tick}"
+            ),
+            Self::UnexpectedCheckpointLabel { label } => {
+                write!(formatter, "checkpoint label {label} was not planned")
+            }
+            Self::StopReasonMismatch { expected, actual } => match actual {
+                Some(actual) => write!(
+                    formatter,
+                    "stop reason {actual} does not match planned reason {expected}"
+                ),
+                None => write!(formatter, "missing planned stop reason {expected}"),
+            },
+            Self::UnexpectedStopReason { actual } => {
+                write!(formatter, "stop reason {actual} was not planned")
+            }
         }
     }
 }
 
-impl Error for WorkloadError {}
+impl Error for WorkloadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Boot(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
     let (rank, label) = match event.intent() {
@@ -459,6 +713,23 @@ fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
         HostEventIntent::Stop { reason } => (5, reason.as_str()),
     };
     (event.tick(), rank, label.to_string())
+}
+
+fn planned_checkpoint_labels(events: &[WorkloadHostEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event.intent() {
+            HostEventIntent::Checkpoint { label } => Some(label.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn planned_stop_reason(events: &[WorkloadHostEvent]) -> Option<String> {
+    events.iter().find_map(|event| match event.intent() {
+        HostEventIntent::Stop { reason } => Some(reason.clone()),
+        _ => None,
+    })
 }
 
 fn manifest_identity(

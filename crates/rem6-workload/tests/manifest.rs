@@ -4,7 +4,8 @@ use rem6_memory::{AccessSize, Address};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadId,
-    WorkloadManifest, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadManifest, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -41,6 +42,27 @@ fn disk_resource() -> WorkloadResource {
         "resources/rootfs.img",
     )
     .unwrap()
+}
+
+fn replay_manifest_with_planned_outputs() -> WorkloadManifest {
+    WorkloadManifest::builder(id("planned-output-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            80,
+            HostEventIntent::Stop {
+                reason: "done".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
 }
 
 #[test]
@@ -179,4 +201,199 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
     assert_eq!(result.stop_reason(), Some("host-stop"));
     assert_eq!(result.stats_snapshot(), Some(&snapshot));
     assert_eq!(result.checkpoint_labels(), &["after-roi".to_string()]);
+}
+
+#[test]
+fn workload_manifest_reconstructs_boot_image_and_replay_plan() {
+    let manifest = WorkloadManifest::builder(id("replay-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(disk_resource())
+        .unwrap()
+        .add_required_resource(resource_id("disk"))
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            80,
+            HostEventIntent::Stop {
+                reason: "done".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::RoiBegin {
+                label: "main".to_string(),
+            },
+        ))
+        .with_checkpoint_lineage(CheckpointLineage::CreatedByWorkload {
+            label: "cold-boot".to_string(),
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(manifest.to_boot_image().unwrap(), boot_image());
+
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(plan.manifest_identity(), manifest.identity());
+    assert_eq!(plan.boot(), manifest.boot());
+    assert_eq!(plan.to_boot_image().unwrap(), boot_image());
+    assert_eq!(plan.required_resources().len(), 2);
+    assert_eq!(plan.required_resources()[0].id().as_str(), "disk");
+    assert_eq!(
+        plan.required_resources()[0].kind(),
+        WorkloadResourceKind::DiskImage
+    );
+    assert_eq!(plan.required_resources()[1].id().as_str(), "kernel");
+    assert_eq!(plan.host_events().len(), 2);
+    assert_eq!(plan.host_events()[0].tick(), 20);
+    assert_eq!(plan.host_events()[1].tick(), 80);
+    assert_eq!(
+        plan.checkpoint_lineage().unwrap(),
+        &CheckpointLineage::CreatedByWorkload {
+            label: "cold-boot".to_string(),
+        },
+    );
+}
+
+#[test]
+fn workload_result_validation_rejects_wrong_manifest_and_late_stats() {
+    let manifest = WorkloadManifest::builder(id("result-source"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let other = WorkloadManifest::builder(id("different-source"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    let valid = WorkloadResult::new(manifest.identity(), 90);
+    valid.verify_manifest(&manifest).unwrap();
+
+    let wrong_manifest = WorkloadResult::new(other.identity(), 90)
+        .verify_manifest(&manifest)
+        .unwrap_err();
+    assert_eq!(
+        wrong_manifest,
+        WorkloadError::ManifestIdentityMismatch {
+            expected: manifest.identity(),
+            actual: other.identity(),
+        }
+    );
+
+    let stats = StatsRegistry::new().snapshot(95);
+    let late_stats = WorkloadResult::new(manifest.identity(), 90)
+        .with_stats_snapshot(stats)
+        .verify_manifest(&manifest)
+        .unwrap_err();
+    assert_eq!(
+        late_stats,
+        WorkloadError::StatsAfterFinalTick {
+            stats_tick: 95,
+            final_tick: 90,
+        }
+    );
+}
+
+#[test]
+fn workload_replay_plan_validates_matching_result_outputs() {
+    let manifest = replay_manifest_with_planned_outputs();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let snapshot = StatsRegistry::new().snapshot(75);
+    let result = WorkloadResult::new(plan.manifest_identity(), 80)
+        .with_stop_reason("done")
+        .with_stats_snapshot(snapshot)
+        .with_checkpoint_label("warm");
+
+    assert_eq!(plan.planned_checkpoint_labels(), &["warm".to_string()]);
+    assert_eq!(plan.planned_stop_reason(), Some("done"));
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_truncated_runs() {
+    let manifest = replay_manifest_with_planned_outputs();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 60)
+        .with_stop_reason("done")
+        .with_checkpoint_label("warm");
+
+    let error = plan.verify_result(&result).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::PlannedHostEventAfterFinalTick {
+            event_tick: 80,
+            final_tick: 60,
+        }
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_unplanned_outputs() {
+    let manifest = replay_manifest_with_planned_outputs();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let unexpected_checkpoint = WorkloadResult::new(plan.manifest_identity(), 80)
+        .with_stop_reason("done")
+        .with_checkpoint_label("cold");
+    let error = plan.verify_result(&unexpected_checkpoint).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::UnexpectedCheckpointLabel {
+            label: "cold".to_string(),
+        }
+    );
+
+    let wrong_stop = WorkloadResult::new(plan.manifest_identity(), 80)
+        .with_stop_reason("aborted")
+        .with_checkpoint_label("warm");
+    let error = plan.verify_result(&wrong_stop).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::StopReasonMismatch {
+            expected: "done".to_string(),
+            actual: Some("aborted".to_string()),
+        }
+    );
+
+    let missing_stop =
+        WorkloadResult::new(plan.manifest_identity(), 80).with_checkpoint_label("warm");
+    let error = plan.verify_result(&missing_stop).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::StopReasonMismatch {
+            expected: "done".to_string(),
+            actual: None,
+        }
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_stop_reason_without_planned_stop() {
+    let manifest = WorkloadManifest::builder(id("no-stop-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 20)
+        .with_stop_reason("host-stop")
+        .with_checkpoint_label("warm");
+
+    let error = plan.verify_result(&result).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::UnexpectedStopReason {
+            actual: "host-stop".to_string(),
+        }
+    );
 }
