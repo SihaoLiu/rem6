@@ -295,6 +295,8 @@ pub struct WorkloadRiscvCore {
     entry: Address,
     fetch_endpoint: String,
     fetch_route: WorkloadRouteId,
+    data_endpoint: Option<String>,
+    data_route: Option<WorkloadRouteId>,
 }
 
 impl WorkloadRiscvCore {
@@ -318,7 +320,24 @@ impl WorkloadRiscvCore {
             entry,
             fetch_endpoint,
             fetch_route,
+            data_endpoint: None,
+            data_route: None,
         })
+    }
+
+    pub fn with_data(
+        mut self,
+        data_endpoint: impl Into<String>,
+        data_route: WorkloadRouteId,
+    ) -> Result<Self, WorkloadError> {
+        let data_endpoint = data_endpoint.into();
+        if data_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        self.data_endpoint = Some(data_endpoint);
+        self.data_route = Some(data_route);
+        Ok(self)
     }
 
     pub const fn cpu(&self) -> u32 {
@@ -343,6 +362,14 @@ impl WorkloadRiscvCore {
 
     pub fn fetch_route(&self) -> &WorkloadRouteId {
         &self.fetch_route
+    }
+
+    pub fn data_endpoint(&self) -> Option<&str> {
+        self.data_endpoint.as_deref()
+    }
+
+    pub fn data_route(&self) -> Option<&WorkloadRouteId> {
+        self.data_route.as_ref()
     }
 }
 
@@ -448,6 +475,18 @@ impl WorkloadTopology {
                 cpu: core.cpu(),
                 route: core.fetch_route().clone(),
             });
+        }
+        if let Some(route) = core.data_route() {
+            if !self
+                .memory_routes
+                .iter()
+                .any(|existing| existing.id() == route)
+            {
+                return Err(WorkloadError::MissingCoreDataRoute {
+                    cpu: core.cpu(),
+                    route: route.clone(),
+                });
+            }
         }
 
         self.riscv_cores.push(core);
@@ -1054,6 +1093,10 @@ pub enum WorkloadError {
         cpu: u32,
         route: WorkloadRouteId,
     },
+    MissingCoreDataRoute {
+        cpu: u32,
+        route: WorkloadRouteId,
+    },
     ManifestIdentityMismatch {
         expected: WorkloadManifestIdentity,
         actual: WorkloadManifestIdentity,
@@ -1149,6 +1192,11 @@ impl fmt::Display for WorkloadError {
             Self::MissingCoreFetchRoute { cpu, route } => write!(
                 formatter,
                 "RISC-V core {cpu} fetch route {} is not defined",
+                route.as_str()
+            ),
+            Self::MissingCoreDataRoute { cpu, route } => write!(
+                formatter,
+                "RISC-V core {cpu} data route {} is not defined",
                 route.as_str()
             ),
             Self::ManifestIdentityMismatch { expected, actual } => write!(
@@ -1310,6 +1358,15 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, core.entry().get());
         hash_str(hash, core.fetch_endpoint());
         hash_str(hash, core.fetch_route().as_str());
+        match (core.data_endpoint(), core.data_route()) {
+            (Some(endpoint), Some(route)) => {
+                hash_str(hash, "data");
+                hash_str(hash, endpoint);
+                hash_str(hash, route.as_str());
+            }
+            (None, None) => hash_str(hash, "data.none"),
+            _ => hash_str(hash, "data.invalid"),
+        }
     }
 }
 

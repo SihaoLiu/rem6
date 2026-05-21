@@ -4,10 +4,13 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootError;
-use rem6_cpu::{CpuCore, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore};
+use rem6_cpu::{
+    CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
-    AccessSize, AgentId, CacheLineLayout, MemoryError, MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, AgentId, CacheLineLayout, MemoryError, MemoryTargetId, PartitionedMemorySnapshot,
+    PartitionedMemoryStore,
 };
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
@@ -107,11 +110,17 @@ impl RiscvWorkloadReplay {
         self.plan
             .verify_result(&result)
             .map_err(RiscvWorkloadReplayError::Workload)?;
+        let memory_snapshot = store
+            .lock()
+            .expect("workload replay memory lock")
+            .snapshot();
 
         Ok(RiscvWorkloadReplayOutcome::new(
+            cluster,
             run,
             result,
             host_action_outcomes,
+            memory_snapshot,
         ))
     }
 
@@ -220,7 +229,26 @@ impl RiscvWorkloadReplay {
                     ),
                 )
                 .map_err(RiscvWorkloadReplayError::Cpu)?;
-                Ok(RiscvCore::new(cpu_core))
+                let Some(data_route) = core.data_route() else {
+                    return Ok(RiscvCore::new(cpu_core));
+                };
+                let Some(data_endpoint) = core.data_endpoint() else {
+                    return Ok(RiscvCore::new(cpu_core));
+                };
+                let data_route = route_map.get(data_route).copied().ok_or_else(|| {
+                    RiscvWorkloadReplayError::MissingRoute {
+                        route: data_route.clone(),
+                    }
+                })?;
+                Ok(RiscvCore::with_data(
+                    cpu_core,
+                    CpuDataConfig::new(
+                        TransportEndpointId::new(data_endpoint)
+                            .map_err(RiscvWorkloadReplayError::Transport)?,
+                        data_route,
+                        layout,
+                    ),
+                ))
             })
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 
@@ -318,24 +346,34 @@ fn planned_host_guest_event(
     ))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplayOutcome {
+    cluster: RiscvCluster,
     run: RiscvSystemRun,
     result: WorkloadResult,
     host_action_outcomes: Vec<SystemActionOutcome>,
+    memory_snapshot: PartitionedMemorySnapshot,
 }
 
 impl RiscvWorkloadReplayOutcome {
     pub const fn new(
+        cluster: RiscvCluster,
         run: RiscvSystemRun,
         result: WorkloadResult,
         host_action_outcomes: Vec<SystemActionOutcome>,
+        memory_snapshot: PartitionedMemorySnapshot,
     ) -> Self {
         Self {
+            cluster,
             run,
             result,
             host_action_outcomes,
+            memory_snapshot,
         }
+    }
+
+    pub const fn cluster(&self) -> &RiscvCluster {
+        &self.cluster
     }
 
     pub const fn run(&self) -> &RiscvSystemRun {
@@ -348,6 +386,10 @@ impl RiscvWorkloadReplayOutcome {
 
     pub fn host_action_outcomes(&self) -> &[SystemActionOutcome] {
         &self.host_action_outcomes
+    }
+
+    pub const fn memory_snapshot(&self) -> &PartitionedMemorySnapshot {
+        &self.memory_snapshot
     }
 }
 

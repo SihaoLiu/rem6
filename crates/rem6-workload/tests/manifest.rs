@@ -92,7 +92,17 @@ fn riscv_topology() -> WorkloadTopology {
         )
         .unwrap()
         .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
             WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.data"), "cpu1.dmem", 1, "memory", 2, 2, 3)
                 .unwrap(),
         )
         .unwrap()
@@ -105,6 +115,8 @@ fn riscv_topology() -> WorkloadTopology {
                 "cpu0.ifetch",
                 route_id("cpu0.fetch"),
             )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
             .unwrap(),
         )
         .unwrap()
@@ -117,6 +129,8 @@ fn riscv_topology() -> WorkloadTopology {
                 "cpu1.ifetch",
                 route_id("cpu1.fetch"),
             )
+            .unwrap()
+            .with_data("cpu1.dmem", route_id("cpu1.data"))
             .unwrap(),
         )
         .unwrap()
@@ -333,12 +347,19 @@ fn workload_manifest_records_topology_for_full_system_replay() {
     assert_eq!(topology.memory_targets().len(), 1);
     assert_eq!(topology.memory_targets()[0].target(), 0);
     assert_eq!(topology.memory_targets()[0].line_bytes(), 16);
-    assert_eq!(topology.memory_routes().len(), 2);
-    assert_eq!(topology.memory_routes()[0].id().as_str(), "cpu0.fetch");
+    assert_eq!(topology.memory_routes().len(), 4);
+    assert_eq!(topology.memory_routes()[0].id().as_str(), "cpu0.data");
     assert_eq!(topology.riscv_cores().len(), 2);
     assert_eq!(
         topology.riscv_cores()[1].fetch_route().as_str(),
         "cpu1.fetch"
+    );
+    assert_eq!(topology.riscv_cores()[0].data_endpoint(), Some("cpu0.dmem"));
+    assert_eq!(
+        topology.riscv_cores()[0]
+            .data_route()
+            .map(WorkloadRouteId::as_str),
+        Some("cpu0.data")
     );
 
     let different_topology = WorkloadManifest::builder(id("topology-run"), boot_image())
