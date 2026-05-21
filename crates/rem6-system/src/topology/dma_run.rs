@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
 use rem6_accelerator::{AcceleratorDmaCopy, AcceleratorEngineId};
+use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
 use rem6_fabric::{FabricActivityProfile, FabricLaneActivity, FabricLinkId, VirtualNetworkId};
 use rem6_gpu::{GpuDeviceId, GpuDmaCopy};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRunProfile, PartitionEventId, PartitionId,
     RecordedConservativeRunSummary, Tick,
 };
+use rem6_memory::MemoryTargetId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvTopologyDmaCopy {
@@ -89,6 +91,7 @@ pub struct RiscvTopologyDmaStageRunSummary {
     accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyDmaDeviceActivity>,
     gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyDmaDeviceActivity>,
     fabric_activity: Vec<FabricLaneActivity>,
+    dram_activity: Vec<DramTargetActivity>,
 }
 
 impl RiscvTopologyDmaStageRunSummary {
@@ -108,6 +111,7 @@ impl RiscvTopologyDmaStageRunSummary {
             accelerator_activity: BTreeMap::new(),
             gpu_activity: BTreeMap::new(),
             fabric_activity: Vec::new(),
+            dram_activity: Vec::new(),
         }
     }
 
@@ -123,6 +127,11 @@ impl RiscvTopologyDmaStageRunSummary {
 
     pub fn with_fabric_activity(mut self, fabric_activity: Vec<FabricLaneActivity>) -> Self {
         self.fabric_activity = fabric_activity;
+        self
+    }
+
+    pub fn with_dram_activity(mut self, dram_activity: Vec<DramTargetActivity>) -> Self {
+        self.dram_activity = dram_activity;
         self
     }
 
@@ -266,6 +275,33 @@ impl RiscvTopologyDmaStageRunSummary {
     pub fn has_fabric_activity(&self) -> bool {
         self.fabric_transfer_count() != 0
     }
+
+    pub fn dram_target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
+        self.dram_activity
+            .iter()
+            .find(|activity| activity.target() == target)
+            .copied()
+    }
+
+    pub fn dram_target_activities(&self) -> &[DramTargetActivity] {
+        &self.dram_activity
+    }
+
+    pub fn dram_profile(&self) -> DramMemoryActivityProfile {
+        DramMemoryActivityProfile::from_target_activities(self.dram_activity.iter())
+    }
+
+    pub fn active_dram_target_count(&self) -> usize {
+        self.dram_profile().active_target_count()
+    }
+
+    pub fn dram_access_count(&self) -> usize {
+        self.dram_profile().access_count()
+    }
+
+    pub fn has_dram_activity(&self) -> bool {
+        self.dram_access_count() != 0
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -408,6 +444,33 @@ impl RiscvTopologyDmaRunSummary {
         self.fabric_transfer_count() != 0
     }
 
+    pub fn dram_target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
+        self.dram_target_activities().remove(&target)
+    }
+
+    pub fn dram_target_activities(&self) -> BTreeMap<MemoryTargetId, DramTargetActivity> {
+        let mut activities = collect_dram_activity(self.read.dram_target_activities());
+        merge_dram_activity_maps(&mut activities, self.write.dram_target_activities());
+        activities
+    }
+
+    pub fn dram_profile(&self) -> DramMemoryActivityProfile {
+        let activities = self.dram_target_activities();
+        DramMemoryActivityProfile::from_target_activities(activities.values())
+    }
+
+    pub fn active_dram_target_count(&self) -> usize {
+        self.dram_profile().active_target_count()
+    }
+
+    pub fn dram_access_count(&self) -> usize {
+        self.dram_profile().access_count()
+    }
+
+    pub fn has_dram_activity(&self) -> bool {
+        self.dram_access_count() != 0
+    }
+
     pub fn final_tick(&self) -> Tick {
         self.write.final_tick()
     }
@@ -488,5 +551,31 @@ fn merge_fabric_activity_maps(
             .entry((activity.link().clone(), activity.virtual_network()))
             .and_modify(|stored| *stored = stored.clone().merge_window(activity.clone()))
             .or_insert_with(|| activity.clone());
+    }
+}
+
+fn collect_dram_activity(
+    source: &[DramTargetActivity],
+) -> BTreeMap<MemoryTargetId, DramTargetActivity> {
+    source
+        .iter()
+        .map(|activity| (activity.target(), *activity))
+        .collect()
+}
+
+fn merge_dram_activity_maps(
+    target: &mut BTreeMap<MemoryTargetId, DramTargetActivity>,
+    source: &[DramTargetActivity],
+) {
+    for activity in source {
+        target
+            .entry(activity.target())
+            .and_modify(|stored| {
+                *stored = DramTargetActivity::new(
+                    stored.target(),
+                    stored.profile().merge_window(activity.profile()),
+                );
+            })
+            .or_insert(*activity);
     }
 }

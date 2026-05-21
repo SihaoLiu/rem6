@@ -170,7 +170,7 @@ impl DramActivityProfile {
         profile
     }
 
-    pub(crate) fn merge_target(self, later: Self) -> Self {
+    pub fn merge_window(self, later: Self) -> Self {
         Self {
             active_port_count: self.active_port_count + later.active_port_count,
             active_bank_count: self.active_bank_count + later.active_bank_count,
@@ -284,7 +284,7 @@ pub struct DramMemoryActivityProfile {
 }
 
 impl DramMemoryActivityProfile {
-    pub(crate) fn from_target_activities<'a, I>(activities: I) -> Self
+    pub fn from_target_activities<'a, I>(activities: I) -> Self
     where
         I: IntoIterator<Item = &'a DramTargetActivity>,
     {
@@ -293,7 +293,7 @@ impl DramMemoryActivityProfile {
         for activity in activities {
             if !activity.profile().is_empty() {
                 active_target_count += 1;
-                profile = profile.merge_target(activity.profile());
+                profile = profile.merge_window(activity.profile());
             }
         }
         Self {

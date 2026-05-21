@@ -109,6 +109,10 @@ fn dram_config() -> RiscvTopologyDramConfig {
     .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap())
 }
 
+fn dram_dma_config() -> RiscvTopologyDramConfig {
+    dram_config().add_region(Address::new(0x1000), AccessSize::new(0x3000).unwrap())
+}
+
 fn core_config(cpu: u32, partition: u32, agent: u32, entry: u64) -> RiscvCoreTopologyConfig {
     let cpu_name = format!("cpu{cpu}");
     RiscvCoreTopologyConfig::new(
@@ -364,6 +368,19 @@ fn memory_store() -> PartitionedMemoryStore {
         .insert_line(target, Address::new(0x3000), vec![0; 16])
         .unwrap();
     store
+}
+
+fn seed_dma_dram(system: &RiscvTopologySystem) {
+    let target = MemoryTargetId::new(0);
+    let mut source_line = vec![0; 16];
+    source_line[4..8].copy_from_slice(&[0x21, 0x32, 0x43, 0x54]);
+
+    let dram = system.dram_memory_controller().unwrap();
+    let mut dram = dram.lock().unwrap();
+    dram.insert_line(target, Address::new(0x1000), source_line)
+        .unwrap();
+    dram.insert_line(target, Address::new(0x3000), vec![0; 16])
+        .unwrap();
 }
 
 fn accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig {
@@ -1053,6 +1070,76 @@ fn topology_system_batches_gpu_and_accelerator_dma_reads_on_shared_fabric() {
             ),
         ],
     );
+}
+
+#[test]
+fn topology_system_reports_dram_activity_for_accelerator_dma_copy() {
+    let accelerator_id = AcceleratorEngineId::new(81);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        accelerator_fabric_topology(),
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 81, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(dram_dma_config(), &ecall_image())
+    .unwrap()
+    .with_accelerator(accelerator_config(accelerator_id))
+    .unwrap();
+    seed_dma_dram(&system);
+    let route = system.accelerator(accelerator_id).unwrap().dma_route();
+
+    let summary = system
+        .run_accelerator_dma_copy_parallel_recorded(
+            accelerator_id,
+            dma_copy(route, 390, 0x1004),
+            MemoryTrace::new(),
+        )
+        .unwrap();
+
+    assert!(summary.read().has_dram_activity());
+    assert_eq!(summary.read().active_dram_target_count(), 1);
+    assert_eq!(summary.read().dram_access_count(), 1);
+    assert_eq!(summary.read().dram_profile().access_count(), 1);
+    assert_eq!(summary.read().dram_profile().read_count(), 1);
+    assert_eq!(summary.read().dram_profile().write_count(), 0);
+    let read_target = summary
+        .read()
+        .dram_target_activity(MemoryTargetId::new(0))
+        .unwrap();
+    assert_eq!(read_target.profile().read_count(), 1);
+
+    assert!(summary.write().has_dram_activity());
+    assert_eq!(summary.write().active_dram_target_count(), 1);
+    assert_eq!(summary.write().dram_access_count(), 1);
+    assert_eq!(summary.write().dram_profile().access_count(), 1);
+    assert_eq!(summary.write().dram_profile().read_count(), 0);
+    assert_eq!(summary.write().dram_profile().write_count(), 1);
+    let write_target = summary
+        .write()
+        .dram_target_activity(MemoryTargetId::new(0))
+        .unwrap();
+    assert_eq!(write_target.profile().write_count(), 1);
+
+    assert!(summary.has_dram_activity());
+    assert_eq!(summary.active_dram_target_count(), 1);
+    assert_eq!(summary.dram_access_count(), 2);
+    assert_eq!(summary.dram_profile().access_count(), 2);
+    assert_eq!(summary.dram_profile().read_count(), 1);
+    assert_eq!(summary.dram_profile().write_count(), 1);
+    assert_eq!(summary.dram_target_activities().len(), 1);
+    let full_target = summary
+        .dram_target_activity(MemoryTargetId::new(0))
+        .unwrap();
+    assert_eq!(full_target.profile().access_count(), 2);
+
+    let destination = system
+        .dram_memory_controller()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x3000))
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0x21, 0x32, 0x43, 0x54]);
 }
 
 #[test]

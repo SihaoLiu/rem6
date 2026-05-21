@@ -25,8 +25,8 @@ use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_dram::{
-    DramControllerConfig, DramGeometry, DramMemoryActivityProfile, DramMemoryController,
-    DramMemoryError, DramTargetActivity, DramTiming, ExternalMemoryProfile,
+    DramControllerConfig, DramGeometry, DramMemoryActivityMarker, DramMemoryActivityProfile,
+    DramMemoryController, DramMemoryError, DramTargetActivity, DramTiming, ExternalMemoryProfile,
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{
@@ -936,6 +936,7 @@ impl RiscvTopologySystem {
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
+        let dram_activity_start = mark_dram_activity(&memory);
         let mut issue_records = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
 
@@ -1004,6 +1005,7 @@ impl RiscvTopologySystem {
         let fabric_activity = fabric_activity_start
             .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
             .unwrap_or_default();
+        let dram_activity = dram_activities_since(&memory, dram_activity_start);
 
         Ok(RiscvTopologyDmaStageRunSummary::new(
             events,
@@ -1013,7 +1015,8 @@ impl RiscvTopologySystem {
             activity.dma_completion_count,
         )
         .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
-        .with_fabric_activity(fabric_activity))
+        .with_fabric_activity(fabric_activity)
+        .with_dram_activity(dram_activity))
     }
 
     pub fn run_dma_copies_parallel<I>(
@@ -1066,6 +1069,7 @@ impl RiscvTopologySystem {
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
+        let dram_activity_start = mark_dram_activity(&memory);
         let mut issue_records = Vec::new();
         let mut rollbacks = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
@@ -1155,6 +1159,7 @@ impl RiscvTopologySystem {
         let fabric_activity = fabric_activity_start
             .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
             .unwrap_or_default();
+        let dram_activity = dram_activities_since(&memory, dram_activity_start);
 
         Ok(RiscvTopologyDmaStageRunSummary::new(
             events,
@@ -1164,7 +1169,8 @@ impl RiscvTopologySystem {
             activity.dma_completion_count,
         )
         .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
-        .with_fabric_activity(fabric_activity))
+        .with_fabric_activity(fabric_activity)
+        .with_dram_activity(dram_activity))
     }
 
     fn dma_device_snapshots(
@@ -1519,6 +1525,34 @@ fn topology_memory_response(
                 TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
             }
         },
+    }
+}
+
+fn mark_dram_activity(memory: &RiscvTopologyMemoryBackend) -> Option<DramMemoryActivityMarker> {
+    match memory {
+        RiscvTopologyMemoryBackend::Store { .. } => None,
+        RiscvTopologyMemoryBackend::Dram { memory, .. } => Some(
+            memory
+                .lock()
+                .expect("topology DRAM memory lock")
+                .mark_activity(),
+        ),
+    }
+}
+
+fn dram_activities_since(
+    memory: &RiscvTopologyMemoryBackend,
+    marker: Option<DramMemoryActivityMarker>,
+) -> Vec<DramTargetActivity> {
+    let Some(marker) = marker else {
+        return Vec::new();
+    };
+    match memory {
+        RiscvTopologyMemoryBackend::Store { .. } => Vec::new(),
+        RiscvTopologyMemoryBackend::Dram { memory, .. } => memory
+            .lock()
+            .expect("topology DRAM memory lock")
+            .target_activities_since(&marker),
     }
 }
 
