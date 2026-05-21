@@ -2,6 +2,7 @@ use rem6_dram::{
     DramAccessKind, DramControllerConfig, DramError, DramGeometry, DramMemoryController,
     DramMemoryError, DramTiming,
 };
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
     MemoryRequestId, MemoryTargetId, ResponseStatus,
@@ -208,6 +209,41 @@ fn dram_memory_controller_reports_target_activity_profiles() {
     assert_eq!(target_windows.len(), 2);
     assert_eq!(target_windows[0].target(), low);
     assert_eq!(target_windows[1].target(), high);
+}
+
+#[test]
+fn dram_memory_controller_aggregates_target_wait_for_diagnostics() {
+    let (mut controller, low, high) = controller_with_targets();
+    let marker = controller.mark_wait_for();
+
+    controller.accept(0, &read(0x1000, 8, 90)).unwrap();
+    controller.accept(1, &read(0x1008, 8, 91)).unwrap();
+    controller.accept(0, &read(0x8000, 8, 92)).unwrap();
+
+    let low_request = WaitForNode::transaction("dram.target.1.agent.6.request.91").unwrap();
+    let low_bank = WaitForNode::resource("dram.target.1.port.0.bank.0").unwrap();
+    let high_request = WaitForNode::transaction("dram.target.2.agent.6.request.92").unwrap();
+    let graph = controller.wait_for_graph_since(&marker).snapshot();
+
+    assert_eq!(graph.edge_count(), 1);
+    assert_eq!(graph.first_observed_tick(), Some(1));
+    assert_eq!(graph.last_observed_tick(), Some(7));
+    assert!(graph.contains_edge(&low_request, &low_bank, WaitForEdgeKind::Queue));
+    assert!(graph.dependencies(&high_request).is_empty());
+    assert_eq!(
+        controller
+            .target_wait_for_graph_since(&marker, low)
+            .unwrap()
+            .edge_count(),
+        1
+    );
+    assert_eq!(
+        controller
+            .target_wait_for_graph_since(&marker, high)
+            .unwrap()
+            .edge_count(),
+        0
+    );
 }
 
 #[test]

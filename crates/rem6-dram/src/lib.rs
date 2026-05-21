@@ -10,6 +10,7 @@ pub use activity::{
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
 
+use rem6_kernel::{WaitForEdgeKind, WaitForGraph, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot,
@@ -181,6 +182,32 @@ impl Error for DramMemoryError {
 impl From<MemoryError> for DramMemoryError {
     fn from(error: MemoryError) -> Self {
         Self::Memory(error)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramWaitForMarker {
+    offset: usize,
+}
+
+impl DramWaitForMarker {
+    const fn new(offset: usize) -> Self {
+        Self { offset }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemoryWaitForMarker {
+    targets: BTreeMap<MemoryTargetId, DramWaitForMarker>,
+}
+
+impl DramMemoryWaitForMarker {
+    fn new(targets: BTreeMap<MemoryTargetId, DramWaitForMarker>) -> Self {
+        Self { targets }
+    }
+
+    fn marker_for(&self, target: MemoryTargetId) -> Option<DramWaitForMarker> {
+        self.targets.get(&target).copied()
     }
 }
 
@@ -689,6 +716,146 @@ impl DramAccess {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DramWaitResource {
+    Bank { parallel_port: u32, bank: u32 },
+    Bus { parallel_port: u32 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DramWaitRecord {
+    request: MemoryRequestId,
+    resource: DramWaitResource,
+    kind: WaitForEdgeKind,
+    first_cycle: u64,
+    last_cycle: u64,
+}
+
+impl DramWaitRecord {
+    fn bank_queue(
+        request: MemoryRequestId,
+        parallel_port: u32,
+        bank: u32,
+        first_cycle: u64,
+        last_cycle: u64,
+    ) -> Self {
+        Self {
+            request,
+            resource: DramWaitResource::Bank {
+                parallel_port,
+                bank,
+            },
+            kind: WaitForEdgeKind::Queue,
+            first_cycle,
+            last_cycle,
+        }
+    }
+
+    fn bus_resource(
+        request: MemoryRequestId,
+        parallel_port: u32,
+        first_cycle: u64,
+        last_cycle: u64,
+    ) -> Self {
+        Self {
+            request,
+            resource: DramWaitResource::Bus { parallel_port },
+            kind: WaitForEdgeKind::Resource,
+            first_cycle,
+            last_cycle,
+        }
+    }
+}
+
+fn record_dram_wait_interval(
+    graph: &mut WaitForGraph,
+    wait: &DramWaitRecord,
+    target: Option<MemoryTargetId>,
+) {
+    let source = dram_request_node(wait.request, target);
+    let target = dram_resource_node(wait.resource, target);
+    graph
+        .record_wait(source.clone(), target.clone(), wait.kind, wait.first_cycle)
+        .expect("DRAM wait-for labels are generated from typed ids");
+    if wait.last_cycle != wait.first_cycle {
+        graph
+            .record_wait(source, target, wait.kind, wait.last_cycle)
+            .expect("DRAM wait-for labels are generated from typed ids");
+    }
+}
+
+fn dram_request_node(request: MemoryRequestId, target: Option<MemoryTargetId>) -> WaitForNode {
+    let label = if let Some(target) = target {
+        format!(
+            "dram.target.{}.agent.{}.request.{}",
+            target.get(),
+            request.agent().get(),
+            request.sequence()
+        )
+    } else {
+        format!(
+            "dram.agent.{}.request.{}",
+            request.agent().get(),
+            request.sequence()
+        )
+    };
+    WaitForNode::transaction(label).expect("DRAM request wait-for label uses numeric ids")
+}
+
+fn dram_resource_node(resource: DramWaitResource, target: Option<MemoryTargetId>) -> WaitForNode {
+    let label = match (target, resource) {
+        (
+            Some(target),
+            DramWaitResource::Bank {
+                parallel_port,
+                bank,
+            },
+        ) => format!(
+            "dram.target.{}.port.{}.bank.{}",
+            target.get(),
+            parallel_port,
+            bank
+        ),
+        (Some(target), DramWaitResource::Bus { parallel_port }) => {
+            format!("dram.target.{}.port.{}.bus", target.get(), parallel_port)
+        }
+        (
+            None,
+            DramWaitResource::Bank {
+                parallel_port,
+                bank,
+            },
+        ) => format!("dram.port.{}.bank.{}", parallel_port, bank),
+        (None, DramWaitResource::Bus { parallel_port }) => {
+            format!("dram.port.{}.bus", parallel_port)
+        }
+    };
+    WaitForNode::resource(label).expect("DRAM resource wait-for label uses numeric ids")
+}
+
+fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
+    for edge in source.edges() {
+        target
+            .record_wait(
+                edge.source().clone(),
+                edge.target().clone(),
+                edge.kind(),
+                edge.first_observed_tick(),
+            )
+            .expect("merged wait-for graph already contains valid labels");
+        if edge.last_observed_tick() != edge.first_observed_tick() {
+            target
+                .record_wait(
+                    edge.source().clone(),
+                    edge.target().clone(),
+                    edge.kind(),
+                    edge.last_observed_tick(),
+                )
+                .expect("merged wait-for graph already contains valid labels");
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramBankState {
     open_row: Option<u64>,
     available_cycle: u64,
@@ -769,6 +936,7 @@ pub struct DramController {
     banks: Vec<DramBankState>,
     ports: Vec<DramPortState>,
     activity_log: Vec<DramAccess>,
+    wait_log: Vec<DramWaitRecord>,
 }
 
 impl DramController {
@@ -790,6 +958,7 @@ impl DramController {
             ],
             ports: vec![DramPortState::new(); parallel_port_count as usize],
             activity_log: Vec::new(),
+            wait_log: Vec::new(),
         }
     }
 
@@ -837,11 +1006,16 @@ impl DramController {
                 snapshot.ports().to_vec()
             },
             activity_log: Vec::new(),
+            wait_log: Vec::new(),
         }
     }
 
     pub fn mark_activity(&self) -> DramActivityMarker {
         DramActivityMarker::new(self.activity_log.len())
+    }
+
+    pub fn mark_wait_for(&self) -> DramWaitForMarker {
+        DramWaitForMarker::new(self.wait_log.len())
     }
 
     pub fn bank_activities(&self) -> BTreeMap<(u32, u32), DramBankActivity> {
@@ -895,6 +1069,25 @@ impl DramController {
         self.activity_log.clear();
     }
 
+    pub fn wait_for_graph_since(&self, marker: DramWaitForMarker) -> WaitForGraph {
+        self.wait_for_graph_since_with_target(marker, None)
+    }
+
+    fn wait_for_graph_since_with_target(
+        &self,
+        marker: DramWaitForMarker,
+        target: Option<MemoryTargetId>,
+    ) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        let Some(records) = self.wait_log.get(marker.offset..) else {
+            return graph;
+        };
+        for wait in records {
+            record_dram_wait_interval(&mut graph, wait, target);
+        }
+        graph
+    }
+
     pub fn schedule(
         &mut self,
         arrival_cycle: u64,
@@ -909,6 +1102,16 @@ impl DramController {
         let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
         let bank = &mut self.banks[bank_index];
         let mut commands = Vec::new();
+        let mut waits = Vec::new();
+        if bank.available_cycle > arrival_cycle {
+            waits.push(DramWaitRecord::bank_queue(
+                request.id(),
+                decoded.parallel_port,
+                decoded.bank,
+                arrival_cycle,
+                bank.available_cycle - 1,
+            ));
+        }
         let mut next_cycle = arrival_cycle.max(bank.available_cycle);
         let row_hit = bank.open_row == Some(decoded.row);
 
@@ -934,6 +1137,14 @@ impl DramController {
             bank.open_row = Some(decoded.row);
         }
 
+        if bus_ready_cycle > next_cycle {
+            waits.push(DramWaitRecord::bus_resource(
+                request.id(),
+                decoded.parallel_port,
+                next_cycle,
+                bus_ready_cycle - 1,
+            ));
+        }
         let command_cycle = next_cycle.max(bus_ready_cycle);
         commands.push(DramCommand::new(
             command_cycle,
@@ -960,6 +1171,7 @@ impl DramController {
             commands,
         };
         self.activity_log.push(access.clone());
+        self.wait_log.extend(waits);
         Ok(access)
     }
 }
@@ -1316,6 +1528,15 @@ impl DramMemoryController {
         )
     }
 
+    pub fn mark_wait_for(&self) -> DramMemoryWaitForMarker {
+        DramMemoryWaitForMarker::new(
+            self.dram
+                .iter()
+                .map(|(target, controller)| (*target, controller.mark_wait_for()))
+                .collect(),
+        )
+    }
+
     pub fn target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
         self.dram
             .get(&target)
@@ -1365,6 +1586,30 @@ impl DramMemoryController {
         DramMemoryActivityProfile::from_target_activities(
             self.target_activities_since(marker).iter(),
         )
+    }
+
+    pub fn target_wait_for_graph_since(
+        &self,
+        marker: &DramMemoryWaitForMarker,
+        target: MemoryTargetId,
+    ) -> Option<WaitForGraph> {
+        self.dram.get(&target).map(|controller| {
+            let marker = marker
+                .marker_for(target)
+                .unwrap_or_else(|| DramWaitForMarker::new(0));
+            controller.wait_for_graph_since_with_target(marker, Some(target))
+        })
+    }
+
+    pub fn wait_for_graph_since(&self, marker: &DramMemoryWaitForMarker) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        for target in self.dram.keys() {
+            let Some(target_graph) = self.target_wait_for_graph_since(marker, *target) else {
+                continue;
+            };
+            merge_wait_for_graph(&mut graph, target_graph);
+        }
+        graph
     }
 
     pub fn snapshot(&self) -> DramMemorySnapshot {

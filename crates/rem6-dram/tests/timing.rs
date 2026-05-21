@@ -1,6 +1,7 @@
 use rem6_dram::{
     DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramTiming,
 };
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
@@ -167,6 +168,36 @@ fn dram_controller_reports_bank_port_and_window_activity() {
 
     controller.clear_activity();
     assert!(controller.activity_profile().is_empty());
+}
+
+#[test]
+fn dram_controller_records_wait_for_edges_for_bank_and_port_contention() {
+    let mut controller = DramController::new(geometry(), timing());
+    let marker = controller.mark_wait_for();
+
+    controller.schedule(0, &read(0x0000, 8, 20)).unwrap();
+    controller.schedule(1, &read(0x0100, 8, 21)).unwrap();
+    controller.schedule(0, &write(0x0040, 22)).unwrap();
+
+    let request_waiting_for_bank = WaitForNode::transaction("dram.agent.2.request.21").unwrap();
+    let bank = WaitForNode::resource("dram.port.0.bank.0").unwrap();
+    let request_waiting_for_bus = WaitForNode::transaction("dram.agent.2.request.22").unwrap();
+    let bus = WaitForNode::resource("dram.port.0.bus").unwrap();
+    let graph = controller.wait_for_graph_since(marker).snapshot();
+
+    assert_eq!(graph.edge_count(), 2);
+    assert_eq!(graph.first_observed_tick(), Some(1));
+    assert_eq!(graph.last_observed_tick(), Some(11));
+    assert!(graph.contains_edge(&request_waiting_for_bank, &bank, WaitForEdgeKind::Queue));
+    assert!(graph.contains_edge(&request_waiting_for_bus, &bus, WaitForEdgeKind::Resource));
+    assert_eq!(
+        graph.dependencies(&request_waiting_for_bank)[0].last_observed_tick(),
+        7
+    );
+    assert_eq!(
+        graph.dependencies(&request_waiting_for_bus)[0].last_observed_tick(),
+        11
+    );
 }
 
 #[test]
