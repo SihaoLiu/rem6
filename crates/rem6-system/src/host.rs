@@ -49,6 +49,8 @@ pub enum SystemActionOutcome {
         target: ExecutionModeTarget,
         previous_mode: Option<ExecutionMode>,
         mode: ExecutionMode,
+        stats_epoch: u64,
+        stats_reset_tick: Tick,
     },
     Stop(StopRequest),
 }
@@ -589,6 +591,8 @@ impl SystemActionExecutor {
                     target: target.clone(),
                     previous_mode,
                     mode: *mode,
+                    stats_epoch: self.stats.epoch(),
+                    stats_reset_tick: self.stats.reset_tick(),
                 })
             }
             HostAction::Checkpoint { label } => {

@@ -176,6 +176,14 @@ impl StatsRegistry {
         Ok(())
     }
 
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub const fn reset_tick(&self) -> Tick {
+        self.reset_tick
+    }
+
     pub fn snapshot(&self, tick: Tick) -> StatSnapshot {
         self.try_snapshot(tick)
             .expect("snapshot tick must be at or after the last reset")

@@ -2035,13 +2035,17 @@ fn workload_replay_executes_planned_host_actions() {
             source,
             target,
             previous_mode,
-            mode
+            mode,
+            stats_epoch,
+            stats_reset_tick,
         } if *tick == 2
             && event.get() == 10_004
             && source.get() == 51
             && target == &ExecutionModeTarget::new("cpu0")
             && previous_mode.is_none()
             && *mode == ExecutionMode::Functional
+            && *stats_epoch == 1
+            && *stats_reset_tick == 1
     )));
     plan.verify_result(outcome.result()).unwrap();
 }

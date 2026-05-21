@@ -1241,6 +1241,8 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
             target: target.clone(),
             previous_mode: None,
             mode: ExecutionMode::Functional,
+            stats_epoch: 0,
+            stats_reset_tick: 0,
         }]
     );
     assert_eq!(
@@ -1276,6 +1278,8 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
             target: target.clone(),
             previous_mode: Some(ExecutionMode::Functional),
             mode: ExecutionMode::Detailed,
+            stats_epoch: 0,
+            stats_reset_tick: 0,
         }]
     );
     assert_eq!(
@@ -1292,6 +1296,8 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
                 target: target.clone(),
                 previous_mode: None,
                 mode: ExecutionMode::Functional,
+                stats_epoch: 0,
+                stats_reset_tick: 0,
             },
             SystemActionOutcome::ExecutionModeSwitched {
                 tick: 60,
@@ -1300,8 +1306,64 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
                 target,
                 previous_mode: Some(ExecutionMode::Functional),
                 mode: ExecutionMode::Detailed,
+                stats_epoch: 0,
+                stats_reset_tick: 0,
             },
         ]
+    );
+}
+
+#[test]
+fn execution_mode_switch_outcome_records_stats_scope() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(13);
+    let target = ExecutionModeTarget::new("cpu0");
+    let mut stats = StatsRegistry::new();
+    let insts = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    stats.increment(insts, 17).unwrap();
+    let mut executor = SystemActionExecutor::new(stats);
+
+    assert_eq!(
+        executor
+            .apply(&HostActionRecord::new(
+                40,
+                guest,
+                host,
+                GuestEventId::new(20),
+                source,
+                HostAction::ResetStats,
+            ))
+            .unwrap(),
+        SystemActionOutcome::StatsReset(StatsResetRecord::new(40, 1, vec![(insts, 17)]))
+    );
+
+    assert_eq!(
+        executor
+            .apply(&HostActionRecord::new(
+                52,
+                guest,
+                host,
+                GuestEventId::new(21),
+                source,
+                HostAction::SwitchExecutionMode {
+                    target: target.clone(),
+                    mode: ExecutionMode::Timing,
+                },
+            ))
+            .unwrap(),
+        SystemActionOutcome::ExecutionModeSwitched {
+            tick: 52,
+            event: GuestEventId::new(21),
+            source,
+            target,
+            previous_mode: None,
+            mode: ExecutionMode::Timing,
+            stats_epoch: 1,
+            stats_reset_tick: 40,
+        }
     );
 }
 
