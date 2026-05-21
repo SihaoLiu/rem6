@@ -26,6 +26,7 @@ mod branch_predictor;
 mod error;
 mod gshare_predictor;
 mod indirect_target_predictor;
+mod loop_predictor;
 mod riscv_activity;
 mod riscv_cluster;
 mod topology;
@@ -56,6 +57,11 @@ pub use indirect_target_predictor::{
     IndirectTargetPrediction, IndirectTargetPredictor, IndirectTargetPredictorConfig,
     IndirectTargetPredictorError, IndirectTargetPredictorSnapshot, IndirectTargetSequence,
     IndirectTargetSquash, IndirectTargetThreadSnapshot, IndirectTargetUpdate,
+};
+pub use loop_predictor::{
+    LoopBranchPredictor, LoopBranchPredictorConfig, LoopBranchPredictorError,
+    LoopBranchPredictorSnapshot, LoopEntrySnapshot, LoopHistory, LoopPrediction, LoopSquash,
+    LoopTrainingUpdate,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
