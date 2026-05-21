@@ -1,7 +1,14 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use std::collections::BTreeMap;
+mod activity;
+
+use activity::{collect_dram_bank_activity, collect_dram_port_activity};
+pub use activity::{
+    DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
+    DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
+};
 
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -761,6 +768,7 @@ pub struct DramController {
     timing: DramTiming,
     banks: Vec<DramBankState>,
     ports: Vec<DramPortState>,
+    activity_log: Vec<DramAccess>,
 }
 
 impl DramController {
@@ -781,6 +789,7 @@ impl DramController {
                 geometry.bank_count() as usize * parallel_port_count as usize
             ],
             ports: vec![DramPortState::new(); parallel_port_count as usize],
+            activity_log: Vec::new(),
         }
     }
 
@@ -827,7 +836,63 @@ impl DramController {
             } else {
                 snapshot.ports().to_vec()
             },
+            activity_log: Vec::new(),
         }
+    }
+
+    pub fn mark_activity(&self) -> DramActivityMarker {
+        DramActivityMarker::new(self.activity_log.len())
+    }
+
+    pub fn bank_activities(&self) -> BTreeMap<(u32, u32), DramBankActivity> {
+        collect_dram_bank_activity(&self.activity_log)
+    }
+
+    pub fn bank_activities_since(
+        &self,
+        marker: DramActivityMarker,
+    ) -> BTreeMap<(u32, u32), DramBankActivity> {
+        let Some(accesses) = self.activity_log.get(marker.offset..) else {
+            return BTreeMap::new();
+        };
+        collect_dram_bank_activity(accesses)
+    }
+
+    pub fn bank_activity(&self, parallel_port: u32, bank: u32) -> Option<DramBankActivity> {
+        self.bank_activities().remove(&(parallel_port, bank))
+    }
+
+    pub fn port_activities(&self) -> BTreeMap<u32, DramPortActivity> {
+        collect_dram_port_activity(&self.activity_log)
+    }
+
+    pub fn port_activities_since(
+        &self,
+        marker: DramActivityMarker,
+    ) -> BTreeMap<u32, DramPortActivity> {
+        let Some(accesses) = self.activity_log.get(marker.offset..) else {
+            return BTreeMap::new();
+        };
+        collect_dram_port_activity(accesses)
+    }
+
+    pub fn port_activity(&self, parallel_port: u32) -> Option<DramPortActivity> {
+        self.port_activities().remove(&parallel_port)
+    }
+
+    pub fn activity_profile(&self) -> DramActivityProfile {
+        DramActivityProfile::from_activities(&self.port_activities(), &self.bank_activities())
+    }
+
+    pub fn activity_profile_since(&self, marker: DramActivityMarker) -> DramActivityProfile {
+        DramActivityProfile::from_activities(
+            &self.port_activities_since(marker),
+            &self.bank_activities_since(marker),
+        )
+    }
+
+    pub fn clear_activity(&mut self) {
+        self.activity_log.clear();
     }
 
     pub fn schedule(
@@ -882,7 +947,7 @@ impl DramController {
         bank.available_cycle = ready_cycle;
         self.ports[port_index] = DramPortState::from_snapshot(command_cycle, Some(kind));
 
-        Ok(DramAccess {
+        let access = DramAccess {
             request: request.id(),
             kind,
             parallel_port: decoded.parallel_port,
@@ -893,7 +958,9 @@ impl DramController {
             command_cycle,
             ready_cycle,
             commands,
-        })
+        };
+        self.activity_log.push(access.clone());
+        Ok(access)
     }
 }
 
@@ -1238,6 +1305,66 @@ impl DramMemoryController {
 
     pub fn memory_profile(&self, target: MemoryTargetId) -> Option<&ExternalMemoryProfile> {
         self.profiles.get(&target)
+    }
+
+    pub fn mark_activity(&self) -> DramMemoryActivityMarker {
+        DramMemoryActivityMarker::new(
+            self.dram
+                .iter()
+                .map(|(target, controller)| (*target, controller.mark_activity()))
+                .collect(),
+        )
+    }
+
+    pub fn target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
+        self.dram
+            .get(&target)
+            .map(|controller| DramTargetActivity::new(target, controller.activity_profile()))
+    }
+
+    pub fn target_activity_since(
+        &self,
+        marker: &DramMemoryActivityMarker,
+        target: MemoryTargetId,
+    ) -> Option<DramTargetActivity> {
+        self.dram.get(&target).map(|controller| {
+            let profile = marker.marker_for(target).map_or_else(
+                || controller.activity_profile(),
+                |marker| controller.activity_profile_since(marker),
+            );
+            DramTargetActivity::new(target, profile)
+        })
+    }
+
+    pub fn target_activities(&self) -> Vec<DramTargetActivity> {
+        self.dram
+            .keys()
+            .filter_map(|target| self.target_activity(*target))
+            .collect()
+    }
+
+    pub fn target_activities_since(
+        &self,
+        marker: &DramMemoryActivityMarker,
+    ) -> Vec<DramTargetActivity> {
+        self.dram
+            .keys()
+            .filter_map(|target| self.target_activity_since(marker, *target))
+            .filter(|activity| !activity.profile().is_empty())
+            .collect()
+    }
+
+    pub fn activity_profile(&self) -> DramMemoryActivityProfile {
+        DramMemoryActivityProfile::from_target_activities(self.target_activities().iter())
+    }
+
+    pub fn activity_profile_since(
+        &self,
+        marker: &DramMemoryActivityMarker,
+    ) -> DramMemoryActivityProfile {
+        DramMemoryActivityProfile::from_target_activities(
+            self.target_activities_since(marker).iter(),
+        )
     }
 
     pub fn snapshot(&self) -> DramMemorySnapshot {

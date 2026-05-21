@@ -1327,6 +1327,18 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
         ]
     );
     assert!(data_trace.snapshot().is_empty());
+    let dram_profile = system.dram_activity_profile().unwrap();
+    assert_eq!(dram_profile.active_target_count(), 1);
+    assert_eq!(dram_profile.access_count(), 1);
+    assert_eq!(dram_profile.read_count(), 1);
+    assert_eq!(dram_profile.row_miss_count(), 1);
+    assert_eq!(dram_profile.command_count(), 2);
+    assert_eq!(dram_profile.total_ready_latency_cycles(), 12);
+    assert_eq!(dram_profile.max_ready_latency_cycles(), 12);
+    let target_activity = system.dram_target_activity(MemoryTargetId::new(0)).unwrap();
+    assert_eq!(target_activity.profile().access_count(), 1);
+    assert_eq!(target_activity.profile().active_port_count(), 1);
+    assert_eq!(target_activity.profile().active_bank_count(), 1);
 }
 
 #[test]

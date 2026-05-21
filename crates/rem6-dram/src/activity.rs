@@ -1,0 +1,389 @@
+use std::collections::BTreeMap;
+
+use rem6_memory::MemoryTargetId;
+
+use crate::{DramAccess, DramAccessKind};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramActivityMarker {
+    pub(crate) offset: usize,
+}
+
+impl DramActivityMarker {
+    pub(crate) const fn new(offset: usize) -> Self {
+        Self { offset }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DramBankActivity {
+    access_count: usize,
+    row_hit_count: usize,
+    row_miss_count: usize,
+    command_count: usize,
+    first_arrival_cycle: u64,
+    last_ready_cycle: u64,
+    total_ready_latency_cycles: u64,
+    max_ready_latency_cycles: u64,
+}
+
+impl DramBankActivity {
+    pub(crate) fn record(&mut self, access: &DramAccess) {
+        if self.access_count == 0 {
+            self.first_arrival_cycle = access.arrival_cycle();
+        } else {
+            self.first_arrival_cycle = self.first_arrival_cycle.min(access.arrival_cycle());
+        }
+        self.access_count += 1;
+        if access.row_hit() {
+            self.row_hit_count += 1;
+        } else {
+            self.row_miss_count += 1;
+        }
+        self.command_count += access.commands().len();
+        self.last_ready_cycle = self.last_ready_cycle.max(access.ready_cycle());
+        let ready_latency = access.ready_cycle() - access.arrival_cycle();
+        self.total_ready_latency_cycles += ready_latency;
+        self.max_ready_latency_cycles = self.max_ready_latency_cycles.max(ready_latency);
+    }
+
+    pub const fn access_count(self) -> usize {
+        self.access_count
+    }
+
+    pub const fn row_hit_count(self) -> usize {
+        self.row_hit_count
+    }
+
+    pub const fn row_miss_count(self) -> usize {
+        self.row_miss_count
+    }
+
+    pub const fn command_count(self) -> usize {
+        self.command_count
+    }
+
+    pub const fn first_arrival_cycle(self) -> u64 {
+        self.first_arrival_cycle
+    }
+
+    pub const fn last_ready_cycle(self) -> u64 {
+        self.last_ready_cycle
+    }
+
+    pub const fn total_ready_latency_cycles(self) -> u64 {
+        self.total_ready_latency_cycles
+    }
+
+    pub const fn max_ready_latency_cycles(self) -> u64 {
+        self.max_ready_latency_cycles
+    }
+
+    pub const fn has_row_misses(self) -> bool {
+        self.row_miss_count != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DramPortActivity {
+    access_count: usize,
+    read_count: usize,
+    write_count: usize,
+    turnaround_count: usize,
+    command_count: usize,
+}
+
+impl DramPortActivity {
+    pub(crate) fn record(&mut self, access: &DramAccess, previous: Option<DramAccessKind>) {
+        self.access_count += 1;
+        match access.kind() {
+            DramAccessKind::Read => self.read_count += 1,
+            DramAccessKind::Write => self.write_count += 1,
+        }
+        if previous.is_some_and(|kind| kind != access.kind()) {
+            self.turnaround_count += 1;
+        }
+        self.command_count += access.commands().len();
+    }
+
+    pub const fn access_count(self) -> usize {
+        self.access_count
+    }
+
+    pub const fn read_count(self) -> usize {
+        self.read_count
+    }
+
+    pub const fn write_count(self) -> usize {
+        self.write_count
+    }
+
+    pub const fn turnaround_count(self) -> usize {
+        self.turnaround_count
+    }
+
+    pub const fn command_count(self) -> usize {
+        self.command_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DramActivityProfile {
+    active_port_count: usize,
+    active_bank_count: usize,
+    access_count: usize,
+    read_count: usize,
+    write_count: usize,
+    row_hit_count: usize,
+    row_miss_count: usize,
+    command_count: usize,
+    turnaround_count: usize,
+    total_ready_latency_cycles: u64,
+    max_ready_latency_cycles: u64,
+}
+
+impl DramActivityProfile {
+    pub(crate) fn from_activities(
+        ports: &BTreeMap<u32, DramPortActivity>,
+        banks: &BTreeMap<(u32, u32), DramBankActivity>,
+    ) -> Self {
+        let mut profile = Self {
+            active_port_count: ports.len(),
+            active_bank_count: banks.len(),
+            ..Self::default()
+        };
+        for port in ports.values() {
+            profile.access_count += port.access_count();
+            profile.read_count += port.read_count();
+            profile.write_count += port.write_count();
+            profile.command_count += port.command_count();
+            profile.turnaround_count += port.turnaround_count();
+        }
+        for bank in banks.values() {
+            profile.row_hit_count += bank.row_hit_count();
+            profile.row_miss_count += bank.row_miss_count();
+            profile.total_ready_latency_cycles += bank.total_ready_latency_cycles();
+            profile.max_ready_latency_cycles = profile
+                .max_ready_latency_cycles
+                .max(bank.max_ready_latency_cycles());
+        }
+        profile
+    }
+
+    pub(crate) fn merge_target(self, later: Self) -> Self {
+        Self {
+            active_port_count: self.active_port_count + later.active_port_count,
+            active_bank_count: self.active_bank_count + later.active_bank_count,
+            access_count: self.access_count + later.access_count,
+            read_count: self.read_count + later.read_count,
+            write_count: self.write_count + later.write_count,
+            row_hit_count: self.row_hit_count + later.row_hit_count,
+            row_miss_count: self.row_miss_count + later.row_miss_count,
+            command_count: self.command_count + later.command_count,
+            turnaround_count: self.turnaround_count + later.turnaround_count,
+            total_ready_latency_cycles: self.total_ready_latency_cycles
+                + later.total_ready_latency_cycles,
+            max_ready_latency_cycles: self
+                .max_ready_latency_cycles
+                .max(later.max_ready_latency_cycles),
+        }
+    }
+
+    pub const fn active_port_count(self) -> usize {
+        self.active_port_count
+    }
+
+    pub const fn active_bank_count(self) -> usize {
+        self.active_bank_count
+    }
+
+    pub const fn access_count(self) -> usize {
+        self.access_count
+    }
+
+    pub const fn read_count(self) -> usize {
+        self.read_count
+    }
+
+    pub const fn write_count(self) -> usize {
+        self.write_count
+    }
+
+    pub const fn row_hit_count(self) -> usize {
+        self.row_hit_count
+    }
+
+    pub const fn row_miss_count(self) -> usize {
+        self.row_miss_count
+    }
+
+    pub const fn command_count(self) -> usize {
+        self.command_count
+    }
+
+    pub const fn turnaround_count(self) -> usize {
+        self.turnaround_count
+    }
+
+    pub const fn total_ready_latency_cycles(self) -> u64 {
+        self.total_ready_latency_cycles
+    }
+
+    pub const fn max_ready_latency_cycles(self) -> u64 {
+        self.max_ready_latency_cycles
+    }
+
+    pub const fn has_row_misses(self) -> bool {
+        self.row_miss_count != 0
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.access_count == 0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DramMemoryActivityMarker {
+    targets: BTreeMap<MemoryTargetId, DramActivityMarker>,
+}
+
+impl DramMemoryActivityMarker {
+    pub(crate) fn new(targets: BTreeMap<MemoryTargetId, DramActivityMarker>) -> Self {
+        Self { targets }
+    }
+
+    pub(crate) fn marker_for(&self, target: MemoryTargetId) -> Option<DramActivityMarker> {
+        self.targets.get(&target).copied()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramTargetActivity {
+    target: MemoryTargetId,
+    profile: DramActivityProfile,
+}
+
+impl DramTargetActivity {
+    pub const fn new(target: MemoryTargetId, profile: DramActivityProfile) -> Self {
+        Self { target, profile }
+    }
+
+    pub const fn target(self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn profile(self) -> DramActivityProfile {
+        self.profile
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DramMemoryActivityProfile {
+    active_target_count: usize,
+    profile: DramActivityProfile,
+}
+
+impl DramMemoryActivityProfile {
+    pub(crate) fn from_target_activities<'a, I>(activities: I) -> Self
+    where
+        I: IntoIterator<Item = &'a DramTargetActivity>,
+    {
+        let mut active_target_count = 0;
+        let mut profile = DramActivityProfile::default();
+        for activity in activities {
+            if !activity.profile().is_empty() {
+                active_target_count += 1;
+                profile = profile.merge_target(activity.profile());
+            }
+        }
+        Self {
+            active_target_count,
+            profile,
+        }
+    }
+
+    pub const fn active_target_count(self) -> usize {
+        self.active_target_count
+    }
+
+    pub const fn active_port_count(self) -> usize {
+        self.profile.active_port_count()
+    }
+
+    pub const fn active_bank_count(self) -> usize {
+        self.profile.active_bank_count()
+    }
+
+    pub const fn access_count(self) -> usize {
+        self.profile.access_count()
+    }
+
+    pub const fn read_count(self) -> usize {
+        self.profile.read_count()
+    }
+
+    pub const fn write_count(self) -> usize {
+        self.profile.write_count()
+    }
+
+    pub const fn row_hit_count(self) -> usize {
+        self.profile.row_hit_count()
+    }
+
+    pub const fn row_miss_count(self) -> usize {
+        self.profile.row_miss_count()
+    }
+
+    pub const fn command_count(self) -> usize {
+        self.profile.command_count()
+    }
+
+    pub const fn turnaround_count(self) -> usize {
+        self.profile.turnaround_count()
+    }
+
+    pub const fn total_ready_latency_cycles(self) -> u64 {
+        self.profile.total_ready_latency_cycles()
+    }
+
+    pub const fn max_ready_latency_cycles(self) -> u64 {
+        self.profile.max_ready_latency_cycles()
+    }
+
+    pub const fn has_row_misses(self) -> bool {
+        self.profile.has_row_misses()
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.profile.is_empty()
+    }
+}
+
+pub(crate) fn collect_dram_bank_activity(
+    accesses: &[DramAccess],
+) -> BTreeMap<(u32, u32), DramBankActivity> {
+    let mut activities = BTreeMap::<(u32, u32), DramBankActivity>::new();
+    for access in accesses {
+        activities
+            .entry((access.parallel_port(), access.bank()))
+            .or_default()
+            .record(access);
+    }
+    activities
+}
+
+pub(crate) fn collect_dram_port_activity(
+    accesses: &[DramAccess],
+) -> BTreeMap<u32, DramPortActivity> {
+    let mut activities = BTreeMap::<u32, DramPortActivity>::new();
+    let mut previous_kind = BTreeMap::<u32, DramAccessKind>::new();
+    for access in accesses {
+        let port = access.parallel_port();
+        activities
+            .entry(port)
+            .or_default()
+            .record(access, previous_kind.get(&port).copied());
+        previous_kind.insert(port, access.kind());
+    }
+    activities
+}

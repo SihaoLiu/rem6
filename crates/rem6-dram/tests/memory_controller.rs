@@ -162,6 +162,55 @@ fn dram_memory_controller_keeps_independent_timing_per_target() {
 }
 
 #[test]
+fn dram_memory_controller_reports_target_activity_profiles() {
+    let (mut controller, low, high) = controller_with_targets();
+    let activity_start = controller.mark_activity();
+
+    controller.accept(0, &read(0x1000, 8, 80)).unwrap();
+    controller.accept(1, &read(0x1008, 8, 81)).unwrap();
+    controller
+        .accept(0, &write(0x8000, &[0xaa, 0xbb, 0xcc, 0xdd], 82))
+        .unwrap();
+
+    let low_activity = controller.target_activity(low).unwrap();
+    assert_eq!(low_activity.target(), low);
+    assert_eq!(low_activity.profile().access_count(), 2);
+    assert_eq!(low_activity.profile().read_count(), 2);
+    assert_eq!(low_activity.profile().row_hit_count(), 1);
+    assert_eq!(low_activity.profile().row_miss_count(), 1);
+    assert_eq!(low_activity.profile().command_count(), 3);
+    assert_eq!(low_activity.profile().total_ready_latency_cycles(), 20);
+
+    let high_activity = controller.target_activity(high).unwrap();
+    assert_eq!(high_activity.target(), high);
+    assert_eq!(high_activity.profile().access_count(), 1);
+    assert_eq!(high_activity.profile().write_count(), 1);
+    assert_eq!(high_activity.profile().row_miss_count(), 1);
+
+    let memory_profile = controller.activity_profile();
+    assert_eq!(memory_profile.active_target_count(), 2);
+    assert_eq!(memory_profile.access_count(), 3);
+    assert_eq!(memory_profile.read_count(), 2);
+    assert_eq!(memory_profile.write_count(), 1);
+    assert_eq!(memory_profile.row_hit_count(), 1);
+    assert_eq!(memory_profile.row_miss_count(), 2);
+    assert_eq!(memory_profile.command_count(), 5);
+    assert_eq!(memory_profile.active_port_count(), 2);
+    assert_eq!(memory_profile.active_bank_count(), 2);
+    assert_eq!(memory_profile.total_ready_latency_cycles(), 28);
+    assert_eq!(memory_profile.max_ready_latency_cycles(), 12);
+    assert_eq!(
+        controller.activity_profile_since(&activity_start),
+        memory_profile
+    );
+
+    let target_windows = controller.target_activities_since(&activity_start);
+    assert_eq!(target_windows.len(), 2);
+    assert_eq!(target_windows[0].target(), low);
+    assert_eq!(target_windows[1].target(), high);
+}
+
+#[test]
 fn dram_memory_controller_snapshots_and_restores_storage_and_timing_state() {
     let (mut controller, low, high) = controller_with_targets();
 

@@ -119,6 +119,57 @@ fn dram_controller_enforces_read_write_turnaround_across_banks() {
 }
 
 #[test]
+fn dram_controller_reports_bank_port_and_window_activity() {
+    let mut controller = DramController::new(geometry(), timing());
+    let activity_start = controller.mark_activity();
+
+    controller.schedule(0, &read(0x0000, 8, 10)).unwrap();
+    controller.schedule(1, &read(0x0100, 8, 11)).unwrap();
+    controller.schedule(0, &write(0x0040, 12)).unwrap();
+
+    let profile = controller.activity_profile();
+    assert_eq!(profile.active_port_count(), 1);
+    assert_eq!(profile.active_bank_count(), 2);
+    assert_eq!(profile.access_count(), 3);
+    assert_eq!(profile.read_count(), 2);
+    assert_eq!(profile.write_count(), 1);
+    assert_eq!(profile.row_hit_count(), 1);
+    assert_eq!(profile.row_miss_count(), 2);
+    assert_eq!(profile.command_count(), 5);
+    assert_eq!(profile.turnaround_count(), 1);
+    assert_eq!(profile.total_ready_latency_cycles(), 39);
+    assert_eq!(profile.max_ready_latency_cycles(), 19);
+    assert!(profile.has_row_misses());
+    assert_eq!(controller.activity_profile_since(activity_start), profile);
+
+    let bank0 = controller.bank_activity(0, 0).unwrap();
+    assert_eq!(bank0.access_count(), 2);
+    assert_eq!(bank0.row_hit_count(), 1);
+    assert_eq!(bank0.row_miss_count(), 1);
+    assert_eq!(bank0.command_count(), 3);
+    assert_eq!(bank0.first_arrival_cycle(), 0);
+    assert_eq!(bank0.last_ready_cycle(), 13);
+    assert_eq!(bank0.total_ready_latency_cycles(), 20);
+    assert_eq!(bank0.max_ready_latency_cycles(), 12);
+
+    let bank1 = controller.bank_activity(0, 1).unwrap();
+    assert_eq!(bank1.access_count(), 1);
+    assert_eq!(bank1.row_miss_count(), 1);
+    assert_eq!(bank1.command_count(), 2);
+    assert_eq!(bank1.total_ready_latency_cycles(), 19);
+
+    let port = controller.port_activity(0).unwrap();
+    assert_eq!(port.access_count(), 3);
+    assert_eq!(port.read_count(), 2);
+    assert_eq!(port.write_count(), 1);
+    assert_eq!(port.turnaround_count(), 1);
+    assert_eq!(port.command_count(), 5);
+
+    controller.clear_activity();
+    assert!(controller.activity_profile().is_empty());
+}
+
+#[test]
 fn dram_controller_rejects_invalid_geometry_and_line_mismatch() {
     assert_eq!(
         DramGeometry::new(0, 256, 64).unwrap_err(),

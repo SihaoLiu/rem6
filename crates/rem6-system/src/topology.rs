@@ -25,8 +25,8 @@ use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_dram::{
-    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramTiming,
-    ExternalMemoryProfile,
+    DramControllerConfig, DramGeometry, DramMemoryActivityProfile, DramMemoryController,
+    DramMemoryError, DramTargetActivity, DramTiming, ExternalMemoryProfile,
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{
@@ -767,6 +767,24 @@ impl RiscvTopologySystem {
             RiscvTopologyMemoryBackend::Store { .. } => None,
             RiscvTopologyMemoryBackend::Dram { memory, .. } => Some(memory),
         }
+    }
+
+    pub fn dram_activity_profile(&self) -> Option<DramMemoryActivityProfile> {
+        self.dram_memory_controller().map(|controller| {
+            controller
+                .lock()
+                .expect("DRAM memory lock")
+                .activity_profile()
+        })
+    }
+
+    pub fn dram_target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
+        self.dram_memory_controller().and_then(|controller| {
+            controller
+                .lock()
+                .expect("DRAM memory lock")
+                .target_activity(target)
+        })
     }
 
     pub fn host_controller(&self) -> Option<Arc<Mutex<SystemHostController>>> {
