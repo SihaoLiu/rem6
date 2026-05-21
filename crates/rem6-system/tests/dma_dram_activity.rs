@@ -7,7 +7,7 @@ use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopolo
 use rem6_dram::{DramGeometry, DramTiming};
 use rem6_fabric::{FabricLinkId, VirtualNetworkId};
 use rem6_gpu::{GpuComputeConfig, GpuDeviceId, GpuDmaCopy, GpuDmaId, GpuTopologyConfig};
-use rem6_kernel::PartitionId;
+use rem6_kernel::{PartitionId, WaitForEdgeKind};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
 };
@@ -382,14 +382,43 @@ fn dma_summary_merges_shared_target_dram_activity_for_multiple_devices() {
     assert_eq!(summary.read().dram_profile().access_count(), 2);
     assert_eq!(summary.read().dram_profile().read_count(), 2);
     assert_eq!(summary.read().dram_profile().write_count(), 0);
+    assert!(summary.read().has_dram_wait_for_edges());
+    assert_eq!(
+        summary
+            .read()
+            .dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
     assert_eq!(summary.write().active_dram_target_count(), 1);
     assert_eq!(summary.write().dram_profile().access_count(), 2);
     assert_eq!(summary.write().dram_profile().read_count(), 0);
     assert_eq!(summary.write().dram_profile().write_count(), 2);
+    assert!(summary.write().has_dram_wait_for_edges());
+    assert_eq!(
+        summary
+            .write()
+            .dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
     assert_eq!(summary.active_dram_target_count(), 1);
     assert_eq!(summary.dram_profile().access_count(), 4);
     assert_eq!(summary.dram_profile().read_count(), 2);
     assert_eq!(summary.dram_profile().write_count(), 2);
+    assert!(summary.has_dram_wait_for_edges());
+    assert_eq!(
+        summary.dram_wait_for_edge_count(),
+        summary.read().dram_wait_for_edge_count() + summary.write().dram_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        summary
+            .read()
+            .dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue)
+            + summary
+                .write()
+                .dram_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+    );
+    assert!(!summary.dram_wait_for_blocked_nodes().is_empty());
     assert_eq!(
         summary
             .dram_target_activity(MemoryTargetId::new(0))

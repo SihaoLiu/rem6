@@ -93,6 +93,7 @@ pub struct RiscvTopologyDmaStageRunSummary {
     fabric_activity: Vec<FabricLaneActivity>,
     fabric_wait_for: WaitForGraph,
     dram_activity: Vec<DramTargetActivity>,
+    dram_wait_for: WaitForGraph,
 }
 
 impl RiscvTopologyDmaStageRunSummary {
@@ -114,6 +115,7 @@ impl RiscvTopologyDmaStageRunSummary {
             fabric_activity: Vec::new(),
             fabric_wait_for: WaitForGraph::new(),
             dram_activity: Vec::new(),
+            dram_wait_for: WaitForGraph::new(),
         }
     }
 
@@ -139,6 +141,11 @@ impl RiscvTopologyDmaStageRunSummary {
 
     pub fn with_dram_activity(mut self, dram_activity: Vec<DramTargetActivity>) -> Self {
         self.dram_activity = dram_activity;
+        self
+    }
+
+    pub fn with_dram_wait_for(mut self, dram_wait_for: WaitForGraph) -> Self {
+        self.dram_wait_for = dram_wait_for;
         self
     }
 
@@ -335,6 +342,33 @@ impl RiscvTopologyDmaStageRunSummary {
 
     pub fn has_dram_activity(&self) -> bool {
         self.dram_access_count() != 0
+    }
+
+    pub fn dram_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        self.dram_wait_for.edges()
+    }
+
+    pub fn dram_wait_for_edge_count(&self) -> usize {
+        self.dram_wait_for.edge_count()
+    }
+
+    pub fn has_dram_wait_for_edges(&self) -> bool {
+        self.dram_wait_for_edge_count() != 0
+    }
+
+    pub fn dram_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.dram_wait_for.blocked_nodes()
+    }
+
+    pub fn dram_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        wait_for_edge_kind_counts(self.dram_wait_for_edges())
+    }
+
+    pub fn dram_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.dram_wait_for_edges()
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
     }
 }
 
@@ -537,6 +571,40 @@ impl RiscvTopologyDmaRunSummary {
 
     pub fn has_dram_activity(&self) -> bool {
         self.dram_access_count() != 0
+    }
+
+    pub fn dram_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        let mut edges = self.read.dram_wait_for_edges();
+        edges.extend(self.write.dram_wait_for_edges());
+        edges
+    }
+
+    pub fn dram_wait_for_edge_count(&self) -> usize {
+        self.read.dram_wait_for_edge_count() + self.write.dram_wait_for_edge_count()
+    }
+
+    pub fn has_dram_wait_for_edges(&self) -> bool {
+        self.dram_wait_for_edge_count() != 0
+    }
+
+    pub fn dram_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.dram_wait_for_edges()
+            .into_iter()
+            .map(|edge| edge.source().clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    pub fn dram_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        wait_for_edge_kind_counts(self.dram_wait_for_edges())
+    }
+
+    pub fn dram_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.dram_wait_for_edges()
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
     }
 
     pub fn final_tick(&self) -> Tick {

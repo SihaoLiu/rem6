@@ -16,9 +16,10 @@ use super::coherence_data::{
     RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
 };
 use super::{
-    dram_activities_since, mark_dram_activity, take_memory_error, topology_cached_memory_response,
-    RiscvTopologyDmaCopy, RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary,
-    RiscvTopologyDmaStageRunSummary, RiscvTopologySystem, RiscvTopologySystemError,
+    dram_activities_since, dram_wait_for_since, mark_dram_activity, mark_dram_wait_for,
+    take_memory_error, topology_cached_memory_response, RiscvTopologyDmaCopy,
+    RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary,
+    RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 #[derive(Clone, Debug)]
@@ -160,6 +161,7 @@ impl RiscvTopologySystem {
         let fabric_activity_start = self.transport.mark_fabric_activity();
         let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
+        let dram_wait_for_start = mark_dram_wait_for(&memory);
         let mut issue_records = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
 
@@ -252,6 +254,7 @@ impl RiscvTopologySystem {
             .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
             .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let dram_wait_for = dram_wait_for_since(&memory, dram_wait_for_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
             dram_activity,
@@ -281,7 +284,8 @@ impl RiscvTopologySystem {
         .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
         .with_fabric_activity(fabric_activity)
         .with_fabric_wait_for(fabric_wait_for)
-        .with_dram_activity(dram_activity))
+        .with_dram_activity(dram_activity)
+        .with_dram_wait_for(dram_wait_for))
     }
 
     pub fn run_dma_copies_parallel<I>(
@@ -348,6 +352,7 @@ impl RiscvTopologySystem {
         let fabric_activity_start = self.transport.mark_fabric_activity();
         let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
+        let dram_wait_for_start = mark_dram_wait_for(&memory);
         let mut issue_records = Vec::new();
         let mut rollbacks = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
@@ -461,6 +466,7 @@ impl RiscvTopologySystem {
             .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
             .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let dram_wait_for = dram_wait_for_since(&memory, dram_wait_for_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
             dram_activity,
@@ -490,7 +496,8 @@ impl RiscvTopologySystem {
         .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
         .with_fabric_activity(fabric_activity)
         .with_fabric_wait_for(fabric_wait_for)
-        .with_dram_activity(dram_activity))
+        .with_dram_activity(dram_activity)
+        .with_dram_wait_for(dram_wait_for))
     }
 
     fn dma_device_snapshots(
