@@ -8,6 +8,13 @@ use std::thread;
 
 use crate::Tick;
 
+mod state;
+
+pub use state::{
+    PartitionSnapshot, PendingEventSnapshot, RecordedRunSummary, ScheduledEventKind,
+    SchedulerDispatchRecord, SchedulerSnapshot,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PartitionId(u32);
 
@@ -28,6 +35,10 @@ pub struct PartitionEventId {
 }
 
 impl PartitionEventId {
+    pub const fn new(partition: PartitionId, local: u64) -> Self {
+        Self { partition, local }
+    }
+
     pub const fn partition(self) -> PartitionId {
         self.partition
     }
@@ -67,6 +78,20 @@ pub enum SchedulerError {
     SerialEventInParallelEpoch {
         partition: PartitionId,
         tick: Tick,
+    },
+    SnapshotContainsPendingEvents {
+        pending_events: usize,
+    },
+    RestoreWouldDiscardPendingEvents {
+        pending_events: usize,
+    },
+    SnapshotPartitionCountMismatch {
+        snapshot_partitions: u32,
+        scheduler_partitions: u32,
+    },
+    SnapshotLookaheadMismatch {
+        snapshot_min_remote_delay: Tick,
+        scheduler_min_remote_delay: Tick,
     },
 }
 
@@ -117,6 +142,28 @@ impl fmt::Display for SchedulerError {
                 formatter,
                 "parallel epoch cannot dispatch serial event in partition {} at tick {tick}",
                 partition.index()
+            ),
+            Self::SnapshotContainsPendingEvents { pending_events } => write!(
+                formatter,
+                "scheduler snapshot contains {pending_events} pending events"
+            ),
+            Self::RestoreWouldDiscardPendingEvents { pending_events } => write!(
+                formatter,
+                "scheduler restore would discard {pending_events} pending events"
+            ),
+            Self::SnapshotPartitionCountMismatch {
+                snapshot_partitions,
+                scheduler_partitions,
+            } => write!(
+                formatter,
+                "scheduler snapshot has {snapshot_partitions} partitions; scheduler has {scheduler_partitions}"
+            ),
+            Self::SnapshotLookaheadMismatch {
+                snapshot_min_remote_delay,
+                scheduler_min_remote_delay,
+            } => write!(
+                formatter,
+                "scheduler snapshot lookahead is {snapshot_min_remote_delay}; scheduler lookahead is {scheduler_min_remote_delay}"
             ),
         }
     }
@@ -312,6 +359,70 @@ impl PartitionedScheduler {
         queue.schedule_parallel_at(partition, tick, Box::new(callback))
     }
 
+    pub fn snapshot(&self) -> SchedulerSnapshot {
+        SchedulerSnapshot {
+            now: self.now,
+            min_remote_delay: self.min_remote_delay,
+            partitions: self
+                .partitions
+                .iter()
+                .enumerate()
+                .map(|(index, queue)| queue.snapshot(PartitionId::new(index as u32)))
+                .collect(),
+        }
+    }
+
+    pub fn quiescent_snapshot(&self) -> Result<SchedulerSnapshot, SchedulerError> {
+        let snapshot = self.snapshot();
+        let pending_events = snapshot.total_pending_events();
+        if pending_events != 0 {
+            return Err(SchedulerError::SnapshotContainsPendingEvents { pending_events });
+        }
+
+        Ok(snapshot)
+    }
+
+    pub fn restore_quiescent(
+        &mut self,
+        snapshot: &SchedulerSnapshot,
+    ) -> Result<(), SchedulerError> {
+        let snapshot_pending = snapshot.total_pending_events();
+        if snapshot_pending != 0 {
+            return Err(SchedulerError::SnapshotContainsPendingEvents {
+                pending_events: snapshot_pending,
+            });
+        }
+
+        let current_pending = self.total_pending_events();
+        if current_pending != 0 {
+            return Err(SchedulerError::RestoreWouldDiscardPendingEvents {
+                pending_events: current_pending,
+            });
+        }
+
+        let scheduler_partitions = self.partition_count();
+        let snapshot_partitions = snapshot.partitions.len() as u32;
+        if snapshot_partitions != scheduler_partitions {
+            return Err(SchedulerError::SnapshotPartitionCountMismatch {
+                snapshot_partitions,
+                scheduler_partitions,
+            });
+        }
+        if snapshot.min_remote_delay != self.min_remote_delay {
+            return Err(SchedulerError::SnapshotLookaheadMismatch {
+                snapshot_min_remote_delay: snapshot.min_remote_delay,
+                scheduler_min_remote_delay: self.min_remote_delay,
+            });
+        }
+
+        self.now = snapshot.now;
+        for (queue, partition) in self.partitions.iter_mut().zip(&snapshot.partitions) {
+            queue.restore_quiescent(partition);
+        }
+
+        Ok(())
+    }
+
     pub fn run_until_idle(&mut self) -> RunSummary {
         let mut executed_events = 0;
 
@@ -355,10 +466,20 @@ impl PartitionedScheduler {
     }
 
     pub fn run_next_epoch_parallel(&mut self) -> Result<RunSummary, SchedulerError> {
+        self.run_next_epoch_parallel_recorded()
+            .map(|recorded| recorded.summary)
+    }
+
+    pub fn run_next_epoch_parallel_recorded(
+        &mut self,
+    ) -> Result<RecordedRunSummary, SchedulerError> {
         let Some(plan) = self.plan_next_epoch() else {
-            return Ok(RunSummary {
-                executed_events: 0,
-                final_tick: self.now,
+            return Ok(RecordedRunSummary {
+                summary: RunSummary {
+                    executed_events: 0,
+                    final_tick: self.now,
+                },
+                dispatches: Vec::new(),
             });
         };
         let horizon = plan.horizon;
@@ -374,9 +495,11 @@ impl PartitionedScheduler {
             .collect::<Vec<_>>();
 
         let mut executed_events = 0;
+        let mut dispatches = Vec::new();
         while !ready_partitions.is_empty() {
             let batch = self.run_parallel_batch(horizon, ready_partitions)?;
             executed_events += batch.executed_events;
+            dispatches.extend(batch.dispatches);
             self.merge_remote_parallel_events(batch.remote_events)?;
 
             if let Some((partition, tick)) = self.first_serial_event_at_or_before(horizon) {
@@ -387,10 +510,14 @@ impl PartitionedScheduler {
         }
 
         self.advance_partitions_to(horizon);
+        dispatches.sort_by_key(|record| (record.tick, record.partition(), record.id.local()));
 
-        Ok(RunSummary {
-            executed_events,
-            final_tick: self.now,
+        Ok(RecordedRunSummary {
+            summary: RunSummary {
+                executed_events,
+                final_tick: self.now,
+            },
+            dispatches,
         })
     }
 
@@ -469,6 +596,13 @@ impl PartitionedScheduler {
 
     fn partition_mut(&mut self, partition: PartitionId) -> Option<&mut PartitionQueue> {
         self.partitions.get_mut(partition.index() as usize)
+    }
+
+    fn total_pending_events(&self) -> usize {
+        self.partitions
+            .iter()
+            .map(PartitionQueue::pending_event_count)
+            .sum()
     }
 
     fn next_partition_with_event(&self) -> Option<PartitionId> {
@@ -570,8 +704,10 @@ impl PartitionedScheduler {
         })?;
 
         let mut executed_events = 0;
+        let mut dispatches = Vec::new();
         for result in results {
             executed_events += result.executed_events;
+            dispatches.extend(result.dispatches);
             self.partitions[result.index] = result.queue;
         }
 
@@ -580,6 +716,7 @@ impl PartitionedScheduler {
         Ok(ParallelBatchResult {
             executed_events,
             remote_events,
+            dispatches,
         })
     }
 
@@ -823,11 +960,13 @@ struct ParallelPartitionResult {
     index: usize,
     queue: PartitionQueue,
     executed_events: usize,
+    dispatches: Vec<SchedulerDispatchRecord>,
 }
 
 struct ParallelBatchResult {
     executed_events: usize,
     remote_events: Vec<RemoteScheduledEvent>,
+    dispatches: Vec<SchedulerDispatchRecord>,
 }
 
 struct RemoteScheduledEvent {
@@ -849,6 +988,7 @@ fn run_parallel_partition(
 ) -> Result<ParallelPartitionResult, SchedulerError> {
     let mut executed_events = 0;
     let mut next_remote_order = 0;
+    let mut dispatches = Vec::new();
 
     while queue.peek_tick().is_some_and(|tick| tick <= horizon) {
         let mut event = queue.pop_next().expect("partition has pending event");
@@ -877,6 +1017,11 @@ fn run_parallel_partition(
                 };
                 callback(&mut context);
                 executed_events += 1;
+                dispatches.push(SchedulerDispatchRecord::new(
+                    event.id,
+                    event.tick,
+                    ScheduledEventKind::Parallel,
+                ));
             }
         }
     }
@@ -885,6 +1030,7 @@ fn run_parallel_partition(
         index,
         queue,
         executed_events,
+        dispatches,
     })
 }
 
@@ -907,6 +1053,10 @@ impl PartitionQueue {
 
     fn is_empty(&self) -> bool {
         self.pending.is_empty()
+    }
+
+    fn pending_event_count(&self) -> usize {
+        self.pending.len()
     }
 
     fn peek_tick(&self) -> Option<Tick> {
@@ -975,11 +1125,44 @@ impl PartitionQueue {
 
         Ok(id)
     }
+
+    fn snapshot(&self, partition: PartitionId) -> PartitionSnapshot {
+        let mut pending_events = self
+            .pending
+            .iter()
+            .map(PartitionEvent::snapshot)
+            .collect::<Vec<_>>();
+        pending_events.sort_by_key(|event| (event.tick, event.order, event.id.local()));
+
+        PartitionSnapshot {
+            partition,
+            now: self.now,
+            next_event_local: self.next_id,
+            next_event_order: self.next_order,
+            pending_events,
+        }
+    }
+
+    fn restore_quiescent(&mut self, snapshot: &PartitionSnapshot) {
+        self.now = snapshot.now;
+        self.next_id = snapshot.next_event_local;
+        self.next_order = snapshot.next_event_order;
+        self.pending.clear();
+    }
 }
 
 enum PartitionEventCallback {
     Serial(SchedulerCallback),
     Parallel(ParallelSchedulerCallback),
+}
+
+impl PartitionEventCallback {
+    fn kind(&self) -> ScheduledEventKind {
+        match self {
+            Self::Serial(_) => ScheduledEventKind::Serial,
+            Self::Parallel(_) => ScheduledEventKind::Parallel,
+        }
+    }
 }
 
 struct PartitionEvent {
@@ -992,6 +1175,19 @@ struct PartitionEvent {
 impl PartitionEvent {
     fn is_serial(&self) -> bool {
         matches!(self.callback, Some(PartitionEventCallback::Serial(_)))
+    }
+
+    fn snapshot(&self) -> PendingEventSnapshot {
+        PendingEventSnapshot {
+            id: self.id,
+            tick: self.tick,
+            order: self.order,
+            kind: self
+                .callback
+                .as_ref()
+                .expect("scheduler callback is present")
+                .kind(),
+        }
     }
 }
 

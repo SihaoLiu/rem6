@@ -518,6 +518,30 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u32(payload, partition.index());
             write_u64(payload, *tick);
         }
+        SchedulerError::SnapshotContainsPendingEvents { pending_events } => {
+            write_u64(payload, 8);
+            write_u64(payload, *pending_events as u64);
+        }
+        SchedulerError::RestoreWouldDiscardPendingEvents { pending_events } => {
+            write_u64(payload, 9);
+            write_u64(payload, *pending_events as u64);
+        }
+        SchedulerError::SnapshotPartitionCountMismatch {
+            snapshot_partitions,
+            scheduler_partitions,
+        } => {
+            write_u64(payload, 10);
+            write_u32(payload, *snapshot_partitions);
+            write_u32(payload, *scheduler_partitions);
+        }
+        SchedulerError::SnapshotLookaheadMismatch {
+            snapshot_min_remote_delay,
+            scheduler_min_remote_delay,
+        } => {
+            write_u64(payload, 11);
+            write_u64(payload, *snapshot_min_remote_delay);
+            write_u64(payload, *scheduler_min_remote_delay);
+        }
     }
 }
 
@@ -553,6 +577,20 @@ fn decode_scheduler_error(
         7 => Ok(SchedulerError::SerialEventInParallelEpoch {
             partition: PartitionId::new(cursor.read_u32("scheduler serial partition")?),
             tick: cursor.read_u64("scheduler serial tick")?,
+        }),
+        8 => Ok(SchedulerError::SnapshotContainsPendingEvents {
+            pending_events: cursor.read_count("scheduler snapshot pending events")?,
+        }),
+        9 => Ok(SchedulerError::RestoreWouldDiscardPendingEvents {
+            pending_events: cursor.read_count("scheduler restore pending events")?,
+        }),
+        10 => Ok(SchedulerError::SnapshotPartitionCountMismatch {
+            snapshot_partitions: cursor.read_u32("scheduler snapshot partition count")?,
+            scheduler_partitions: cursor.read_u32("scheduler live partition count")?,
+        }),
+        11 => Ok(SchedulerError::SnapshotLookaheadMismatch {
+            snapshot_min_remote_delay: cursor.read_u64("scheduler snapshot lookahead")?,
+            scheduler_min_remote_delay: cursor.read_u64("scheduler live lookahead")?,
         }),
         value => Err(cursor.invalid(format!("scheduler error has invalid kind {value}"))),
     }
