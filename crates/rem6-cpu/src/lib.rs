@@ -21,11 +21,16 @@ use rem6_transport::{
     ResponseDelivery, TargetOutcome, TransportEndpointId, TransportError,
 };
 
+mod branch_predictor;
 mod error;
 mod riscv_activity;
 mod riscv_cluster;
 mod topology;
 
+pub use branch_predictor::{
+    BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
+    BranchPredictorSnapshot, BranchUpdate,
+};
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{

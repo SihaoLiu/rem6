@@ -55,6 +55,9 @@ The following public sources shape this design:
 - Recent gem5 call-stack profiling work identifies layered runtime complexity
   and hard-to-pinpoint coherence deadlock and livelock:
   <https://arxiv.org/abs/2605.01419>
+- gem5 branch predictor discussion identifies incomplete speculative history
+  support and history unwinding as a source of misleading predictor results:
+  <https://github.com/orgs/gem5/discussions/1341>
 
 ## Debt Map
 
@@ -71,6 +74,7 @@ backed by tests, traces, or explicit runtime records.
 | Deadlock and livelock can look like a normal long run. | Runtime-level progress monitors and protocol-level wait-for graphs are required for blocking resources. | Tests inject cycles and assert a diagnostic rather than a silent hang. |
 | Checkpoint correctness depends on a specific protocol flush path. | Checkpointing snapshots partition state, pending events, stores, directories, caches, and devices through protocol-neutral traits. | Checkpoint tests cover MSI, MESI, MOESI, CPU, GPU, accelerator, fabric, and memory state. |
 | KVM, fast-forwarding, and model switching are external workflow choices. | Execution modes are modeled as host-controlled runtime actions with explicit statistics scope. | Host-control tests show ROI, switch, and statistics actions as traceable events. |
+| Front-end speculation can hide predictor state and unwind behavior. | Branch predictors are per-model typed state with explicit prediction, update, and snapshot records. | Predictor tests assert counter training, target updates, restore behavior, and incompatible snapshot rejection. |
 | Full-system experiments need external scripts and fragile artifacts. | Workload manifests, resources, host events, checkpoints, and result metadata are first-class rem6 data. | Manifest tests reconstruct runs from recorded metadata and reject missing inputs. |
 | Profiling often observes the simulator indirectly. | Run summaries expose scheduler, fabric, DRAM, coherence, device, host, and trace activity from the runtime. | System tests assert resource profiles match per-component activity counts. |
 
