@@ -7,7 +7,7 @@ use rem6_coherence::{
 };
 use rem6_directory::{MesiDirectoryDataSource, MesiDirectoryLineState, MesiDirectorySnoop};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
-use rem6_kernel::{PartitionId, SchedulerError};
+use rem6_kernel::{ParallelRunProfile, PartitionId, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId, ResponseStatus,
@@ -512,6 +512,119 @@ fn partitioned_mesi_harness_runs_parallel_epochs_for_peer_downgrade() {
 }
 
 #[test]
+fn partitioned_mesi_harness_recorded_parallel_run_reports_protocol_activity() {
+    let mut harness = partitioned_harness();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.summary().final_tick(), 12);
+    assert_eq!(run.final_tick(), 12);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 0);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.profile().epoch_count(), run.epoch_count());
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.profile().batch_count(), run.batch_count());
+    assert_eq!(run.scheduler_epochs().len(), run.epoch_count());
+    assert_eq!(run.dispatches().len(), run.dispatch_count());
+    assert_eq!(run.batches().len(), run.batch_count());
+    assert_eq!(run.scheduler_run().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.scheduler_run().batch_count(), run.batch_count());
+    assert_eq!(
+        run.parallel_worker_partitions().len(),
+        run.total_parallel_workers()
+    );
+    assert_eq!(run.protocol_activity_count(), 2);
+    assert_eq!(
+        run.profile(),
+        ParallelRunProfile::new(
+            run.epoch_count(),
+            run.empty_epoch_count(),
+            run.batch_count(),
+            run.dispatch_count(),
+            run.total_parallel_workers(),
+            run.max_parallel_workers(),
+        )
+    );
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(!run.has_dram_activity());
+    assert_eq!(
+        run.scheduler_run().profile().dispatch_count(),
+        run.dispatch_count()
+    );
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
+}
+
+#[test]
+fn partitioned_mesi_harness_recorded_parallel_run_counts_only_scheduled_window_activity() {
+    let mut harness = partitioned_harness();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    let first_run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert_eq!(first_run.cpu_response_count(), 1);
+    assert_eq!(first_run.directory_decision_count(), 1);
+
+    let hit = harness
+        .submit_cpu_request_parallel(agent(1), read(1, 1, 0x3004, 4))
+        .unwrap();
+    assert_eq!(hit.kind(), SubmitKind::ImmediateHit);
+    let idle_run = harness.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(idle_run.summary().epochs(), 0);
+    assert_eq!(idle_run.summary().executed_events(), 0);
+    assert_eq!(idle_run.final_tick(), 12);
+    assert_eq!(idle_run.cpu_response_count(), 0);
+    assert_eq!(idle_run.directory_decision_count(), 0);
+    assert_eq!(idle_run.dram_access_count(), 0);
+    assert_eq!(idle_run.protocol_activity_count(), 0);
+    assert_eq!(idle_run.profile(), ParallelRunProfile::default());
+    assert!(!idle_run.has_parallel_work());
+    assert!(!idle_run.has_directory_activity());
+    assert!(!idle_run.has_dram_activity());
+    assert_eq!(harness.cpu_responses().len(), 2);
+}
+
+#[test]
+fn partitioned_mesi_harness_recorded_parallel_run_reports_peer_snoop_activity() {
+    let mut harness = partitioned_harness();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    harness.run_until_idle_parallel_recorded().unwrap();
+    harness
+        .submit_cpu_request(agent(1), write(1, 1, 0x3002, vec![0xaa, 0xbb]))
+        .unwrap();
+
+    harness
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x3000, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.final_tick(), 26);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 0);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.protocol_activity_count(), 2);
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(!run.has_dram_activity());
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Shared);
+    assert_eq!(harness.cache_state(agent(2)).unwrap(), MesiState::Shared);
+}
+
+#[test]
 fn mesi_harness_snapshot_restore_reinstates_serial_state() {
     let mut source = harness();
     source
@@ -938,8 +1051,16 @@ fn partitioned_mesi_harness_routes_dram_backing_reads_in_parallel_epochs() {
     harness
         .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
         .unwrap();
-    let run = harness.run_until_idle_parallel().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
     assert_eq!(run.final_tick(), 38);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 1);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(run.has_dram_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
     assert_eq!(
         harness.directory_state(),

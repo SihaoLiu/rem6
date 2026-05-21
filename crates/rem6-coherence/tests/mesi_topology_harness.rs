@@ -227,9 +227,20 @@ fn topology_mesi_harness_builds_intermediate_dram_path_for_parallel_reader() {
     harness
         .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
         .unwrap();
-    let run = harness.run_until_idle_parallel().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
 
     assert_eq!(run.final_tick(), 52);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 1);
+    assert_eq!(run.protocol_activity_count(), 3);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.profile().epoch_count(), run.epoch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(run.has_dram_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MesiState::Exclusive);
     assert_eq!(
         harness.cpu_responses(),

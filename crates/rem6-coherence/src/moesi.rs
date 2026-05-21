@@ -29,8 +29,9 @@ use rem6_transport::{
 };
 
 use crate::{
-    DramMemoryAccessRecord, HarnessError, LineBackingStore, PartitionedCacheAgentConfig,
-    PartitionedDramMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunSummary,
+    PartitionedCacheAgentConfig, PartitionedDramMemoryConfig, PartitionedRouteHopConfig,
+    SubmitKind,
 };
 
 mod snapshot;
@@ -954,9 +955,51 @@ impl PartitionedMoesiDirectoryLineHarness {
     }
 
     pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, MoesiHarnessError> {
-        self.scheduler
-            .run_until_idle_parallel()
-            .map_err(MoesiHarnessError::Scheduler)
+        self.run_until_idle_parallel_recorded()
+            .map(|run| run.summary())
+    }
+
+    pub fn run_until_idle_parallel_recorded(
+        &mut self,
+    ) -> Result<ParallelCoherenceRunSummary, MoesiHarnessError> {
+        let cpu_responses_before = self.cpu_responses.lock().expect("response lock").len();
+        let directory_decisions_before = self
+            .directory_decisions
+            .lock()
+            .expect("decision lock")
+            .len();
+        let dram_accesses_before = self.dram_accesses.lock().expect("dram access lock").len();
+
+        let scheduler_run = self
+            .scheduler
+            .run_until_idle_parallel_recorded()
+            .map_err(MoesiHarnessError::Scheduler)?;
+
+        let cpu_response_count = self
+            .cpu_responses
+            .lock()
+            .expect("response lock")
+            .len()
+            .saturating_sub(cpu_responses_before);
+        let directory_decision_count = self
+            .directory_decisions
+            .lock()
+            .expect("decision lock")
+            .len()
+            .saturating_sub(directory_decisions_before);
+        let dram_access_count = self
+            .dram_accesses
+            .lock()
+            .expect("dram access lock")
+            .len()
+            .saturating_sub(dram_accesses_before);
+
+        Ok(ParallelCoherenceRunSummary::new(
+            scheduler_run,
+            cpu_response_count,
+            directory_decision_count,
+            dram_access_count,
+        ))
     }
 
     pub fn cache_state(&self, agent: AgentId) -> Result<MoesiState, MoesiHarnessError> {

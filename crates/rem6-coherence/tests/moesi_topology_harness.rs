@@ -323,8 +323,19 @@ fn topology_moesi_harness_reserves_fabric_for_dram_fill_response() {
         .unwrap();
     assert_eq!(submit.kind(), SubmitKind::ScheduledMiss);
 
-    let run = harness.run_until_idle_parallel().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
     assert_eq!(run.final_tick(), 49);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 1);
+    assert_eq!(run.protocol_activity_count(), 3);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.profile().epoch_count(), run.epoch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(run.has_dram_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MoesiState::Modified);
     assert_eq!(
         harness.cpu_responses(),
@@ -481,9 +492,20 @@ fn topology_moesi_harness_reserves_fabric_on_directory_memory_path() {
     harness
         .submit_cpu_request_parallel(agent(1), write(1, 0, 0x3006, vec![0xaa, 0xbb]))
         .unwrap();
-    let run = harness.run_until_idle_parallel().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
 
     assert_eq!(run.final_tick(), 37);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 1);
+    assert_eq!(run.protocol_activity_count(), 3);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.profile().epoch_count(), run.epoch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(run.has_dram_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MoesiState::Modified);
     assert_eq!(
         harness.cpu_responses(),
@@ -569,9 +591,20 @@ fn topology_moesi_harness_routes_dram_then_dirty_owner_over_declared_paths() {
     harness
         .submit_cpu_request_parallel(agent(1), write(1, 0, 0x3006, vec![0xaa, 0xbb]))
         .unwrap();
-    let run = harness.run_until_idle_parallel().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
 
     assert_eq!(run.final_tick(), 52);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 1);
+    assert_eq!(run.protocol_activity_count(), 3);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.profile().epoch_count(), run.epoch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(run.has_dram_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MoesiState::Modified);
     assert_eq!(
         harness.directory_state(),
@@ -681,9 +714,20 @@ fn topology_moesi_harness_routes_dram_then_dirty_owner_over_declared_paths() {
     harness
         .submit_cpu_request_parallel(agent(2), read(2, 0, 0x3004, 4))
         .unwrap();
-    let run = harness.run_until_idle_parallel().unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
 
     assert_eq!(run.final_tick(), 66);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 0);
+    assert_eq!(run.protocol_activity_count(), 2);
+    assert_eq!(run.summary().executed_events(), run.executed_events());
+    assert_eq!(run.executed_events(), run.dispatch_count());
+    assert_eq!(run.profile().dispatch_count(), run.dispatch_count());
+    assert_eq!(run.profile().epoch_count(), run.epoch_count());
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(!run.has_dram_activity());
     assert_eq!(harness.cache_state(agent(1)).unwrap(), MoesiState::Owned);
     assert_eq!(harness.cache_state(agent(2)).unwrap(), MoesiState::Shared);
     assert_eq!(
