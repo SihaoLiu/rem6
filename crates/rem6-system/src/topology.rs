@@ -25,8 +25,9 @@ use rem6_accelerator::{
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_coherence::{
-    MesiHarnessError, MoesiHarnessError, ParallelCoherenceRunSummary,
-    PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
+    HarnessError, MesiHarnessError, MoesiHarnessError, ParallelCoherenceRunSummary,
+    PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
+    PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_cpu::{CpuId, CpuTopologyError, RiscvCluster, RiscvClusterTopologyConfig};
 use rem6_dram::{
@@ -63,8 +64,9 @@ use crate::{
 };
 
 use coherence_data::{
-    merge_mesi_data_cache_activity, merge_moesi_data_cache_activity, topology_mesi_data_response,
-    topology_moesi_data_response, RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache,
+    merge_mesi_data_cache_activity, merge_moesi_data_cache_activity, merge_msi_data_cache_activity,
+    topology_mesi_data_response, topology_moesi_data_response, topology_msi_data_response,
+    RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
 };
 
 pub struct RiscvTopologySystem {
@@ -76,6 +78,7 @@ pub struct RiscvTopologySystem {
     gpus: BTreeMap<GpuDeviceId, GpuTopologyDevice>,
     platform: Option<Platform>,
     memory: Option<RiscvTopologyMemoryBackend>,
+    msi_data_cache: Option<RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<RiscvTopologyMoesiDataCache>,
     host: Option<RiscvTopologyHost>,
@@ -568,6 +571,7 @@ impl RiscvTopologySystem {
             gpus: BTreeMap::new(),
             platform: None,
             memory: None,
+            msi_data_cache: None,
             mesi_data_cache: None,
             moesi_data_cache: None,
             host: None,
@@ -725,6 +729,14 @@ impl RiscvTopologySystem {
         Ok(self)
     }
 
+    pub fn with_msi_data_cache(
+        mut self,
+        harness: PartitionedDirectoryLineHarness,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        self.msi_data_cache = Some(RiscvTopologyMsiDataCache::new(harness));
+        Ok(self)
+    }
+
     pub fn with_moesi_data_cache(
         mut self,
         harness: PartitionedMoesiDirectoryLineHarness,
@@ -815,6 +827,19 @@ impl RiscvTopologySystem {
                 .expect("DRAM memory lock")
                 .target_activity(target)
         })
+    }
+
+    pub fn msi_data_cache(&self) -> Option<Arc<Mutex<PartitionedDirectoryLineHarness>>> {
+        self.msi_data_cache
+            .as_ref()
+            .map(RiscvTopologyMsiDataCache::harness)
+    }
+
+    pub fn msi_data_cache_runs(&self) -> Vec<ParallelCoherenceRunSummary> {
+        self.msi_data_cache
+            .as_ref()
+            .map(RiscvTopologyMsiDataCache::runs)
+            .unwrap_or_default()
     }
 
     pub fn mesi_data_cache(&self) -> Option<Arc<Mutex<PartitionedMesiDirectoryLineHarness>>> {
@@ -1351,6 +1376,10 @@ impl RiscvTopologySystem {
         let memory_error = Arc::new(Mutex::new(None));
         let fabric_activity_start = self.transport.mark_fabric_activity();
         let dram_activity_start = mark_dram_activity(&memory);
+        let msi_data_cache = self.msi_data_cache.clone();
+        let msi_data_run_start = msi_data_cache
+            .as_ref()
+            .map(RiscvTopologyMsiDataCache::mark_runs);
         let mesi_data_cache = self.mesi_data_cache.clone();
         let mesi_data_run_start = mesi_data_cache
             .as_ref()
@@ -1372,11 +1401,13 @@ impl RiscvTopologySystem {
 
         let data_memory = memory.clone();
         let data_error = Arc::clone(&memory_error);
+        let data_msi_cache = msi_data_cache.clone();
         let data_mesi_cache = mesi_data_cache.clone();
         let data_moesi_cache = moesi_data_cache.clone();
         let data_responder = move |_cpu| {
             let memory = data_memory.clone();
             let memory_error = Arc::clone(&data_error);
+            let msi_data_cache = data_msi_cache.clone();
             let mesi_data_cache = data_mesi_cache.clone();
             let moesi_data_cache = data_moesi_cache.clone();
             move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
@@ -1384,6 +1415,8 @@ impl RiscvTopologySystem {
                     topology_moesi_data_response(cache, &memory_error, &delivery)
                 } else if let Some(cache) = mesi_data_cache.as_ref() {
                     topology_mesi_data_response(cache, &memory_error, &delivery)
+                } else if let Some(cache) = msi_data_cache.as_ref() {
+                    topology_msi_data_response(cache, &memory_error, &delivery)
                 } else {
                     topology_memory_response(&memory, &memory_error, &delivery)
                 }
@@ -1435,6 +1468,12 @@ impl RiscvTopologySystem {
             .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
             .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
+            fabric_activity,
+            dram_activity,
+            msi_data_cache.as_ref(),
+            msi_data_run_start,
+        );
         let (fabric_activity, dram_activity) = merge_mesi_data_cache_activity(
             fabric_activity,
             dram_activity,
@@ -1487,10 +1526,12 @@ pub enum RiscvTopologySystemError {
     HostPartitionOutOfRange { host: PartitionId, partitions: u32 },
     MissingMemoryStore,
     MissingHostController,
+    MissingMsiDataResponse { request: MemoryRequestId },
     MissingMesiDataResponse { request: MemoryRequestId },
     MissingMoesiDataResponse { request: MemoryRequestId },
     Accelerator(AcceleratorError),
     Gpu(GpuError),
+    MsiDataCache(HarnessError),
     MesiDataCache(MesiHarnessError),
     MoesiDataCache(MoesiHarnessError),
     Transport(TransportError),
@@ -1542,6 +1583,12 @@ impl fmt::Display for RiscvTopologySystemError {
             Self::MissingHostController => {
                 write!(formatter, "topology system has no host controller")
             }
+            Self::MissingMsiDataResponse { request } => write!(
+                formatter,
+                "MSI data cache produced no response for request {} from agent {}",
+                request.sequence(),
+                request.agent().get()
+            ),
             Self::MissingMesiDataResponse { request } => write!(
                 formatter,
                 "MESI data cache produced no response for request {} from agent {}",
@@ -1556,6 +1603,7 @@ impl fmt::Display for RiscvTopologySystemError {
             ),
             Self::Accelerator(error) => write!(formatter, "{error}"),
             Self::Gpu(error) => write!(formatter, "{error}"),
+            Self::MsiDataCache(error) => write!(formatter, "{error}"),
             Self::MesiDataCache(error) => write!(formatter, "{error}"),
             Self::MoesiDataCache(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
@@ -1582,10 +1630,12 @@ impl Error for RiscvTopologySystemError {
             Self::HostPartitionOutOfRange { .. } => None,
             Self::MissingMemoryStore => None,
             Self::MissingHostController => None,
+            Self::MissingMsiDataResponse { .. } => None,
             Self::MissingMesiDataResponse { .. } => None,
             Self::MissingMoesiDataResponse { .. } => None,
             Self::Accelerator(error) => Some(error),
             Self::Gpu(error) => Some(error),
+            Self::MsiDataCache(error) => Some(error),
             Self::MesiDataCache(error) => Some(error),
             Self::MoesiDataCache(error) => Some(error),
             Self::Transport(error) => Some(error),

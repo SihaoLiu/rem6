@@ -10,7 +10,9 @@ use rem6_directory::{
 };
 use rem6_dram::{DramMemoryController, DramMemoryError};
 use rem6_fabric::{FabricError, FabricModel, FabricPath, VirtualNetworkId};
-use rem6_kernel::{ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{
+    ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError, Tick,
+};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse, MemoryTargetId, ResponseStatus,
@@ -26,6 +28,7 @@ mod deferred;
 mod directory_snapshot;
 mod mesi;
 mod moesi;
+mod partitioned_parallel;
 mod partitioned_snapshot;
 mod snoop;
 mod summary;
@@ -46,6 +49,7 @@ pub use moesi::{
     PartitionedMoesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarnessSnapshot,
 };
 pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
+use summary::CoherenceResourceActivityWindow;
 pub use summary::ParallelCoherenceRunSummary;
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
@@ -1346,6 +1350,59 @@ impl PartitionedDirectoryLineHarness {
 
     pub fn run_until_idle(&mut self) -> ConservativeRunSummary {
         self.scheduler.run_until_idle_conservative()
+    }
+
+    pub fn now(&self) -> Tick {
+        self.scheduler.now()
+    }
+
+    pub fn run_until_idle_parallel_recorded(
+        &mut self,
+    ) -> Result<ParallelCoherenceRunSummary, HarnessError> {
+        let cpu_responses_before = self.cpu_responses.lock().expect("response lock").len();
+        let directory_decisions_before = self
+            .directory_decisions
+            .lock()
+            .expect("decision lock")
+            .len();
+        let dram_accesses_before = self.dram_accesses.lock().expect("DRAM access lock").len();
+        let resource_window =
+            CoherenceResourceActivityWindow::mark(&self.transport, self.dram_memory.as_ref());
+
+        let scheduler_run = self
+            .scheduler
+            .run_until_idle_parallel_recorded()
+            .map_err(HarnessError::Scheduler)?;
+
+        let cpu_response_count = self
+            .cpu_responses
+            .lock()
+            .expect("response lock")
+            .len()
+            .saturating_sub(cpu_responses_before);
+        let directory_decision_count = self
+            .directory_decisions
+            .lock()
+            .expect("decision lock")
+            .len()
+            .saturating_sub(directory_decisions_before);
+        let dram_access_count = self
+            .dram_accesses
+            .lock()
+            .expect("DRAM access lock")
+            .len()
+            .saturating_sub(dram_accesses_before);
+        let (fabric_activity, dram_activity) =
+            resource_window.collect(&self.transport, self.dram_memory.as_ref());
+
+        Ok(ParallelCoherenceRunSummary::new(
+            scheduler_run,
+            cpu_response_count,
+            directory_decision_count,
+            dram_access_count,
+            fabric_activity,
+            dram_activity,
+        ))
     }
 
     pub fn cache_state(&self, agent: AgentId) -> Result<MsiState, HarnessError> {

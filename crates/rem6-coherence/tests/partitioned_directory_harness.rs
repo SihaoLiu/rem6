@@ -722,6 +722,59 @@ fn partitioned_directory_harness_waits_for_owner_snoop_before_peer_fill() {
 }
 
 #[test]
+fn partitioned_directory_harness_parallel_path_reads_dirty_peer_without_serial_events() {
+    let mut harness = harness_with_dram_memory();
+
+    let owner_store = harness
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x1006, vec![0xaa, 0xbb]))
+        .unwrap();
+    assert_eq!(owner_store.kind(), SubmitKind::ScheduledMiss);
+    let first_run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert!(first_run.has_parallel_work());
+    assert_eq!(first_run.cpu_response_count(), 1);
+    assert_eq!(first_run.directory_decision_count(), 1);
+    assert_eq!(first_run.dram_access_count(), 1);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Modified);
+    assert_eq!(
+        harness.directory_state(),
+        DirectoryLineState::new(line()).with_owner(agent(1))
+    );
+
+    let peer_read = harness
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x1004, 6))
+        .unwrap();
+    assert_eq!(peer_read.kind(), SubmitKind::ScheduledMiss);
+    assert_eq!(
+        harness.cache_state(agent(2)).unwrap(),
+        MsiState::InvalidToShared
+    );
+
+    let second_run = harness.run_until_idle_parallel_recorded().unwrap();
+    assert!(second_run.has_parallel_work());
+    assert_eq!(second_run.cpu_response_count(), 1);
+    assert_eq!(second_run.directory_decision_count(), 1);
+    assert_eq!(second_run.dram_access_count(), 0);
+    assert_eq!(harness.cache_state(agent(1)).unwrap(), MsiState::Shared);
+    assert_eq!(harness.cache_state(agent(2)).unwrap(), MsiState::Shared);
+    assert_eq!(
+        harness.directory_state(),
+        DirectoryLineState::new(line())
+            .with_sharer(agent(1))
+            .with_sharer(agent(2))
+    );
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            second_run.final_tick(),
+            CacheControllerResultKind::Fill,
+            request_id(2, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 0xaa, 0xbb, 8, 9]),
+        ))
+    );
+}
+
+#[test]
 fn partitioned_directory_harness_rejects_unknown_agent_without_events() {
     let mut harness = harness();
 

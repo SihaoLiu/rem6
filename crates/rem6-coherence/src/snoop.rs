@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use rem6_cache::MsiCacheController;
 use rem6_directory::DirectoryDecision;
 use rem6_fabric::{FabricError, FabricModel, FabricPacket, FabricPacketId};
-use rem6_kernel::{PartitionId, SchedulerContext, Tick};
+use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext, Tick};
 use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, TransportEndpointId,
@@ -117,10 +117,111 @@ impl DirectorySnoopWork {
 
         Ok(())
     }
+
+    pub(super) fn schedule_parallel(
+        self,
+        context: &mut ParallelSchedulerContext<'_>,
+        decision_tick: Tick,
+    ) -> Result<(), HarnessError> {
+        let source_data = partitioned_directory_source_data(&self.decision, &self.caches)?;
+        self.decisions
+            .lock()
+            .expect("decision lock")
+            .push(DirectoryDecisionRecord::new(
+                decision_tick,
+                self.request.id().agent(),
+                self.decision.clone(),
+            ));
+
+        let snoop_ready_tick = schedule_directory_snoops_parallel(
+            context,
+            &self.decision,
+            self.request.id(),
+            &self.cache_routes,
+            &self.caches,
+            &self.fabric,
+        )?;
+        let snoop_delay =
+            snoop_ready_tick
+                .checked_sub(context.now())
+                .ok_or(HarnessError::Transport(TransportError::Fabric(
+                    FabricError::TickOverflow,
+                )))?;
+
+        let response =
+            MemoryResponse::completed(&self.request, source_data).map_err(HarnessError::Memory)?;
+        let response_work = SnoopResponseWork {
+            route: self.requester_route,
+            fabric: self.fabric,
+            trace: self.trace,
+            response_cache: self.response_cache,
+            responses: self.responses,
+        };
+        context
+            .schedule_local_after(snoop_delay, move |context| {
+                response_work.schedule_parallel(context, response);
+            })
+            .map_err(HarnessError::Scheduler)?;
+
+        Ok(())
+    }
 }
 
 pub(super) fn schedule_directory_snoops(
     context: &mut SchedulerContext<'_>,
+    decision: &DirectoryDecision,
+    request: MemoryRequestId,
+    cache_routes: &BTreeMap<AgentId, SnoopRoute>,
+    caches: &BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
+    fabric: &Option<Arc<Mutex<FabricModel>>>,
+) -> Result<Tick, HarnessError> {
+    let mut max_snoop_delay = 0;
+    for snoop in decision.snoops() {
+        let snoop_route = cache_routes
+            .get(&snoop.target())
+            .ok_or(HarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let delay = route_response_delay(
+            fabric,
+            context.now(),
+            snoop_route.id,
+            &snoop_route.route,
+            request,
+            1,
+        )
+        .map_err(HarnessError::Transport)?;
+        max_snoop_delay = max_snoop_delay.max(delay);
+
+        let cache = caches
+            .get(&snoop.target())
+            .cloned()
+            .ok_or(HarnessError::UnknownCache {
+                agent: snoop.target(),
+            })?;
+        let event = snoop.event();
+        context
+            .schedule_remote_after(snoop_route.route.source_partition(), delay, move |_| {
+                cache
+                    .lock()
+                    .expect("cache lock")
+                    .accept_snoop(event)
+                    .map_err(map_cache_error)
+                    .expect("scheduled snoop");
+            })
+            .map_err(HarnessError::Scheduler)?;
+    }
+
+    context
+        .now()
+        .checked_add(max_snoop_delay)
+        .ok_or(HarnessError::Transport(TransportError::Fabric(
+            FabricError::TickOverflow,
+        )))
+}
+
+pub(super) fn schedule_directory_snoops_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
     decision: &DirectoryDecision,
     request: MemoryRequestId,
     cache_routes: &BTreeMap<AgentId, SnoopRoute>,
@@ -186,6 +287,15 @@ impl SnoopResponseWork {
         self.schedule_response_hop(context, last_hop, response);
     }
 
+    fn schedule_parallel(
+        self,
+        context: &mut ParallelSchedulerContext<'_>,
+        response: MemoryResponse,
+    ) {
+        let last_hop = self.route.route.hops().len() - 1;
+        self.schedule_response_hop_parallel(context, last_hop, response);
+    }
+
     fn schedule_response_hop(
         self,
         context: &mut SchedulerContext<'_>,
@@ -230,6 +340,55 @@ impl SnoopResponseWork {
                     }
                 } else {
                     self.schedule_response_hop(context, hop_index - 1, response);
+                }
+            })
+            .expect("validated snoop response latency");
+    }
+
+    fn schedule_response_hop_parallel(
+        self,
+        context: &mut ParallelSchedulerContext<'_>,
+        hop_index: usize,
+        response: MemoryResponse,
+    ) {
+        let hop = self.route.route.hops()[hop_index].clone();
+        let (endpoint, partition) = route_response_destination(&self.route.route, hop_index);
+        let route_id = self.route.id;
+        let delay = response_hop_delay(
+            &self.fabric,
+            context.now(),
+            route_id,
+            &self.route.route,
+            &hop,
+            response.request_id(),
+            response_packet_bytes(&response),
+        )
+        .expect("validated snoop response fabric timing");
+        context
+            .schedule_remote_after(partition, delay, move |context| {
+                self.trace.record(MemoryTraceEvent::response(
+                    context.now(),
+                    route_id,
+                    endpoint,
+                    response.request_id(),
+                    response.status(),
+                ));
+
+                if hop_index == 0 {
+                    let result = self
+                        .response_cache
+                        .lock()
+                        .expect("cache lock")
+                        .accept_fill(response)
+                        .expect("cache fill");
+                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
+                        self.responses
+                            .lock()
+                            .expect("response lock")
+                            .push(response_record(context.now(), result.kind(), response));
+                    }
+                } else {
+                    self.schedule_response_hop_parallel(context, hop_index - 1, response);
                 }
             })
             .expect("validated snoop response latency");
