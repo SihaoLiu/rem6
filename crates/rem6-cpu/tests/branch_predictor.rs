@@ -1,5 +1,6 @@
 use rem6_cpu::{
     BranchPredictor, BranchPredictorConfig, BranchPredictorError, BranchSpeculationId,
+    BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError, BranchTargetKind,
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
     ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
 };
@@ -11,6 +12,10 @@ fn predictor(entries: usize) -> BranchPredictor {
 
 fn ras(entries: usize) -> ReturnAddressStack {
     ReturnAddressStack::new(ReturnAddressStackConfig::new(entries).unwrap())
+}
+
+fn btb(entries: usize, associativity: usize) -> BranchTargetBuffer {
+    BranchTargetBuffer::new(BranchTargetBufferConfig::new(entries, associativity).unwrap())
 }
 
 #[test]
@@ -381,6 +386,144 @@ fn return_address_stack_rejects_bad_config_and_snapshot_shape() {
         Err(ReturnAddressStackError::SnapshotEntriesMismatch {
             expected: 3,
             actual: 2,
+        })
+    );
+}
+
+#[test]
+fn branch_target_buffer_records_miss_update_hit_and_counters() {
+    let mut btb = btb(4, 2);
+    let pc = Address::new(0x1000);
+    let target = Address::new(0x1080);
+
+    let miss = btb.lookup(pc, BranchTargetKind::DirectConditional);
+
+    assert!(!miss.hit());
+    assert_eq!(miss.pc(), pc);
+    assert_eq!(miss.target(), None);
+    assert_eq!(miss.kind(), BranchTargetKind::DirectConditional);
+    assert_eq!(miss.lookup_count(), 1);
+    assert_eq!(btb.miss_count(), 1);
+
+    let update = btb.update(pc, target, BranchTargetKind::DirectConditional);
+
+    assert_eq!(update.pc(), pc);
+    assert_eq!(update.target(), target);
+    assert_eq!(update.kind(), BranchTargetKind::DirectConditional);
+    assert_eq!(update.replaced(), None);
+    assert_eq!(update.update_count(), 1);
+    assert!(btb.valid(pc));
+
+    let hit = btb.lookup(pc, BranchTargetKind::DirectConditional);
+
+    assert!(hit.hit());
+    assert_eq!(hit.target(), Some(target));
+    assert_eq!(hit.entry().unwrap().pc(), pc);
+    assert_eq!(
+        hit.entry().unwrap().kind(),
+        BranchTargetKind::DirectConditional
+    );
+    assert_eq!(btb.lookup_count(), 2);
+    assert_eq!(btb.hit_count(), 1);
+    assert_eq!(btb.miss_count(), 1);
+}
+
+#[test]
+fn branch_target_buffer_uses_set_associative_lru_replacement() {
+    let mut btb = btb(4, 2);
+    let first = Address::new(0x1000);
+    let second = Address::new(0x1010);
+    let third = Address::new(0x1020);
+
+    btb.update(
+        first,
+        Address::new(0x1100),
+        BranchTargetKind::DirectUnconditional,
+    );
+    btb.update(second, Address::new(0x1200), BranchTargetKind::CallDirect);
+    btb.lookup(first, BranchTargetKind::DirectUnconditional);
+
+    let replacement = btb.update(third, Address::new(0x1300), BranchTargetKind::Return);
+
+    assert_eq!(replacement.replaced().unwrap().pc(), second);
+    assert!(btb.valid(first));
+    assert!(!btb.valid(second));
+    assert!(btb.valid(third));
+    assert_eq!(btb.eviction_count(), 1);
+}
+
+#[test]
+fn branch_target_buffer_snapshot_restore_preserves_entries_and_counters() {
+    let mut btb = btb(8, 2);
+    let pc = Address::new(0x1000);
+    let target = Address::new(0x1080);
+
+    btb.lookup(pc, BranchTargetKind::IndirectConditional);
+    btb.update(pc, target, BranchTargetKind::IndirectConditional);
+    let snapshot = btb.snapshot();
+
+    btb.invalidate();
+    btb.update(
+        Address::new(0x2000),
+        Address::new(0x2080),
+        BranchTargetKind::CallIndirect,
+    );
+    assert!(!btb.valid(pc));
+
+    btb.restore(&snapshot).unwrap();
+
+    assert!(btb.valid(pc));
+    assert_eq!(btb.snapshot().entries(), snapshot.entries());
+    assert_eq!(
+        btb.lookup(pc, BranchTargetKind::IndirectConditional)
+            .target(),
+        Some(target)
+    );
+    assert_eq!(btb.miss_count(), 1);
+    assert_eq!(btb.update_count(), 1);
+}
+
+#[test]
+fn branch_target_buffer_rejects_bad_config_and_snapshot_shape() {
+    assert_eq!(
+        BranchTargetBufferConfig::new(0, 1),
+        Err(BranchTargetBufferError::ZeroEntries)
+    );
+    assert_eq!(
+        BranchTargetBufferConfig::new(4, 0),
+        Err(BranchTargetBufferError::ZeroAssociativity)
+    );
+    assert_eq!(
+        BranchTargetBufferConfig::new(4, 8),
+        Err(BranchTargetBufferError::AssociativityExceedsEntries {
+            entries: 4,
+            associativity: 8,
+        })
+    );
+    assert_eq!(
+        BranchTargetBufferConfig::new(6, 4),
+        Err(
+            BranchTargetBufferError::EntriesNotDivisibleByAssociativity {
+                entries: 6,
+                associativity: 4,
+            }
+        )
+    );
+    assert_eq!(
+        BranchTargetBufferConfig::new(6, 2),
+        Err(BranchTargetBufferError::SetCountNotPowerOfTwo { sets: 3 })
+    );
+
+    let snapshot = btb(4, 2).snapshot();
+    let mut larger = btb(8, 2);
+
+    assert_eq!(
+        larger.restore(&snapshot),
+        Err(BranchTargetBufferError::SnapshotShapeMismatch {
+            expected_entries: 8,
+            expected_associativity: 2,
+            actual_entries: 4,
+            actual_associativity: 2,
         })
     );
 }

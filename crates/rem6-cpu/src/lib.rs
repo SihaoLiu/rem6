@@ -30,9 +30,11 @@ mod topology;
 pub use branch_predictor::{
     BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
     BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationId, BranchSpeculationRepair,
-    BranchUpdate, ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
-    ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
-    ReturnAddressStackRepair, ReturnAddressStackSnapshot,
+    BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
+    BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetLookup,
+    BranchTargetUpdate, BranchUpdate, ReturnAddressStack, ReturnAddressStackConfig,
+    ReturnAddressStackError, ReturnAddressStackOperation, ReturnAddressStackOperationId,
+    ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use riscv_activity::RiscvCoreDriveActivity;

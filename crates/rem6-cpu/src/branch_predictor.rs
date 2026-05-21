@@ -543,6 +543,554 @@ impl BranchPredictorSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BranchTargetBufferError {
+    ZeroEntries,
+    ZeroAssociativity,
+    AssociativityExceedsEntries {
+        entries: usize,
+        associativity: usize,
+    },
+    EntriesNotDivisibleByAssociativity {
+        entries: usize,
+        associativity: usize,
+    },
+    SetCountNotPowerOfTwo {
+        sets: usize,
+    },
+    SnapshotShapeMismatch {
+        expected_entries: usize,
+        expected_associativity: usize,
+        actual_entries: usize,
+        actual_associativity: usize,
+    },
+}
+
+impl fmt::Display for BranchTargetBufferError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroEntries => write!(formatter, "branch target buffer is empty"),
+            Self::ZeroAssociativity => write!(
+                formatter,
+                "branch target buffer associativity must be non-zero"
+            ),
+            Self::AssociativityExceedsEntries {
+                entries,
+                associativity,
+            } => write!(
+                formatter,
+                "branch target buffer associativity {associativity} exceeds entries {entries}"
+            ),
+            Self::EntriesNotDivisibleByAssociativity {
+                entries,
+                associativity,
+            } => write!(
+                formatter,
+                "branch target buffer entries {entries} are not divisible by associativity {associativity}"
+            ),
+            Self::SetCountNotPowerOfTwo { sets } => write!(
+                formatter,
+                "branch target buffer set count {sets} is not a power of two"
+            ),
+            Self::SnapshotShapeMismatch {
+                expected_entries,
+                expected_associativity,
+                actual_entries,
+                actual_associativity,
+            } => write!(
+                formatter,
+                "branch target buffer snapshot has {actual_entries} entries and associativity {actual_associativity} but buffer has {expected_entries} entries and associativity {expected_associativity}"
+            ),
+        }
+    }
+}
+
+impl Error for BranchTargetBufferError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchTargetBufferConfig {
+    entries: usize,
+    associativity: usize,
+    sets: usize,
+}
+
+impl BranchTargetBufferConfig {
+    pub fn new(entries: usize, associativity: usize) -> Result<Self, BranchTargetBufferError> {
+        if entries == 0 {
+            return Err(BranchTargetBufferError::ZeroEntries);
+        }
+        if associativity == 0 {
+            return Err(BranchTargetBufferError::ZeroAssociativity);
+        }
+        if associativity > entries {
+            return Err(BranchTargetBufferError::AssociativityExceedsEntries {
+                entries,
+                associativity,
+            });
+        }
+        if !entries.is_multiple_of(associativity) {
+            return Err(
+                BranchTargetBufferError::EntriesNotDivisibleByAssociativity {
+                    entries,
+                    associativity,
+                },
+            );
+        }
+
+        let sets = entries / associativity;
+        if !sets.is_power_of_two() {
+            return Err(BranchTargetBufferError::SetCountNotPowerOfTwo { sets });
+        }
+
+        Ok(Self {
+            entries,
+            associativity,
+            sets,
+        })
+    }
+
+    pub const fn entries(&self) -> usize {
+        self.entries
+    }
+
+    pub const fn associativity(&self) -> usize {
+        self.associativity
+    }
+
+    pub const fn sets(&self) -> usize {
+        self.sets
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BranchTargetKind {
+    NoBranch,
+    DirectConditional,
+    DirectUnconditional,
+    IndirectConditional,
+    IndirectUnconditional,
+    CallDirect,
+    CallIndirect,
+    Return,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchTargetBuffer {
+    config: BranchTargetBufferConfig,
+    entries: Vec<Option<BranchTargetEntry>>,
+    access_sequence: u64,
+    lookup_count: u64,
+    hit_count: u64,
+    miss_count: u64,
+    update_count: u64,
+    eviction_count: u64,
+}
+
+impl BranchTargetBuffer {
+    pub fn new(config: BranchTargetBufferConfig) -> Self {
+        let entries = vec![None; config.entries()];
+        Self {
+            config,
+            entries,
+            access_sequence: 0,
+            lookup_count: 0,
+            hit_count: 0,
+            miss_count: 0,
+            update_count: 0,
+            eviction_count: 0,
+        }
+    }
+
+    pub const fn config(&self) -> &BranchTargetBufferConfig {
+        &self.config
+    }
+
+    pub const fn lookup_count(&self) -> u64 {
+        self.lookup_count
+    }
+
+    pub const fn hit_count(&self) -> u64 {
+        self.hit_count
+    }
+
+    pub const fn miss_count(&self) -> u64 {
+        self.miss_count
+    }
+
+    pub const fn update_count(&self) -> u64 {
+        self.update_count
+    }
+
+    pub const fn eviction_count(&self) -> u64 {
+        self.eviction_count
+    }
+
+    pub fn valid(&self, pc: Address) -> bool {
+        self.find_entry(pc).is_some()
+    }
+
+    pub fn lookup(&mut self, pc: Address, kind: BranchTargetKind) -> BranchTargetLookup {
+        self.lookup_count += 1;
+        let set = self.set_index(pc);
+        let mut hit = None;
+
+        for way in 0..self.config.associativity() {
+            let index = self.entry_index(set, way);
+            let Some(entry) = &self.entries[index] else {
+                continue;
+            };
+            if entry.pc() == pc {
+                hit = Some((index, way));
+                break;
+            }
+        }
+
+        match hit {
+            Some((index, way)) => {
+                self.hit_count += 1;
+                let access_sequence = self.next_access_sequence();
+                let entry = self.entries[index]
+                    .as_mut()
+                    .expect("hit index contains entry");
+                entry.last_used = access_sequence;
+                let entry = entry.clone();
+                BranchTargetLookup {
+                    pc,
+                    kind,
+                    set,
+                    way: Some(way),
+                    hit: true,
+                    entry: Some(entry.clone()),
+                    target: Some(entry.target()),
+                    lookup_count: self.lookup_count,
+                }
+            }
+            None => {
+                self.miss_count += 1;
+                BranchTargetLookup {
+                    pc,
+                    kind,
+                    set,
+                    way: None,
+                    hit: false,
+                    entry: None,
+                    target: None,
+                    lookup_count: self.lookup_count,
+                }
+            }
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        pc: Address,
+        target: Address,
+        kind: BranchTargetKind,
+    ) -> BranchTargetUpdate {
+        self.update_count += 1;
+        let set = self.set_index(pc);
+        let access_sequence = self.next_access_sequence();
+
+        for way in 0..self.config.associativity() {
+            let index = self.entry_index(set, way);
+            let Some(entry) = &mut self.entries[index] else {
+                continue;
+            };
+            if entry.pc() == pc {
+                entry.target = target;
+                entry.kind = kind;
+                entry.last_used = access_sequence;
+                return BranchTargetUpdate {
+                    pc,
+                    target,
+                    kind,
+                    set,
+                    way,
+                    replaced: None,
+                    update_count: self.update_count,
+                };
+            }
+        }
+
+        let (way, index, replaced) = self.replacement_slot(set);
+        let entry = BranchTargetEntry {
+            pc,
+            target,
+            kind,
+            set,
+            way,
+            last_used: access_sequence,
+        };
+        self.entries[index] = Some(entry);
+        if replaced.is_some() {
+            self.eviction_count += 1;
+        }
+
+        BranchTargetUpdate {
+            pc,
+            target,
+            kind,
+            set,
+            way,
+            replaced,
+            update_count: self.update_count,
+        }
+    }
+
+    pub fn invalidate(&mut self) {
+        self.entries.fill(None);
+    }
+
+    pub fn snapshot(&self) -> BranchTargetBufferSnapshot {
+        BranchTargetBufferSnapshot {
+            config: self.config.clone(),
+            entries: self.entries.clone(),
+            access_sequence: self.access_sequence,
+            lookup_count: self.lookup_count,
+            hit_count: self.hit_count,
+            miss_count: self.miss_count,
+            update_count: self.update_count,
+            eviction_count: self.eviction_count,
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &BranchTargetBufferSnapshot,
+    ) -> Result<(), BranchTargetBufferError> {
+        if snapshot.config.entries() != self.config.entries()
+            || snapshot.config.associativity() != self.config.associativity()
+        {
+            return Err(BranchTargetBufferError::SnapshotShapeMismatch {
+                expected_entries: self.config.entries(),
+                expected_associativity: self.config.associativity(),
+                actual_entries: snapshot.config.entries(),
+                actual_associativity: snapshot.config.associativity(),
+            });
+        }
+
+        self.entries.clone_from(&snapshot.entries);
+        self.access_sequence = snapshot.access_sequence;
+        self.lookup_count = snapshot.lookup_count;
+        self.hit_count = snapshot.hit_count;
+        self.miss_count = snapshot.miss_count;
+        self.update_count = snapshot.update_count;
+        self.eviction_count = snapshot.eviction_count;
+        Ok(())
+    }
+
+    fn find_entry(&self, pc: Address) -> Option<&BranchTargetEntry> {
+        let set = self.set_index(pc);
+        (0..self.config.associativity())
+            .map(|way| self.entry_index(set, way))
+            .filter_map(|index| self.entries[index].as_ref())
+            .find(|entry| entry.pc() == pc)
+    }
+
+    fn replacement_slot(&self, set: usize) -> (usize, usize, Option<BranchTargetEntry>) {
+        for way in 0..self.config.associativity() {
+            let index = self.entry_index(set, way);
+            if self.entries[index].is_none() {
+                return (way, index, None);
+            }
+        }
+
+        let victim_way = (0..self.config.associativity())
+            .min_by_key(|way| {
+                self.entries[self.entry_index(set, *way)]
+                    .as_ref()
+                    .expect("full set has entry")
+                    .last_used
+            })
+            .expect("associativity is non-zero");
+        let victim_index = self.entry_index(set, victim_way);
+        (victim_way, victim_index, self.entries[victim_index].clone())
+    }
+
+    fn set_index(&self, pc: Address) -> usize {
+        ((pc.get() >> 2) % self.config.sets() as u64) as usize
+    }
+
+    fn entry_index(&self, set: usize, way: usize) -> usize {
+        set * self.config.associativity() + way
+    }
+
+    fn next_access_sequence(&mut self) -> u64 {
+        let access_sequence = self.access_sequence;
+        self.access_sequence = self.access_sequence.saturating_add(1);
+        access_sequence
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchTargetEntry {
+    pc: Address,
+    target: Address,
+    kind: BranchTargetKind,
+    set: usize,
+    way: usize,
+    last_used: u64,
+}
+
+impl BranchTargetEntry {
+    pub const fn pc(&self) -> Address {
+        self.pc
+    }
+
+    pub const fn target(&self) -> Address {
+        self.target
+    }
+
+    pub const fn kind(&self) -> BranchTargetKind {
+        self.kind
+    }
+
+    pub const fn set(&self) -> usize {
+        self.set
+    }
+
+    pub const fn way(&self) -> usize {
+        self.way
+    }
+
+    pub const fn last_used(&self) -> u64 {
+        self.last_used
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchTargetLookup {
+    pc: Address,
+    kind: BranchTargetKind,
+    set: usize,
+    way: Option<usize>,
+    hit: bool,
+    entry: Option<BranchTargetEntry>,
+    target: Option<Address>,
+    lookup_count: u64,
+}
+
+impl BranchTargetLookup {
+    pub const fn pc(&self) -> Address {
+        self.pc
+    }
+
+    pub const fn kind(&self) -> BranchTargetKind {
+        self.kind
+    }
+
+    pub const fn set(&self) -> usize {
+        self.set
+    }
+
+    pub const fn way(&self) -> Option<usize> {
+        self.way
+    }
+
+    pub const fn hit(&self) -> bool {
+        self.hit
+    }
+
+    pub const fn entry(&self) -> Option<&BranchTargetEntry> {
+        self.entry.as_ref()
+    }
+
+    pub const fn target(&self) -> Option<Address> {
+        self.target
+    }
+
+    pub const fn lookup_count(&self) -> u64 {
+        self.lookup_count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchTargetUpdate {
+    pc: Address,
+    target: Address,
+    kind: BranchTargetKind,
+    set: usize,
+    way: usize,
+    replaced: Option<BranchTargetEntry>,
+    update_count: u64,
+}
+
+impl BranchTargetUpdate {
+    pub const fn pc(&self) -> Address {
+        self.pc
+    }
+
+    pub const fn target(&self) -> Address {
+        self.target
+    }
+
+    pub const fn kind(&self) -> BranchTargetKind {
+        self.kind
+    }
+
+    pub const fn set(&self) -> usize {
+        self.set
+    }
+
+    pub const fn way(&self) -> usize {
+        self.way
+    }
+
+    pub const fn replaced(&self) -> Option<&BranchTargetEntry> {
+        self.replaced.as_ref()
+    }
+
+    pub const fn update_count(&self) -> u64 {
+        self.update_count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchTargetBufferSnapshot {
+    config: BranchTargetBufferConfig,
+    entries: Vec<Option<BranchTargetEntry>>,
+    access_sequence: u64,
+    lookup_count: u64,
+    hit_count: u64,
+    miss_count: u64,
+    update_count: u64,
+    eviction_count: u64,
+}
+
+impl BranchTargetBufferSnapshot {
+    pub const fn config(&self) -> &BranchTargetBufferConfig {
+        &self.config
+    }
+
+    pub fn entries(&self) -> &[Option<BranchTargetEntry>] {
+        &self.entries
+    }
+
+    pub const fn access_sequence(&self) -> u64 {
+        self.access_sequence
+    }
+
+    pub const fn lookup_count(&self) -> u64 {
+        self.lookup_count
+    }
+
+    pub const fn hit_count(&self) -> u64 {
+        self.hit_count
+    }
+
+    pub const fn miss_count(&self) -> u64 {
+        self.miss_count
+    }
+
+    pub const fn update_count(&self) -> u64 {
+        self.update_count
+    }
+
+    pub const fn eviction_count(&self) -> u64 {
+        self.eviction_count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReturnAddressStackError {
     ZeroEntries,
     SnapshotEntriesMismatch {
