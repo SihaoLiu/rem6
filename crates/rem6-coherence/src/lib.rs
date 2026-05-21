@@ -24,6 +24,7 @@ use rem6_transport::{
 
 mod deferred;
 mod mesi;
+mod moesi;
 mod snoop;
 mod topology;
 
@@ -33,6 +34,10 @@ use snoop::{DirectorySnoopWork, SnoopRoute};
 pub use mesi::{
     MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness, MesiHarnessError,
     MesiSubmitResult, PartitionedMesiDirectoryLineHarness,
+};
+pub use moesi::{
+    MoesiCpuResponseRecord, MoesiDirectoryDecisionRecord, MoesiDirectoryLineHarness,
+    MoesiHarnessError, MoesiSubmitResult,
 };
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
