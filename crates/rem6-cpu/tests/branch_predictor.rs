@@ -1,4 +1,4 @@
-use rem6_cpu::{BranchPredictor, BranchPredictorConfig, BranchPredictorError};
+use rem6_cpu::{BranchPredictor, BranchPredictorConfig, BranchPredictorError, BranchSpeculationId};
 use rem6_memory::Address;
 
 fn predictor(entries: usize) -> BranchPredictor {
@@ -95,9 +95,149 @@ fn restore_rejects_snapshot_with_different_table_size() {
 }
 
 #[test]
+fn restore_rejects_snapshot_with_different_history_width() {
+    let snapshot =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap()).snapshot();
+    let mut wider = BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 4).unwrap());
+
+    let error = wider.restore(&snapshot).unwrap_err();
+
+    assert_eq!(
+        error,
+        BranchPredictorError::SnapshotHistoryBitsMismatch {
+            expected: 4,
+            actual: 3,
+        }
+    );
+}
+
+#[test]
 fn config_rejects_empty_table() {
     assert_eq!(
         BranchPredictorConfig::new(0),
         Err(BranchPredictorError::ZeroTableEntries)
     );
+    assert_eq!(
+        BranchPredictorConfig::with_history_bits(8, 0),
+        Err(BranchPredictorError::HistoryBitsOutOfRange { bits: 0 })
+    );
+    assert_eq!(
+        BranchPredictorConfig::with_history_bits(8, 65),
+        Err(BranchPredictorError::HistoryBitsOutOfRange { bits: 65 })
+    );
+}
+
+#[test]
+fn speculative_prediction_records_history_and_unwinds_false_path() {
+    let mut predictor = predictor(8);
+    let taken_pc = Address::new(0x1000);
+    let false_path_pc = Address::new(0x1004);
+    let target = Address::new(0x1080);
+
+    predictor.update(taken_pc, true, Some(target));
+
+    let first = predictor.predict_speculative(taken_pc);
+    assert_eq!(first.id(), BranchSpeculationId::new(0));
+    assert_eq!(first.history_before(), 0);
+    assert_eq!(first.history_after(), 1);
+    assert!(first.predicted_taken());
+    assert!(first.history_taken());
+    assert_eq!(predictor.speculative_history(), 1);
+    assert_eq!(predictor.committed_history(), 0);
+
+    let second = predictor.predict_speculative(false_path_pc);
+    assert_eq!(second.id(), BranchSpeculationId::new(1));
+    assert_eq!(second.history_before(), 1);
+    assert_eq!(second.history_after(), 2);
+    assert!(!second.predicted_taken());
+    assert!(!second.history_taken());
+    assert_eq!(predictor.pending_speculation_count(), 2);
+
+    let repair = predictor.repair_speculation(first.id(), false).unwrap();
+
+    assert_eq!(repair.repaired().id(), first.id());
+    assert_eq!(repair.removed_youngers(), &[second]);
+    assert_eq!(repair.history_before(), 0);
+    assert_eq!(repair.old_history_after(), 1);
+    assert_eq!(repair.new_history_after(), 0);
+    assert_eq!(predictor.speculative_history(), 0);
+    assert_eq!(predictor.committed_history(), 0);
+    assert_eq!(predictor.pending_speculation_count(), 1);
+    assert_eq!(predictor.pending_speculations()[0].id(), first.id());
+    assert!(!predictor.pending_speculations()[0].history_taken());
+}
+
+#[test]
+fn committing_speculation_advances_committed_history_in_order() {
+    let mut predictor = predictor(8);
+    let taken_pc = Address::new(0x1000);
+    let not_taken_pc = Address::new(0x1004);
+    let target = Address::new(0x1080);
+
+    predictor.update(taken_pc, true, Some(target));
+
+    let first = predictor.predict_speculative(taken_pc);
+    let second = predictor.predict_speculative(not_taken_pc);
+
+    assert_eq!(predictor.speculative_history(), 2);
+    assert_eq!(predictor.committed_history(), 0);
+
+    let committed_first = predictor.commit_speculation(first.id()).unwrap();
+    assert_eq!(committed_first, first);
+    assert_eq!(predictor.committed_history(), 1);
+    assert_eq!(predictor.speculative_history(), 2);
+    assert_eq!(
+        predictor.pending_speculations(),
+        std::slice::from_ref(&second)
+    );
+
+    let committed_second = predictor.commit_speculation(second.id()).unwrap();
+    assert_eq!(committed_second, second);
+    assert_eq!(predictor.committed_history(), 2);
+    assert_eq!(predictor.speculative_history(), 2);
+    assert_eq!(predictor.pending_speculation_count(), 0);
+}
+
+#[test]
+fn speculation_commit_rejects_out_of_order_and_unknown_records() {
+    let mut predictor = predictor(8);
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+
+    assert_eq!(
+        predictor.commit_speculation(second.id()),
+        Err(BranchPredictorError::OutOfOrderSpeculationCommit {
+            expected: first.id(),
+            actual: second.id(),
+        })
+    );
+    assert_eq!(
+        predictor.repair_speculation(BranchSpeculationId::new(99), true),
+        Err(BranchPredictorError::UnknownSpeculation {
+            id: BranchSpeculationId::new(99),
+        })
+    );
+}
+
+#[test]
+fn snapshot_restore_preserves_pending_speculation_history() {
+    let mut predictor =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
+    let first_pc = Address::new(0x1000);
+    let second_pc = Address::new(0x1004);
+
+    predictor.update(first_pc, true, Some(Address::new(0x1080)));
+    let first = predictor.predict_speculative(first_pc);
+    let second = predictor.predict_speculative(second_pc);
+    let snapshot = predictor.snapshot();
+
+    predictor.repair_speculation(first.id(), false).unwrap();
+    predictor.update(second_pc, true, Some(Address::new(0x1100)));
+
+    predictor.restore(&snapshot).unwrap();
+
+    assert_eq!(predictor.committed_history(), 0);
+    assert_eq!(predictor.speculative_history(), 2);
+    assert_eq!(predictor.pending_speculations(), &[first, second]);
+    assert_eq!(predictor.predict(second_pc).counter(), 1);
 }

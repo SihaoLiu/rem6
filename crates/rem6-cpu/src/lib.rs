@@ -29,7 +29,8 @@ mod topology;
 
 pub use branch_predictor::{
     BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
-    BranchPredictorSnapshot, BranchUpdate,
+    BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationId, BranchSpeculationRepair,
+    BranchUpdate,
 };
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use riscv_activity::RiscvCoreDriveActivity;
