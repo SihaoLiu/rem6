@@ -17,8 +17,8 @@ use rem6_memory::{
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
 use rem6_transport::{
-    MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
-    TransportEndpointId, TransportError,
+    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    ResponseDelivery, TargetOutcome, TransportEndpointId, TransportError,
 };
 
 mod error;
@@ -278,7 +278,32 @@ impl CpuCore {
             + Send
             + 'static,
     {
-        let issue = self.prepare_fetch(scheduler.now(), transport)?;
+        let (issue, transaction) =
+            self.prepare_fetch_parallel_transaction(scheduler.now(), transport, trace, responder)?;
+        let event = transport
+            .submit_parallel_batch(scheduler, [transaction])
+            .map_err(CpuError::Transport)?
+            .into_iter()
+            .next()
+            .expect("single fetch transaction returns one event");
+
+        self.record_issue(issue);
+        Ok(event)
+    }
+
+    fn prepare_fetch_parallel_transaction<F>(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<(OutstandingFetch, ParallelMemoryTransaction), CpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let issue = self.prepare_fetch(tick, transport)?;
         let request = MemoryRequest::instruction_fetch(
             issue.request_id,
             issue.pc,
@@ -288,19 +313,14 @@ impl CpuCore {
         .map_err(CpuError::Memory)?;
 
         let core = self.clone();
-        let event = transport
-            .submit_parallel(
-                scheduler,
-                issue.route,
-                request,
-                trace,
-                responder,
-                move |delivery| core.record_response(delivery),
-            )
-            .map_err(CpuError::Transport)?;
-
-        self.record_issue(issue);
-        Ok(event)
+        let transaction = ParallelMemoryTransaction::new(
+            issue.route,
+            request,
+            trace,
+            responder,
+            move |delivery| core.record_response(delivery),
+        );
+        Ok((issue, transaction))
     }
 
     fn prepare_fetch(
@@ -864,6 +884,26 @@ impl RiscvCore {
             .issue_next_fetch_parallel(scheduler, transport, trace, responder)
     }
 
+    fn prepare_fetch_parallel_transaction<F>(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<(OutstandingFetch, ParallelMemoryTransaction), CpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        self.core
+            .prepare_fetch_parallel_transaction(tick, transport, trace, responder)
+    }
+
+    fn record_prepared_fetch_issue(&self, issue: OutstandingFetch) {
+        self.core.record_issue(issue);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_next_action<F, D>(
         &self,
@@ -996,25 +1036,51 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
+        let Some((issue, transaction)) =
+            self.prepare_data_parallel_transaction(scheduler.now(), transport, trace, responder)?
+        else {
             return Ok(None);
         };
-        let request = issue.memory_request()?;
-
-        let core = self.clone();
         let event = transport
-            .submit_parallel(
-                scheduler,
-                issue.memory_route(),
-                request,
-                trace,
-                responder,
-                move |delivery| core.record_data_response(delivery),
-            )
-            .map_err(RiscvCpuError::Transport)?;
+            .submit_parallel_batch(scheduler, [transaction])
+            .map_err(RiscvCpuError::Transport)?
+            .into_iter()
+            .next()
+            .expect("single data transaction returns one event");
 
         self.record_data_issue(issue);
         Ok(Some(event))
+    }
+
+    fn prepare_data_parallel_transaction<F>(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<Option<(OutstandingDataAccess, ParallelMemoryTransaction)>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let Some(issue) = self.prepare_data_access(tick, transport)? else {
+            return Ok(None);
+        };
+        let request = issue.memory_request()?;
+        let core = self.clone();
+        let transaction = ParallelMemoryTransaction::new(
+            issue.memory_route(),
+            request,
+            trace,
+            responder,
+            move |delivery| core.record_data_response(delivery),
+        );
+        Ok(Some((issue, transaction)))
+    }
+
+    fn record_prepared_data_issue(&self, issue: OutstandingDataAccess) {
+        self.record_data_issue(issue);
     }
 
     pub fn issue_next_mmio_data_access_parallel(

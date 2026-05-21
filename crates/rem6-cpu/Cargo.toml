@@ -16,6 +16,7 @@ rem6-transport = { path = "../rem6-transport" }
 
 [dev-dependencies]
 rem6-cache = { path = "../rem6-cache" }
+rem6-fabric = { path = "../rem6-fabric" }
 
 [lints]
 workspace = true

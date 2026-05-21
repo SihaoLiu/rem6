@@ -9,10 +9,29 @@ use rem6_kernel::{
 use rem6_memory::AgentId;
 use rem6_mmio::MmioBus;
 use rem6_transport::{
-    MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportEndpointId,
+    MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
+    TransportEndpointId,
 };
 
-use crate::{CpuId, RiscvCore, RiscvCoreDriveAction, RiscvCpuError};
+use crate::{
+    CpuId, OutstandingDataAccess, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+};
+
+enum PreparedParallelAction {
+    Ready(RiscvClusterDriveEvent),
+    Fetch {
+        cpu: CpuId,
+        core: RiscvCore,
+        issue: OutstandingFetch,
+        transaction_index: usize,
+    },
+    Data {
+        cpu: CpuId,
+        core: RiscvCore,
+        issue: OutstandingDataAccess,
+        transaction_index: usize,
+    },
+}
 
 #[derive(Clone, Debug)]
 pub struct RiscvCluster {
@@ -160,7 +179,9 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
-        let mut actions = Vec::new();
+        let mut prepared_actions = Vec::new();
+        let mut transaction_cpus = Vec::new();
+        let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
             if core.has_pending_fetch()
                 || core.has_pending_data_access()
@@ -174,16 +195,16 @@ impl RiscvCluster {
                 .execute_next_completed_fetch()
                 .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
             {
-                actions.push(RiscvClusterDriveEvent::new(
+                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
                     *cpu,
                     RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                ));
+                )));
                 continue;
             }
 
-            let event = core
-                .issue_next_fetch_parallel(
-                    scheduler,
+            let (issue, transaction) = core
+                .prepare_fetch_parallel_transaction(
+                    scheduler.now(),
                     transport,
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
@@ -192,13 +213,24 @@ impl RiscvCluster {
                     cpu: *cpu,
                     error: RiscvCpuError::Cpu(error),
                 })?;
-            actions.push(RiscvClusterDriveEvent::new(
-                *cpu,
-                RiscvCoreDriveAction::FetchIssued { event },
-            ));
+            let transaction_index = transactions.len();
+            transaction_cpus.push(*cpu);
+            transactions.push(transaction);
+            prepared_actions.push(PreparedParallelAction::Fetch {
+                cpu: *cpu,
+                core: core.clone(),
+                issue,
+                transaction_index,
+            });
         }
 
-        Ok(actions)
+        self.finish_prepared_parallel_actions(
+            scheduler,
+            transport,
+            prepared_actions,
+            transaction_cpus,
+            transactions,
+        )
     }
 
     pub fn drive_ready_cores_parallel<F, D, FR, DR>(
@@ -220,7 +252,9 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
-        let mut actions = Vec::new();
+        let mut prepared_actions = Vec::new();
+        let mut transaction_cpus = Vec::new();
+        let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
@@ -231,32 +265,37 @@ impl RiscvCluster {
                 .execute_next_completed_fetch()
                 .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
             {
-                actions.push(RiscvClusterDriveEvent::new(
+                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
                     *cpu,
                     RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                ));
+                )));
                 continue;
             }
 
-            if let Some(event) = core
-                .issue_next_data_access_parallel(
-                    scheduler,
+            if let Some((issue, transaction)) = core
+                .prepare_data_parallel_transaction(
+                    scheduler.now(),
                     transport,
                     data_trace.clone(),
                     data_responder(*cpu),
                 )
                 .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
             {
-                actions.push(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::DataAccessIssued { event },
-                ));
+                let transaction_index = transactions.len();
+                transaction_cpus.push(*cpu);
+                transactions.push(transaction);
+                prepared_actions.push(PreparedParallelAction::Data {
+                    cpu: *cpu,
+                    core: core.clone(),
+                    issue,
+                    transaction_index,
+                });
                 continue;
             }
 
-            let event = core
-                .issue_next_fetch_parallel(
-                    scheduler,
+            let (issue, transaction) = core
+                .prepare_fetch_parallel_transaction(
+                    scheduler.now(),
                     transport,
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
@@ -265,10 +304,82 @@ impl RiscvCluster {
                     cpu: *cpu,
                     error: RiscvCpuError::Cpu(error),
                 })?;
-            actions.push(RiscvClusterDriveEvent::new(
-                *cpu,
-                RiscvCoreDriveAction::FetchIssued { event },
-            ));
+            let transaction_index = transactions.len();
+            transaction_cpus.push(*cpu);
+            transactions.push(transaction);
+            prepared_actions.push(PreparedParallelAction::Fetch {
+                cpu: *cpu,
+                core: core.clone(),
+                issue,
+                transaction_index,
+            });
+        }
+
+        self.finish_prepared_parallel_actions(
+            scheduler,
+            transport,
+            prepared_actions,
+            transaction_cpus,
+            transactions,
+        )
+    }
+
+    fn finish_prepared_parallel_actions(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        prepared_actions: Vec<PreparedParallelAction>,
+        transaction_cpus: Vec<CpuId>,
+        transactions: Vec<ParallelMemoryTransaction>,
+    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError> {
+        debug_assert_eq!(transaction_cpus.len(), transactions.len());
+        let events = if transactions.is_empty() {
+            Vec::new()
+        } else {
+            transport
+                .submit_parallel_batch(scheduler, transactions)
+                .map_err(|error| RiscvClusterError::Core {
+                    cpu: transaction_cpus
+                        .first()
+                        .copied()
+                        .expect("batch submission has at least one CPU"),
+                    error: RiscvCpuError::Transport(error),
+                })?
+        };
+
+        let mut actions = Vec::with_capacity(prepared_actions.len());
+        for prepared in prepared_actions {
+            match prepared {
+                PreparedParallelAction::Ready(event) => actions.push(event),
+                PreparedParallelAction::Fetch {
+                    cpu,
+                    core,
+                    issue,
+                    transaction_index,
+                } => {
+                    core.record_prepared_fetch_issue(issue);
+                    actions.push(RiscvClusterDriveEvent::new(
+                        cpu,
+                        RiscvCoreDriveAction::FetchIssued {
+                            event: events[transaction_index],
+                        },
+                    ));
+                }
+                PreparedParallelAction::Data {
+                    cpu,
+                    core,
+                    issue,
+                    transaction_index,
+                } => {
+                    core.record_prepared_data_issue(issue);
+                    actions.push(RiscvClusterDriveEvent::new(
+                        cpu,
+                        RiscvCoreDriveAction::DataAccessIssued {
+                            event: events[transaction_index],
+                        },
+                    ));
+                }
+            }
         }
 
         Ok(actions)

@@ -7,20 +7,31 @@ use rem6_cpu::{
     RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind,
     RiscvDataAccessTarget,
 };
+use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
 use rem6_memory::{
-    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
-    TransportEndpointId,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery,
+    TargetOutcome, TransportEndpointId,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
+}
+
+fn fabric_path(name: &str, latency: u64, bandwidth_bytes_per_tick: u64) -> FabricPath {
+    FabricPath::new([FabricPathHop::new(
+        FabricLinkId::new(name).unwrap(),
+        latency,
+        bandwidth_bytes_per_tick,
+    )
+    .unwrap()])
+    .unwrap()
 }
 
 fn layout() -> CacheLineLayout {
@@ -850,6 +861,127 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
 }
 
 #[test]
+fn riscv_cluster_parallel_fetch_batches_shared_fabric_by_packet_order() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let shared_path = fabric_path("fetch_mesh", 2, 4);
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(1), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 0,
+            agent: 8,
+            entry: 0x9000,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    let store = store_with_programs(&[
+        (0x8000, i_type(11, 0, 0x0, 1, 0x13)),
+        (0x9000, i_type(22, 0, 0x0, 1, 0x13)),
+    ]);
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+
+    let issued = cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            let deliveries = Arc::clone(&deliveries);
+            move |delivery, _context| {
+                deliveries.lock().unwrap().push((
+                    delivery.route(),
+                    delivery.tick(),
+                    delivery.request().id(),
+                ));
+                memory_response(&store, &delivery)
+            }
+        })
+        .unwrap();
+
+    assert_eq!(
+        issued
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)],
+    );
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![
+            (cpu1_fetch, 3, MemoryRequestId::new(AgentId::new(8), 0),),
+            (cpu0_fetch, 4, MemoryRequestId::new(AgentId::new(7), 0),),
+        ],
+    );
+}
+
+#[test]
 fn riscv_cluster_parallel_turns_issue_completed_data_accesses() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
     let mut transport = MemoryTransport::new();
@@ -1033,6 +1165,182 @@ fn riscv_cluster_parallel_turns_issue_completed_data_accesses() {
             ]
         );
     }
+}
+
+#[test]
+fn riscv_cluster_parallel_data_batches_shared_fabric_by_packet_order() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric(FabricModel::new());
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(2),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("memory0"),
+                PartitionId::new(2),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let shared_path = fabric_path("data_mesh", 2, 4);
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(2), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(endpoint("memory0"), PartitionId::new(2), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(reg(2), 0x9000);
+    cluster
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(reg(2), 0x9010);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
+        ],
+        &[
+            (0x9008, vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]),
+            (0x9018, vec![0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f]),
+        ],
+    );
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+
+    for _ in 0..10 {
+        let turn = cluster
+            .drive_turn_parallel(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        if turn
+            .core_events()
+            .iter()
+            .all(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+            && turn.core_events().len() == 2
+        {
+            break;
+        }
+    }
+
+    let data_issued = cluster
+        .drive_ready_cores_parallel(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                let deliveries = Arc::clone(&deliveries);
+                move |delivery, _context| {
+                    deliveries.lock().unwrap().push((
+                        delivery.route(),
+                        delivery.tick(),
+                        delivery.request().id(),
+                    ));
+                    memory_response(&store, &delivery)
+                }
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        data_issued
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)],
+    );
+    assert!(data_issued.iter().all(|event| matches!(
+        event.action(),
+        RiscvCoreDriveAction::DataAccessIssued { .. }
+    )));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![
+            (cpu1_data, 8, MemoryRequestId::new(AgentId::new(8), 1),),
+            (cpu0_data, 10, MemoryRequestId::new(AgentId::new(7), 1),),
+        ],
+    );
 }
 
 #[test]
