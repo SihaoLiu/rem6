@@ -32,6 +32,7 @@ mod riscv_activity;
 mod riscv_cluster;
 mod statistical_corrector;
 mod tage_predictor;
+mod tage_sc_l_predictor;
 mod topology;
 mod tournament_predictor;
 
@@ -86,6 +87,11 @@ pub use tage_predictor::{
     FoldedHistorySnapshot, TageBranchPredictor, TageBranchPredictorConfig,
     TageBranchPredictorError, TageBranchPredictorSnapshot, TageHistory, TageHistoryUpdate,
     TagePrediction, TageProvider, TageTableEntry, TageThreadSnapshot, TageTrainingUpdate,
+};
+pub use tage_sc_l_predictor::{
+    TageScLBranchPredictor, TageScLBranchPredictorConfig, TageScLBranchPredictorError,
+    TageScLBranchPredictorSnapshot, TageScLHistory, TageScLHistoryUpdate, TageScLPrediction,
+    TageScLProvider, TageScLRepair, TageScLTrainingUpdate,
 };
 pub use topology::{CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 pub use tournament_predictor::{
