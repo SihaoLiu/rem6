@@ -2,12 +2,14 @@ use std::collections::BTreeMap;
 
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError,
-    AcceleratorTopologyDevice,
+    AcceleratorTopologyDevice, AcceleratorWaitForMarker,
 };
-use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuKernelLaunch, GpuTopologyDevice};
+use rem6_gpu::{
+    GpuDeviceId, GpuDeviceSnapshot, GpuKernelLaunch, GpuTopologyDevice, GpuWaitForMarker,
+};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRunProfile, PartitionEventId, PartitionId,
-    RecordedConservativeRunSummary, Tick,
+    RecordedConservativeRunSummary, Tick, WaitForEdge, WaitForEdgeKind, WaitForGraph,
 };
 
 use super::{RiscvTopologySystem, RiscvTopologySystemError};
@@ -44,6 +46,8 @@ pub struct RiscvTopologyHeterogeneousRunSummary {
     accelerator_command_completion_count: usize,
     gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyGpuComputeActivity>,
     accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyAcceleratorComputeActivity>,
+    gpu_wait_for: BTreeMap<GpuDeviceId, WaitForGraph>,
+    accelerator_wait_for: BTreeMap<AcceleratorEngineId, WaitForGraph>,
 }
 
 impl RiscvTopologyHeterogeneousRunSummary {
@@ -64,6 +68,8 @@ impl RiscvTopologyHeterogeneousRunSummary {
             accelerator_command_completion_count,
             gpu_activity: BTreeMap::new(),
             accelerator_activity: BTreeMap::new(),
+            gpu_wait_for: BTreeMap::new(),
+            accelerator_wait_for: BTreeMap::new(),
         }
     }
 
@@ -77,6 +83,16 @@ impl RiscvTopologyHeterogeneousRunSummary {
     ) -> Self {
         self.gpu_activity = gpu_activity;
         self.accelerator_activity = accelerator_activity;
+        self
+    }
+
+    pub fn with_device_wait_for(
+        mut self,
+        gpu_wait_for: BTreeMap<GpuDeviceId, WaitForGraph>,
+        accelerator_wait_for: BTreeMap<AcceleratorEngineId, WaitForGraph>,
+    ) -> Self {
+        self.gpu_wait_for = gpu_wait_for;
+        self.accelerator_wait_for = accelerator_wait_for;
         self
     }
 
@@ -204,6 +220,93 @@ impl RiscvTopologyHeterogeneousRunSummary {
     pub const fn has_compute_activity(&self) -> bool {
         self.compute_completion_count() != 0
     }
+
+    pub fn gpu_wait_for_edges(&self, device: GpuDeviceId) -> Vec<WaitForEdge> {
+        self.gpu_wait_for
+            .get(&device)
+            .map(WaitForGraph::edges)
+            .unwrap_or_default()
+    }
+
+    pub fn gpu_wait_for_edge_count(&self, device: GpuDeviceId) -> usize {
+        self.gpu_wait_for
+            .get(&device)
+            .map(WaitForGraph::edge_count)
+            .unwrap_or(0)
+    }
+
+    pub fn gpu_wait_for_edge_count_by_kind(
+        &self,
+        device: GpuDeviceId,
+        kind: WaitForEdgeKind,
+    ) -> usize {
+        self.gpu_wait_for_edges(device)
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
+    }
+
+    pub fn has_gpu_wait_for_edges(&self) -> bool {
+        self.gpu_wait_for.values().any(|graph| !graph.is_empty())
+    }
+
+    pub fn accelerator_wait_for_edges(&self, engine: AcceleratorEngineId) -> Vec<WaitForEdge> {
+        self.accelerator_wait_for
+            .get(&engine)
+            .map(WaitForGraph::edges)
+            .unwrap_or_default()
+    }
+
+    pub fn accelerator_wait_for_edge_count(&self, engine: AcceleratorEngineId) -> usize {
+        self.accelerator_wait_for
+            .get(&engine)
+            .map(WaitForGraph::edge_count)
+            .unwrap_or(0)
+    }
+
+    pub fn accelerator_wait_for_edge_count_by_kind(
+        &self,
+        engine: AcceleratorEngineId,
+        kind: WaitForEdgeKind,
+    ) -> usize {
+        self.accelerator_wait_for_edges(engine)
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
+    }
+
+    pub fn has_accelerator_wait_for_edges(&self) -> bool {
+        self.accelerator_wait_for
+            .values()
+            .any(|graph| !graph.is_empty())
+    }
+
+    pub fn compute_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        self.gpu_wait_for
+            .values()
+            .chain(self.accelerator_wait_for.values())
+            .flat_map(WaitForGraph::edges)
+            .collect()
+    }
+
+    pub fn compute_wait_for_edge_count(&self) -> usize {
+        self.gpu_wait_for
+            .values()
+            .chain(self.accelerator_wait_for.values())
+            .map(WaitForGraph::edge_count)
+            .sum()
+    }
+
+    pub fn compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.compute_wait_for_edges()
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
+    }
+
+    pub fn has_compute_wait_for_edges(&self) -> bool {
+        self.compute_wait_for_edge_count() != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -290,6 +393,18 @@ struct HeterogeneousActivityCounts {
     accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyAcceleratorComputeActivity>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct HeterogeneousWaitForGraphs {
+    accelerators: BTreeMap<AcceleratorEngineId, WaitForGraph>,
+    gpus: BTreeMap<GpuDeviceId, WaitForGraph>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct HeterogeneousWaitForMarkers {
+    accelerators: BTreeMap<AcceleratorEngineId, AcceleratorWaitForMarker>,
+    gpus: BTreeMap<GpuDeviceId, GpuWaitForMarker>,
+}
+
 impl RiscvTopologySystem {
     pub fn run_heterogeneous_work_parallel_recorded<I>(
         &mut self,
@@ -305,18 +420,19 @@ impl RiscvTopologySystem {
 
         let work = self.resolve_heterogeneous_work(work)?;
         let before = self.heterogeneous_device_snapshots(&work);
+        let wait_markers = self.heterogeneous_wait_for_markers(&work);
         let mut scheduler = self.scheduler_mut();
         let mut events = Vec::with_capacity(work.len());
 
-        for item in work {
-            let event = match item {
+        for item in &work {
+            let event = match &item {
                 ResolvedHeterogeneousWork::Accelerator {
                     device, command, ..
                 } => device
-                    .submit_command(&mut scheduler, command)
+                    .submit_command(&mut scheduler, command.clone())
                     .map_err(RiscvTopologySystemError::Accelerator)?,
                 ResolvedHeterogeneousWork::Gpu { device, launch, .. } => device
-                    .submit_kernel(&mut scheduler, launch)
+                    .submit_kernel(&mut scheduler, launch.clone())
                     .map_err(RiscvTopologySystemError::Gpu)?,
             };
             events.push(event);
@@ -328,6 +444,7 @@ impl RiscvTopologySystem {
         drop(scheduler);
 
         let activity = self.heterogeneous_activity_since(&before);
+        let wait_for = self.heterogeneous_wait_for_graphs_since(&wait_markers);
         Ok(RiscvTopologyHeterogeneousRunSummary::new(
             events,
             scheduler_run,
@@ -336,7 +453,8 @@ impl RiscvTopologySystem {
             activity.accelerator_trace_event_count,
             activity.accelerator_command_completion_count,
         )
-        .with_device_activity(activity.gpu_activity, activity.accelerator_activity))
+        .with_device_activity(activity.gpu_activity, activity.accelerator_activity)
+        .with_device_wait_for(wait_for.gpus, wait_for.accelerators))
     }
 
     fn resolve_heterogeneous_work(
@@ -462,5 +580,55 @@ impl RiscvTopologySystem {
         }
 
         activity
+    }
+
+    fn heterogeneous_wait_for_markers(
+        &self,
+        work: &[ResolvedHeterogeneousWork],
+    ) -> HeterogeneousWaitForMarkers {
+        let mut markers = HeterogeneousWaitForMarkers::default();
+        for item in work {
+            match item {
+                ResolvedHeterogeneousWork::Accelerator { engine, device, .. } => {
+                    markers
+                        .accelerators
+                        .entry(*engine)
+                        .or_insert_with(|| device.engine().mark_wait_for());
+                }
+                ResolvedHeterogeneousWork::Gpu {
+                    device_id, device, ..
+                } => {
+                    markers
+                        .gpus
+                        .entry(*device_id)
+                        .or_insert_with(|| device.gpu().mark_wait_for());
+                }
+            }
+        }
+        markers
+    }
+
+    fn heterogeneous_wait_for_graphs_since(
+        &self,
+        markers: &HeterogeneousWaitForMarkers,
+    ) -> HeterogeneousWaitForGraphs {
+        let mut wait_for = HeterogeneousWaitForGraphs::default();
+        for (engine, marker) in &markers.accelerators {
+            let Some(device) = self.accelerators.get(engine) else {
+                continue;
+            };
+            wait_for
+                .accelerators
+                .insert(*engine, device.engine().wait_for_graph_since(*marker));
+        }
+        for (device_id, marker) in &markers.gpus {
+            let Some(device) = self.gpus.get(device_id) else {
+                continue;
+            };
+            wait_for
+                .gpus
+                .insert(*device_id, device.gpu().wait_for_graph_since(*marker));
+        }
+        wait_for
     }
 }

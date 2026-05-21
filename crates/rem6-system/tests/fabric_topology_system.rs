@@ -1491,6 +1491,18 @@ fn topology_system_records_gpu_and_accelerator_compute_batch_activity() {
     assert_eq!(summary.trace_event_count(), 11);
     assert_eq!(summary.compute_completion_count(), 4);
     assert_eq!(summary.final_tick(), 14);
+    assert!(summary.has_gpu_wait_for_edges());
+    assert_eq!(summary.gpu_wait_for_edge_count(gpu_id), 1);
+    assert_eq!(
+        summary.gpu_wait_for_edge_count_by_kind(gpu_id, WaitForEdgeKind::Queue),
+        1,
+    );
+    assert_eq!(summary.accelerator_wait_for_edge_count(accelerator_id), 0);
+    assert_eq!(
+        summary.compute_wait_for_edge_count(),
+        summary.gpu_wait_for_edge_count(gpu_id)
+            + summary.accelerator_wait_for_edge_count(accelerator_id),
+    );
     assert_eq!(
         summary.profile(),
         ParallelRunProfile::new(

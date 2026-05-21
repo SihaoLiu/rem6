@@ -72,6 +72,17 @@ impl GpuDmaId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GpuWaitForMarker {
+    offset: usize,
+}
+
+impl GpuWaitForMarker {
+    const fn new(offset: usize) -> Self {
+        Self { offset }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpuComputeConfig {
     device: GpuDeviceId,
@@ -1004,6 +1015,17 @@ impl GpuDevice {
             .wait_for_graph(self.id())
     }
 
+    pub fn mark_wait_for(&self) -> GpuWaitForMarker {
+        self.state.lock().expect("GPU state lock").mark_wait_for()
+    }
+
+    pub fn wait_for_graph_since(&self, marker: GpuWaitForMarker) -> WaitForGraph {
+        self.state
+            .lock()
+            .expect("GPU state lock")
+            .wait_for_graph_since(self.id(), marker)
+    }
+
     pub fn restore(&self, snapshot: &GpuDeviceSnapshot) {
         *self.state.lock().expect("GPU state lock") = GpuDeviceState::from_snapshot(snapshot);
     }
@@ -1200,21 +1222,30 @@ impl GpuDevice {
         let mut touched_slots = Vec::new();
         for workgroup in 0..launch.workgroups() {
             let slot_index = state.next_slot_index();
-            let slot = &mut state.slots[slot_index];
-            let started_at = now.max(slot.available_at);
-            let completed_at = started_at
-                .checked_add(launch.workgroup_latency())
-                .expect("validated GPU workgroup latency fits");
-            slot.available_at = completed_at;
-            slot.queued.push_back(GpuQueuedWorkgroup {
-                kernel: launch.kernel(),
-                workgroup: GpuWorkgroupId::new(workgroup),
-                compute_unit: compute_unit_for_slot(slot_index, self.wave_slots_per_compute_unit()),
-                slot: wave_slot_for_slot(slot_index, self.wave_slots_per_compute_unit()),
-                queued_at: now,
-                started_at,
-                completed_at,
-            });
+            let compute_unit =
+                compute_unit_for_slot(slot_index, self.wave_slots_per_compute_unit());
+            let wave_slot = wave_slot_for_slot(slot_index, self.wave_slots_per_compute_unit());
+            let queued = {
+                let slot = &mut state.slots[slot_index];
+                let started_at = now.max(slot.available_at);
+                let completed_at = started_at
+                    .checked_add(launch.workgroup_latency())
+                    .expect("validated GPU workgroup latency fits");
+                slot.available_at = completed_at;
+                GpuQueuedWorkgroup {
+                    kernel: launch.kernel(),
+                    workgroup: GpuWorkgroupId::new(workgroup),
+                    compute_unit,
+                    slot: wave_slot,
+                    queued_at: now,
+                    started_at,
+                    completed_at,
+                }
+            };
+            if queued.started_at > queued.queued_at {
+                state.wait_log.push(queued.clone());
+            }
+            state.slots[slot_index].queued.push_back(queued);
             touched_slots.push(slot_index);
         }
         touched_slots.sort_unstable();
@@ -1377,6 +1408,7 @@ struct GpuDeviceState {
     completions: Vec<GpuWorkgroupCompletion>,
     pending_dma_writes: Vec<GpuPendingDmaWrite>,
     dma_completions: Vec<GpuDmaCompletion>,
+    wait_log: Vec<GpuQueuedWorkgroup>,
 }
 
 impl GpuDeviceState {
@@ -1387,6 +1419,7 @@ impl GpuDeviceState {
             completions: Vec::new(),
             pending_dma_writes: Vec::new(),
             dma_completions: Vec::new(),
+            wait_log: Vec::new(),
         }
     }
 
@@ -1411,7 +1444,12 @@ impl GpuDeviceState {
             completions: snapshot.completions.clone(),
             pending_dma_writes: snapshot.pending_dma_writes.clone(),
             dma_completions: snapshot.dma_completions.clone(),
+            wait_log: Vec::new(),
         }
+    }
+
+    fn mark_wait_for(&self) -> GpuWaitForMarker {
+        GpuWaitForMarker::new(self.wait_log.len())
     }
 
     fn wait_for_graph(&self, device: GpuDeviceId) -> WaitForGraph {
@@ -1421,15 +1459,24 @@ impl GpuDeviceState {
                 if workgroup.started_at <= workgroup.queued_at {
                     continue;
                 }
-                graph
-                    .record_wait(
-                        gpu_workgroup_node(device, workgroup.kernel, workgroup.workgroup),
-                        gpu_slot_node(device, workgroup.compute_unit, workgroup.slot),
-                        WaitForEdgeKind::Queue,
-                        workgroup.queued_at,
-                    )
-                    .expect("GPU wait-for labels are generated from typed ids");
+                record_gpu_wait_interval(&mut graph, device, workgroup, workgroup.queued_at);
             }
+        }
+        graph
+    }
+
+    fn wait_for_graph_since(&self, device: GpuDeviceId, marker: GpuWaitForMarker) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        let Some(records) = self.wait_log.get(marker.offset..) else {
+            return graph;
+        };
+        for workgroup in records {
+            record_gpu_wait_interval(
+                &mut graph,
+                device,
+                workgroup,
+                workgroup.started_at.saturating_sub(1),
+            );
         }
         graph
     }
@@ -1518,6 +1565,29 @@ impl GpuQueuedWorkgroup {
             started_at: snapshot.started_at,
             completed_at: snapshot.completed_at,
         }
+    }
+}
+
+fn record_gpu_wait_interval(
+    graph: &mut WaitForGraph,
+    device: GpuDeviceId,
+    workgroup: &GpuQueuedWorkgroup,
+    last_tick: Tick,
+) {
+    let source = gpu_workgroup_node(device, workgroup.kernel, workgroup.workgroup);
+    let target = gpu_slot_node(device, workgroup.compute_unit, workgroup.slot);
+    graph
+        .record_wait(
+            source.clone(),
+            target.clone(),
+            WaitForEdgeKind::Queue,
+            workgroup.queued_at,
+        )
+        .expect("GPU wait-for labels are generated from typed ids");
+    if last_tick != workgroup.queued_at {
+        graph
+            .record_wait(source, target, WaitForEdgeKind::Queue, last_tick)
+            .expect("GPU wait-for labels are generated from typed ids");
     }
 }
 

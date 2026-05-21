@@ -202,6 +202,7 @@ fn gpu_wait_for_graph_tracks_queued_workgroups_until_slot_starts() {
     let gpu =
         GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(8), gpu_partition, 1, 1).unwrap());
     let launch = GpuKernelLaunch::new(GpuKernelId::new(40), 3, 4).unwrap();
+    let marker = gpu.mark_wait_for();
 
     gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
         .unwrap();
@@ -233,6 +234,12 @@ fn gpu_wait_for_graph_tracks_queued_workgroups_until_slot_starts() {
     assert!(after_second_start.contains_edge(&third_workgroup, &slot, WaitForEdgeKind::Queue));
 
     scheduler.run_until_idle_parallel_recorded().unwrap();
+    let history = gpu.wait_for_graph_since(marker).snapshot();
+    assert_eq!(history.edge_count(), 2);
+    assert_eq!(history.first_observed_tick(), Some(2));
+    assert_eq!(history.last_observed_tick(), Some(9));
+    assert!(history.contains_edge(&second_workgroup, &slot, WaitForEdgeKind::Queue));
+    assert!(history.contains_edge(&third_workgroup, &slot, WaitForEdgeKind::Queue));
     assert!(gpu.wait_for_graph().is_empty());
 }
 

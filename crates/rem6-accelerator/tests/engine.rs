@@ -169,6 +169,7 @@ fn accelerator_wait_for_graph_tracks_queued_commands_until_lane_starts() {
         AcceleratorEngineConfig::new(AcceleratorEngineId::new(14), accelerator_partition, 1)
             .unwrap(),
     );
+    let marker = engine.mark_wait_for();
 
     engine
         .submit_from_partition(
@@ -239,6 +240,11 @@ fn accelerator_wait_for_graph_tracks_queued_commands_until_lane_starts() {
     assert!(engine.wait_for_graph().is_empty());
 
     scheduler.run_until_idle_parallel_recorded().unwrap();
+    let history = engine.wait_for_graph_since(marker).snapshot();
+    assert_eq!(history.edge_count(), 1);
+    assert_eq!(history.first_observed_tick(), Some(2));
+    assert_eq!(history.last_observed_tick(), Some(6));
+    assert!(history.contains_edge(&queued_command, &lane, WaitForEdgeKind::Queue));
     assert!(engine.wait_for_graph().is_empty());
 }
 

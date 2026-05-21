@@ -47,6 +47,17 @@ impl AcceleratorCommandId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AcceleratorWaitForMarker {
+    offset: usize,
+}
+
+impl AcceleratorWaitForMarker {
+    const fn new(offset: usize) -> Self {
+        Self { offset }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AcceleratorCommandKind {
     GpuKernel { workgroups: u32 },
@@ -910,6 +921,20 @@ impl AcceleratorEngine {
             .wait_for_graph(self.id())
     }
 
+    pub fn mark_wait_for(&self) -> AcceleratorWaitForMarker {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .mark_wait_for()
+    }
+
+    pub fn wait_for_graph_since(&self, marker: AcceleratorWaitForMarker) -> WaitForGraph {
+        self.state
+            .lock()
+            .expect("accelerator state lock")
+            .wait_for_graph_since(self.id(), marker)
+    }
+
     pub fn restore(&self, snapshot: &AcceleratorEngineSnapshot) {
         *self.state.lock().expect("accelerator state lock") =
             AcceleratorEngineState::from_snapshot(snapshot);
@@ -1190,17 +1215,16 @@ impl AcceleratorEngine {
         queued_at: Tick,
         reservation: AcceleratorReservation,
     ) {
-        self.state
-            .lock()
-            .expect("accelerator state lock")
-            .queued_commands
-            .push(AcceleratorQueuedCommand::new(
-                command,
-                reservation.lane,
-                queued_at,
-                reservation.started_at,
-                reservation.completed_at,
-            ));
+        let queued = AcceleratorQueuedCommand::new(
+            command,
+            reservation.lane,
+            queued_at,
+            reservation.started_at,
+            reservation.completed_at,
+        );
+        let mut state = self.state.lock().expect("accelerator state lock");
+        state.wait_log.push(queued.clone());
+        state.queued_commands.push(queued);
     }
 
     fn clear_queued_command(&self, command: AcceleratorCommandId, lane: u32, started_at: Tick) {
@@ -1291,6 +1315,7 @@ struct AcceleratorEngineState {
     completed: Vec<AcceleratorCompletion>,
     pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
     dma_completions: Vec<AcceleratorDmaCompletion>,
+    wait_log: Vec<AcceleratorQueuedCommand>,
 }
 
 impl AcceleratorEngineState {
@@ -1302,6 +1327,7 @@ impl AcceleratorEngineState {
             completed: Vec::new(),
             pending_dma_writes: Vec::new(),
             dma_completions: Vec::new(),
+            wait_log: Vec::new(),
         }
     }
 
@@ -1333,7 +1359,12 @@ impl AcceleratorEngineState {
             completed: snapshot.completed.clone(),
             pending_dma_writes: snapshot.pending_dma_writes.clone(),
             dma_completions: snapshot.dma_completions.clone(),
+            wait_log: Vec::new(),
         }
+    }
+
+    fn mark_wait_for(&self) -> AcceleratorWaitForMarker {
+        AcceleratorWaitForMarker::new(self.wait_log.len())
     }
 
     fn wait_for_graph(&self, engine: AcceleratorEngineId) -> WaitForGraph {
@@ -1342,14 +1373,27 @@ impl AcceleratorEngineState {
             if queued.started_at <= queued.queued_at {
                 continue;
             }
-            graph
-                .record_wait(
-                    accelerator_command_node(engine, queued.command.id()),
-                    accelerator_lane_node(engine, queued.lane),
-                    WaitForEdgeKind::Queue,
-                    queued.queued_at,
-                )
-                .expect("accelerator wait-for labels are generated from typed ids");
+            record_accelerator_wait_interval(&mut graph, engine, queued, queued.queued_at);
+        }
+        graph
+    }
+
+    fn wait_for_graph_since(
+        &self,
+        engine: AcceleratorEngineId,
+        marker: AcceleratorWaitForMarker,
+    ) -> WaitForGraph {
+        let mut graph = WaitForGraph::new();
+        let Some(records) = self.wait_log.get(marker.offset..) else {
+            return graph;
+        };
+        for queued in records {
+            record_accelerator_wait_interval(
+                &mut graph,
+                engine,
+                queued,
+                queued.started_at.saturating_sub(1),
+            );
         }
         graph
     }
@@ -1399,6 +1443,29 @@ impl AcceleratorQueuedCommand {
             started_at: snapshot.started_at,
             completed_at: snapshot.completed_at,
         }
+    }
+}
+
+fn record_accelerator_wait_interval(
+    graph: &mut WaitForGraph,
+    engine: AcceleratorEngineId,
+    queued: &AcceleratorQueuedCommand,
+    last_tick: Tick,
+) {
+    let source = accelerator_command_node(engine, queued.command.id());
+    let target = accelerator_lane_node(engine, queued.lane);
+    graph
+        .record_wait(
+            source.clone(),
+            target.clone(),
+            WaitForEdgeKind::Queue,
+            queued.queued_at,
+        )
+        .expect("accelerator wait-for labels are generated from typed ids");
+    if last_tick != queued.queued_at {
+        graph
+            .record_wait(source, target, WaitForEdgeKind::Queue, last_tick)
+            .expect("accelerator wait-for labels are generated from typed ids");
     }
 }
 
