@@ -11,8 +11,9 @@ use crate::Tick;
 mod state;
 
 pub use state::{
-    PartitionSnapshot, PendingEventSnapshot, RecordedRunSummary, ScheduledEventKind,
-    SchedulerDispatchRecord, SchedulerSnapshot,
+    EpochPlan, ParallelEpochPlan, PartitionFrontier, PartitionSnapshot, PendingEventSnapshot,
+    ReadyPartition, RecordedRunSummary, ScheduledEventKind, SchedulerDispatchRecord,
+    SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -79,6 +80,11 @@ pub enum SchedulerError {
         partition: PartitionId,
         tick: Tick,
     },
+    EpochHorizonOverflow {
+        partition: PartitionId,
+        now: Tick,
+        delay: Tick,
+    },
     SnapshotContainsPendingEvents {
         pending_events: usize,
     },
@@ -141,6 +147,15 @@ impl fmt::Display for SchedulerError {
             Self::SerialEventInParallelEpoch { partition, tick } => write!(
                 formatter,
                 "parallel epoch cannot dispatch serial event in partition {} at tick {tick}",
+                partition.index()
+            ),
+            Self::EpochHorizonOverflow {
+                partition,
+                now,
+                delay,
+            } => write!(
+                formatter,
+                "partition {} cannot compute parallel epoch horizon from tick {now} with delay {delay}",
                 partition.index()
             ),
             Self::SnapshotContainsPendingEvents { pending_events } => write!(
@@ -206,28 +221,6 @@ impl ConservativeRunSummary {
     pub const fn final_tick(self) -> Tick {
         self.final_tick
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EpochPlan {
-    horizon: Tick,
-    ready_partitions: Vec<ReadyPartition>,
-}
-
-impl EpochPlan {
-    pub fn horizon(&self) -> Tick {
-        self.horizon
-    }
-
-    pub fn ready_partitions(&self) -> &[ReadyPartition] {
-        &self.ready_partitions
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ReadyPartition {
-    pub partition: PartitionId,
-    pub next_tick: Tick,
 }
 
 type SchedulerCallback = Box<dyn FnOnce(&mut SchedulerContext<'_>) + Send + 'static>;
@@ -473,7 +466,7 @@ impl PartitionedScheduler {
     pub fn run_next_epoch_parallel_recorded(
         &mut self,
     ) -> Result<RecordedRunSummary, SchedulerError> {
-        let Some(plan) = self.plan_next_epoch() else {
+        let Some(plan) = self.plan_next_parallel_epoch()? else {
             return Ok(RecordedRunSummary {
                 summary: RunSummary {
                     executed_events: 0,
@@ -482,14 +475,17 @@ impl PartitionedScheduler {
                 dispatches: Vec::new(),
             });
         };
-        let horizon = plan.horizon;
+        let horizon = plan.horizon();
 
-        if let Some((partition, tick)) = self.first_serial_event_at_or_before(horizon) {
-            return Err(SchedulerError::SerialEventInParallelEpoch { partition, tick });
+        if let Some(blocker) = plan.serial_blockers().first() {
+            return Err(SchedulerError::SerialEventInParallelEpoch {
+                partition: blocker.partition(),
+                tick: blocker.tick(),
+            });
         }
 
         let mut ready_partitions = plan
-            .ready_partitions
+            .ready_partitions()
             .iter()
             .map(|ready| ready.partition)
             .collect::<Vec<_>>();
@@ -525,7 +521,7 @@ impl PartitionedScheduler {
         let mut epochs = 0;
         let mut executed_events = 0;
 
-        while self.plan_next_epoch().is_some() {
+        while self.plan_next_parallel_epoch()?.is_some() {
             let before = self.now;
             let summary = self.run_next_epoch_parallel()?;
             epochs += 1;
@@ -590,6 +586,53 @@ impl PartitionedScheduler {
         })
     }
 
+    pub fn plan_next_parallel_epoch(&self) -> Result<Option<ParallelEpochPlan>, SchedulerError> {
+        if self.is_idle() {
+            return Ok(None);
+        }
+
+        let mut horizon = None;
+        let mut frontiers = Vec::with_capacity(self.partitions.len());
+        for (index, queue) in self.partitions.iter().enumerate() {
+            let partition = PartitionId::new(index as u32);
+            let safe_until = queue.now.checked_add(self.min_remote_delay).ok_or(
+                SchedulerError::EpochHorizonOverflow {
+                    partition,
+                    now: queue.now,
+                    delay: self.min_remote_delay,
+                },
+            )?;
+            horizon = Some(horizon.map_or(safe_until, |current: Tick| current.min(safe_until)));
+            frontiers.push(PartitionFrontier::new(
+                partition,
+                queue.now,
+                safe_until,
+                queue.peek_tick(),
+                queue.pending_event_count(),
+            ));
+        }
+
+        let horizon = horizon.expect("non-empty scheduler has a horizon");
+        let ready_partitions = frontiers
+            .iter()
+            .filter_map(|frontier| {
+                let next_tick = frontier.next_tick()?;
+                (next_tick <= horizon).then_some(ReadyPartition {
+                    partition: frontier.partition(),
+                    next_tick,
+                })
+            })
+            .collect();
+        let serial_blockers = self.serial_blockers_at_or_before(horizon);
+
+        Ok(Some(ParallelEpochPlan::new(
+            horizon,
+            ready_partitions,
+            frontiers,
+            serial_blockers,
+        )))
+    }
+
     fn partition(&self, partition: PartitionId) -> Option<&PartitionQueue> {
         self.partitions.get(partition.index() as usize)
     }
@@ -648,6 +691,19 @@ impl PartitionedScheduler {
                     .map(|tick| (PartitionId::new(index as u32), tick))
             })
             .min_by_key(|(partition, tick)| (*tick, *partition))
+    }
+
+    fn serial_blockers_at_or_before(&self, horizon: Tick) -> Vec<SchedulerDispatchRecord> {
+        let mut blockers = self
+            .partitions
+            .iter()
+            .enumerate()
+            .flat_map(|(index, queue)| {
+                queue.serial_blockers_at_or_before(PartitionId::new(index as u32), horizon)
+            })
+            .collect::<Vec<_>>();
+        blockers.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
+        blockers
     }
 
     fn ready_partitions_at_or_before(&self, horizon: Tick) -> Vec<PartitionId> {
@@ -1075,6 +1131,21 @@ impl PartitionQueue {
             .min()
     }
 
+    fn serial_blockers_at_or_before(
+        &self,
+        partition: PartitionId,
+        horizon: Tick,
+    ) -> Vec<SchedulerDispatchRecord> {
+        let mut blockers = self
+            .pending
+            .iter()
+            .filter(|event| event.tick <= horizon && event.is_serial())
+            .map(|event| event.dispatch_record(partition))
+            .collect::<Vec<_>>();
+        blockers.sort_by_key(|record| (record.tick(), record.id().local()));
+        blockers
+    }
+
     fn schedule_at(
         &mut self,
         partition: PartitionId,
@@ -1175,6 +1246,17 @@ struct PartitionEvent {
 impl PartitionEvent {
     fn is_serial(&self) -> bool {
         matches!(self.callback, Some(PartitionEventCallback::Serial(_)))
+    }
+
+    fn dispatch_record(&self, partition: PartitionId) -> SchedulerDispatchRecord {
+        SchedulerDispatchRecord::new(
+            PartitionEventId::new(partition, self.id.local()),
+            self.tick,
+            self.callback
+                .as_ref()
+                .expect("scheduler callback is present")
+                .kind(),
+        )
     }
 
     fn snapshot(&self) -> PendingEventSnapshot {

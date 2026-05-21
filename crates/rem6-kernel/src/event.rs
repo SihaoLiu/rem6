@@ -18,6 +18,7 @@ impl EventId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ScheduleError {
     InThePast { now: Tick, requested: Tick },
+    TickOverflow { now: Tick, delay: Tick },
 }
 
 impl fmt::Display for ScheduleError {
@@ -28,6 +29,9 @@ impl fmt::Display for ScheduleError {
                     formatter,
                     "cannot schedule event at tick {requested}; current tick is {now}"
                 )
+            }
+            Self::TickOverflow { now, delay } => {
+                write!(formatter, "tick {now} overflows when adding delay {delay}")
             }
         }
     }
@@ -117,7 +121,14 @@ impl EventQueue {
     where
         F: FnOnce(Tick) + Send + 'static,
     {
-        self.schedule_at(self.now + delay, callback)
+        let tick = self
+            .now
+            .checked_add(delay)
+            .ok_or(ScheduleError::TickOverflow {
+                now: self.now,
+                delay,
+            })?;
+        self.schedule_at(tick, callback)
     }
 
     pub fn schedule_at_clock_edge<F>(

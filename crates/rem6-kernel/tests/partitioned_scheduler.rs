@@ -1,8 +1,8 @@
 use std::sync::{Arc, Barrier, Mutex};
 
 use rem6_kernel::{
-    PartitionEventId, PartitionId, PartitionedScheduler, ScheduledEventKind,
-    SchedulerDispatchRecord, SchedulerError,
+    PartitionEventId, PartitionId, PartitionSnapshot, PartitionedScheduler, ScheduledEventKind,
+    SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
 };
 
 #[test]
@@ -832,5 +832,191 @@ fn scheduler_recorded_parallel_epoch_reports_canonical_dispatch_order() {
                 ScheduledEventKind::Parallel,
             ),
         ]
+    );
+}
+
+#[test]
+fn scheduler_parallel_plan_exposes_frontiers_and_serial_blockers_without_dispatching() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let device = PartitionId::new(2);
+
+    let serial_log = Arc::clone(&observed);
+    let serial_id = scheduler
+        .schedule_at(core, 4, move |context| {
+            serial_log
+                .lock()
+                .unwrap()
+                .push((context.now(), context.partition(), "serial"));
+        })
+        .unwrap();
+    scheduler.schedule_parallel_at(memory, 8, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(device, 3, |_| {}).unwrap();
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    assert_eq!(plan.horizon(), 5);
+    assert!(!plan.is_parallel_safe());
+    assert_eq!(
+        plan.ready_partitions(),
+        &[
+            rem6_kernel::ReadyPartition {
+                partition: core,
+                next_tick: 4,
+            },
+            rem6_kernel::ReadyPartition {
+                partition: device,
+                next_tick: 3,
+            },
+        ]
+    );
+    assert_eq!(plan.frontiers().len(), 3);
+    assert_eq!(plan.frontiers()[0].partition(), core);
+    assert_eq!(plan.frontiers()[0].now(), 0);
+    assert_eq!(plan.frontiers()[0].safe_until(), 5);
+    assert_eq!(plan.frontiers()[0].next_tick(), Some(4));
+    assert_eq!(plan.frontiers()[0].pending_events(), 1);
+    assert_eq!(plan.frontiers()[1].partition(), memory);
+    assert_eq!(plan.frontiers()[1].next_tick(), Some(8));
+    assert_eq!(plan.frontiers()[2].partition(), device);
+    assert_eq!(plan.frontiers()[2].next_tick(), Some(3));
+    assert_eq!(plan.frontiers()[2].pending_events(), 1);
+    assert_eq!(
+        plan.frontier(memory).map(|frontier| frontier.next_tick()),
+        Some(Some(8))
+    );
+    assert_eq!(plan.frontier(PartitionId::new(9)), None);
+    assert_eq!(
+        plan.serial_blockers(),
+        &[SchedulerDispatchRecord::new(
+            serial_id,
+            4,
+            ScheduledEventKind::Serial,
+        )]
+    );
+    assert_eq!(plan.serial_blocker_count(), 1);
+    assert_eq!(
+        plan.first_serial_blocker(),
+        Some(SchedulerDispatchRecord::new(
+            serial_id,
+            4,
+            ScheduledEventKind::Serial,
+        ))
+    );
+
+    assert_eq!(scheduler.now(), 0);
+    assert_eq!(scheduler.next_pending_tick(core).unwrap(), Some(4));
+    assert_eq!(scheduler.next_pending_tick(memory).unwrap(), Some(8));
+    assert_eq!(scheduler.next_pending_tick(device).unwrap(), Some(3));
+    assert!(observed.lock().unwrap().is_empty());
+
+    assert_eq!(
+        scheduler.run_next_epoch_parallel_recorded().unwrap_err(),
+        SchedulerError::SerialEventInParallelEpoch {
+            partition: core,
+            tick: 4,
+        }
+    );
+}
+
+#[test]
+fn scheduler_parallel_plan_marks_all_parallel_epoch_as_safe() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();
+
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let device = PartitionId::new(2);
+
+    scheduler.schedule_parallel_at(core, 2, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(memory, 4, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(device, 9, |_| {}).unwrap();
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    assert_eq!(plan.horizon(), 5);
+    assert!(plan.is_parallel_safe());
+    assert_eq!(plan.ready_partition_count(), 2);
+    assert_eq!(plan.frontier_count(), 3);
+    assert_eq!(plan.serial_blocker_count(), 0);
+    assert_eq!(plan.first_serial_blocker(), None);
+    assert_eq!(
+        plan.ready_partitions(),
+        &[
+            rem6_kernel::ReadyPartition {
+                partition: core,
+                next_tick: 2,
+            },
+            rem6_kernel::ReadyPartition {
+                partition: memory,
+                next_tick: 4,
+            },
+        ]
+    );
+}
+
+#[test]
+fn scheduler_parallel_plan_leaves_near_limit_idle_scheduler_idle() {
+    let near_end = u64::MAX - 1;
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+    let snapshot = SchedulerSnapshot::new(
+        near_end,
+        5,
+        vec![
+            PartitionSnapshot::quiescent(core, near_end, 0, 0),
+            PartitionSnapshot::quiescent(memory, near_end, 0, 0),
+        ],
+    );
+
+    scheduler.restore_quiescent(&snapshot).unwrap();
+
+    assert!(scheduler.plan_next_parallel_epoch().unwrap().is_none());
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(summary.epochs(), 0);
+    assert_eq!(summary.executed_events(), 0);
+    assert_eq!(summary.final_tick(), near_end);
+}
+
+#[test]
+fn scheduler_parallel_plan_reports_horizon_overflow_before_silently_stopping() {
+    let near_end = u64::MAX - 1;
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+    let snapshot = SchedulerSnapshot::new(
+        near_end,
+        5,
+        vec![
+            PartitionSnapshot::quiescent(core, near_end, 0, 0),
+            PartitionSnapshot::quiescent(memory, near_end, 0, 0),
+        ],
+    );
+
+    scheduler.restore_quiescent(&snapshot).unwrap();
+    scheduler
+        .schedule_parallel_at(core, near_end, |_| {})
+        .unwrap();
+
+    let error = scheduler.plan_next_parallel_epoch().unwrap_err();
+
+    assert_eq!(
+        error,
+        SchedulerError::EpochHorizonOverflow {
+            partition: core,
+            now: near_end,
+            delay: 5,
+        }
+    );
+    assert_eq!(
+        scheduler.run_next_epoch_parallel_recorded().unwrap_err(),
+        SchedulerError::EpochHorizonOverflow {
+            partition: core,
+            now: near_end,
+            delay: 5,
+        }
     );
 }

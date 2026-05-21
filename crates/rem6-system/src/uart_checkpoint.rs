@@ -518,6 +518,16 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u32(payload, partition.index());
             write_u64(payload, *tick);
         }
+        SchedulerError::EpochHorizonOverflow {
+            partition,
+            now,
+            delay,
+        } => {
+            write_u64(payload, 12);
+            write_u32(payload, partition.index());
+            write_u64(payload, *now);
+            write_u64(payload, *delay);
+        }
         SchedulerError::SnapshotContainsPendingEvents { pending_events } => {
             write_u64(payload, 8);
             write_u64(payload, *pending_events as u64);
@@ -591,6 +601,11 @@ fn decode_scheduler_error(
         11 => Ok(SchedulerError::SnapshotLookaheadMismatch {
             snapshot_min_remote_delay: cursor.read_u64("scheduler snapshot lookahead")?,
             scheduler_min_remote_delay: cursor.read_u64("scheduler live lookahead")?,
+        }),
+        12 => Ok(SchedulerError::EpochHorizonOverflow {
+            partition: PartitionId::new(cursor.read_u32("scheduler horizon partition")?),
+            now: cursor.read_u64("scheduler horizon now")?,
+            delay: cursor.read_u64("scheduler horizon delay")?,
         }),
         value => Err(cursor.invalid(format!("scheduler error has invalid kind {value}"))),
     }

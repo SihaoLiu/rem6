@@ -75,6 +75,25 @@ fn event_queue_schedules_relative_to_current_tick() {
 }
 
 #[test]
+fn event_queue_rejects_relative_delay_overflow_without_mutating_queue() {
+    let mut queue = EventQueue::new();
+    queue.schedule_at(u64::MAX - 1, |_| {}).unwrap();
+    queue.run_until_empty();
+
+    let error = queue.schedule_after(2, |_| {}).unwrap_err();
+
+    assert_eq!(
+        error,
+        ScheduleError::TickOverflow {
+            now: u64::MAX - 1,
+            delay: 2,
+        }
+    );
+    assert_eq!(queue.now(), u64::MAX - 1);
+    assert!(queue.is_empty());
+}
+
+#[test]
 fn event_queue_schedules_clock_domain_deadlines() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let mut queue = EventQueue::new();
