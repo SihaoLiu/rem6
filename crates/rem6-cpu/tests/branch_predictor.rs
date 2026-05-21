@@ -1,8 +1,16 @@
-use rem6_cpu::{BranchPredictor, BranchPredictorConfig, BranchPredictorError, BranchSpeculationId};
+use rem6_cpu::{
+    BranchPredictor, BranchPredictorConfig, BranchPredictorError, BranchSpeculationId,
+    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
+    ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
+};
 use rem6_memory::Address;
 
 fn predictor(entries: usize) -> BranchPredictor {
     BranchPredictor::new(BranchPredictorConfig::new(entries).unwrap())
+}
+
+fn ras(entries: usize) -> ReturnAddressStack {
+    ReturnAddressStack::new(ReturnAddressStackConfig::new(entries).unwrap())
 }
 
 #[test]
@@ -240,4 +248,139 @@ fn snapshot_restore_preserves_pending_speculation_history() {
     assert_eq!(predictor.speculative_history(), 2);
     assert_eq!(predictor.pending_speculations(), &[first, second]);
     assert_eq!(predictor.predict(second_pc).counter(), 1);
+}
+
+#[test]
+fn return_address_stack_predicts_returns_and_commits_in_order() {
+    let mut ras = ras(2);
+    let first_return = Address::new(0x1004);
+    let second_return = Address::new(0x2004);
+
+    let first_call = ras.push_speculative(first_return);
+    assert_eq!(first_call.id(), ReturnAddressStackOperationId::new(0));
+    assert_eq!(first_call.kind(), ReturnAddressStackOperationKind::Push);
+    assert_eq!(first_call.pushed_address(), Some(first_return));
+    assert_eq!(first_call.depth_before(), 0);
+    assert_eq!(first_call.depth_after(), 1);
+    assert_eq!(ras.top(), Some(first_return));
+
+    let second_call = ras.push_speculative(second_return);
+    let predicted_return = ras.pop_speculative();
+
+    assert_eq!(
+        predicted_return.kind(),
+        ReturnAddressStackOperationKind::Pop
+    );
+    assert_eq!(predicted_return.predicted_return(), Some(second_return));
+    assert_eq!(predicted_return.depth_before(), 2);
+    assert_eq!(predicted_return.depth_after(), 1);
+    assert_eq!(ras.top(), Some(first_return));
+    assert_eq!(ras.pending_operation_count(), 3);
+
+    assert_eq!(ras.commit_operation(first_call.id()).unwrap(), first_call);
+    assert_eq!(ras.commit_operation(second_call.id()).unwrap(), second_call);
+    assert_eq!(
+        ras.commit_operation(predicted_return.id()).unwrap(),
+        predicted_return
+    );
+    assert_eq!(ras.pending_operation_count(), 0);
+    assert_eq!(ras.stack_entries(), &[first_return]);
+}
+
+#[test]
+fn return_address_stack_squash_restores_selected_and_younger_operations() {
+    let mut ras = ras(4);
+    let call_return = Address::new(0x1004);
+    let false_path_return = Address::new(0x2004);
+
+    let call = ras.push_speculative(call_return);
+    let mispredicted_return = ras.pop_speculative();
+    let false_path_call = ras.push_speculative(false_path_return);
+
+    assert_eq!(ras.stack_entries(), &[false_path_return]);
+
+    let repair = ras.squash_from(mispredicted_return.id()).unwrap();
+
+    assert_eq!(repair.reverted().id(), mispredicted_return.id());
+    assert_eq!(repair.removed_youngers(), &[false_path_call]);
+    assert_eq!(repair.restored_stack(), &[call_return]);
+    assert_eq!(ras.stack_entries(), &[call_return]);
+    assert_eq!(ras.pending_operations(), &[call]);
+}
+
+#[test]
+fn return_address_stack_capacity_overwrites_oldest_entry() {
+    let mut ras = ras(2);
+    let first = Address::new(0x1004);
+    let second = Address::new(0x2004);
+    let third = Address::new(0x3004);
+
+    ras.push_speculative(first);
+    ras.push_speculative(second);
+    let overflow = ras.push_speculative(third);
+
+    assert_eq!(overflow.stack_before(), &[first, second]);
+    assert_eq!(overflow.stack_after(), &[second, third]);
+    assert_eq!(ras.stack_entries(), &[second, third]);
+    assert_eq!(ras.top(), Some(third));
+}
+
+#[test]
+fn return_address_stack_commit_rejects_out_of_order_and_unknown_records() {
+    let mut ras = ras(4);
+    let first = ras.push_speculative(Address::new(0x1004));
+    let second = ras.push_speculative(Address::new(0x2004));
+
+    assert_eq!(
+        ras.commit_operation(second.id()),
+        Err(ReturnAddressStackError::OutOfOrderOperationCommit {
+            expected: first.id(),
+            actual: second.id(),
+        })
+    );
+    assert_eq!(
+        ras.squash_from(ReturnAddressStackOperationId::new(99)),
+        Err(ReturnAddressStackError::UnknownOperation {
+            id: ReturnAddressStackOperationId::new(99),
+        })
+    );
+}
+
+#[test]
+fn return_address_stack_snapshot_restore_preserves_stack_and_pending_operations() {
+    let mut ras = ras(2);
+    let first = ras.push_speculative(Address::new(0x1004));
+    let second = ras.push_speculative(Address::new(0x2004));
+    let snapshot = ras.snapshot();
+
+    ras.pop_speculative();
+    ras.commit_operation(first.id()).unwrap();
+
+    ras.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        ras.stack_entries(),
+        &[Address::new(0x1004), Address::new(0x2004)]
+    );
+    assert_eq!(ras.pending_operations(), &[first, second]);
+    assert_eq!(ras.next_operation(), ReturnAddressStackOperationId::new(2));
+}
+
+#[test]
+fn return_address_stack_rejects_bad_config_and_snapshot_shape() {
+    assert_eq!(
+        ReturnAddressStackConfig::new(0),
+        Err(ReturnAddressStackError::ZeroEntries)
+    );
+
+    let snapshot = ras(2).snapshot();
+    let mut wider = ras(3);
+
+    assert_eq!(
+        wider.restore(&snapshot),
+        Err(ReturnAddressStackError::SnapshotEntriesMismatch {
+            expected: 3,
+            actual: 2,
+        })
+    );
 }
