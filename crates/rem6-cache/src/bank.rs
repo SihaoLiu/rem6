@@ -5,7 +5,7 @@ use std::fmt;
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
 };
-use rem6_protocol_msi::MsiState;
+use rem6_protocol_msi::{MsiEvent, MsiState};
 
 use crate::{
     CacheControllerError, CacheControllerResult, MsiCacheController, MsiCacheControllerSnapshot,
@@ -20,6 +20,9 @@ pub enum MsiCacheBankError {
     },
     UnknownPendingFill {
         response: MemoryRequestId,
+    },
+    UnknownSnoopLine {
+        line: Address,
     },
     SnapshotIdentityMismatch {
         expected_agent: AgentId,
@@ -50,6 +53,11 @@ impl fmt::Display for MsiCacheBankError {
                 "MSI cache bank has no pending fill for response {} from agent {}",
                 response.sequence(),
                 response.agent().get()
+            ),
+            Self::UnknownSnoopLine { line } => write!(
+                formatter,
+                "MSI cache bank has no resident line {:#x} for snoop",
+                line.get()
             ),
             Self::SnapshotIdentityMismatch {
                 expected_agent,
@@ -83,6 +91,7 @@ impl Error for MsiCacheBankError {
             Self::Controller(error) => Some(error),
             Self::WrongAgent { .. }
             | Self::UnknownPendingFill { .. }
+            | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. } => None,
@@ -290,6 +299,19 @@ impl MsiCacheBank {
         let result = controller.accept_fill(response)?;
         self.pending_fills.remove(&response_id);
         Ok(result)
+    }
+
+    pub fn accept_snoop(
+        &mut self,
+        address: Address,
+        event: MsiEvent,
+    ) -> Result<CacheControllerResult, MsiCacheBankError> {
+        let line = self.layout.line_address(address);
+        let controller = self
+            .lines
+            .get_mut(&line)
+            .ok_or(MsiCacheBankError::UnknownSnoopLine { line })?;
+        controller.accept_snoop(event).map_err(Into::into)
     }
 
     fn validate_request_agent(&self, request: &MemoryRequest) -> Result<(), MsiCacheBankError> {

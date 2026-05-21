@@ -288,6 +288,10 @@ impl MsiDirectory {
             .unwrap_or_else(|| DirectoryLineState::new(line))
     }
 
+    pub fn line_addresses(&self) -> Vec<rem6_memory::Address> {
+        self.lines.keys().map(|line| line.address()).collect()
+    }
+
     pub fn restore_line_state(&mut self, snapshot: &DirectoryLineState) {
         let line = snapshot.line();
         let stored = DirectoryLine::from_snapshot(snapshot);

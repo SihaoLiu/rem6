@@ -3,7 +3,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_cache::{CacheControllerError, CacheControllerResultKind, MsiCacheController};
+use rem6_cache::{
+    CacheControllerError, CacheControllerResultKind, MsiCacheBankError, MsiCacheController,
+};
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryError, DirectoryGrant, DirectoryLineState,
     MsiDirectory,
@@ -14,8 +16,8 @@ use rem6_kernel::{
     ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError, Tick,
 };
 use rem6_memory::{
-    Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
-    MemoryRequestId, MemoryResponse, MemoryTargetId, ResponseStatus,
+    Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse,
+    MemoryTargetId, ResponseStatus,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_topology::{Endpoint, TopologyError};
@@ -24,6 +26,8 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId, TransportError,
 };
 
+mod backing;
+mod bank;
 mod deferred;
 mod directory_snapshot;
 mod mesi;
@@ -38,6 +42,8 @@ mod wait_for;
 use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 use snoop::{DirectorySnoopWork, SnoopRoute};
 
+pub use backing::LineBackingStore;
+pub use bank::MsiBankDirectoryHarness;
 pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{
     MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness,
@@ -156,6 +162,7 @@ pub enum HarnessError {
     MissingDirectoryGrant { request: MemoryRequestId },
     GrantDataUnavailable { agent: AgentId, line: MsiLineId },
     Cache(CacheControllerError),
+    CacheBank(MsiCacheBankError),
     Directory(DirectoryError),
     Dram(DramMemoryError),
     Fabric(FabricError),
@@ -214,6 +221,7 @@ impl fmt::Display for HarnessError {
                 line.address().get()
             ),
             Self::Cache(error) => write!(formatter, "{error}"),
+            Self::CacheBank(error) => write!(formatter, "{error}"),
             Self::Directory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Fabric(error) => write!(formatter, "{error}"),
@@ -233,6 +241,7 @@ impl Error for HarnessError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Cache(error) => Some(error),
+            Self::CacheBank(error) => Some(error),
             Self::Directory(error) => Some(error),
             Self::Dram(error) => Some(error),
             Self::Fabric(error) => Some(error),
@@ -242,124 +251,6 @@ impl Error for HarnessError {
             Self::Transport(error) => Some(error),
             _ => None,
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LineBackingStore {
-    layout: CacheLineLayout,
-    line_address: Address,
-    data: Vec<u8>,
-}
-
-impl LineBackingStore {
-    pub fn new(
-        layout: CacheLineLayout,
-        line_address: Address,
-        data: Vec<u8>,
-    ) -> Result<Self, HarnessError> {
-        let line_address = layout.line_address(line_address);
-        if data.len() as u64 != layout.bytes() {
-            return Err(HarnessError::LineDataSizeMismatch {
-                expected: layout.bytes(),
-                actual: data.len() as u64,
-            });
-        }
-
-        Ok(Self {
-            layout,
-            line_address,
-            data,
-        })
-    }
-
-    pub fn line_address(&self) -> Address {
-        self.line_address
-    }
-
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-
-    pub fn replace_data(&mut self, data: Vec<u8>) -> Result<(), HarnessError> {
-        if data.len() as u64 != self.layout.bytes() {
-            return Err(HarnessError::LineDataSizeMismatch {
-                expected: self.layout.bytes(),
-                actual: data.len() as u64,
-            });
-        }
-
-        self.data = data;
-        Ok(())
-    }
-
-    pub fn respond(&mut self, request: &MemoryRequest) -> Result<MemoryResponse, HarnessError> {
-        self.check_line(request)?;
-        match request.operation() {
-            MemoryOperation::ReadShared | MemoryOperation::ReadUnique => {
-                MemoryResponse::completed(request, Some(self.data.clone()))
-                    .map_err(HarnessError::Memory)
-            }
-            MemoryOperation::Upgrade => {
-                MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
-            }
-            MemoryOperation::Write | MemoryOperation::Atomic => {
-                self.apply_write(request)?;
-                MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
-            }
-            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty => {
-                self.replace_line(request)?;
-                Ok(MemoryResponse::retry(request))
-            }
-            _ => MemoryResponse::completed(request, None).map_err(HarnessError::Memory),
-        }
-    }
-
-    fn check_line(&self, request: &MemoryRequest) -> Result<(), HarnessError> {
-        let actual = request.line_address();
-        if actual != self.line_address {
-            return Err(HarnessError::WrongLine {
-                expected: self.line_address,
-                actual,
-            });
-        }
-
-        Ok(())
-    }
-
-    fn apply_write(&mut self, request: &MemoryRequest) -> Result<(), HarnessError> {
-        let offset = request.line_offset() as usize;
-        let payload =
-            request
-                .data()
-                .ok_or(HarnessError::Memory(MemoryError::MissingRequestData {
-                    request: request.id(),
-                }))?;
-        let mask = request.byte_mask();
-        for (index, byte) in payload.iter().enumerate() {
-            if mask.is_none_or(|mask| mask.bits()[index]) {
-                self.data[offset + index] = *byte;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn replace_line(&mut self, request: &MemoryRequest) -> Result<(), HarnessError> {
-        let data = request
-            .data()
-            .ok_or(HarnessError::Memory(MemoryError::MissingRequestData {
-                request: request.id(),
-            }))?;
-        if data.len() as u64 != self.layout.bytes() {
-            return Err(HarnessError::LineDataSizeMismatch {
-                expected: self.layout.bytes(),
-                actual: data.len() as u64,
-            });
-        }
-
-        self.data = data.to_vec();
-        Ok(())
     }
 }
 
