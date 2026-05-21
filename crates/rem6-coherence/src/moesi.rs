@@ -15,7 +15,7 @@ use rem6_dram::{DramMemoryController, DramMemoryError};
 use rem6_fabric::{FabricError, FabricModel, FabricPacket, FabricPacketId};
 use rem6_kernel::{
     ConservativeRunSummary, ParallelSchedulerContext, PartitionId, PartitionedScheduler,
-    SchedulerError,
+    SchedulerError, Tick,
 };
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse,
@@ -959,7 +959,9 @@ impl PartitionedMoesiDirectoryLineHarness {
         self.run_until_idle_parallel_recorded()
             .map(|run| run.summary())
     }
-
+    pub fn now(&self) -> Tick {
+        self.scheduler.now()
+    }
     pub fn run_until_idle_parallel_recorded(
         &mut self,
     ) -> Result<ParallelCoherenceRunSummary, MoesiHarnessError> {
