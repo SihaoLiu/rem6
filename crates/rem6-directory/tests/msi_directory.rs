@@ -222,3 +222,42 @@ fn directory_dirty_writeback_clears_owner_and_rejects_non_owner() {
         DirectoryLineState::new(line())
     );
 }
+
+#[test]
+fn directory_restores_line_state_for_later_requests() {
+    let mut directory = MsiDirectory::new();
+    let snapshot = DirectoryLineState::new(line()).with_owner(AgentId::new(2));
+
+    directory.restore_line_state(&snapshot);
+    assert_eq!(directory.line_state(line()), snapshot);
+
+    let decision = directory.accept(read_shared(1, 2)).unwrap();
+    assert_eq!(
+        decision.snoops(),
+        &[DirectorySnoop::new(AgentId::new(2), MsiEvent::SnoopRead)]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(1, 2),
+            MsiState::Shared,
+            DirectoryDataSource::ModifiedOwner(AgentId::new(2)),
+        ))
+    );
+
+    directory.restore_line_state(&DirectoryLineState::new(line()));
+    assert_eq!(
+        directory.line_state(line()),
+        DirectoryLineState::new(line())
+    );
+    let clean = directory.accept(read_shared(3, 0)).unwrap();
+    assert_eq!(clean.snoops(), &[]);
+    assert_eq!(
+        clean.grant(),
+        Some(&grant(
+            id(3, 0),
+            MsiState::Shared,
+            DirectoryDataSource::BackingMemory,
+        ))
+    );
+}

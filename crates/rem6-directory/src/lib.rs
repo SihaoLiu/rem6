@@ -251,6 +251,13 @@ impl DirectoryLine {
         self.owner.is_none() && self.sharers.is_empty()
     }
 
+    fn from_snapshot(snapshot: &DirectoryLineState) -> Self {
+        Self {
+            owner: snapshot.owner(),
+            sharers: snapshot.sharers().iter().copied().collect(),
+        }
+    }
+
     fn snapshot(&self, line: MsiLineId) -> DirectoryLineState {
         let mut snapshot = DirectoryLineState::new(line);
         if let Some(owner) = self.owner {
@@ -279,6 +286,16 @@ impl MsiDirectory {
             .get(&line)
             .map(|stored| stored.snapshot(line))
             .unwrap_or_else(|| DirectoryLineState::new(line))
+    }
+
+    pub fn restore_line_state(&mut self, snapshot: &DirectoryLineState) {
+        let line = snapshot.line();
+        let stored = DirectoryLine::from_snapshot(snapshot);
+        if stored.is_empty() {
+            self.lines.remove(&line);
+        } else {
+            self.lines.insert(line, stored);
+        }
     }
 
     pub fn accept(&mut self, request: MemoryRequest) -> Result<DirectoryDecision, DirectoryError> {
@@ -674,6 +691,10 @@ pub enum MesiDirectoryError {
         line: MesiLineId,
         requester: AgentId,
     },
+    InvalidSnapshotOwnerState {
+        line: MesiLineId,
+        state: MesiState,
+    },
     WritebackFromNonOwner {
         line: MesiLineId,
         requester: AgentId,
@@ -692,6 +713,11 @@ impl fmt::Display for MesiDirectoryError {
                 formatter,
                 "agent {} cannot upgrade line {:#x} without shared ownership",
                 requester.get(),
+                line.address().get()
+            ),
+            Self::InvalidSnapshotOwnerState { line, state } => write!(
+                formatter,
+                "snapshot owner for line {:#x} cannot be restored in {state:?}",
                 line.address().get()
             ),
             Self::WritebackFromNonOwner {
@@ -728,6 +754,22 @@ impl MesiStoredLine {
         self.owner.is_none() && self.sharers.is_empty()
     }
 
+    fn from_snapshot(snapshot: &MesiDirectoryLineState) -> Result<Self, MesiDirectoryError> {
+        if let Some((_, state)) = snapshot.owner() {
+            if !state.is_owned() {
+                return Err(MesiDirectoryError::InvalidSnapshotOwnerState {
+                    line: snapshot.line(),
+                    state,
+                });
+            }
+        }
+
+        Ok(Self {
+            owner: snapshot.owner(),
+            sharers: snapshot.sharers().iter().copied().collect(),
+        })
+    }
+
     fn snapshot(&self, line: MesiLineId) -> MesiDirectoryLineState {
         let mut snapshot = MesiDirectoryLineState::new(line);
         if let Some((owner, state)) = self.owner {
@@ -756,6 +798,20 @@ impl MesiDirectory {
             .get(&line)
             .map(|stored| stored.snapshot(line))
             .unwrap_or_else(|| MesiDirectoryLineState::new(line))
+    }
+
+    pub fn restore_line_state(
+        &mut self,
+        snapshot: &MesiDirectoryLineState,
+    ) -> Result<(), MesiDirectoryError> {
+        let line = snapshot.line();
+        let stored = MesiStoredLine::from_snapshot(snapshot)?;
+        if stored.is_empty() {
+            self.lines.remove(&line);
+        } else {
+            self.lines.insert(line, stored);
+        }
+        Ok(())
     }
 
     pub fn accept(

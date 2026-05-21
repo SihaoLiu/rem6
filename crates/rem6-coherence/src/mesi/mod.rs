@@ -16,7 +16,7 @@ mod partitioned;
 mod serial;
 
 pub use partitioned::PartitionedMesiDirectoryLineHarness;
-pub use serial::MesiDirectoryLineHarness;
+pub use serial::{MesiDirectoryLineHarness, MesiDirectoryLineHarnessSnapshot};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MesiHarnessError {

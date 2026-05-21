@@ -278,3 +278,68 @@ fn moesi_directory_upgrade_from_sharer_invalidates_owner_and_peers() {
         MoesiDirectoryLineState::new(line()).with_owner(AgentId::new(4), MoesiState::Modified)
     );
 }
+
+#[test]
+fn moesi_directory_restores_line_state_for_later_requests() {
+    let mut directory = MoesiDirectory::new();
+    let snapshot = MoesiDirectoryLineState::new(line())
+        .with_owner(AgentId::new(2), MoesiState::Owned)
+        .with_sharer(AgentId::new(4));
+
+    directory.restore_line_state(&snapshot).unwrap();
+    assert_eq!(directory.line_state(line()), snapshot);
+
+    let decision = directory.accept(read_unique(1, 2)).unwrap();
+    assert_eq!(
+        decision.snoops(),
+        &[
+            MoesiDirectorySnoop::new(AgentId::new(2), MoesiEvent::SnoopWrite),
+            MoesiDirectorySnoop::new(AgentId::new(4), MoesiEvent::SnoopWrite),
+        ]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(1, 2),
+            MoesiState::Modified,
+            MoesiDirectoryDataSource::OwnerCache(AgentId::new(2)),
+        ))
+    );
+
+    directory
+        .restore_line_state(&MoesiDirectoryLineState::new(line()))
+        .unwrap();
+    assert_eq!(
+        directory.line_state(line()),
+        MoesiDirectoryLineState::new(line())
+    );
+    let clean = directory.accept(read_shared(3, 0)).unwrap();
+    assert_eq!(clean.snoops(), &[]);
+    assert_eq!(
+        clean.grant(),
+        Some(&grant(
+            id(3, 0),
+            MoesiState::Exclusive,
+            MoesiDirectoryDataSource::BackingMemory,
+        ))
+    );
+}
+
+#[test]
+fn moesi_directory_restore_rejects_invalid_owner_state() {
+    let mut directory = MoesiDirectory::new();
+    let snapshot =
+        MoesiDirectoryLineState::new(line()).with_owner(AgentId::new(2), MoesiState::Shared);
+
+    assert_eq!(
+        directory.restore_line_state(&snapshot).unwrap_err(),
+        MoesiDirectoryError::InvalidSnapshotOwnerState {
+            line: line(),
+            state: MoesiState::Shared,
+        }
+    );
+    assert_eq!(
+        directory.line_state(line()),
+        MoesiDirectoryLineState::new(line())
+    );
+}

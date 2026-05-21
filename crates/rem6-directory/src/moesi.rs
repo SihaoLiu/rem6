@@ -191,6 +191,10 @@ pub enum MoesiDirectoryError {
         line: MoesiLineId,
         requester: AgentId,
     },
+    InvalidSnapshotOwnerState {
+        line: MoesiLineId,
+        state: MoesiState,
+    },
     WritebackFromNonOwner {
         line: MoesiLineId,
         requester: AgentId,
@@ -209,6 +213,11 @@ impl fmt::Display for MoesiDirectoryError {
                 formatter,
                 "agent {} cannot upgrade line {:#x} without shared ownership",
                 requester.get(),
+                line.address().get()
+            ),
+            Self::InvalidSnapshotOwnerState { line, state } => write!(
+                formatter,
+                "snapshot owner for line {:#x} cannot be restored in {state:?}",
                 line.address().get()
             ),
             Self::WritebackFromNonOwner {
@@ -245,6 +254,25 @@ impl MoesiStoredLine {
         self.owner.is_none() && self.sharers.is_empty()
     }
 
+    fn from_snapshot(snapshot: &MoesiDirectoryLineState) -> Result<Self, MoesiDirectoryError> {
+        if let Some((_, state)) = snapshot.owner() {
+            if !matches!(
+                state,
+                MoesiState::Exclusive | MoesiState::Owned | MoesiState::Modified
+            ) {
+                return Err(MoesiDirectoryError::InvalidSnapshotOwnerState {
+                    line: snapshot.line(),
+                    state,
+                });
+            }
+        }
+
+        Ok(Self {
+            owner: snapshot.owner(),
+            sharers: snapshot.sharers().iter().copied().collect(),
+        })
+    }
+
     fn snapshot(&self, line: MoesiLineId) -> MoesiDirectoryLineState {
         let mut snapshot = MoesiDirectoryLineState::new(line);
         if let Some((owner, state)) = self.owner {
@@ -273,6 +301,20 @@ impl MoesiDirectory {
             .get(&line)
             .map(|stored| stored.snapshot(line))
             .unwrap_or_else(|| MoesiDirectoryLineState::new(line))
+    }
+
+    pub fn restore_line_state(
+        &mut self,
+        snapshot: &MoesiDirectoryLineState,
+    ) -> Result<(), MoesiDirectoryError> {
+        let line = snapshot.line();
+        let stored = MoesiStoredLine::from_snapshot(snapshot)?;
+        if stored.is_empty() {
+            self.lines.remove(&line);
+        } else {
+            self.lines.insert(line, stored);
+        }
+        Ok(())
     }
 
     pub fn accept(

@@ -3,7 +3,10 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_cache::{MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResultKind};
+use rem6_cache::{
+    MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResultKind,
+    MoesiCacheControllerSnapshot,
+};
 use rem6_directory::{
     MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,
     MoesiDirectoryGrant, MoesiDirectoryLineState,
@@ -233,6 +236,60 @@ pub struct MoesiDirectoryLineHarness {
     directory_decisions: Vec<MoesiDirectoryDecision>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MoesiDirectoryLineHarnessSnapshot {
+    line: MoesiLineId,
+    directory: MoesiDirectoryLineState,
+    caches: BTreeMap<AgentId, MoesiCacheControllerSnapshot>,
+    backing: LineBackingStore,
+    cpu_responses: Vec<MoesiCpuResponseRecord>,
+    directory_decisions: Vec<MoesiDirectoryDecision>,
+}
+
+impl MoesiDirectoryLineHarnessSnapshot {
+    pub fn new(
+        line: MoesiLineId,
+        directory: MoesiDirectoryLineState,
+        caches: BTreeMap<AgentId, MoesiCacheControllerSnapshot>,
+        backing: LineBackingStore,
+        cpu_responses: Vec<MoesiCpuResponseRecord>,
+        directory_decisions: Vec<MoesiDirectoryDecision>,
+    ) -> Self {
+        Self {
+            line,
+            directory,
+            caches,
+            backing,
+            cpu_responses,
+            directory_decisions,
+        }
+    }
+
+    pub const fn line(&self) -> MoesiLineId {
+        self.line
+    }
+
+    pub const fn directory(&self) -> &MoesiDirectoryLineState {
+        &self.directory
+    }
+
+    pub fn caches(&self) -> &BTreeMap<AgentId, MoesiCacheControllerSnapshot> {
+        &self.caches
+    }
+
+    pub const fn backing(&self) -> &LineBackingStore {
+        &self.backing
+    }
+
+    pub fn cpu_responses(&self) -> &[MoesiCpuResponseRecord] {
+        &self.cpu_responses
+    }
+
+    pub fn directory_decisions(&self) -> &[MoesiDirectoryDecision] {
+        &self.directory_decisions
+    }
+}
+
 #[derive(Clone)]
 struct PartitionedMoesiRoute {
     id: MemoryRouteId,
@@ -373,6 +430,46 @@ impl MoesiDirectoryLineHarness {
         self.line
     }
 
+    pub fn snapshot(&self) -> MoesiDirectoryLineHarnessSnapshot {
+        MoesiDirectoryLineHarnessSnapshot::new(
+            self.line,
+            self.directory.line_state(self.line),
+            self.caches
+                .iter()
+                .map(|(agent, cache)| (*agent, cache.snapshot()))
+                .collect(),
+            self.backing.clone(),
+            self.cpu_responses.clone(),
+            self.directory_decisions.clone(),
+        )
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MoesiDirectoryLineHarnessSnapshot,
+    ) -> Result<(), MoesiHarnessError> {
+        self.validate_snapshot_identity(snapshot)?;
+        let mut directory = self.directory.clone();
+        directory
+            .restore_line_state(snapshot.directory())
+            .map_err(MoesiHarnessError::Directory)?;
+        let mut caches = self.caches.clone();
+        for (agent, cache_snapshot) in snapshot.caches() {
+            caches
+                .get_mut(agent)
+                .ok_or(MoesiHarnessError::UnknownCache { agent: *agent })?
+                .restore(cache_snapshot)
+                .map_err(map_moesi_cache_error)?;
+        }
+
+        self.directory = directory;
+        self.caches = caches;
+        self.backing = snapshot.backing.clone();
+        self.cpu_responses = snapshot.cpu_responses.clone();
+        self.directory_decisions = snapshot.directory_decisions.clone();
+        Ok(())
+    }
+
     fn directory_response(
         &mut self,
         request: &MemoryRequest,
@@ -450,6 +547,30 @@ impl MoesiDirectoryLineHarness {
     ) {
         self.cpu_responses
             .push(moesi_response_record(tick, cache_result, response));
+    }
+
+    fn validate_snapshot_identity(
+        &self,
+        snapshot: &MoesiDirectoryLineHarnessSnapshot,
+    ) -> Result<(), MoesiHarnessError> {
+        if self.line != snapshot.line() {
+            return Err(MoesiHarnessError::Backing(HarnessError::WrongLine {
+                expected: self.line.address(),
+                actual: snapshot.line().address(),
+            }));
+        }
+        for agent in self.caches.keys() {
+            if !snapshot.caches().contains_key(agent) {
+                return Err(MoesiHarnessError::UnknownCache { agent: *agent });
+            }
+        }
+        for agent in snapshot.caches().keys() {
+            if !self.caches.contains_key(agent) {
+                return Err(MoesiHarnessError::UnknownCache { agent: *agent });
+            }
+        }
+
+        Ok(())
     }
 }
 

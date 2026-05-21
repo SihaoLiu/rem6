@@ -263,6 +263,50 @@ fn directory_harness_records_replayable_directory_decision_order() {
 }
 
 #[test]
+fn directory_harness_snapshot_restore_reinstates_serial_state() {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x1000, 8))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(2), read(2, 0, 0x1000, 8))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(2), write(2, 1, 0x1002, vec![0xcc, 0xdd]))
+        .unwrap();
+    let snapshot = source.snapshot();
+
+    let mut restored = harness();
+    restored
+        .submit_cpu_request(agent(1), write(1, 4, 0x1000, vec![0x99]))
+        .unwrap();
+    assert_ne!(restored.snapshot(), snapshot);
+
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(
+        restored.directory_state(),
+        DirectoryLineState::new(line()).with_owner(agent(2))
+    );
+
+    let local_hit = restored
+        .submit_cpu_request(agent(2), read(2, 9, 0x1000, 6))
+        .unwrap();
+    assert_eq!(local_hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(local_hit.directory_decision(), None);
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            0,
+            CacheControllerResultKind::Hit,
+            request_id(2, 9),
+            ResponseStatus::Completed,
+            Some(vec![0, 1, 0xcc, 0xdd, 4, 5]),
+        ))
+    );
+}
+
+#[test]
 fn directory_harness_rejects_unknown_cache_agent() {
     let mut harness = harness();
 

@@ -23,6 +23,7 @@ use rem6_transport::{
 };
 
 mod deferred;
+mod directory_snapshot;
 mod mesi;
 mod moesi;
 mod snoop;
@@ -31,13 +32,16 @@ mod topology;
 use deferred::{DeferredMemoryPath, DeferredMemoryWork};
 use snoop::{DirectorySnoopWork, SnoopRoute};
 
+pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{
-    MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness, MesiHarnessError,
-    MesiSubmitResult, PartitionedMesiDirectoryLineHarness,
+    MesiCpuResponseRecord, MesiDirectoryDecisionRecord, MesiDirectoryLineHarness,
+    MesiDirectoryLineHarnessSnapshot, MesiHarnessError, MesiSubmitResult,
+    PartitionedMesiDirectoryLineHarness,
 };
 pub use moesi::{
     MoesiCpuResponseRecord, MoesiDirectoryDecisionRecord, MoesiDirectoryLineHarness,
-    MoesiHarnessError, MoesiSubmitResult, PartitionedMoesiDirectoryLineHarness,
+    MoesiDirectoryLineHarnessSnapshot, MoesiHarnessError, MoesiSubmitResult,
+    PartitionedMoesiDirectoryLineHarness,
 };
 pub use topology::{
     TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,

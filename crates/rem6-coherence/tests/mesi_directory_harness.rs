@@ -496,6 +496,60 @@ fn partitioned_mesi_harness_runs_parallel_epochs_for_peer_downgrade() {
 }
 
 #[test]
+fn mesi_harness_snapshot_restore_reinstates_serial_state() {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x3000, 4))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(1), write(1, 1, 0x3002, vec![0xaa, 0xbb]))
+        .unwrap();
+    source
+        .submit_cpu_request(agent(2), read(2, 0, 0x3000, 4))
+        .unwrap();
+    let snapshot = source.snapshot();
+
+    let mut restored = harness();
+    restored
+        .submit_cpu_request(agent(3), write(3, 4, 0x3000, vec![0x99]))
+        .unwrap();
+    assert_ne!(restored.snapshot(), snapshot);
+
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(
+        restored.directory_state(),
+        MesiDirectoryLineState::new(line())
+            .with_sharer(agent(1))
+            .with_sharer(agent(2))
+    );
+
+    let store = restored
+        .submit_cpu_request(agent(2), write(2, 9, 0x3001, vec![0xcc]))
+        .unwrap();
+    assert_eq!(store.kind(), SubmitKind::ScheduledMiss);
+    assert_eq!(
+        store.directory_decision().unwrap().snoops(),
+        &[MesiDirectorySnoop::new(agent(1), MesiEvent::SnoopWrite)]
+    );
+
+    let local_hit = restored
+        .submit_cpu_request(agent(2), read(2, 10, 0x3000, 4))
+        .unwrap();
+    assert_eq!(local_hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&MesiCpuResponseRecord::new(
+            0,
+            MesiCacheControllerResultKind::Hit,
+            request_id(2, 10),
+            ResponseStatus::Completed,
+            Some(vec![0, 0xcc, 0xaa, 0xbb]),
+        ))
+    );
+}
+
+#[test]
 fn partitioned_mesi_harness_routes_backing_reads_through_memory_partition() {
     let mut harness = partitioned_harness_with_memory();
 

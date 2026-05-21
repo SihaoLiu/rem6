@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use rem6_cache::{MesiCacheController, MesiCacheControllerError, MesiCacheControllerResultKind};
+use rem6_cache::{
+    MesiCacheController, MesiCacheControllerError, MesiCacheControllerResultKind,
+    MesiCacheControllerSnapshot,
+};
 use rem6_directory::{
     MesiDirectory, MesiDirectoryDataSource, MesiDirectoryDecision, MesiDirectoryGrant,
     MesiDirectoryLineState,
@@ -23,6 +26,60 @@ pub struct MesiDirectoryLineHarness {
     backing: LineBackingStore,
     cpu_responses: Vec<MesiCpuResponseRecord>,
     directory_decisions: Vec<MesiDirectoryDecision>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MesiDirectoryLineHarnessSnapshot {
+    line: MesiLineId,
+    directory: MesiDirectoryLineState,
+    caches: BTreeMap<AgentId, MesiCacheControllerSnapshot>,
+    backing: LineBackingStore,
+    cpu_responses: Vec<MesiCpuResponseRecord>,
+    directory_decisions: Vec<MesiDirectoryDecision>,
+}
+
+impl MesiDirectoryLineHarnessSnapshot {
+    pub fn new(
+        line: MesiLineId,
+        directory: MesiDirectoryLineState,
+        caches: BTreeMap<AgentId, MesiCacheControllerSnapshot>,
+        backing: LineBackingStore,
+        cpu_responses: Vec<MesiCpuResponseRecord>,
+        directory_decisions: Vec<MesiDirectoryDecision>,
+    ) -> Self {
+        Self {
+            line,
+            directory,
+            caches,
+            backing,
+            cpu_responses,
+            directory_decisions,
+        }
+    }
+
+    pub const fn line(&self) -> MesiLineId {
+        self.line
+    }
+
+    pub const fn directory(&self) -> &MesiDirectoryLineState {
+        &self.directory
+    }
+
+    pub fn caches(&self) -> &BTreeMap<AgentId, MesiCacheControllerSnapshot> {
+        &self.caches
+    }
+
+    pub const fn backing(&self) -> &LineBackingStore {
+        &self.backing
+    }
+
+    pub fn cpu_responses(&self) -> &[MesiCpuResponseRecord] {
+        &self.cpu_responses
+    }
+
+    pub fn directory_decisions(&self) -> &[MesiDirectoryDecision] {
+        &self.directory_decisions
+    }
 }
 
 impl MesiDirectoryLineHarness {
@@ -133,6 +190,46 @@ impl MesiDirectoryLineHarness {
         self.line
     }
 
+    pub fn snapshot(&self) -> MesiDirectoryLineHarnessSnapshot {
+        MesiDirectoryLineHarnessSnapshot::new(
+            self.line,
+            self.directory.line_state(self.line),
+            self.caches
+                .iter()
+                .map(|(agent, cache)| (*agent, cache.snapshot()))
+                .collect(),
+            self.backing.clone(),
+            self.cpu_responses.clone(),
+            self.directory_decisions.clone(),
+        )
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MesiDirectoryLineHarnessSnapshot,
+    ) -> Result<(), MesiHarnessError> {
+        self.validate_snapshot_identity(snapshot)?;
+        let mut directory = self.directory.clone();
+        directory
+            .restore_line_state(snapshot.directory())
+            .map_err(MesiHarnessError::Directory)?;
+        let mut caches = self.caches.clone();
+        for (agent, cache_snapshot) in snapshot.caches() {
+            caches
+                .get_mut(agent)
+                .ok_or(MesiHarnessError::UnknownCache { agent: *agent })?
+                .restore(cache_snapshot)
+                .map_err(map_mesi_cache_error)?;
+        }
+
+        self.directory = directory;
+        self.caches = caches;
+        self.backing = snapshot.backing.clone();
+        self.cpu_responses = snapshot.cpu_responses.clone();
+        self.directory_decisions = snapshot.directory_decisions.clone();
+        Ok(())
+    }
+
     fn directory_response(
         &mut self,
         request: &MemoryRequest,
@@ -213,5 +310,29 @@ impl MesiDirectoryLineHarness {
     ) {
         self.cpu_responses
             .push(mesi_response_record(tick, cache_result, response));
+    }
+
+    fn validate_snapshot_identity(
+        &self,
+        snapshot: &MesiDirectoryLineHarnessSnapshot,
+    ) -> Result<(), MesiHarnessError> {
+        if self.line != snapshot.line() {
+            return Err(MesiHarnessError::Backing(HarnessError::WrongLine {
+                expected: self.line.address(),
+                actual: snapshot.line().address(),
+            }));
+        }
+        for agent in self.caches.keys() {
+            if !snapshot.caches().contains_key(agent) {
+                return Err(MesiHarnessError::UnknownCache { agent: *agent });
+            }
+        }
+        for agent in snapshot.caches().keys() {
+            if !self.caches.contains_key(agent) {
+                return Err(MesiHarnessError::UnknownCache { agent: *agent });
+            }
+        }
+
+        Ok(())
     }
 }

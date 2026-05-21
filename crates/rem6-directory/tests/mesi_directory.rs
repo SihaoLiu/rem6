@@ -208,3 +208,67 @@ fn mesi_directory_dirty_writeback_clears_modified_owner_and_rejects_non_owner() 
         MesiDirectoryLineState::new(line())
     );
 }
+
+#[test]
+fn mesi_directory_restores_line_state_for_later_requests() {
+    let mut directory = MesiDirectory::new();
+    let snapshot =
+        MesiDirectoryLineState::new(line()).with_owner(AgentId::new(2), MesiState::Modified);
+
+    directory.restore_line_state(&snapshot).unwrap();
+    assert_eq!(directory.line_state(line()), snapshot);
+
+    let decision = directory.accept(read_shared(1, 2)).unwrap();
+    assert_eq!(
+        decision.snoops(),
+        &[MesiDirectorySnoop::new(
+            AgentId::new(2),
+            MesiEvent::SnoopRead,
+        )]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(1, 2),
+            MesiState::Shared,
+            MesiDirectoryDataSource::OwnedCache(AgentId::new(2)),
+        ))
+    );
+
+    directory
+        .restore_line_state(&MesiDirectoryLineState::new(line()))
+        .unwrap();
+    assert_eq!(
+        directory.line_state(line()),
+        MesiDirectoryLineState::new(line())
+    );
+    let clean = directory.accept(read_shared(3, 0)).unwrap();
+    assert_eq!(clean.snoops(), &[]);
+    assert_eq!(
+        clean.grant(),
+        Some(&grant(
+            id(3, 0),
+            MesiState::Exclusive,
+            MesiDirectoryDataSource::BackingMemory,
+        ))
+    );
+}
+
+#[test]
+fn mesi_directory_restore_rejects_invalid_owner_state() {
+    let mut directory = MesiDirectory::new();
+    let snapshot =
+        MesiDirectoryLineState::new(line()).with_owner(AgentId::new(2), MesiState::Shared);
+
+    assert_eq!(
+        directory.restore_line_state(&snapshot).unwrap_err(),
+        MesiDirectoryError::InvalidSnapshotOwnerState {
+            line: line(),
+            state: MesiState::Shared,
+        }
+    );
+    assert_eq!(
+        directory.line_state(line()),
+        MesiDirectoryLineState::new(line())
+    );
+}
