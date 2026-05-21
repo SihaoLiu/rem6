@@ -30,6 +30,7 @@ mod loop_predictor;
 mod ltage_predictor;
 mod riscv_activity;
 mod riscv_cluster;
+mod statistical_corrector;
 mod tage_predictor;
 mod topology;
 mod tournament_predictor;
@@ -74,6 +75,12 @@ pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
     RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
+};
+pub use statistical_corrector::{
+    StatisticalCorrector, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
+    StatisticalCorrectorError, StatisticalCorrectorHistory, StatisticalCorrectorHistoryUpdate,
+    StatisticalCorrectorInput, StatisticalCorrectorPrediction, StatisticalCorrectorSnapshot,
+    StatisticalCorrectorThreadSnapshot, StatisticalCorrectorTrainingUpdate,
 };
 pub use tage_predictor::{
     FoldedHistorySnapshot, TageBranchPredictor, TageBranchPredictorConfig,
