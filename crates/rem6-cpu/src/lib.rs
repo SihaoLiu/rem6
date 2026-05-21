@@ -22,10 +22,12 @@ use rem6_transport::{
 };
 
 mod error;
+mod riscv_activity;
 mod riscv_cluster;
 mod topology;
 
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
+pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
     RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,

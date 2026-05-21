@@ -844,4 +844,26 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
         .parallel_scheduler_dispatches()
         .iter()
         .all(|record| record.kind() == ScheduledEventKind::Parallel));
+    let cpu0_activity = run.cpu_activity(CpuId::new(0)).unwrap();
+    assert_eq!(cpu0_activity.fetch_issue_count(), 2);
+    assert_eq!(cpu0_activity.instruction_execution_count(), 2);
+    assert_eq!(cpu0_activity.data_access_issue_count(), 1);
+    assert_eq!(cpu0_activity.scheduled_trap_count(), 1);
+    assert_eq!(cpu0_activity.total_activity_count(), 6);
+    assert!(cpu0_activity.has_core_activity());
+    assert!(cpu0_activity.has_trap_activity());
+    assert_eq!(run.cpu_activities().len(), 2);
+    assert_eq!(run.active_cpu_count(), 2);
+    assert!(run.has_cpu_activity(CpuId::new(0)));
+    assert!(!run.has_cpu_activity(CpuId::new(2)));
+    let partition0_activity = run.partition_activity(PartitionId::new(0)).unwrap();
+    assert_eq!(partition0_activity.fetch_issue_count(), 2);
+    assert_eq!(partition0_activity.instruction_execution_count(), 2);
+    assert_eq!(partition0_activity.data_access_issue_count(), 1);
+    assert_eq!(partition0_activity.scheduled_trap_count(), 1);
+    assert_eq!(partition0_activity.total_activity_count(), 6);
+    assert_eq!(run.partition_activities().len(), 2);
+    assert_eq!(run.active_partition_count(), 2);
+    assert!(run.has_partition_activity(PartitionId::new(0)));
+    assert!(!run.has_partition_activity(PartitionId::new(2)));
 }

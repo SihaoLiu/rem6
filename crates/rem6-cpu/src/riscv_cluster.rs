@@ -15,6 +15,7 @@ use rem6_transport::{
     TransportEndpointId,
 };
 
+use crate::riscv_activity::{drive_action_partition, RiscvCoreDriveActivity};
 use crate::{
     CpuId, OutstandingDataAccess, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
 };
@@ -796,6 +797,54 @@ impl RiscvClusterTurn {
         &self.core_events
     }
 
+    pub fn cpu_activity(&self, cpu: CpuId) -> Option<RiscvCoreDriveActivity> {
+        self.cpu_activities().remove(&cpu)
+    }
+
+    pub fn has_cpu_activity(&self, cpu: CpuId) -> bool {
+        self.cpu_activity(cpu)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_cpu_count(&self) -> usize {
+        self.cpu_activities().len()
+    }
+
+    pub fn cpu_activities(&self) -> BTreeMap<CpuId, RiscvCoreDriveActivity> {
+        let mut activities = BTreeMap::new();
+        for event in &self.core_events {
+            activities
+                .entry(event.cpu())
+                .or_insert_with(RiscvCoreDriveActivity::default)
+                .record_action(event.action());
+        }
+        activities
+    }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<RiscvCoreDriveActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, RiscvCoreDriveActivity> {
+        let mut activities = BTreeMap::new();
+        for event in &self.core_events {
+            activities
+                .entry(drive_action_partition(event.action()))
+                .or_insert_with(RiscvCoreDriveActivity::default)
+                .record_action(event.action());
+        }
+        activities
+    }
+
     pub const fn scheduler_summary(&self) -> Option<RunSummary> {
         match (self.scheduler, self.parallel_scheduler.as_ref()) {
             (Some(summary), _) => Some(summary),
@@ -982,6 +1031,62 @@ impl RiscvClusterRun {
 
     pub fn turns(&self) -> &[RiscvClusterTurn] {
         &self.turns
+    }
+
+    pub fn cpu_activity(&self, cpu: CpuId) -> Option<RiscvCoreDriveActivity> {
+        self.cpu_activities().remove(&cpu)
+    }
+
+    pub fn has_cpu_activity(&self, cpu: CpuId) -> bool {
+        self.cpu_activity(cpu)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_cpu_count(&self) -> usize {
+        self.cpu_activities().len()
+    }
+
+    pub fn cpu_activities(&self) -> BTreeMap<CpuId, RiscvCoreDriveActivity> {
+        let mut activities = BTreeMap::new();
+        for turn in &self.turns {
+            for (cpu, activity) in turn.cpu_activities() {
+                activities
+                    .entry(cpu)
+                    .and_modify(|stored: &mut RiscvCoreDriveActivity| {
+                        *stored = stored.merge(activity);
+                    })
+                    .or_insert(activity);
+            }
+        }
+        activities
+    }
+
+    pub fn partition_activity(&self, partition: PartitionId) -> Option<RiscvCoreDriveActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, RiscvCoreDriveActivity> {
+        let mut activities = BTreeMap::new();
+        for turn in &self.turns {
+            for (partition, activity) in turn.partition_activities() {
+                activities
+                    .entry(partition)
+                    .and_modify(|stored: &mut RiscvCoreDriveActivity| {
+                        *stored = stored.merge(activity);
+                    })
+                    .or_insert(activity);
+            }
+        }
+        activities
     }
 
     pub const fn stop_reason(&self) -> RiscvClusterStopReason {

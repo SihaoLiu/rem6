@@ -1,0 +1,119 @@
+use rem6_cpu::{
+    CpuFetchEvent, CpuFetchRecord, CpuId, RiscvClusterDriveEvent, RiscvClusterRun,
+    RiscvClusterStopReason, RiscvClusterTurn, RiscvCoreDriveAction, RiscvCoreDriveActivity,
+    RiscvCpuExecutionEvent,
+};
+use rem6_isa_riscv::{RiscvExecutionRecord, RiscvInstruction};
+use rem6_kernel::{PartitionEventId, PartitionId};
+use rem6_memory::{AccessSize, Address, AgentId, MemoryRequestId};
+use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+fn scheduler_event(partition: u32, local: u64) -> PartitionEventId {
+    PartitionEventId::new(PartitionId::new(partition), local)
+}
+
+fn fetch_event(cpu: u32, sequence: u64, pc: u64) -> CpuFetchEvent {
+    CpuFetchEvent::completed(
+        CpuFetchRecord::new(
+            10 + sequence,
+            PartitionId::new(cpu),
+            MemoryRouteId::new(u64::from(cpu)),
+            TransportEndpointId::new(format!("cpu{cpu}.ifetch")).unwrap(),
+            MemoryRequestId::new(AgentId::new(cpu), sequence),
+            Address::new(pc),
+            AccessSize::new(4).unwrap(),
+        ),
+        0x0000_0073u32.to_le_bytes().to_vec(),
+    )
+}
+
+fn executed(cpu: u32, sequence: u64, pc: u64) -> RiscvClusterDriveEvent {
+    let instruction = RiscvInstruction::Ecall;
+    RiscvClusterDriveEvent::new(
+        CpuId::new(cpu),
+        RiscvCoreDriveAction::InstructionExecuted(Box::new(RiscvCpuExecutionEvent::new(
+            fetch_event(cpu, sequence, pc),
+            instruction,
+            RiscvExecutionRecord::new(instruction, pc, pc + 4, Vec::new(), None),
+        ))),
+    )
+}
+
+#[test]
+fn cluster_run_reports_core_drive_activity_by_cpu() {
+    let run = RiscvClusterRun::new(
+        vec![
+            RiscvClusterTurn::core(vec![
+                RiscvClusterDriveEvent::new(
+                    CpuId::new(0),
+                    RiscvCoreDriveAction::FetchIssued {
+                        event: scheduler_event(0, 1),
+                    },
+                ),
+                RiscvClusterDriveEvent::new(
+                    CpuId::new(1),
+                    RiscvCoreDriveAction::FetchIssued {
+                        event: scheduler_event(1, 1),
+                    },
+                ),
+            ]),
+            RiscvClusterTurn::core(vec![
+                executed(0, 2, 0x8000),
+                RiscvClusterDriveEvent::new(
+                    CpuId::new(0),
+                    RiscvCoreDriveAction::DataAccessIssued {
+                        event: scheduler_event(0, 3),
+                    },
+                ),
+                executed(1, 4, 0x9000),
+            ]),
+        ],
+        RiscvClusterStopReason::StopCondition,
+    );
+
+    assert_eq!(
+        run.cpu_activity(CpuId::new(0)).unwrap(),
+        RiscvCoreDriveActivity::new(1, 1, 1)
+    );
+    assert_eq!(
+        run.cpu_activity(CpuId::new(1)).unwrap(),
+        RiscvCoreDriveActivity::new(1, 1, 0)
+    );
+    assert_eq!(run.cpu_activities().len(), 2);
+    assert_eq!(run.active_cpu_count(), 2);
+    assert!(run.has_cpu_activity(CpuId::new(0)));
+    assert!(!run.has_cpu_activity(CpuId::new(2)));
+    assert_eq!(
+        run.turns()[1].cpu_activity(CpuId::new(0)).unwrap(),
+        RiscvCoreDriveActivity::new(0, 1, 1)
+    );
+    assert_eq!(run.turns()[1].active_cpu_count(), 2);
+    assert_eq!(
+        run.cpu_activity(CpuId::new(0))
+            .unwrap()
+            .total_drive_action_count(),
+        3
+    );
+    assert!(run.cpu_activity(CpuId::new(0)).unwrap().has_activity());
+    assert!(run.cpu_activity(CpuId::new(2)).is_none());
+    assert_eq!(
+        run.partition_activity(PartitionId::new(0)).unwrap(),
+        RiscvCoreDriveActivity::new(1, 1, 1)
+    );
+    assert_eq!(
+        run.partition_activity(PartitionId::new(1)).unwrap(),
+        RiscvCoreDriveActivity::new(1, 1, 0)
+    );
+    assert_eq!(run.partition_activities().len(), 2);
+    assert_eq!(run.active_partition_count(), 2);
+    assert!(run.has_partition_activity(PartitionId::new(0)));
+    assert!(!run.has_partition_activity(PartitionId::new(2)));
+    assert_eq!(
+        run.turns()[1]
+            .partition_activity(PartitionId::new(0))
+            .unwrap(),
+        RiscvCoreDriveActivity::new(0, 1, 1)
+    );
+    assert_eq!(run.turns()[1].active_partition_count(), 2);
+    assert!(run.partition_activity(PartitionId::new(2)).is_none());
+}

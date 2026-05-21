@@ -24,6 +24,7 @@ mod host;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod riscv_checkpoint;
+mod riscv_run_activity;
 mod scheduler_checkpoint;
 mod timer_checkpoint;
 mod topology;
@@ -53,6 +54,7 @@ pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
 };
+pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use scheduler_checkpoint::{
     SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
     SchedulerCheckpointRecord,
@@ -610,6 +612,49 @@ impl RiscvSystemRun {
 
     pub fn scheduled_traps(&self) -> &[ScheduledRiscvTrap] {
         &self.scheduled_traps
+    }
+
+    pub fn cpu_activity(&self, cpu: CpuId) -> Option<RiscvSystemRunCpuActivity> {
+        self.cpu_activities().remove(&cpu)
+    }
+
+    pub fn has_cpu_activity(&self, cpu: CpuId) -> bool {
+        self.cpu_activity(cpu)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_cpu_count(&self) -> usize {
+        self.cpu_activities().len()
+    }
+
+    pub fn cpu_activities(&self) -> BTreeMap<CpuId, RiscvSystemRunCpuActivity> {
+        riscv_run_activity::collect_riscv_system_run_cpu_activity(
+            &self.turns,
+            &self.scheduled_traps,
+        )
+    }
+
+    pub fn partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<RiscvSystemRunPartitionActivity> {
+        self.partition_activities().remove(&partition)
+    }
+
+    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
+        self.partition_activity(partition)
+            .is_some_and(|activity| activity.has_activity())
+    }
+
+    pub fn active_partition_count(&self) -> usize {
+        self.partition_activities().len()
+    }
+
+    pub fn partition_activities(&self) -> BTreeMap<PartitionId, RiscvSystemRunPartitionActivity> {
+        riscv_run_activity::collect_riscv_system_run_partition_activity(
+            &self.turns,
+            &self.scheduled_traps,
+        )
     }
 
     pub const fn stop_reason(&self) -> RiscvSystemRunStopReason {
