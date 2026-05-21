@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_accelerator::{AcceleratorDmaCopy, AcceleratorEngineId};
 use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
@@ -6,7 +6,7 @@ use rem6_fabric::{FabricActivityProfile, FabricLaneActivity, FabricLinkId, Virtu
 use rem6_gpu::{GpuDeviceId, GpuDmaCopy};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRunProfile, PartitionEventId, PartitionId,
-    RecordedConservativeRunSummary, Tick,
+    RecordedConservativeRunSummary, Tick, WaitForEdge, WaitForEdgeKind, WaitForGraph, WaitForNode,
 };
 use rem6_memory::MemoryTargetId;
 
@@ -91,6 +91,7 @@ pub struct RiscvTopologyDmaStageRunSummary {
     accelerator_activity: BTreeMap<AcceleratorEngineId, RiscvTopologyDmaDeviceActivity>,
     gpu_activity: BTreeMap<GpuDeviceId, RiscvTopologyDmaDeviceActivity>,
     fabric_activity: Vec<FabricLaneActivity>,
+    fabric_wait_for: WaitForGraph,
     dram_activity: Vec<DramTargetActivity>,
 }
 
@@ -111,6 +112,7 @@ impl RiscvTopologyDmaStageRunSummary {
             accelerator_activity: BTreeMap::new(),
             gpu_activity: BTreeMap::new(),
             fabric_activity: Vec::new(),
+            fabric_wait_for: WaitForGraph::new(),
             dram_activity: Vec::new(),
         }
     }
@@ -127,6 +129,11 @@ impl RiscvTopologyDmaStageRunSummary {
 
     pub fn with_fabric_activity(mut self, fabric_activity: Vec<FabricLaneActivity>) -> Self {
         self.fabric_activity = fabric_activity;
+        self
+    }
+
+    pub fn with_fabric_wait_for(mut self, fabric_wait_for: WaitForGraph) -> Self {
+        self.fabric_wait_for = fabric_wait_for;
         self
     }
 
@@ -274,6 +281,33 @@ impl RiscvTopologyDmaStageRunSummary {
 
     pub fn has_fabric_activity(&self) -> bool {
         self.fabric_transfer_count() != 0
+    }
+
+    pub fn fabric_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        self.fabric_wait_for.edges()
+    }
+
+    pub fn fabric_wait_for_edge_count(&self) -> usize {
+        self.fabric_wait_for.edge_count()
+    }
+
+    pub fn has_fabric_wait_for_edges(&self) -> bool {
+        self.fabric_wait_for_edge_count() != 0
+    }
+
+    pub fn fabric_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.fabric_wait_for.blocked_nodes()
+    }
+
+    pub fn fabric_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        wait_for_edge_kind_counts(self.fabric_wait_for_edges())
+    }
+
+    pub fn fabric_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.fabric_wait_for_edges()
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
     }
 
     pub fn dram_target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
@@ -444,6 +478,40 @@ impl RiscvTopologyDmaRunSummary {
         self.fabric_transfer_count() != 0
     }
 
+    pub fn fabric_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        let mut edges = self.read.fabric_wait_for_edges();
+        edges.extend(self.write.fabric_wait_for_edges());
+        edges
+    }
+
+    pub fn fabric_wait_for_edge_count(&self) -> usize {
+        self.read.fabric_wait_for_edge_count() + self.write.fabric_wait_for_edge_count()
+    }
+
+    pub fn has_fabric_wait_for_edges(&self) -> bool {
+        self.fabric_wait_for_edge_count() != 0
+    }
+
+    pub fn fabric_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        self.fabric_wait_for_edges()
+            .into_iter()
+            .map(|edge| edge.source().clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    pub fn fabric_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        wait_for_edge_kind_counts(self.fabric_wait_for_edges())
+    }
+
+    pub fn fabric_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.fabric_wait_for_edges()
+            .into_iter()
+            .filter(|edge| edge.kind() == kind)
+            .count()
+    }
+
     pub fn dram_target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
         self.dram_target_activities().remove(&target)
     }
@@ -552,6 +620,17 @@ fn merge_fabric_activity_maps(
             .and_modify(|stored| *stored = stored.clone().merge_window(activity.clone()))
             .or_insert_with(|| activity.clone());
     }
+}
+
+fn wait_for_edge_kind_counts<I>(edges: I) -> BTreeMap<WaitForEdgeKind, usize>
+where
+    I: IntoIterator<Item = WaitForEdge>,
+{
+    let mut counts = BTreeMap::new();
+    for edge in edges {
+        *counts.entry(edge.kind()).or_insert(0) += 1;
+    }
+    counts
 }
 
 fn collect_dram_activity(

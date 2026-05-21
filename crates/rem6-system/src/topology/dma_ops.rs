@@ -158,6 +158,7 @@ impl RiscvTopologySystem {
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
+        let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
         let mut issue_records = Vec::new();
         let mut transactions = Vec::<ParallelMemoryTransaction>::new();
@@ -247,6 +248,9 @@ impl RiscvTopologySystem {
         let fabric_activity = fabric_activity_start
             .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
             .unwrap_or_default();
+        let fabric_wait_for = fabric_wait_for_start
+            .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
+            .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
@@ -276,6 +280,7 @@ impl RiscvTopologySystem {
         )
         .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
         .with_fabric_activity(fabric_activity)
+        .with_fabric_wait_for(fabric_wait_for)
         .with_dram_activity(dram_activity))
     }
 
@@ -341,6 +346,7 @@ impl RiscvTopologySystem {
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
+        let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
         let mut issue_records = Vec::new();
         let mut rollbacks = Vec::new();
@@ -451,6 +457,9 @@ impl RiscvTopologySystem {
         let fabric_activity = fabric_activity_start
             .and_then(|marker| self.transport.fabric_lane_activities_since(marker))
             .unwrap_or_default();
+        let fabric_wait_for = fabric_wait_for_start
+            .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
+            .unwrap_or_default();
         let dram_activity = dram_activities_since(&memory, dram_activity_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
@@ -480,6 +489,7 @@ impl RiscvTopologySystem {
         )
         .with_device_activity(activity.accelerator_activity, activity.gpu_activity)
         .with_fabric_activity(fabric_activity)
+        .with_fabric_wait_for(fabric_wait_for)
         .with_dram_activity(dram_activity))
     }
 

@@ -16,7 +16,7 @@ use rem6_gpu::{
     GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuKernelId,
     GpuKernelLaunch, GpuPendingDmaWrite, GpuTopologyConfig, GpuWorkgroupCompletion, GpuWorkgroupId,
 };
-use rem6_kernel::{ClockDomain, ParallelRunProfile, PartitionId};
+use rem6_kernel::{ClockDomain, ParallelRunProfile, PartitionId, WaitForEdgeKind};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore, ResponseStatus,
@@ -1232,6 +1232,21 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
     assert_eq!(read_requests.occupied_ticks(), 2);
     assert_eq!(read_requests.queue_delay_ticks(), 1);
     assert!(summary.read().has_fabric_activity());
+    assert!(summary.read().has_fabric_wait_for_edges());
+    assert_eq!(
+        summary
+            .read()
+            .fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
+    assert_eq!(summary.read().fabric_wait_for_blocked_nodes().len(), 1);
+    assert!(summary.write().has_fabric_wait_for_edges());
+    assert_eq!(
+        summary
+            .write()
+            .fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
     assert_eq!(summary.read().active_fabric_lane_count(), 2);
     assert_eq!(summary.read().fabric_profile().active_lane_count(), 2);
     assert_eq!(summary.read().fabric_profile().transfer_count(), 4);
@@ -1245,6 +1260,20 @@ fn topology_system_batches_gpu_and_accelerator_dma_copies_on_shared_fabric() {
     assert_eq!(full_requests.occupied_ticks(), 4);
     assert_eq!(summary.active_fabric_lane_count(), 2);
     assert_eq!(summary.fabric_transfer_count(), 8);
+    assert!(summary.has_fabric_wait_for_edges());
+    assert_eq!(
+        summary.fabric_wait_for_edge_count(),
+        summary.read().fabric_wait_for_edge_count() + summary.write().fabric_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        summary
+            .read()
+            .fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue)
+            + summary
+                .write()
+                .fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+    );
     assert_eq!(summary.fabric_profile().active_lane_count(), 2);
     assert_eq!(summary.fabric_profile().transfer_count(), 8);
     assert_eq!(summary.fabric_profile().byte_count(), 26);
