@@ -68,6 +68,10 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
     data_cache_wait_for_edge_count: usize,
     data_cache_deadlock_diagnostic_count: usize,
+    fabric_wait_for_edge_count: usize,
+    fabric_deadlock_diagnostic_count: usize,
+    dram_wait_for_edge_count: usize,
+    dram_deadlock_diagnostic_count: usize,
     gpu_kernel_launch_count: usize,
     gpu_trace_event_count: usize,
     gpu_workgroup_completion_count: usize,
@@ -177,6 +181,20 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.data_cache_wait_for_edge_count = wait_for_edge_count;
         self.data_cache_deadlock_diagnostic_count = deadlock_diagnostic_count;
+        self
+    }
+
+    pub const fn with_resource_diagnostics(
+        mut self,
+        fabric_wait_for_edge_count: usize,
+        fabric_deadlock_diagnostic_count: usize,
+        dram_wait_for_edge_count: usize,
+        dram_deadlock_diagnostic_count: usize,
+    ) -> Self {
+        self.fabric_wait_for_edge_count = fabric_wait_for_edge_count;
+        self.fabric_deadlock_diagnostic_count = fabric_deadlock_diagnostic_count;
+        self.dram_wait_for_edge_count = dram_wait_for_edge_count;
+        self.dram_deadlock_diagnostic_count = dram_deadlock_diagnostic_count;
         self
     }
 
@@ -369,6 +387,54 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn has_data_cache_diagnostics(&self) -> bool {
         self.data_cache_wait_for_edge_count != 0 || self.data_cache_deadlock_diagnostic_count != 0
+    }
+
+    pub const fn fabric_wait_for_edge_count(&self) -> usize {
+        self.fabric_wait_for_edge_count
+    }
+
+    pub const fn fabric_deadlock_diagnostic_count(&self) -> usize {
+        self.fabric_deadlock_diagnostic_count
+    }
+
+    pub const fn has_fabric_diagnostics(&self) -> bool {
+        self.fabric_wait_for_edge_count != 0 || self.fabric_deadlock_diagnostic_count != 0
+    }
+
+    pub const fn dram_wait_for_edge_count(&self) -> usize {
+        self.dram_wait_for_edge_count
+    }
+
+    pub const fn dram_deadlock_diagnostic_count(&self) -> usize {
+        self.dram_deadlock_diagnostic_count
+    }
+
+    pub const fn has_dram_diagnostics(&self) -> bool {
+        self.dram_wait_for_edge_count != 0 || self.dram_deadlock_diagnostic_count != 0
+    }
+
+    pub const fn resource_wait_for_edge_count(&self) -> usize {
+        self.fabric_wait_for_edge_count + self.dram_wait_for_edge_count
+    }
+
+    pub const fn resource_deadlock_diagnostic_count(&self) -> usize {
+        self.fabric_deadlock_diagnostic_count + self.dram_deadlock_diagnostic_count
+    }
+
+    pub const fn has_resource_diagnostics(&self) -> bool {
+        self.has_fabric_diagnostics() || self.has_dram_diagnostics()
+    }
+
+    pub const fn full_system_wait_for_edge_count(&self) -> usize {
+        self.resource_wait_for_edge_count() + self.data_cache_wait_for_edge_count
+    }
+
+    pub const fn full_system_deadlock_diagnostic_count(&self) -> usize {
+        self.resource_deadlock_diagnostic_count() + self.data_cache_deadlock_diagnostic_count
+    }
+
+    pub const fn has_full_system_diagnostics(&self) -> bool {
+        self.has_resource_diagnostics() || self.has_data_cache_diagnostics()
     }
 
     pub const fn gpu_kernel_launch_count(&self) -> usize {

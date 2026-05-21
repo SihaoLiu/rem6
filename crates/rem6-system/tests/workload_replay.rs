@@ -156,6 +156,18 @@ fn hbm_profile(target: u32) -> ExternalMemoryProfile {
     .unwrap()
 }
 
+fn single_channel_ddr_profile(target: u32) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::ddr(
+        MemoryTargetId::new(target),
+        layout(),
+        1,
+        1,
+        DramGeometry::new(2, 64, 16).unwrap(),
+        dram_timing(),
+    )
+    .unwrap()
+}
+
 fn kernel_resource() -> WorkloadResource {
     WorkloadResource::new(
         resource_id("kernel"),
@@ -206,6 +218,56 @@ fn replay_topology() -> WorkloadTopology {
                 1,
                 8,
                 Address::new(0x9000),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_profiled_contended_fetches() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(single_channel_ddr_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x8000),
                 "cpu1.ifetch",
                 route_id("cpu1.fetch"),
             )
@@ -690,6 +752,25 @@ fn replay_manifest() -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_profiled_contended_fetches() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-profiled-contended-fetches"),
+        boot_image(),
+    )
+    .with_topology(replay_topology_with_profiled_contended_fetches())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
 fn replay_manifest_with_gpu_kernel() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay-gpu-kernel"), boot_image())
         .with_topology(replay_topology_with_gpu_kernel())
@@ -1040,6 +1121,22 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     assert!(!summary.has_unattributed_data_cache_parallel_runs());
     assert!(!summary.has_data_cache_diagnostics());
     assert_eq!(
+        summary.fabric_wait_for_edge_count(),
+        outcome.run().fabric_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.dram_wait_for_edge_count(),
+        outcome.run().dram_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.resource_wait_for_edge_count(),
+        outcome.run().fabric_wait_for_edge_count() + outcome.run().dram_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count(),
+        summary.resource_wait_for_edge_count() + summary.data_cache_wait_for_edge_count(),
+    );
+    assert_eq!(
         summary.full_system_parallel_scheduler_dispatch_count(),
         outcome
             .run()
@@ -1060,6 +1157,58 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     assert_eq!(outcome.run().scheduled_traps().len(), 2);
     assert!(outcome.run().active_partition_count() >= 2);
     assert!(outcome.run().max_parallel_scheduler_workers() >= 1);
+}
+
+#[test]
+fn workload_replay_summary_reports_resource_wait_diagnostics() {
+    let manifest = replay_manifest_with_profiled_contended_fetches();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert!(outcome.run().has_dram_wait_for_edges());
+    assert_eq!(
+        summary.fabric_wait_for_edge_count(),
+        outcome.run().fabric_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.fabric_deadlock_diagnostic_count(),
+        outcome.run().fabric_deadlock_diagnostic_count(),
+    );
+    assert_eq!(
+        summary.dram_wait_for_edge_count(),
+        outcome.run().dram_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.dram_deadlock_diagnostic_count(),
+        outcome.run().dram_deadlock_diagnostic_count(),
+    );
+    assert_eq!(
+        summary.resource_wait_for_edge_count(),
+        outcome.run().fabric_wait_for_edge_count() + outcome.run().dram_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.resource_deadlock_diagnostic_count(),
+        outcome.run().fabric_deadlock_diagnostic_count()
+            + outcome.run().dram_deadlock_diagnostic_count(),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count(),
+        summary.resource_wait_for_edge_count() + summary.data_cache_wait_for_edge_count(),
+    );
+    assert_eq!(
+        summary.full_system_deadlock_diagnostic_count(),
+        summary.resource_deadlock_diagnostic_count()
+            + summary.data_cache_deadlock_diagnostic_count(),
+    );
+    assert!(summary.has_dram_diagnostics());
+    assert!(summary.has_resource_diagnostics());
+    assert!(summary.has_full_system_diagnostics());
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]

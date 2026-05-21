@@ -16,10 +16,10 @@ use rem6_cpu::{
 };
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
-    DramTargetActivity, DramTiming,
+    DramMemoryWaitForMarker, DramTargetActivity, DramTiming,
 };
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, WaitForGraph};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
     MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
@@ -95,6 +95,30 @@ impl WorkloadMemoryBackend {
                 .lock()
                 .expect("workload replay DRAM lock")
                 .target_activities(),
+        }
+    }
+
+    fn mark_dram_wait_for(&self) -> Option<DramMemoryWaitForMarker> {
+        match self {
+            Self::Store(_) => None,
+            Self::Dram(dram) => Some(
+                dram.lock()
+                    .expect("workload replay DRAM lock")
+                    .mark_wait_for(),
+            ),
+        }
+    }
+
+    fn dram_wait_for_since(&self, marker: Option<DramMemoryWaitForMarker>) -> WaitForGraph {
+        let Some(marker) = marker else {
+            return WaitForGraph::new();
+        };
+        match self {
+            Self::Store(_) => WaitForGraph::new(),
+            Self::Dram(dram) => dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .wait_for_graph_since(&marker),
         }
     }
 
@@ -692,6 +716,8 @@ impl RiscvWorkloadReplay {
         let data_cache = self.build_data_cache(&memory)?;
         let gpu_devices = build_gpu_devices(topology)?;
         let transport = self.build_transport()?;
+        let fabric_wait_for_start = transport.mark_fabric_wait_for();
+        let dram_wait_for_start = memory.mark_dram_wait_for();
         let gpu_dma_activity = self.run_gpu_dma_copies(
             topology,
             &route_map,
@@ -790,6 +816,12 @@ impl RiscvWorkloadReplay {
         if !dram_target_activities.is_empty() {
             run = run.with_dram_activity(dram_target_activities);
         }
+        if let Some(fabric_wait_for) =
+            fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
+        {
+            run = run.with_fabric_wait_for(fabric_wait_for);
+        }
+        run = run.with_dram_wait_for(memory.dram_wait_for_since(dram_wait_for_start));
         let gpu_snapshots = gpu_snapshots(&gpu_devices);
         let gpu_activity =
             WorkloadGpuActivity::from_snapshots(gpu_launch_count, &gpu_before, &gpu_snapshots);
@@ -1421,6 +1453,12 @@ fn parallel_execution_summary(
         .with_data_cache_diagnostics(
             run.data_cache_wait_for_edge_count(),
             run.data_cache_deadlock_diagnostic_count(),
+        )
+        .with_resource_diagnostics(
+            run.fabric_wait_for_edge_count(),
+            run.fabric_deadlock_diagnostic_count(),
+            run.dram_wait_for_edge_count(),
+            run.dram_deadlock_diagnostic_count(),
         )
         .with_gpu_compute_counts(
             activities.gpu.kernel_launch_count,
