@@ -869,6 +869,66 @@ fn trace_frame_stream_parallel_ingestion_plan_rejects_reader_bytes_from_differen
 }
 
 #[test]
+fn trace_frame_stream_parallel_ingestion_plan_decodes_workers_on_threads_in_global_order() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let encoded = TraceFrameStream::new(vec![first, large, third, fourth])
+        .unwrap()
+        .encode();
+    let plan = TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 1, 2).unwrap();
+
+    let records = plan.decode_all_threaded(&encoded).unwrap();
+
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.record().index())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3],
+    );
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.worker_id())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 0, 0],
+    );
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.merge_order())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3],
+    );
+}
+
+#[test]
+fn trace_frame_stream_parallel_ingestion_plan_threaded_decode_rejects_unplanned_bytes() {
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+    let plan = TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 1, 1).unwrap();
+
+    let mut same_len_different_stream = encoded.clone();
+    let last = same_len_different_stream.len() - 1;
+    same_len_different_stream[last] ^= 0xff;
+    assert_eq!(
+        plan.decode_all_threaded(&same_len_different_stream)
+            .unwrap_err(),
+        ProtoError::FrameStreamIngestionPlanStreamMismatch {
+            expected_len: encoded.len(),
+            actual_len: same_len_different_stream.len(),
+        },
+    );
+}
+
+#[test]
 fn trace_frame_stream_shard_cursor_reads_only_its_shard_with_global_indexes() {
     let first =
         TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();

@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, thread};
 
 use crate::{ProtoError, TraceFrame, TraceFrameKind, FNV_OFFSET, FNV_PRIME};
 
@@ -468,6 +468,45 @@ impl TraceFrameStreamParallelIngestionPlan {
         reader.drain_all_round_robin()
     }
 
+    pub fn decode_all_threaded(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Vec<TraceFrameStreamWorkerRecord>, ProtoError> {
+        self.validate_stream_bytes(bytes)?;
+
+        let worker_plan = &self.worker_plan;
+        let worker_records = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_plan.worker_count());
+            for worker_id in 0..worker_plan.worker_count() {
+                handles.push(
+                    scope.spawn(move || decode_worker_records(bytes, worker_plan, worker_id)),
+                );
+            }
+
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("trace frame stream worker thread panicked")
+                })
+                .collect::<Result<Vec<_>, ProtoError>>()
+        })?;
+
+        let mut merge_buffer = TraceFrameStreamWorkerMergeBuffer::new(worker_plan);
+        let mut records = Vec::with_capacity(worker_plan.total_records());
+        for worker_records in worker_records {
+            for record in worker_records {
+                merge_buffer.push(record)?;
+                records.extend(merge_buffer.drain_ready());
+            }
+        }
+        if !merge_buffer.is_complete() {
+            return Err(ProtoError::TruncatedFrameStream);
+        }
+        Ok(records)
+    }
+
     fn validate_stream_bytes(&self, bytes: &[u8]) -> Result<(), ProtoError> {
         if bytes.len() != self.stream_len || stream_fingerprint(bytes) != self.stream_fingerprint {
             return Err(ProtoError::FrameStreamIngestionPlanStreamMismatch {
@@ -477,6 +516,19 @@ impl TraceFrameStreamParallelIngestionPlan {
         }
         Ok(())
     }
+}
+
+fn decode_worker_records(
+    bytes: &[u8],
+    worker_plan: &TraceFrameStreamWorkerPlan,
+    worker_id: usize,
+) -> Result<Vec<TraceFrameStreamWorkerRecord>, ProtoError> {
+    let mut cursor = TraceFrameStreamWorkerCursor::new(bytes, worker_plan, worker_id)?;
+    let mut records = Vec::new();
+    while let Some(record) = cursor.next_frame()? {
+        records.push(record);
+    }
+    Ok(records)
 }
 
 impl<'a> TraceFrameStreamParallelReader<'a> {
