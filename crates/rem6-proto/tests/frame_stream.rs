@@ -3,9 +3,9 @@ use rem6_proto::{
     DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader,
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
-    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan, TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerMergeBuffer,
-    TraceFrameStreamWorkerPlan, TraceHeader, TraceSourceId,
+    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamParallelReader,
+    TraceFrameStreamShardCursor, TraceFrameStreamShardPlan, TraceFrameStreamWorkerCursor,
+    TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan, TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -648,6 +648,101 @@ fn trace_frame_stream_worker_merge_buffer_rejects_duplicate_wrong_worker_and_out
             total_records: 2,
         },
     );
+}
+
+#[test]
+fn trace_frame_stream_parallel_reader_hides_worker_poll_order_from_output_order() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let encoded = TraceFrameStream::new(vec![
+        first.clone(),
+        large.clone(),
+        third.clone(),
+        fourth.clone(),
+    ])
+    .unwrap()
+    .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+
+    let mut reader = TraceFrameStreamParallelReader::new(&encoded, worker_plan).unwrap();
+    assert_eq!(reader.worker_count(), 2);
+    assert_eq!(reader.next_index(), 0);
+    assert_eq!(reader.pending_records(), 0);
+    assert_eq!(reader.decoded_records(), 0);
+
+    assert!(reader.poll_worker(1).unwrap().is_empty());
+    assert_eq!(reader.next_index(), 0);
+    assert_eq!(reader.pending_records(), 1);
+    assert_eq!(reader.decoded_records(), 1);
+
+    let ready = reader.poll_worker(0).unwrap();
+    assert_eq!(ready.len(), 2);
+    assert_eq!(ready[0].record().index(), 0);
+    assert_eq!(ready[0].record().frame(), &first);
+    assert_eq!(ready[1].record().index(), 1);
+    assert_eq!(ready[1].record().frame(), &large);
+    assert_eq!(reader.next_index(), 2);
+    assert_eq!(reader.pending_records(), 0);
+
+    let ready = reader.poll_worker(0).unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].record().index(), 2);
+    assert_eq!(ready[0].record().frame(), &third);
+
+    let ready = reader.poll_worker(0).unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].record().index(), 3);
+    assert_eq!(ready[0].record().frame(), &fourth);
+    assert!(reader.is_complete());
+    assert!(reader.worker_is_finished(0).unwrap());
+    assert!(reader.worker_is_finished(1).unwrap());
+}
+
+#[test]
+fn trace_frame_stream_parallel_reader_drains_all_round_robin_and_rejects_unknown_worker() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let encoded = TraceFrameStream::new(vec![first, large, third, fourth])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+
+    let mut reader = TraceFrameStreamParallelReader::new(&encoded, worker_plan).unwrap();
+    assert_eq!(
+        reader.poll_worker(2).unwrap_err(),
+        ProtoError::UnknownFrameStreamWorker {
+            worker_id: 2,
+            worker_count: 2,
+        },
+    );
+
+    let records = reader.drain_all_round_robin().unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.record().index())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3],
+    );
+    assert!(reader.is_complete());
+    assert_eq!(reader.pending_records(), 0);
+    assert_eq!(reader.decoded_records(), 4);
 }
 
 #[test]

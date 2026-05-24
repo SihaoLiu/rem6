@@ -11,9 +11,10 @@ mod frame_stream;
 pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
-    TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerCursor,
-    TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan, TraceFrameStreamWorkerRecord,
+    TraceFrameStreamParallelReader, TraceFrameStreamRecord, TraceFrameStreamShard,
+    TraceFrameStreamShardCursor, TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment,
+    TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan,
+    TraceFrameStreamWorkerRecord,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

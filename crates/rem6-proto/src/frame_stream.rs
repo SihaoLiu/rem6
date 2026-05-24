@@ -216,6 +216,13 @@ pub struct TraceFrameStreamWorkerMergeBuffer {
 }
 
 #[derive(Clone, Debug)]
+pub struct TraceFrameStreamParallelReader<'a> {
+    cursors: Vec<TraceFrameStreamWorkerCursor<'a>>,
+    merge_buffer: TraceFrameStreamWorkerMergeBuffer,
+    decoded_records: usize,
+}
+
+#[derive(Clone, Debug)]
 pub struct TraceFrameStreamWorkerCursor<'a> {
     bytes: &'a [u8],
     worker_id: usize,
@@ -382,6 +389,95 @@ impl TraceFrameStreamWorkerMergeBuffer {
 
     pub fn is_complete(&self) -> bool {
         self.next_index == self.records.len()
+    }
+}
+
+impl<'a> TraceFrameStreamParallelReader<'a> {
+    pub fn new(
+        bytes: &'a [u8],
+        worker_plan: TraceFrameStreamWorkerPlan,
+    ) -> Result<Self, ProtoError> {
+        let mut cursors = Vec::with_capacity(worker_plan.worker_count());
+        for worker_id in 0..worker_plan.worker_count() {
+            cursors.push(TraceFrameStreamWorkerCursor::new(
+                bytes,
+                &worker_plan,
+                worker_id,
+            )?);
+        }
+        let merge_buffer = TraceFrameStreamWorkerMergeBuffer::new(&worker_plan);
+
+        Ok(Self {
+            cursors,
+            merge_buffer,
+            decoded_records: 0,
+        })
+    }
+
+    pub fn poll_worker(
+        &mut self,
+        worker_id: usize,
+    ) -> Result<Vec<TraceFrameStreamWorkerRecord>, ProtoError> {
+        let worker_count = self.worker_count();
+        let cursor =
+            self.cursors
+                .get_mut(worker_id)
+                .ok_or(ProtoError::UnknownFrameStreamWorker {
+                    worker_id,
+                    worker_count,
+                })?;
+        if let Some(record) = cursor.next_frame()? {
+            self.merge_buffer.push(record)?;
+            self.decoded_records += 1;
+        }
+        Ok(self.merge_buffer.drain_ready())
+    }
+
+    pub fn drain_all_round_robin(
+        &mut self,
+    ) -> Result<Vec<TraceFrameStreamWorkerRecord>, ProtoError> {
+        let mut records = Vec::new();
+        while !self.is_complete() {
+            let decoded_before_round = self.decoded_records;
+            for worker_id in 0..self.worker_count() {
+                records.extend(self.poll_worker(worker_id)?);
+            }
+            if self.decoded_records == decoded_before_round && !self.is_complete() {
+                return Err(ProtoError::TruncatedFrameStream);
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn worker_is_finished(&self, worker_id: usize) -> Result<bool, ProtoError> {
+        let worker_count = self.worker_count();
+        self.cursors
+            .get(worker_id)
+            .map(TraceFrameStreamWorkerCursor::is_finished)
+            .ok_or(ProtoError::UnknownFrameStreamWorker {
+                worker_id,
+                worker_count,
+            })
+    }
+
+    pub fn worker_count(&self) -> usize {
+        self.cursors.len()
+    }
+
+    pub const fn decoded_records(&self) -> usize {
+        self.decoded_records
+    }
+
+    pub fn next_index(&self) -> usize {
+        self.merge_buffer.next_index()
+    }
+
+    pub fn pending_records(&self) -> usize {
+        self.merge_buffer.pending_records()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.merge_buffer.is_complete()
     }
 }
 
