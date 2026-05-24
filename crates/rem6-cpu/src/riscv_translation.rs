@@ -9,7 +9,8 @@ use rem6_transport::{
 
 use crate::{
     access_width, memory_width_size, store_bytes, CpuDataConfig, CpuTranslationFrontend,
-    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCpuError, RiscvDataAccessTarget,
+    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
+    RiscvCpuError, RiscvDataAccessTarget,
 };
 
 use super::OutstandingDataAccess;
@@ -25,6 +26,33 @@ pub(crate) struct PendingDataTranslation {
 impl PendingDataTranslation {
     pub(crate) const fn fetch_request(&self) -> MemoryRequestId {
         self.fetch_request
+    }
+}
+
+impl RiscvCoreState {
+    pub(super) fn next_unissued_data_access(
+        &self,
+    ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
+        self.events.iter().find_map(|event| {
+            let fetch_request = event.fetch().request_id();
+            if self.issued_data_for_fetches.contains(&fetch_request) {
+                return None;
+            }
+            if self
+                .pending_data_translations
+                .values()
+                .any(|pending| pending.fetch_request() == fetch_request)
+            {
+                return None;
+            }
+            if self.ready_translated_data.contains_key(&fetch_request) {
+                return None;
+            }
+            event
+                .execution()
+                .memory_access()
+                .map(|access| (fetch_request, access.clone()))
+        })
     }
 }
 
@@ -55,6 +83,54 @@ impl RiscvCore {
             .data_translation
             .as_ref()
             .and_then(|frontend| frontend.tlb().map(|tlb| tlb.stats()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_next_action_with_data_translation<F, D>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        page_map: &TranslationPageMap,
+        fetch_responder: F,
+        data_responder: D,
+    ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+        D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+    {
+        if self.core.has_pending_fetch() || self.has_outstanding_data_request() {
+            return Ok(None);
+        }
+        if self.has_pending_trap() {
+            return Ok(None);
+        }
+
+        if let Some(event) = self.execute_next_completed_fetch()? {
+            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                event,
+            ))));
+        }
+
+        let had_unissued_data = self.has_unissued_data_access();
+        if let Some(event) = self.issue_next_translated_data_access(
+            scheduler,
+            transport,
+            data_trace,
+            page_map,
+            data_responder,
+        )? {
+            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
+        }
+        if had_unissued_data || self.has_pending_data_access() {
+            return Ok(None);
+        }
+
+        let event = self
+            .issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)
+            .map_err(RiscvCpuError::Cpu)?;
+        Ok(Some(RiscvCoreDriveAction::FetchIssued { event }))
     }
 
     pub fn issue_next_translated_data_access<F>(

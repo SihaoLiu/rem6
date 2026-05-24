@@ -326,6 +326,47 @@ fn drive_one_action(
     .unwrap()
 }
 
+fn drive_one_translated_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    page_map: &TranslationPageMap,
+) -> Option<RiscvCoreDriveAction> {
+    let fetch_store = store.clone();
+    let data_store = store;
+    core.drive_next_action_with_data_translation(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        MemoryTrace::new(),
+        page_map,
+        move |delivery, _context| {
+            let response = fetch_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+        move |delivery, _context| {
+            let response = data_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+}
+
 fn issue_one_data_access(
     core: &RiscvCore,
     store: Arc<Mutex<PartitionedMemoryStore>>,
@@ -460,6 +501,85 @@ fn riscv_core_driver_waits_for_store_response_before_next_fetch() {
     assert!(matches!(
         drive_one_action(&core, store, &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+}
+
+#[test]
+fn riscv_core_translated_driver_waits_for_data_translation_before_next_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(8, 2, 0x3, 5, 0x03), i_type(4, 0, 0x0, 6, 0x13)],
+        &[(0x9008, vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe])],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert_eq!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        None
+    );
+    assert!(core.has_pending_data_access());
+    assert!(!core.has_pending_fetch());
+
+    scheduler
+        .schedule_after(core.partition(), 1, |_context| {})
+        .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(5)), 0xfedc_ba98_7654_3210);
+    let data_events = core.data_access_events();
+    assert_eq!(data_events[0].physical_address(), Address::new(0x9008));
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+}
+
+#[test]
+fn riscv_core_plain_data_issue_rejects_configured_translation_frontend() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+    let error = core
+        .issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| panic!("plain issue must not bypass translation"),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvCpuError::DataTranslationPageMapRequired { fetch }
+            if fetch == execution.fetch().request_id()
     ));
 }
 

@@ -843,6 +843,15 @@ impl RiscvCore {
             || !state.ready_translated_data.is_empty()
     }
 
+    fn has_outstanding_data_request(&self) -> bool {
+        !self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .outstanding_data
+            .is_empty()
+    }
+
     pub fn has_unissued_data_access(&self) -> bool {
         self.next_unissued_data_access().is_some()
     }
@@ -1142,6 +1151,9 @@ impl RiscvCore {
         tick: Tick,
         transport: &MemoryTransport,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        if let Some(fetch) = self.data_translation_page_map_required_fetch() {
+            return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
+        }
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
@@ -1208,6 +1220,9 @@ impl RiscvCore {
         tick: Tick,
         bus: &MmioBus,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        if let Some(fetch) = self.data_translation_page_map_required_fetch() {
+            return Err(RiscvCpuError::DataTranslationPageMapRequired { fetch });
+        }
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
@@ -1242,26 +1257,15 @@ impl RiscvCore {
 
     fn next_unissued_data_access(&self) -> Option<(MemoryRequestId, MemoryAccessKind)> {
         let state = self.state.lock().expect("riscv core lock");
-        state.events.iter().find_map(|event| {
-            let fetch_request = event.fetch().request_id();
-            if state.issued_data_for_fetches.contains(&fetch_request) {
-                return None;
-            }
-            if state
-                .pending_data_translations
-                .values()
-                .any(|pending| pending.fetch_request() == fetch_request)
-            {
-                return None;
-            }
-            if state.ready_translated_data.contains_key(&fetch_request) {
-                return None;
-            }
-            event
-                .execution()
-                .memory_access()
-                .map(|access| (fetch_request, access.clone()))
-        })
+        state.next_unissued_data_access()
+    }
+
+    fn data_translation_page_map_required_fetch(&self) -> Option<MemoryRequestId> {
+        let state = self.state.lock().expect("riscv core lock");
+        state.data_translation.as_ref()?;
+        state
+            .next_unissued_data_access()
+            .map(|(fetch_request, _access)| fetch_request)
     }
 
     fn record_data_issue(&self, issue: OutstandingDataAccess) {

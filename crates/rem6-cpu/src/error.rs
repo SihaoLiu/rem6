@@ -153,6 +153,9 @@ pub enum RiscvCpuError {
     MissingDataTranslationConfig {
         fetch: MemoryRequestId,
     },
+    DataTranslationPageMapRequired {
+        fetch: MemoryRequestId,
+    },
     MissingFetchData {
         request: MemoryRequestId,
     },
@@ -208,6 +211,12 @@ impl fmt::Display for RiscvCpuError {
             Self::MissingDataTranslationConfig { fetch } => write!(
                 formatter,
                 "fetch response {} from agent {} needs a data translation frontend",
+                fetch.sequence(),
+                fetch.agent().get()
+            ),
+            Self::DataTranslationPageMapRequired { fetch } => write!(
+                formatter,
+                "fetch response {} from agent {} needs a data translation page map",
                 fetch.sequence(),
                 fetch.agent().get()
             ),
