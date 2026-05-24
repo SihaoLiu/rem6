@@ -3,27 +3,30 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_memory::{
-    Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryResponse,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
+    MemoryRequestId, MemoryResponse,
 };
 use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    MesiCacheController, MesiCacheControllerError, MesiCacheControllerResult,
-    MesiCacheControllerResultKind, MesiCacheControllerSnapshot, MshrCompletion, MshrHandle,
-    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
-    MshrTargetSource,
+    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueError, CacheWriteQueueHandle,
+    CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate, MesiCacheController,
+    MesiCacheControllerError, MesiCacheControllerResult, MesiCacheControllerResultKind,
+    MesiCacheControllerSnapshot, MshrCompletion, MshrHandle, MshrQosClass, MshrQosProfile,
+    MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MesiCacheBankError {
     Controller(MesiCacheControllerError),
     Mshr(MshrQueueError),
+    WriteQueue(CacheWriteQueueError),
     WrongAgent {
         expected: AgentId,
         actual: AgentId,
     },
+    WriteQueueDisabled,
     UnknownPendingFill {
         response: MemoryRequestId,
     },
@@ -40,6 +43,10 @@ pub enum MesiCacheBankError {
         snapshot_has_mshr: bool,
         bank_has_mshr: bool,
     },
+    SnapshotWriteQueueModeMismatch {
+        snapshot_has_write_queue: bool,
+        bank_has_write_queue: bool,
+    },
     DuplicateSnapshotLine {
         line: Address,
     },
@@ -53,12 +60,14 @@ impl fmt::Display for MesiCacheBankError {
         match self {
             Self::Controller(error) => write!(formatter, "{error}"),
             Self::Mshr(error) => write!(formatter, "{error}"),
+            Self::WriteQueue(error) => write!(formatter, "{error}"),
             Self::WrongAgent { expected, actual } => write!(
                 formatter,
                 "MESI cache bank for agent {} cannot accept request from agent {}",
                 expected.get(),
                 actual.get()
             ),
+            Self::WriteQueueDisabled => write!(formatter, "MESI cache bank has no write queue"),
             Self::UnknownPendingFill { response } => write!(
                 formatter,
                 "MESI cache bank has no pending fill for response {} from agent {}",
@@ -90,6 +99,13 @@ impl fmt::Display for MesiCacheBankError {
                 formatter,
                 "MESI cache bank snapshot MSHR mode {snapshot_has_mshr} cannot restore bank MSHR mode {bank_has_mshr}"
             ),
+            Self::SnapshotWriteQueueModeMismatch {
+                snapshot_has_write_queue,
+                bank_has_write_queue,
+            } => write!(
+                formatter,
+                "MESI cache bank snapshot write queue mode {snapshot_has_write_queue} cannot restore bank write queue mode {bank_has_write_queue}"
+            ),
             Self::DuplicateSnapshotLine { line } => {
                 write!(formatter, "MESI cache bank snapshot repeats line {:#x}", line.get())
             }
@@ -108,11 +124,14 @@ impl Error for MesiCacheBankError {
         match self {
             Self::Controller(error) => Some(error),
             Self::Mshr(error) => Some(error),
+            Self::WriteQueue(error) => Some(error),
             Self::WrongAgent { .. }
+            | Self::WriteQueueDisabled
             | Self::UnknownPendingFill { .. }
             | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
+            | Self::SnapshotWriteQueueModeMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. } => None,
         }
@@ -131,6 +150,12 @@ impl From<MshrQueueError> for MesiCacheBankError {
     }
 }
 
+impl From<CacheWriteQueueError> for MesiCacheBankError {
+    fn from(error: CacheWriteQueueError) -> Self {
+        Self::WriteQueue(error)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MesiCacheBankSnapshot {
     agent: AgentId,
@@ -138,6 +163,7 @@ pub struct MesiCacheBankSnapshot {
     next_sequence: u64,
     lines: Vec<MesiCacheControllerSnapshot>,
     mshr: Option<MshrQueueSnapshot>,
+    write_queue: Option<CacheWriteQueueSnapshot>,
 }
 
 impl MesiCacheBankSnapshot {
@@ -153,6 +179,7 @@ impl MesiCacheBankSnapshot {
             next_sequence,
             lines,
             mshr: None,
+            write_queue: None,
         }
     }
 
@@ -169,7 +196,13 @@ impl MesiCacheBankSnapshot {
             next_sequence,
             lines,
             mshr: Some(mshr),
+            write_queue: None,
         }
+    }
+
+    pub fn with_write_queue(mut self, write_queue: CacheWriteQueueSnapshot) -> Self {
+        self.write_queue = Some(write_queue);
+        self
     }
 
     pub const fn agent(&self) -> AgentId {
@@ -190,6 +223,10 @@ impl MesiCacheBankSnapshot {
 
     pub fn mshr(&self) -> Option<&MshrQueueSnapshot> {
         self.mshr.as_ref()
+    }
+
+    pub fn write_queue(&self) -> Option<&CacheWriteQueueSnapshot> {
+        self.write_queue.as_ref()
     }
 
     pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
@@ -222,6 +259,7 @@ pub struct MesiCacheBank {
     lines: BTreeMap<Address, MesiCacheController>,
     pending_fills: BTreeMap<MemoryRequestId, PendingBankFill>,
     mshr: Option<MshrQueue>,
+    write_queue: Option<CacheWriteQueue>,
 }
 
 impl MesiCacheBank {
@@ -233,6 +271,7 @@ impl MesiCacheBank {
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
             mshr: None,
+            write_queue: None,
         }
     }
 
@@ -248,6 +287,40 @@ impl MesiCacheBank {
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
+            write_queue: None,
+        }
+    }
+
+    pub fn new_with_write_queue(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        write_queue_config: CacheWriteQueueConfig,
+    ) -> Self {
+        Self {
+            agent,
+            layout,
+            next_sequence: 0,
+            lines: BTreeMap::new(),
+            pending_fills: BTreeMap::new(),
+            mshr: None,
+            write_queue: Some(CacheWriteQueue::new(write_queue_config)),
+        }
+    }
+
+    pub fn new_with_mshr_and_write_queue(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        mshr_config: MshrQueueConfig,
+        write_queue_config: CacheWriteQueueConfig,
+    ) -> Self {
+        Self {
+            agent,
+            layout,
+            next_sequence: 0,
+            lines: BTreeMap::new(),
+            pending_fills: BTreeMap::new(),
+            mshr: Some(MshrQueue::new(mshr_config)),
+            write_queue: Some(CacheWriteQueue::new(write_queue_config)),
         }
     }
 
@@ -305,6 +378,24 @@ impl MesiCacheBank {
         self.mshr.as_ref().map(MshrQueue::qos_profile)
     }
 
+    pub fn write_queue_allocated_count(&self) -> usize {
+        self.write_queue
+            .as_ref()
+            .map_or(0, CacheWriteQueue::allocated_count)
+    }
+
+    pub fn write_queue_next_ready_tick(&self) -> Option<u64> {
+        self.write_queue
+            .as_ref()
+            .and_then(CacheWriteQueue::next_ready_tick)
+    }
+
+    pub fn write_queue_ready_handles(&self, tick: u64) -> Vec<CacheWriteQueueHandle> {
+        self.write_queue
+            .as_ref()
+            .map_or_else(Vec::new, |queue| queue.ready_handles(tick))
+    }
+
     pub fn state(&self, address: Address) -> Option<MesiState> {
         self.lines
             .get(&self.layout.line_address(address))
@@ -323,7 +414,7 @@ impl MesiCacheBank {
             .values()
             .map(MesiCacheController::snapshot)
             .collect();
-        match &self.mshr {
+        let snapshot = match &self.mshr {
             Some(mshr) => MesiCacheBankSnapshot::new_with_mshr(
                 self.agent,
                 self.layout,
@@ -332,6 +423,10 @@ impl MesiCacheBank {
                 mshr.snapshot(),
             ),
             None => MesiCacheBankSnapshot::new(self.agent, self.layout, self.next_sequence, lines),
+        };
+        match &self.write_queue {
+            Some(write_queue) => snapshot.with_write_queue(write_queue.snapshot()),
+            None => snapshot,
         }
     }
 
@@ -357,6 +452,22 @@ impl MesiCacheBank {
                 return Err(MesiCacheBankError::SnapshotMshrModeMismatch {
                     snapshot_has_mshr: true,
                     bank_has_mshr: false,
+                });
+            }
+        };
+
+        let restored_write_queue = match (&self.write_queue, snapshot.write_queue()) {
+            (Some(write_queue), Some(snapshot_write_queue)) => {
+                let mut restored = CacheWriteQueue::new(write_queue.config().clone());
+                restored.restore(snapshot_write_queue)?;
+                Some(restored)
+            }
+            (Some(write_queue), None) => Some(CacheWriteQueue::new(write_queue.config().clone())),
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(MesiCacheBankError::SnapshotWriteQueueModeMismatch {
+                    snapshot_has_write_queue: true,
+                    bank_has_write_queue: false,
                 });
             }
         };
@@ -387,6 +498,7 @@ impl MesiCacheBank {
         self.lines = lines;
         self.pending_fills = pending_fills;
         self.mshr = restored_mshr;
+        self.write_queue = restored_write_queue;
         Ok(())
     }
 
@@ -518,6 +630,95 @@ impl MesiCacheBank {
         controller.accept_snoop(event).map_err(Into::into)
     }
 
+    pub fn enqueue_writeback(
+        &mut self,
+        request: MemoryRequest,
+        secure: bool,
+        ready_tick: u64,
+    ) -> Result<CacheWriteQueueUpdate, MesiCacheBankError> {
+        self.validate_write_queue_request(&request)?;
+        self.write_queue_mut()?
+            .enqueue_writeback(request, secure, ready_tick)
+            .map_err(Into::into)
+    }
+
+    pub fn enqueue_reserved_writeback(
+        &mut self,
+        request: MemoryRequest,
+        secure: bool,
+        ready_tick: u64,
+    ) -> Result<CacheWriteQueueUpdate, MesiCacheBankError> {
+        self.validate_write_queue_request(&request)?;
+        self.write_queue_mut()?
+            .enqueue_reserved_writeback(request, secure, ready_tick)
+            .map_err(Into::into)
+    }
+
+    pub fn enqueue_uncacheable_write(
+        &mut self,
+        request: MemoryRequest,
+        secure: bool,
+        ready_tick: u64,
+    ) -> Result<CacheWriteQueueUpdate, MesiCacheBankError> {
+        self.validate_write_queue_request(&request)?;
+        self.write_queue_mut()?
+            .enqueue_uncacheable_write(request, secure, ready_tick)
+            .map_err(Into::into)
+    }
+
+    pub fn enqueue_reserved_uncacheable_write(
+        &mut self,
+        request: MemoryRequest,
+        secure: bool,
+        ready_tick: u64,
+    ) -> Result<CacheWriteQueueUpdate, MesiCacheBankError> {
+        self.validate_write_queue_request(&request)?;
+        self.write_queue_mut()?
+            .enqueue_reserved_uncacheable_write(request, secure, ready_tick)
+            .map_err(Into::into)
+    }
+
+    pub fn issue_write_queue(
+        &mut self,
+        tick: u64,
+    ) -> Result<Option<CacheWriteQueueIssue>, MesiCacheBankError> {
+        self.write_queue_mut()?.issue_next(tick).map_err(Into::into)
+    }
+
+    pub fn write_queue_find_match(
+        &self,
+        line: Address,
+        secure: bool,
+        ignore_uncacheable: bool,
+    ) -> Option<CacheWriteQueueHandle> {
+        let line = self.layout.line_address(line);
+        self.write_queue
+            .as_ref()
+            .and_then(|queue| queue.find_match(line, secure, ignore_uncacheable))
+    }
+
+    pub fn write_queue_pending_conflict(
+        &self,
+        line: Address,
+        secure: bool,
+    ) -> Option<CacheWriteQueueHandle> {
+        let line = self.layout.line_address(line);
+        self.write_queue
+            .as_ref()
+            .and_then(|queue| queue.pending_conflict(line, secure))
+    }
+
+    pub fn write_queue_satisfy_read(
+        &self,
+        address: Address,
+        size: AccessSize,
+        secure: bool,
+    ) -> Result<Option<Vec<u8>>, MesiCacheBankError> {
+        self.write_queue_ref()?
+            .satisfy_read(address, size, secure)
+            .map_err(Into::into)
+    }
+
     fn validate_request_agent(&self, request: &MemoryRequest) -> Result<(), MesiCacheBankError> {
         let actual = request.id().agent();
         if actual != self.agent {
@@ -528,6 +729,38 @@ impl MesiCacheBank {
         }
 
         Ok(())
+    }
+
+    fn validate_write_queue_request(
+        &self,
+        request: &MemoryRequest,
+    ) -> Result<(), MesiCacheBankError> {
+        self.validate_request_agent(request)?;
+        let actual = request.line_layout();
+        if actual != self.layout {
+            return Err(
+                MesiCacheControllerError::Memory(MemoryError::LineLayoutMismatch {
+                    request: request.id(),
+                    expected: self.layout,
+                    actual,
+                })
+                .into(),
+            );
+        }
+
+        Ok(())
+    }
+
+    fn write_queue_ref(&self) -> Result<&CacheWriteQueue, MesiCacheBankError> {
+        self.write_queue
+            .as_ref()
+            .ok_or(MesiCacheBankError::WriteQueueDisabled)
+    }
+
+    fn write_queue_mut(&mut self) -> Result<&mut CacheWriteQueue, MesiCacheBankError> {
+        self.write_queue
+            .as_mut()
+            .ok_or(MesiCacheBankError::WriteQueueDisabled)
     }
 
     fn can_merge_pending_read_miss(&self, line: Address, request: &MemoryRequest) -> bool {
