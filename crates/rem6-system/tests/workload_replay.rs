@@ -1407,7 +1407,7 @@ fn workload_replay_reconstructs_riscv_data_route() {
     );
     let data_events = outcome.cluster().core(cpu0).unwrap().data_access_events();
     assert_eq!(data_events.len(), 2);
-    assert_eq!(data_events[0].endpoint().as_str(), "cpu0.dmem");
+    assert_eq!(data_events[0].endpoint().unwrap().as_str(), "cpu0.dmem");
     plan.verify_result(outcome.result()).unwrap();
 }
 

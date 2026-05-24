@@ -722,6 +722,8 @@ fn riscv_core_issues_parallel_mmio_load_and_updates_register_after_response() {
     );
     assert_eq!(events[0].target(), RiscvDataAccessTarget::Mmio { route });
     assert_eq!(events[1].target(), RiscvDataAccessTarget::Mmio { route });
+    assert_eq!(events[0].route(), None);
+    assert_eq!(events[0].endpoint(), None);
     assert_eq!(
         events[1].data(),
         Some(&[0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f][..])

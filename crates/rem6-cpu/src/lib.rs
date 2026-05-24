@@ -1520,21 +1520,17 @@ impl RiscvDataAccessRecord {
         self.partition
     }
 
-    pub fn route(&self) -> MemoryRouteId {
+    pub fn route(&self) -> Option<MemoryRouteId> {
         match &self.target {
-            RiscvDataAccessTarget::Memory { route, .. } => *route,
-            RiscvDataAccessTarget::Mmio { .. } => {
-                panic!("MMIO data access does not have a memory route")
-            }
+            RiscvDataAccessTarget::Memory { route, .. } => Some(*route),
+            RiscvDataAccessTarget::Mmio { .. } => None,
         }
     }
 
-    pub fn endpoint(&self) -> &TransportEndpointId {
+    pub fn endpoint(&self) -> Option<&TransportEndpointId> {
         match &self.target {
-            RiscvDataAccessTarget::Memory { endpoint, .. } => endpoint,
-            RiscvDataAccessTarget::Mmio { .. } => {
-                panic!("MMIO data access does not have a transport endpoint")
-            }
+            RiscvDataAccessTarget::Memory { endpoint, .. } => Some(endpoint),
+            RiscvDataAccessTarget::Mmio { .. } => None,
         }
     }
 
@@ -1606,11 +1602,11 @@ impl RiscvDataAccessEvent {
         self.record.partition()
     }
 
-    pub fn route(&self) -> MemoryRouteId {
+    pub fn route(&self) -> Option<MemoryRouteId> {
         self.record.route()
     }
 
-    pub fn endpoint(&self) -> &TransportEndpointId {
+    pub fn endpoint(&self) -> Option<&TransportEndpointId> {
         self.record.endpoint()
     }
 
