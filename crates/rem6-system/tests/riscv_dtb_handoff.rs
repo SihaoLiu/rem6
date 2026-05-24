@@ -8,7 +8,10 @@ use rem6_platform::{
     Platform, PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig,
     PlatformRiscvDeviceTreeConfig,
 };
-use rem6_system::{RiscvTopologyDramConfig, RiscvTopologyMemoryConfig, RiscvTopologySystem};
+use rem6_system::{
+    RiscvLinuxBootHandoffConfig, RiscvLinuxInitrdImage, RiscvTopologyDramConfig,
+    RiscvTopologyMemoryConfig, RiscvTopologySystem, RiscvTopologySystemError,
+};
 use rem6_timer::{ClintId, ClintResetPolicy};
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -204,6 +207,22 @@ fn read_store_blob(system: &RiscvTopologySystem, start: Address, len: usize) -> 
     bytes
 }
 
+fn read_dram_blob(system: &RiscvTopologySystem, start: Address, len: usize) -> Vec<u8> {
+    let mut cursor = start.get();
+    let mut bytes = Vec::with_capacity(len);
+    let controller = system.dram_memory_controller().unwrap().lock().unwrap();
+    while bytes.len() < len {
+        let address = Address::new(cursor);
+        let line = layout().line_address(address);
+        let offset = layout().line_offset(address) as usize;
+        let data = controller.line_data(MemoryTargetId::new(0), line).unwrap();
+        let take = (data.len() - offset).min(len - bytes.len());
+        bytes.extend_from_slice(&data[offset..offset + take]);
+        cursor += take as u64;
+    }
+    bytes
+}
+
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
@@ -280,6 +299,137 @@ fn topology_system_installs_linux_boot_data_in_riscv_device_tree_handoff() {
     assert!(contains_bytes(&dtb, b"linux,initrd-end\0"));
     assert!(contains_bytes(&dtb, &0x8800_0000_u64.to_be_bytes()));
     assert!(contains_bytes(&dtb, &0x8800_2000_u64.to_be_bytes()));
+    assert_a1_handoff(&system, dtb_addr);
+}
+
+#[test]
+fn topology_system_installs_riscv_linux_boot_handoff_with_initrd_blob() {
+    let topology = topology();
+    let platform = platform_with_two_hart_clint(&topology, ClintId::new(3));
+    let memory = RiscvTopologyMemoryConfig::new(MemoryTargetId::new(0), layout()).add_region(
+        Address::new(0x8000_0000),
+        AccessSize::new(0x1000_0000).unwrap(),
+    );
+    let image = BootImage::new(Address::new(0x8000_0000));
+    let system = RiscvTopologySystem::with_min_remote_delay(topology, cluster_config(), 2)
+        .unwrap()
+        .with_boot_image_memory(memory, &image)
+        .unwrap()
+        .with_platform(platform)
+        .unwrap();
+    let bootargs = "console=ttyS0 root=/dev/vda";
+    let initrd_addr = Address::new(0x8800_0008);
+    let initrd_data = (0..24).map(|byte| byte as u8 + 0xa0).collect::<Vec<_>>();
+    let dtb_addr = Address::new(0x87e0_0000);
+    let handoff =
+        RiscvLinuxBootHandoffConfig::new(device_tree_config().with_bootargs(bootargs), dtb_addr)
+            .with_initrd(RiscvLinuxInitrdImage::new(initrd_addr, initrd_data.clone()).unwrap());
+
+    let report = system.install_riscv_linux_boot_handoff(&handoff).unwrap();
+
+    assert_eq!(report.dtb().dtb_addr(), dtb_addr);
+    assert_eq!(
+        report.initrd_load_report().unwrap().writes()[0].line(),
+        Address::new(0x8800_0000)
+    );
+    assert_eq!(
+        read_store_blob(&system, initrd_addr, initrd_data.len()),
+        initrd_data
+    );
+
+    let dtb = read_store_blob(&system, dtb_addr, report.dtb().dtb_len());
+    assert!(contains_bytes(&dtb, format!("{bootargs}\0").as_bytes()));
+    assert!(contains_bytes(&dtb, &initrd_addr.get().to_be_bytes()));
+    assert!(contains_bytes(
+        &dtb,
+        &(initrd_addr.get() + initrd_data.len() as u64).to_be_bytes()
+    ));
+    assert_a1_handoff(&system, dtb_addr);
+}
+
+#[test]
+fn riscv_linux_boot_handoff_does_not_write_initrd_when_dtb_validation_fails() {
+    let topology = topology();
+    let memory = RiscvTopologyMemoryConfig::new(MemoryTargetId::new(0), layout()).add_region(
+        Address::new(0x8000_0000),
+        AccessSize::new(0x1000_0000).unwrap(),
+    );
+    let initrd_addr = Address::new(0x8800_0008);
+    let sentinel = vec![0x11; 24];
+    let image = BootImage::new(Address::new(0x8000_0000))
+        .add_segment(initrd_addr, sentinel.clone())
+        .unwrap();
+    let system = RiscvTopologySystem::with_min_remote_delay(topology, cluster_config(), 2)
+        .unwrap()
+        .with_boot_image_memory(memory, &image)
+        .unwrap();
+    let handoff = RiscvLinuxBootHandoffConfig::new(device_tree_config(), Address::new(0x87e0_0000))
+        .with_initrd(
+            RiscvLinuxInitrdImage::new(
+                initrd_addr,
+                (0..24).map(|byte| byte as u8 + 0xa0).collect(),
+            )
+            .unwrap(),
+        );
+
+    let error = system
+        .install_riscv_linux_boot_handoff(&handoff)
+        .unwrap_err();
+
+    assert!(matches!(error, RiscvTopologySystemError::MissingPlatform));
+    assert_eq!(
+        read_store_blob(&system, initrd_addr, sentinel.len()),
+        sentinel
+    );
+}
+
+#[test]
+fn topology_system_installs_riscv_linux_boot_handoff_with_initrd_blob_into_dram() {
+    let topology = topology();
+    let platform = platform_with_two_hart_clint(&topology, ClintId::new(4));
+    let dram = RiscvTopologyDramConfig::new(
+        MemoryTargetId::new(0),
+        layout(),
+        DramGeometry::new(2, 64, 16).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+    )
+    .add_region(
+        Address::new(0x8000_0000),
+        AccessSize::new(0x1000_0000).unwrap(),
+    );
+    let image = BootImage::new(Address::new(0x8000_0000));
+    let system = RiscvTopologySystem::with_min_remote_delay(topology, cluster_config(), 2)
+        .unwrap()
+        .with_boot_image_dram_memory(dram, &image)
+        .unwrap()
+        .with_platform(platform)
+        .unwrap();
+    let bootargs = "console=ttyS0 root=/dev/vda rw";
+    let initrd_addr = Address::new(0x8800_0010);
+    let initrd_data = (0..32).map(|byte| byte as u8 + 0x40).collect::<Vec<_>>();
+    let dtb_addr = Address::new(0x87e0_0000);
+    let handoff =
+        RiscvLinuxBootHandoffConfig::new(device_tree_config().with_bootargs(bootargs), dtb_addr)
+            .with_initrd(RiscvLinuxInitrdImage::new(initrd_addr, initrd_data.clone()).unwrap());
+
+    let report = system.install_riscv_linux_boot_handoff(&handoff).unwrap();
+
+    assert_eq!(
+        report.initrd_load_report().unwrap().writes()[0].line(),
+        initrd_addr
+    );
+    assert_eq!(
+        read_dram_blob(&system, initrd_addr, initrd_data.len()),
+        initrd_data
+    );
+
+    let dtb = read_dram_blob(&system, dtb_addr, report.dtb().dtb_len());
+    assert!(contains_bytes(&dtb, format!("{bootargs}\0").as_bytes()));
+    assert!(contains_bytes(&dtb, &initrd_addr.get().to_be_bytes()));
+    assert!(contains_bytes(
+        &dtb,
+        &(initrd_addr.get() + initrd_data.len() as u64).to_be_bytes()
+    ));
     assert_a1_handoff(&system, dtb_addr);
 }
 

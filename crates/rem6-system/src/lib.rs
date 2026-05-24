@@ -85,7 +85,8 @@ pub use timer_checkpoint::{
     TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
 };
 pub use topology::{
-    RiscvDtbHandoffReport, RiscvTopologyAcceleratorComputeActivity, RiscvTopologyDmaCopy,
+    RiscvDtbHandoffReport, RiscvLinuxBootHandoffConfig, RiscvLinuxBootHandoffReport,
+    RiscvLinuxInitrdImage, RiscvTopologyAcceleratorComputeActivity, RiscvTopologyDmaCopy,
     RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary,
     RiscvTopologyDramConfig, RiscvTopologyGpuComputeActivity, RiscvTopologyHeterogeneousRunSummary,
     RiscvTopologyHeterogeneousWork, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,

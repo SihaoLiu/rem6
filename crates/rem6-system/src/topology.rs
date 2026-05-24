@@ -45,8 +45,8 @@ use rem6_kernel::{
     Tick, WaitForGraph,
 };
 use rem6_memory::{
-    AccessSize, Address, CacheLineLayout, MemoryError, MemoryRequestId, MemoryResponse,
-    MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryRequestId,
+    MemoryResponse, MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_mmio::MmioBus;
 use rem6_platform::{Platform, PlatformError, PlatformRiscvDeviceTreeConfig};
@@ -113,6 +113,96 @@ impl RiscvDtbHandoffReport {
 
     pub const fn load_report(&self) -> &BootLoadReport {
         &self.load_report
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvLinuxInitrdImage {
+    start: Address,
+    data: Vec<u8>,
+}
+
+impl RiscvLinuxInitrdImage {
+    pub fn new(start: Address, data: Vec<u8>) -> Result<Self, BootError> {
+        if data.is_empty() {
+            return Err(BootError::EmptySegment { start });
+        }
+        let size = AccessSize::new(data.len() as u64).map_err(BootError::Memory)?;
+        AddressRange::new(start, size).map_err(BootError::Memory)?;
+        Ok(Self { start, data })
+    }
+
+    pub const fn start(&self) -> Address {
+        self.start
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub const fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvLinuxBootHandoffConfig {
+    device_tree: PlatformRiscvDeviceTreeConfig,
+    dtb_addr: Address,
+    initrd: Option<RiscvLinuxInitrdImage>,
+}
+
+impl RiscvLinuxBootHandoffConfig {
+    pub fn new(device_tree: PlatformRiscvDeviceTreeConfig, dtb_addr: Address) -> Self {
+        Self {
+            device_tree,
+            dtb_addr,
+            initrd: None,
+        }
+    }
+
+    pub fn with_initrd(mut self, initrd: RiscvLinuxInitrdImage) -> Self {
+        self.initrd = Some(initrd);
+        self
+    }
+
+    pub fn device_tree(&self) -> &PlatformRiscvDeviceTreeConfig {
+        &self.device_tree
+    }
+
+    pub const fn dtb_addr(&self) -> Address {
+        self.dtb_addr
+    }
+
+    pub const fn initrd(&self) -> Option<&RiscvLinuxInitrdImage> {
+        self.initrd.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvLinuxBootHandoffReport {
+    dtb: RiscvDtbHandoffReport,
+    initrd_load_report: Option<BootLoadReport>,
+}
+
+impl RiscvLinuxBootHandoffReport {
+    pub fn new(dtb: RiscvDtbHandoffReport, initrd_load_report: Option<BootLoadReport>) -> Self {
+        Self {
+            dtb,
+            initrd_load_report,
+        }
+    }
+
+    pub const fn dtb(&self) -> &RiscvDtbHandoffReport {
+        &self.dtb
+    }
+
+    pub const fn initrd_load_report(&self) -> Option<&BootLoadReport> {
+        self.initrd_load_report.as_ref()
     }
 }
 
@@ -721,6 +811,47 @@ impl RiscvTopologySystem {
         config: &PlatformRiscvDeviceTreeConfig,
         dtb_addr: Address,
     ) -> Result<RiscvDtbHandoffReport, RiscvTopologySystemError> {
+        let (dtb_len, image) = self.build_riscv_device_tree_image(config, dtb_addr)?;
+        self.install_riscv_device_tree_image_handoff(dtb_addr, dtb_len, &image)
+    }
+
+    pub fn install_riscv_linux_boot_handoff(
+        &self,
+        config: &RiscvLinuxBootHandoffConfig,
+    ) -> Result<RiscvLinuxBootHandoffReport, RiscvTopologySystemError> {
+        let device_tree = if let Some(initrd) = config.initrd() {
+            let size =
+                AccessSize::new(initrd.len() as u64).map_err(RiscvTopologySystemError::Memory)?;
+            config
+                .device_tree()
+                .clone()
+                .with_initrd(initrd.start(), size)
+                .map_err(RiscvTopologySystemError::Platform)?
+        } else {
+            config.device_tree().clone()
+        };
+        let (dtb_len, dtb_image) =
+            self.build_riscv_device_tree_image(&device_tree, config.dtb_addr())?;
+
+        let initrd_load_report = if let Some(initrd) = config.initrd() {
+            let image = BootImage::new(initrd.start())
+                .add_segment(initrd.start(), initrd.data().to_vec())
+                .map_err(RiscvTopologySystemError::Boot)?;
+            Some(self.load_boot_image_by_address(&image)?)
+        } else {
+            None
+        };
+        let dtb =
+            self.install_riscv_device_tree_image_handoff(config.dtb_addr(), dtb_len, &dtb_image)?;
+
+        Ok(RiscvLinuxBootHandoffReport::new(dtb, initrd_load_report))
+    }
+
+    fn build_riscv_device_tree_image(
+        &self,
+        config: &PlatformRiscvDeviceTreeConfig,
+        dtb_addr: Address,
+    ) -> Result<(usize, BootImage), RiscvTopologySystemError> {
         let platform = self
             .platform
             .as_ref()
@@ -733,23 +864,16 @@ impl RiscvTopologySystem {
         let image = BootImage::new(dtb_addr)
             .add_segment(dtb_addr, dtb)
             .map_err(RiscvTopologySystemError::Boot)?;
-        let load_report = match self
-            .memory
-            .as_ref()
-            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
-        {
-            RiscvTopologyMemoryBackend::Store { memory, .. } => image
-                .load_into_partitioned_store_by_address(
-                    &mut memory.lock().expect("topology memory store lock"),
-                )
-                .map_err(RiscvTopologySystemError::Boot)?,
-            RiscvTopologyMemoryBackend::Dram { memory, .. } => {
-                load_boot_image_into_dram_controller_by_address(
-                    &mut memory.lock().expect("topology DRAM memory lock"),
-                    &image,
-                )?
-            }
-        };
+        Ok((dtb_len, image))
+    }
+
+    fn install_riscv_device_tree_image_handoff(
+        &self,
+        dtb_addr: Address,
+        dtb_len: usize,
+        image: &BootImage,
+    ) -> Result<RiscvDtbHandoffReport, RiscvTopologySystemError> {
+        let load_report = self.load_boot_image_by_address(image)?;
 
         let a1 = Register::new(11).expect("RISC-V A1 register index is valid");
         for cpu in self.cluster.core_ids() {
@@ -760,6 +884,29 @@ impl RiscvTopologySystem {
         }
 
         Ok(RiscvDtbHandoffReport::new(dtb_addr, dtb_len, load_report))
+    }
+
+    fn load_boot_image_by_address(
+        &self,
+        image: &BootImage,
+    ) -> Result<BootLoadReport, RiscvTopologySystemError> {
+        match self
+            .memory
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
+        {
+            RiscvTopologyMemoryBackend::Store { memory, .. } => image
+                .load_into_partitioned_store_by_address(
+                    &mut memory.lock().expect("topology memory store lock"),
+                )
+                .map_err(RiscvTopologySystemError::Boot),
+            RiscvTopologyMemoryBackend::Dram { memory, .. } => {
+                load_boot_image_into_dram_controller_by_address(
+                    &mut memory.lock().expect("topology DRAM memory lock"),
+                    image,
+                )
+            }
+        }
     }
 
     pub fn with_mesi_data_cache(

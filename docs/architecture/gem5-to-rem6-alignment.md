@@ -26,16 +26,32 @@ isolated bugs:
   deviation. rem6 therefore treats partition ownership, lookahead, deterministic
   merge order, and per-partition snapshots as core kernel contracts.
 - Configuration and experiment reproducibility are too script-dependent in
-  gem5. Official documentation says parts of Learning gem5 are outdated, and the
-  standard library exists partly because hand-built scripts can grow to hundreds
-  of lines. Full-system runs also require firmware, kernels, disk images, and
-  resource coordination outside the simulator binary. rem6 therefore keeps
-  typed builders and manifests as the authority for platform and workload state.
+  gem5. Official documentation describes embedded Python configuration,
+  behind-the-scenes port connection behavior, and command-line options whose
+  effects must be checked in generated config output. The standard library and
+  resource package reduce this burden, but they also demonstrate that kernels,
+  disk images, benchmark inputs, exit events, and downloads remain workflow
+  state outside the core simulator. rem6 therefore keeps typed builders,
+  manifests, artifact identities, and explicit boot handoff reports as the
+  authority for platform and workload state.
+- Error surfaces are split across simulator fatal errors, simulator panics, and
+  Python tracebacks. gem5 documentation directs users to different debugging
+  paths depending on which layer raised the problem. rem6 therefore returns
+  typed validation errors at subsystem boundaries, records handoff summaries,
+  and requires tests for invalid platform, memory, and workload state before
+  broad compatibility claims.
 - Observability and statistics need stronger contracts. A gem5 issue about
   stats reset explicitly calls out missing reset tests and user confusion from
   inconsistent stats. rem6 therefore treats statistics, activity, wait-for
   graphs, and run summaries as typed data with tests rather than string-only
   logs or ad hoc probes.
+- Simple models are not automatically cheap or transparent. Recent call-stack
+  profiling work identifies gem5's layered design as difficult to profile and
+  reports TimingSimpleCPU behavior that can be slower than a full out-of-order
+  model because of lockup-cache behavior. rem6 therefore does not use model
+  names as performance evidence; every runtime resource needs typed activity
+  records, queue diagnostics, and tests that expose where simulated time and host
+  work are spent.
 - Power equations should not depend on late string lookup into global
   statistics. gem5's MathExprPowerModel accepts equations that reference stat
   names plus automatic variables. rem6 keeps the equation idea, but binds
@@ -48,9 +64,24 @@ isolated bugs:
   and device behavior behind typed crate boundaries with focused regression
   tests before broad parity claims.
 
-Research anchors: gem5 documentation; Parallel M5; gem5 `src/sim/eventq.hh`;
-par-gem5; parti-gem5; gem5 issues for stats reset, syscall emulation, RISC-V
-vector tracing, and CHI LR/SC behavior.
+Research anchors refreshed on 2026-05-24:
+
+- Parallel M5: <https://old.gem5.org/Parallel_M5.html>
+- par-gem5: <https://past.date-conference.com/proceedings-archive/2023/DATA/16.pdf>
+- parti-gem5: <https://arxiv.org/abs/2308.09445>
+- gem5 Python configuration and port wiring:
+  <https://www.gem5.org/documentation/learning_gem5/part1/simple_config/>
+- gem5 default script behavior:
+  <https://www.gem5.org/documentation/learning_gem5/part1/example_configs/>
+- gem5 standard library and resources:
+  <https://www.gem5.org/documentation/gem5-stdlib/overview>
+- gem5 error categories:
+  <https://www.gem5.org/documentation/general_docs/common-errors/>
+- gem5 call-stack profiling:
+  <https://arxiv.org/abs/2605.01419>
+- Local read-only reference anchors: gem5 `src/sim`, `src/python`,
+  `configs`, `src/mem`, `src/cpu`, and public issues for stats reset,
+  syscall emulation, RISC-V vector tracing, and CHI LR/SC behavior.
 
 ## Audit Method
 
@@ -84,9 +115,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/arch` | 1187 | `rem6-isa-riscv`, future ISA crates | partial | Keep per-ISA decoding and architectural state as isolated crates. RISC-V exists; ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA support need equivalent crate ownership before claiming parity. |
 | `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. |
 | `src/cpu` | 363 | `rem6-cpu`, `rem6-kernel`, `rem6-system` | partial | RISC-V cluster execution exists. gem5 simple, checker, Minor, O3, branch prediction, KVM-style switching, and traffic testers need typed rem6 equivalents or explicit replacement models. |
-| `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore, typed reset policy, platform/topology attachment, typed RISC-V DTS source emission, binary FDT/DTB emission, RISC-V DTB memory/A1 handoff, typed Linux `/chosen` bootargs and initrd DTB metadata, GPU, and accelerator paths exist. PCI, storage, network, virtio, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
+| `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore, typed reset policy, platform/topology attachment, typed RISC-V DTS source emission, binary FDT/DTB emission, RISC-V DTB memory/A1 handoff, typed Linux `/chosen` bootargs and initrd DTB metadata, typed initrd blob installation for store-backed and DRAM-backed memory, GPU, and accelerator paths exist. PCI, storage, network, virtio, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
-| `src/kern` | 18 | `rem6-system`, `rem6-platform`, workload resources | planned | Linux and guest ABI helpers need a typed full-system boundary instead of ad hoc scripts. |
+| `src/kern` | 18 | `rem6-system`, `rem6-platform`, workload resources | partial | RISC-V Linux boot handoff can install initrd bytes, emit matching `/chosen` DTB metadata, place the generated DTB in guest memory, and set A1 through typed system APIs. Broader Linux symbols, panic/oops hooks, guest ABI helpers, and other ISA kernels remain open. |
 | `src/mem` | 682 | `rem6-memory`, `rem6-transport`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-dram`, `rem6-fabric`, protocol crates | partial | rem6 already splits protocol state, topology, NoC, DRAM, replacement state, MSHR resources, prefetch queues, stores, directory state, and coherence harnesses into typed crates. CHI-like line states, a single-line cache controller, a multi-line cache bank, an initial directory decision model, serial plus partitioned multi-cache coherence harnesses, topology-built CHI cache-directory and DRAM routes, CHI recorded run-resource summaries, workload-replay CHI data-cache attribution, and direct topology CHI data-cache attach exist; broader CHI transactions, prefetcher breadth, cache QoS, and Ruby-network breadth remain open. |
 | `src/python` | 253 | `rem6-workload`, `rem6-platform`, future front ends | partial | Keep gem5's ease of composition while replacing Python object wiring with checked manifests and typed builders. |
 | `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats`, `rem6-power` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, typed probe events, typed power domains, and checkpoints exist. |
@@ -178,7 +209,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `ext/systemc`, `src/systemc`, `util/systemc`, `util/tlm` | future adapter crates | external-adapter | Interoperability is useful, but rem6 timing authority must stay in the partitioned runtime. |
 | `ext/sst`, `src/sst`, `configs/example/sst` | future SST adapter | external-adapter | SST co-simulation should be explicit and checkpoint-aware. |
 | `ext/nomali`, `ext/mcpat`, `ext/dsent` | future optional analysis adapters | external-adapter | Preserve modeling value behind typed records and stable APIs. |
-| `ext/libelf`, `ext/libfdt`, `ext/softfloat`, `ext/gdbremote` | `rem6-boot`, `rem6-platform`, future debug and ISA support crates | partial | rem6-platform has an initial typed DTS source tree and deterministic binary FDT/DTB writer for RISC-V platform boot descriptions, including Linux `/chosen` bootargs and initrd start/end metadata, and rem6-system installs generated DTBs into guest memory with the RISC-V A1 register handoff for both store-backed and DRAM-backed memory. rem6 still needs equivalent ELF loading breadth, kernel/initrd blob loading orchestration, bootloader handoff coverage, soft-float, and debug capability without vendoring unneeded code into the core. |
+| `ext/libelf`, `ext/libfdt`, `ext/softfloat`, `ext/gdbremote` | `rem6-boot`, `rem6-platform`, future debug and ISA support crates | partial | rem6-platform has an initial typed DTS source tree and deterministic binary FDT/DTB writer for RISC-V platform boot descriptions, including Linux `/chosen` bootargs and initrd start/end metadata, and rem6-system installs initrd bytes plus generated DTBs into guest memory with the RISC-V A1 register handoff for both store-backed and DRAM-backed memory. rem6 still needs equivalent ELF loading breadth, kernel image loaders, bootloader handoff coverage, soft-float, and debug capability without vendoring unneeded code into the core. |
 | `util/gem5art`, resources tooling, disk image tooling | `rem6-workload`, future artifact tooling | partial | rem6 manifests should make artifact provenance first-class and reproducible. |
 | `tests`, `tests/test-progs`, `util/statetrace` | rem6 tests and trace tooling | partial | gem5 tests are audit input. rem6 acceptance remains Rust tests and typed trace comparison. |
 
@@ -263,7 +294,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 - System topology tests cover typed RISC-V DTB handoff from the platform model
   into store-backed and DRAM-backed guest memory, per-core A1 register setup
   for the DTB address, and preservation of Linux bootargs plus initrd metadata
-  in the installed DTB.
+  in the installed DTB. The typed RISC-V Linux boot handoff also installs
+  initrd bytes and matching DTB metadata into both store-backed and DRAM-backed
+  memory.
 - Proto-boundary tests cover typed instruction, packet, and O3 dependency trace
   records, one-of instruction encoding, memory-access and packet-size
   validation, duplicate id-string rejection, canonical id-string ordering,
