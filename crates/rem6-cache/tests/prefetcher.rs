@@ -1,6 +1,7 @@
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchRedundantLine,
-    QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
+    QueuedPrefetchRedundantLine, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
+    StridePrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -145,4 +146,40 @@ fn queued_prefetcher_filters_candidates_already_in_cache_resources() {
     let issued = queue.issue_ready(13);
     assert_eq!(issued.len(), 1);
     assert_eq!(issued[0].address(), Address::new(0x1100));
+}
+
+#[test]
+fn queued_prefetcher_can_evict_oldest_lowest_priority_entry_when_full() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let initial_candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(2, 3, 4, true, 64)
+        .unwrap()
+        .with_full_policy(QueuedPrefetchFullPolicy::EvictOldestLowestPriority);
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(
+        queue.enqueue_candidates(10, &initial_candidates).unwrap(),
+        2
+    );
+
+    let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    let result = queue
+        .enqueue_candidates_filtered(11, &next_candidates, &[])
+        .unwrap();
+
+    assert_eq!(result.accepted(), 1);
+    assert_eq!(result.evicted_full(), 1);
+    assert_eq!(queue.pending_count(), 2);
+    assert_eq!(
+        queue
+            .snapshot()
+            .pending()
+            .iter()
+            .map(|entry| entry.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x10c0), Address::new(0x1140)]
+    );
 }

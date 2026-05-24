@@ -32,11 +32,11 @@ pub use mshr::{
 };
 pub use prefetch::{
     QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchEnqueueResult,
-    QueuedPrefetchEntrySnapshot, QueuedPrefetchIssue, QueuedPrefetchRedundantLine,
-    QueuedPrefetchResidency, QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
-    StridePrefetchAccess, StridePrefetchCandidate, StridePrefetchContextSnapshot,
-    StridePrefetchEntrySnapshot, StridePrefetcher, StridePrefetcherConfig, StridePrefetcherError,
-    StridePrefetcherSnapshot,
+    QueuedPrefetchEntrySnapshot, QueuedPrefetchFullPolicy, QueuedPrefetchIssue,
+    QueuedPrefetchRedundantLine, QueuedPrefetchResidency, QueuedPrefetcher, QueuedPrefetcherError,
+    QueuedPrefetcherSnapshot, StridePrefetchAccess, StridePrefetchCandidate,
+    StridePrefetchContextSnapshot, StridePrefetchEntrySnapshot, StridePrefetcher,
+    StridePrefetcherConfig, StridePrefetcherError, StridePrefetcherSnapshot,
 };
 pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,

@@ -13,6 +13,7 @@ pub struct QueuedPrefetchConfig {
     max_issue_per_tick: usize,
     filter_duplicates: bool,
     line_size: u64,
+    full_policy: QueuedPrefetchFullPolicy,
 }
 
 impl QueuedPrefetchConfig {
@@ -48,6 +49,7 @@ impl QueuedPrefetchConfig {
             max_issue_per_tick,
             filter_duplicates,
             line_size,
+            full_policy: QueuedPrefetchFullPolicy::RejectNew,
         })
     }
 
@@ -69,6 +71,15 @@ impl QueuedPrefetchConfig {
 
     pub const fn line_size(&self) -> u64 {
         self.line_size
+    }
+
+    pub const fn full_policy(&self) -> QueuedPrefetchFullPolicy {
+        self.full_policy
+    }
+
+    pub const fn with_full_policy(mut self, full_policy: QueuedPrefetchFullPolicy) -> Self {
+        self.full_policy = full_policy;
+        self
     }
 }
 
@@ -126,6 +137,12 @@ impl fmt::Display for QueuedPrefetcherError {
 impl Error for QueuedPrefetcherError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QueuedPrefetchFullPolicy {
+    RejectNew,
+    EvictOldestLowestPriority,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueuedPrefetchResidency {
     Cache,
     MissQueue,
@@ -172,6 +189,7 @@ impl QueuedPrefetchRedundantLine {
 pub struct QueuedPrefetchEnqueueResult {
     accepted: usize,
     dropped_redundant: usize,
+    evicted_full: usize,
 }
 
 impl QueuedPrefetchEnqueueResult {
@@ -181,6 +199,10 @@ impl QueuedPrefetchEnqueueResult {
 
     pub const fn dropped_redundant(&self) -> usize {
         self.dropped_redundant
+    }
+
+    pub const fn evicted_full(&self) -> usize {
+        self.evicted_full
     }
 }
 
@@ -212,6 +234,7 @@ pub struct QueuedPrefetchEntrySnapshot {
     secure: bool,
     stride: i64,
     degree_index: u32,
+    priority: i32,
     source_tick: u64,
     ready_tick: u64,
     order: u64,
@@ -240,6 +263,10 @@ impl QueuedPrefetchEntrySnapshot {
 
     pub const fn degree_index(&self) -> u32 {
         self.degree_index
+    }
+
+    pub const fn priority(&self) -> i32 {
+        self.priority
     }
 
     pub const fn source_tick(&self) -> u64 {
@@ -284,6 +311,7 @@ pub struct QueuedPrefetchIssue {
     secure: bool,
     stride: i64,
     degree_index: u32,
+    priority: i32,
     source_tick: u64,
     ready_tick: u64,
     order: u64,
@@ -335,6 +363,7 @@ struct QueuedPrefetchEntry {
     secure: bool,
     stride: i64,
     degree_index: u32,
+    priority: i32,
     source_tick: u64,
     ready_tick: u64,
     order: u64,
@@ -355,6 +384,7 @@ impl QueuedPrefetchEntry {
             secure: candidate.secure(),
             stride: candidate.stride(),
             degree_index: candidate.degree_index(),
+            priority: queued_prefetch_priority(candidate),
             source_tick,
             ready_tick,
             order,
@@ -369,6 +399,7 @@ impl QueuedPrefetchEntry {
             secure: snapshot.secure,
             stride: snapshot.stride,
             degree_index: snapshot.degree_index,
+            priority: snapshot.priority,
             source_tick: snapshot.source_tick,
             ready_tick: snapshot.ready_tick,
             order: snapshot.order,
@@ -383,6 +414,7 @@ impl QueuedPrefetchEntry {
             secure: self.secure,
             stride: self.stride,
             degree_index: self.degree_index,
+            priority: self.priority,
             source_tick: self.source_tick,
             ready_tick: self.ready_tick,
             order: self.order,
@@ -397,6 +429,7 @@ impl QueuedPrefetchEntry {
             secure: self.secure,
             stride: self.stride,
             degree_index: self.degree_index,
+            priority: self.priority,
             source_tick: self.source_tick,
             ready_tick: self.ready_tick,
             order: self.order,
@@ -458,6 +491,7 @@ impl QueuedPrefetcher {
         )?;
         let mut accepted = 0;
         let mut dropped_redundant = 0;
+        let mut evicted_full = 0;
         for candidate in candidates {
             let address = self.normalized_address(candidate.address());
             if self.is_redundant(address, candidate.secure(), redundant_lines) {
@@ -473,9 +507,18 @@ impl QueuedPrefetcher {
                 continue;
             }
             if self.pending.len() == self.config.capacity() {
-                return Err(QueuedPrefetcherError::QueueFull {
-                    capacity: self.config.capacity(),
-                });
+                match self.config.full_policy() {
+                    QueuedPrefetchFullPolicy::RejectNew => {
+                        return Err(QueuedPrefetcherError::QueueFull {
+                            capacity: self.config.capacity(),
+                        });
+                    }
+                    QueuedPrefetchFullPolicy::EvictOldestLowestPriority => {
+                        let victim = oldest_lowest_priority_index(&self.pending);
+                        self.pending.remove(victim);
+                        evicted_full += 1;
+                    }
+                }
             }
 
             let entry = QueuedPrefetchEntry::from_candidate(
@@ -492,6 +535,7 @@ impl QueuedPrefetcher {
         Ok(QueuedPrefetchEnqueueResult {
             accepted,
             dropped_redundant,
+            evicted_full,
         })
     }
 
@@ -581,6 +625,20 @@ fn insert_pending_entry(pending: &mut Vec<QueuedPrefetchEntry>, entry: QueuedPre
         })
         .unwrap_or(pending.len());
     pending.insert(index, entry);
+}
+
+fn oldest_lowest_priority_index(pending: &[QueuedPrefetchEntry]) -> usize {
+    pending
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, entry)| (entry.priority, entry.order))
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn queued_prefetch_priority(candidate: &StridePrefetchCandidate) -> i32 {
+    let degree = candidate.degree_index().min(i32::MAX as u32) as i32;
+    i32::MAX.saturating_sub(degree)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
