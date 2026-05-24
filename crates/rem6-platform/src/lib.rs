@@ -11,8 +11,8 @@ use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 use rem6_mmio::{MmioBus, MmioError, MmioRoute};
 use rem6_timer::{
-    ClintHartConfig, ClintId, ClintMmioDevice, ProgrammableTimer, TimerError, TimerId,
-    TimerMmioDevice,
+    ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, ProgrammableTimer, TimerError,
+    TimerId, TimerMmioDevice,
 };
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{UartId, UartMmioDevice};
@@ -59,6 +59,7 @@ pub struct PlatformClintConfig {
     pub base: Address,
     pub size: AccessSize,
     pub route: MmioRoute,
+    pub reset_policy: ClintResetPolicy,
     pub harts: Vec<PlatformClintHartConfig>,
 }
 
@@ -224,7 +225,9 @@ impl PlatformBuilder {
                     hart.timer_interrupt_source,
                 ));
             }
-            let device = ClintMmioDevice::new(config.base, harts).map_err(PlatformError::Timer)?;
+            let device =
+                ClintMmioDevice::with_reset_policy(config.base, harts, config.reset_policy)
+                    .map_err(PlatformError::Timer)?;
             bus.insert_device(
                 region(config.base, config.size)?,
                 config.route,

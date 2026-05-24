@@ -11,9 +11,9 @@ use rem6_platform::{
     PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
-    ClintId, TimerArm, TimerExpiry, TimerId, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
-    CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
-    CLINT_MTIMECMP_STRIDE, TIMER_MMIO_DEADLINE_OFFSET,
+    ClintId, ClintResetPolicy, TimerArm, TimerExpiry, TimerId, CLINT_MSIP_BASE_OFFSET,
+    CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET,
+    CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE, TIMER_MMIO_DEADLINE_OFFSET,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -263,6 +263,7 @@ fn platform_builder_wires_clint_hart_interrupts_and_mmio_bus() {
             base: Address::new(0x200_0000),
             size: AccessSize::new(0x1_0000).unwrap(),
             route: MmioRoute::new(cpu0, clint_partition, 2, 1).unwrap(),
+            reset_policy: ClintResetPolicy::reset_mtimecmp_to(99),
             harts: vec![PlatformClintHartConfig {
                 hart: 1,
                 target_partition: cpu1,

@@ -12,7 +12,7 @@ use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, M
 mod clint;
 
 pub use self::clint::{
-    ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintSnapshot,
+    ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintResetPolicy, ClintSnapshot,
     CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE,
     CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE,
     CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
@@ -599,6 +599,10 @@ pub enum TimerError {
         expected: Vec<u32>,
         actual: Vec<u32>,
     },
+    ClintResetSignal {
+        hart: u32,
+        error: InterruptError,
+    },
     DeadlineInPast {
         now: Tick,
         deadline: Tick,
@@ -631,6 +635,9 @@ impl fmt::Display for TimerError {
                 formatter,
                 "CLINT snapshot hart mismatch: expected {expected:?}, got {actual:?}"
             ),
+            Self::ClintResetSignal { hart, error } => {
+                write!(formatter, "CLINT hart {hart} reset signal failed: {error}")
+            }
             Self::DeadlineInPast { now, deadline } => {
                 write!(
                     formatter,
@@ -660,4 +667,13 @@ impl fmt::Display for TimerError {
     }
 }
 
-impl Error for TimerError {}
+impl Error for TimerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ClintResetSignal { error, .. } => Some(error),
+            Self::Scheduler(error) => Some(error),
+            Self::Interrupt(error) => Some(error),
+            _ => None,
+        }
+    }
+}

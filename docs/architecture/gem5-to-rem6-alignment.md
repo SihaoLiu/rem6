@@ -84,7 +84,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/arch` | 1187 | `rem6-isa-riscv`, future ISA crates | partial | Keep per-ISA decoding and architectural state as isolated crates. RISC-V exists; ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA support need equivalent crate ownership before claiming parity. |
 | `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. |
 | `src/cpu` | 363 | `rem6-cpu`, `rem6-kernel`, `rem6-system` | partial | RISC-V cluster execution exists. gem5 simple, checker, Minor, O3, branch prediction, KVM-style switching, and traffic testers need typed rem6 equivalents or explicit replacement models. |
-| `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore and platform/topology attachment, GPU, and accelerator paths exist. PCI, storage, network, virtio, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
+| `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore, typed reset policy, and platform/topology attachment, GPU, and accelerator paths exist. PCI, storage, network, virtio, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
 | `src/kern` | 18 | `rem6-system`, `rem6-platform`, workload resources | planned | Linux and guest ABI helpers need a typed full-system boundary instead of ad hoc scripts. |
 | `src/mem` | 682 | `rem6-memory`, `rem6-transport`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-dram`, `rem6-fabric`, protocol crates | partial | rem6 already splits protocol state, topology, NoC, DRAM, replacement state, MSHR resources, prefetch queues, stores, directory state, and coherence harnesses into typed crates. CHI-like line states, a single-line cache controller, a multi-line cache bank, an initial directory decision model, serial plus partitioned multi-cache coherence harnesses, topology-built CHI cache-directory and DRAM routes, CHI recorded run-resource summaries, workload-replay CHI data-cache attribution, and direct topology CHI data-cache attach exist; broader CHI transactions, prefetcher breadth, cache QoS, and Ruby-network breadth remain open. |
@@ -158,7 +158,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/dev/amdgpu`, `src/dev/hsa` | `rem6-gpu`, future GPU ISA and runtime modules | planned | Full GPU system support needs richer queues, address spaces, interrupts, and ISA-visible state. |
 | NPU-style accelerators, not a single gem5 subtree | `rem6-accelerator` | partial | rem6 already models accelerator engines, command lanes, DMA, summaries, and checkpoints. |
 | `src/dev/pci`, `src/dev/virtio`, `src/dev/storage`, `src/dev/net` | future device crates | planned | PCI, block, network, and virtio devices remain required for full-system breadth. |
-| `src/dev/serial`, `src/dev/riscv`, `src/dev/lupio`, `src/dev/i2c` | `rem6-uart`, `rem6-mmio`, `rem6-interrupt`, `rem6-timer`, future device crates | partial | UART, timer, MMIO, interrupts, and an initial RISC-V CLINT model exist. The CLINT path keeps gem5's `msip`, `mtimecmp`, and read-only `mtime` MMIO layout while replacing direct `System::threads` interrupt mutation with typed interrupt ports and scheduler events, including parallel scheduling. CLINT register and timer-assertion state can be captured and restored through typed snapshots and a system checkpoint bank, and platform declarations now attach CLINT MMIO plus host checkpoints automatically. Device-tree emission, reset semantics, RTC input modeling, and other platform devices remain open. |
+| `src/dev/serial`, `src/dev/riscv`, `src/dev/lupio`, `src/dev/i2c` | `rem6-uart`, `rem6-mmio`, `rem6-interrupt`, `rem6-timer`, future device crates | partial | UART, timer, MMIO, interrupts, and an initial RISC-V CLINT model exist. The CLINT path keeps gem5's `msip`, `mtimecmp`, and read-only `mtime` MMIO layout while replacing direct `System::threads` interrupt mutation with typed interrupt ports and scheduler events, including parallel scheduling. CLINT register and timer-assertion state can be captured and restored through typed snapshots and a system checkpoint bank, platform declarations now attach CLINT MMIO plus host checkpoints automatically, and reset is explicit through `ClintResetPolicy`: `msip` is cleared, asserted software and timer lines are typed deasserted, stale timer events are invalidated, and `mtimecmp` is either preserved or reset to a declared value. rem6 does not reset a hidden CLINT time register because `mtime` is scheduler time rather than mutable device-local time. Device-tree emission, RTC input modeling, and other platform devices remain open. |
 | platform-specific device trees under `src/dev/arm`, `src/dev/x86`, `src/dev/mips`, `src/dev/sparc` | future platform crates | planned | These should arrive with the corresponding ISA and platform support. |
 
 ### Simulation Kernel, Checkpointing, and Host Control
@@ -239,13 +239,15 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   `mtimecmp` timer interrupt scheduling, future-deadline timer deassertion,
   read-only `mtime` from scheduler ticks, the same `mtimecmp` path under the
   parallel scheduler, and CLINT snapshot/restore of per-hart `msip` and
-  `mtimecmp` state.
+  `mtimecmp` state. CLINT reset tests cover `msip` clearing, `mtimecmp` reset
+  policy, timer-assertion clearing, serial and parallel typed interrupt
+  deassertion, and stale timer-event invalidation through generation changes.
 - System action tests cover CLINT checkpoint-bank capture and restore through
   host checkpoint manifests for per-hart `msip`, `mtimecmp`, and timer
   assertion state.
 - Platform and topology tests cover declared CLINT hart interrupt routes, CLINT
-  MMIO bus routing, and automatic host checkpoint-bank attachment for platform
-  CLINT devices.
+  MMIO bus routing, declared CLINT reset policy plumbing, and automatic host
+  checkpoint-bank attachment for platform CLINT devices.
 - Proto-boundary tests cover typed instruction, packet, and O3 dependency trace
   records, one-of instruction encoding, memory-access and packet-size
   validation, duplicate id-string rejection, canonical id-string ordering,

@@ -8,9 +8,9 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioRequest, MmioRequestId, MmioResponse};
 use rem6_timer::{
-    ClintHartConfig, ClintMmioDevice, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
-    CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIME_OFFSET,
-    CLINT_MTIME_REGISTER_BYTES,
+    ClintHartConfig, ClintMmioDevice, ClintResetPolicy, CLINT_MSIP_BASE_OFFSET,
+    CLINT_MSIP_REGISTER_BYTES, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
+    CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
 };
 
 fn le32(value: u32) -> Vec<u8> {
@@ -518,6 +518,228 @@ fn clint_snapshot_restore_reinstates_hart_register_state() {
         &[
             MmioResponse::completed(MmioRequestId::new(11), Some(le32(1))),
             MmioResponse::completed(MmioRequestId::new(12), Some(le64(30))),
+        ]
+    );
+}
+
+#[test]
+fn clint_reset_clears_pending_interrupt_state_and_applies_policy() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(82);
+    let timer_line = InterruptLineId::new(83);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(52);
+    let timer_source = InterruptSourceId::new(53);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::with_reset_policy(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+        ClintResetPolicy::reset_mtimecmp_to(99),
+    )
+    .unwrap();
+    let reset_snapshot = Arc::new(Mutex::new(None));
+    let reset_writer = Arc::clone(&reset_snapshot);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    let setup_device = device.clone();
+    scheduler
+        .schedule_at(clint_partition, 4, move |context| {
+            setup_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(13),
+                        Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET),
+                        le32(1),
+                        full_mask(CLINT_MSIP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            setup_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(14),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(5),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let reset_device = device.clone();
+    scheduler
+        .schedule_at(clint_partition, 8, move |context| {
+            reset_device.reset(context).unwrap();
+            *reset_writer.lock().unwrap() = Some(reset_device.snapshot());
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    let snapshot = reset_snapshot.lock().unwrap().clone().unwrap();
+    assert_eq!(snapshot.harts()[0].msip(), 0);
+    assert_eq!(snapshot.harts()[0].mtimecmp(), 99);
+    assert!(!snapshot.harts()[0].timer_asserted());
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                6,
+                software_line,
+                target,
+                cpu,
+                software_source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                7,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Assert
+            ),
+            InterruptEvent::routed(
+                10,
+                software_line,
+                target,
+                cpu,
+                software_source,
+                InterruptEventKind::Deassert,
+            ),
+            InterruptEvent::routed(
+                10,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Deassert,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn clint_parallel_reset_clears_pending_interrupt_state_and_applies_policy() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(84);
+    let timer_line = InterruptLineId::new(85);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(54);
+    let timer_source = InterruptSourceId::new(55);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::with_reset_policy(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+        ClintResetPolicy::reset_mtimecmp_to(123),
+    )
+    .unwrap();
+    let reset_snapshot = Arc::new(Mutex::new(None));
+    let reset_writer = Arc::clone(&reset_snapshot);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    let setup_device = device.clone();
+    scheduler
+        .schedule_parallel_at(clint_partition, 4, move |context| {
+            setup_device
+                .respond_parallel(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(15),
+                        Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET),
+                        le32(1),
+                        full_mask(CLINT_MSIP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            setup_device
+                .respond_parallel(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(16),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(5),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let reset_device = device.clone();
+    scheduler
+        .schedule_parallel_at(clint_partition, 8, move |context| {
+            reset_device.reset_parallel(context).unwrap();
+            *reset_writer.lock().unwrap() = Some(reset_device.snapshot());
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let snapshot = reset_snapshot.lock().unwrap().clone().unwrap();
+    assert_eq!(snapshot.harts()[0].msip(), 0);
+    assert_eq!(snapshot.harts()[0].mtimecmp(), 123);
+    assert!(!snapshot.harts()[0].timer_asserted());
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                6,
+                software_line,
+                target,
+                cpu,
+                software_source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                7,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                10,
+                software_line,
+                target,
+                cpu,
+                software_source,
+                InterruptEventKind::Deassert,
+            ),
+            InterruptEvent::routed(
+                10,
+                timer_line,
+                target,
+                cpu,
+                timer_source,
+                InterruptEventKind::Deassert,
+            ),
         ]
     );
 }

@@ -23,7 +23,9 @@ use rem6_system::{
     RiscvTopologySystemError, RiscvTrapEventPort, StopRequest, SystemActionOutcome,
     SystemHostController, SystemHostEventPort,
 };
-use rem6_timer::{ClintHartSnapshot, ClintId, ClintSnapshot, TimerArm, TimerId, TimerSnapshot};
+use rem6_timer::{
+    ClintHartSnapshot, ClintId, ClintResetPolicy, ClintSnapshot, TimerArm, TimerId, TimerSnapshot,
+};
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
@@ -136,6 +138,7 @@ fn platform_with_clint(topology: &Topology, clint_id: ClintId) -> Platform {
             size: AccessSize::new(0x1_0000).unwrap(),
             route: rem6_mmio::MmioRoute::new(PartitionId::new(0), PartitionId::new(3), 2, 2)
                 .unwrap(),
+            reset_policy: ClintResetPolicy::preserve_mtimecmp(),
             harts: vec![PlatformClintHartConfig {
                 hart: 0,
                 target_partition: PartitionId::new(0),

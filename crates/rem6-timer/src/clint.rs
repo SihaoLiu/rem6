@@ -30,6 +30,29 @@ impl ClintId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClintResetPolicy {
+    mtimecmp_reset_value: Option<u64>,
+}
+
+impl ClintResetPolicy {
+    pub const fn preserve_mtimecmp() -> Self {
+        Self {
+            mtimecmp_reset_value: None,
+        }
+    }
+
+    pub const fn reset_mtimecmp_to(value: u64) -> Self {
+        Self {
+            mtimecmp_reset_value: Some(value),
+        }
+    }
+
+    pub const fn mtimecmp_reset_value(self) -> Option<u64> {
+        self.mtimecmp_reset_value
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ClintHartConfig {
     hart: u32,
@@ -113,6 +136,18 @@ impl ClintHartRuntime {
             ClintHartState::from_snapshot(snapshot);
     }
 
+    fn reset(&self, hart: u32, policy: ClintResetPolicy) -> ClintHartReset {
+        let mut state = self.state.lock().expect("CLINT hart state lock");
+        let reset = ClintHartReset::new(hart, state.msip, state.timer_asserted);
+        state.timer_generation += 1;
+        state.msip = 0;
+        if let Some(value) = policy.mtimecmp_reset_value() {
+            state.mtimecmp = value;
+        }
+        state.timer_asserted = false;
+        reset
+    }
+
     fn msip(&self) -> u32 {
         self.state.lock().expect("CLINT hart state lock").msip
     }
@@ -144,6 +179,35 @@ impl ClintHartRuntime {
         }
         state.timer_asserted = true;
         true
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ClintHartReset {
+    hart: u32,
+    software_was_asserted: bool,
+    timer_was_asserted: bool,
+}
+
+impl ClintHartReset {
+    const fn new(hart: u32, msip: u32, timer_was_asserted: bool) -> Self {
+        Self {
+            hart,
+            software_was_asserted: msip != 0,
+            timer_was_asserted,
+        }
+    }
+
+    const fn hart(self) -> u32 {
+        self.hart
+    }
+
+    const fn software_was_asserted(self) -> bool {
+        self.software_was_asserted
+    }
+
+    const fn timer_was_asserted(self) -> bool {
+        self.timer_was_asserted
     }
 }
 
@@ -361,10 +425,22 @@ impl ClintSnapshot {
 pub struct ClintMmioDevice {
     base: Address,
     harts: Arc<BTreeMap<u32, ClintHartRuntime>>,
+    reset_policy: ClintResetPolicy,
 }
 
 impl ClintMmioDevice {
     pub fn new<I>(base: Address, harts: I) -> Result<Self, TimerError>
+    where
+        I: IntoIterator<Item = ClintHartConfig>,
+    {
+        Self::with_reset_policy(base, harts, ClintResetPolicy::preserve_mtimecmp())
+    }
+
+    pub fn with_reset_policy<I>(
+        base: Address,
+        harts: I,
+        reset_policy: ClintResetPolicy,
+    ) -> Result<Self, TimerError>
     where
         I: IntoIterator<Item = ClintHartConfig>,
     {
@@ -382,6 +458,7 @@ impl ClintMmioDevice {
         Ok(Self {
             base,
             harts: Arc::new(runtimes),
+            reset_policy,
         })
     }
 
@@ -391,6 +468,10 @@ impl ClintMmioDevice {
 
     pub fn hart_count(&self) -> usize {
         self.harts.len()
+    }
+
+    pub const fn reset_policy(&self) -> ClintResetPolicy {
+        self.reset_policy
     }
 
     pub fn snapshot(&self) -> ClintSnapshot {
@@ -424,6 +505,25 @@ impl ClintMmioDevice {
                 .get(&hart.hart())
                 .expect("validated CLINT hart snapshot")
                 .restore(hart);
+        }
+        Ok(())
+    }
+
+    pub fn reset(&self, context: &mut SchedulerContext<'_>) -> Result<(), TimerError> {
+        for (hart, runtime) in self.harts.iter() {
+            let reset = runtime.reset(*hart, self.reset_policy);
+            self.signal_reset_deassertions(context, runtime, reset)?;
+        }
+        Ok(())
+    }
+
+    pub fn reset_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+    ) -> Result<(), TimerError> {
+        for (hart, runtime) in self.harts.iter() {
+            let reset = runtime.reset(*hart, self.reset_policy);
+            self.signal_reset_deassertions_parallel(context, runtime, reset)?;
         }
         Ok(())
     }
@@ -634,6 +734,64 @@ impl ClintMmioDevice {
             });
         }
         Ok(true)
+    }
+
+    fn signal_reset_deassertions(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        runtime: &ClintHartRuntime,
+        reset: ClintHartReset,
+    ) -> Result<(), TimerError> {
+        if reset.software_was_asserted() {
+            runtime
+                .config
+                .software_interrupt
+                .deassert(context, runtime.config.software_source)
+                .map_err(|error| TimerError::ClintResetSignal {
+                    hart: reset.hart(),
+                    error,
+                })?;
+        }
+        if reset.timer_was_asserted() {
+            runtime
+                .config
+                .timer_interrupt
+                .deassert(context, runtime.config.timer_source)
+                .map_err(|error| TimerError::ClintResetSignal {
+                    hart: reset.hart(),
+                    error,
+                })?;
+        }
+        Ok(())
+    }
+
+    fn signal_reset_deassertions_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        runtime: &ClintHartRuntime,
+        reset: ClintHartReset,
+    ) -> Result<(), TimerError> {
+        if reset.software_was_asserted() {
+            runtime
+                .config
+                .software_interrupt
+                .deassert_parallel(context, runtime.config.software_source)
+                .map_err(|error| TimerError::ClintResetSignal {
+                    hart: reset.hart(),
+                    error,
+                })?;
+        }
+        if reset.timer_was_asserted() {
+            runtime
+                .config
+                .timer_interrupt
+                .deassert_parallel(context, runtime.config.timer_source)
+                .map_err(|error| TimerError::ClintResetSignal {
+                    hart: reset.hart(),
+                    error,
+                })?;
+        }
+        Ok(())
     }
 
     fn write_msip(
