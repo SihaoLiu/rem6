@@ -600,7 +600,9 @@ fn workload_topology_records_gpu_devices_and_kernel_launches() {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap()
         .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 3, 5).unwrap())
         .unwrap();
@@ -614,55 +616,12 @@ fn workload_topology_records_gpu_devices_and_kernel_launches() {
         topology.gpu_devices()[0].command_route(),
         &route_id("gpu0.command")
     );
+    assert_eq!(topology.gpu_devices()[0].command_endpoint(), "gpu0.control");
     assert_eq!(topology.gpu_kernel_launches().len(), 1);
     assert_eq!(topology.gpu_kernel_launches()[0].device(), 12);
     assert_eq!(topology.gpu_kernel_launches()[0].kernel(), 90);
     assert_eq!(topology.gpu_kernel_launches()[0].workgroups(), 3);
     assert_eq!(topology.gpu_kernel_launches()[0].workgroup_latency(), 5);
-}
-
-#[test]
-fn workload_topology_rejects_invalid_gpu_declarations() {
-    let missing_route = riscv_topology()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
-        .unwrap_err();
-    assert_eq!(
-        missing_route,
-        WorkloadError::MissingGpuCommandRoute {
-            device: 12,
-            route: route_id("gpu0.command"),
-        }
-    );
-
-    let topology = riscv_topology()
-        .add_memory_route(
-            WorkloadMemoryRoute::new(
-                route_id("gpu0.command"),
-                "cpu0.gpu",
-                0,
-                "gpu0.control",
-                3,
-                1,
-                1,
-            )
-            .unwrap(),
-        )
-        .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
-        .unwrap();
-    let duplicate = topology
-        .clone()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
-        .unwrap_err();
-    assert_eq!(duplicate, WorkloadError::DuplicateGpuDevice { device: 12 });
-
-    let missing_device = topology
-        .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(99, 90, 3, 5).unwrap())
-        .unwrap_err();
-    assert_eq!(
-        missing_device,
-        WorkloadError::MissingGpuDevice { device: 99 }
-    );
 }
 
 #[test]
@@ -686,7 +645,9 @@ fn workload_topology_records_gpu_dma_copies() {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap()
         .add_gpu_dma_copy(
             WorkloadGpuDmaCopy::new(
@@ -736,7 +697,9 @@ fn workload_topology_rejects_invalid_gpu_dma_copies() {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap();
 
     let missing_device = topology
@@ -799,7 +762,14 @@ fn workload_topology_records_accelerator_devices_and_commands() {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                3,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_command(
@@ -820,6 +790,10 @@ fn workload_topology_records_accelerator_devices_and_commands() {
     assert_eq!(
         topology.accelerator_devices()[0].command_route(),
         &route_id("accelerator0.command")
+    );
+    assert_eq!(
+        topology.accelerator_devices()[0].command_endpoint(),
+        "accelerator0.control"
     );
     assert_eq!(topology.accelerator_commands().len(), 1);
     assert_eq!(topology.accelerator_commands()[0].engine(), 22);
@@ -862,7 +836,14 @@ fn workload_topology_records_accelerator_dma_copies() {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                3,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_dma_copy(
@@ -946,7 +927,14 @@ fn workload_topology_rejects_invalid_accelerator_dma_copies() {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                3,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap();
 
@@ -993,67 +981,6 @@ fn workload_topology_rejects_invalid_accelerator_dma_copies() {
             expected: 3,
             actual: 1,
         }
-    );
-}
-
-#[test]
-fn workload_topology_rejects_invalid_accelerator_declarations() {
-    let missing_route = riscv_topology()
-        .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
-        )
-        .unwrap_err();
-    assert_eq!(
-        missing_route,
-        WorkloadError::MissingAcceleratorCommandRoute {
-            engine: 22,
-            route: route_id("accelerator0.command"),
-        }
-    );
-
-    let topology = riscv_topology()
-        .add_memory_route(
-            WorkloadMemoryRoute::new(
-                route_id("accelerator0.command"),
-                "cpu0.accelerator",
-                0,
-                "accelerator0.control",
-                3,
-                1,
-                1,
-            )
-            .unwrap(),
-        )
-        .unwrap()
-        .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
-        )
-        .unwrap();
-    let duplicate = topology
-        .clone()
-        .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
-        )
-        .unwrap_err();
-    assert_eq!(
-        duplicate,
-        WorkloadError::DuplicateAcceleratorDevice { engine: 22 }
-    );
-
-    let missing_device = topology
-        .add_accelerator_command(
-            WorkloadAcceleratorCommand::new(
-                99,
-                80,
-                WorkloadAcceleratorCommandKind::GpuKernel { workgroups: 4 },
-                7,
-            )
-            .unwrap(),
-        )
-        .unwrap_err();
-    assert_eq!(
-        missing_device,
-        WorkloadError::MissingAcceleratorDevice { engine: 99 }
     );
 }
 

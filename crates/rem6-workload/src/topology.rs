@@ -769,6 +769,14 @@ impl WorkloadTopology {
                 actual: route.target_partition(),
             });
         }
+        if route.target_endpoint() != device.command_endpoint() {
+            return Err(WorkloadError::GpuCommandRouteEndpointMismatch {
+                device: device.device(),
+                route: device.command_route().clone(),
+                expected: device.command_endpoint().to_string(),
+                actual: route.target_endpoint().to_string(),
+            });
+        }
 
         self.gpu_devices.push(device);
         self.gpu_devices.sort_by_key(WorkloadGpuDevice::device);
@@ -854,6 +862,14 @@ impl WorkloadTopology {
                 route: device.command_route().clone(),
                 expected: device.partition(),
                 actual: route.target_partition(),
+            });
+        }
+        if route.target_endpoint() != device.command_endpoint() {
+            return Err(WorkloadError::AcceleratorCommandRouteEndpointMismatch {
+                engine: device.engine(),
+                route: device.command_route().clone(),
+                expected: device.command_endpoint().to_string(),
+                actual: route.target_endpoint().to_string(),
             });
         }
 

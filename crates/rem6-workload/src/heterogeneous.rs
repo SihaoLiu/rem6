@@ -9,6 +9,7 @@ pub struct WorkloadGpuDevice {
     partition: u32,
     compute_units: u32,
     wave_slots_per_compute_unit: u32,
+    command_endpoint: String,
     command_route: WorkloadRouteId,
 }
 
@@ -18,13 +19,18 @@ impl WorkloadGpuDevice {
         partition: u32,
         compute_units: u32,
         wave_slots_per_compute_unit: u32,
+        command_endpoint: impl Into<String>,
         command_route: WorkloadRouteId,
     ) -> Result<Self, WorkloadError> {
+        let command_endpoint = command_endpoint.into();
         if compute_units == 0 {
             return Err(WorkloadError::ZeroGpuComputeUnits { device });
         }
         if wave_slots_per_compute_unit == 0 {
             return Err(WorkloadError::ZeroGpuWaveSlots { device });
+        }
+        if command_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
         }
 
         Ok(Self {
@@ -32,6 +38,7 @@ impl WorkloadGpuDevice {
             partition,
             compute_units,
             wave_slots_per_compute_unit,
+            command_endpoint,
             command_route,
         })
     }
@@ -54,6 +61,10 @@ impl WorkloadGpuDevice {
 
     pub const fn command_route(&self) -> &WorkloadRouteId {
         &self.command_route
+    }
+
+    pub fn command_endpoint(&self) -> &str {
+        &self.command_endpoint
     }
 }
 
@@ -239,6 +250,7 @@ pub struct WorkloadAcceleratorDevice {
     engine: u32,
     partition: u32,
     lanes: u32,
+    command_endpoint: String,
     command_route: WorkloadRouteId,
 }
 
@@ -247,16 +259,22 @@ impl WorkloadAcceleratorDevice {
         engine: u32,
         partition: u32,
         lanes: u32,
+        command_endpoint: impl Into<String>,
         command_route: WorkloadRouteId,
     ) -> Result<Self, WorkloadError> {
+        let command_endpoint = command_endpoint.into();
         if lanes == 0 {
             return Err(WorkloadError::ZeroAcceleratorLanes { engine });
+        }
+        if command_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
         }
 
         Ok(Self {
             engine,
             partition,
             lanes,
+            command_endpoint,
             command_route,
         })
     }
@@ -275,6 +293,10 @@ impl WorkloadAcceleratorDevice {
 
     pub const fn command_route(&self) -> &WorkloadRouteId {
         &self.command_route
+    }
+
+    pub fn command_endpoint(&self) -> &str {
+        &self.command_endpoint
     }
 }
 

@@ -119,7 +119,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
 | `src/kern` | 18 | `rem6-system`, `rem6-platform`, workload resources | partial | RISC-V Linux boot handoff can install initrd bytes, emit matching `/chosen` DTB metadata, place generated or resolved-resource DTBs in guest memory, and set A1 through typed system APIs. Broader Linux symbols, panic/oops hooks, guest ABI helpers, and other ISA kernels remain open. |
 | `src/mem` | 682 | `rem6-memory`, `rem6-transport`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-dram`, `rem6-fabric`, protocol crates | partial | rem6 already splits protocol state, topology, NoC, DRAM, replacement state, MSHR resources, prefetch queues, stores, directory state, and coherence harnesses into typed crates. CHI-like line states, a single-line cache controller, a multi-line cache bank, an initial directory decision model, serial plus partitioned multi-cache coherence harnesses, topology-built CHI cache-directory and DRAM routes, CHI recorded run-resource summaries, workload-replay CHI data-cache attribution, and direct topology CHI data-cache attach exist; broader CHI transactions, prefetcher breadth, cache QoS, and Ruby-network breadth remain open. |
-| `src/python` | 253 | `rem6-workload`, `rem6-platform`, future front ends | partial | Keep gem5's ease of composition while replacing Python object wiring with checked manifests and typed builders. Workload manifests now record typed Linux boot handoff intent, including DTB address, bootargs, device-tree resource identity, initrd address range, and initrd resource identity. RISC-V core fetch and data routes must originate from the declared core partition and source endpoint before replay can build a cluster. Resolved resource payloads validate required resource id, digest, device-tree kind, initrd kind, initrd byte length, and manifest identity before workload replay installs DTB and initrd bytes into guest memory. Boot resources are reproducible data rather than Python workflow side effects. |
+| `src/python` | 253 | `rem6-workload`, `rem6-platform`, future front ends | partial | Keep gem5's ease of composition while replacing Python object wiring with checked manifests and typed builders. Workload manifests now record typed Linux boot handoff intent, including DTB address, bootargs, device-tree resource identity, initrd address range, and initrd resource identity. RISC-V core fetch and data routes must originate from the declared core partition and source endpoint before replay can build a cluster. GPU and accelerator command routes must target the declared device partition and control endpoint. Resolved resource payloads validate required resource id, digest, device-tree kind, initrd kind, initrd byte length, and manifest identity before workload replay installs DTB and initrd bytes into guest memory. Boot resources are reproducible data rather than Python workflow side effects. |
 | `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats`, `rem6-power` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, typed probe events, typed power domains, and checkpoints exist. |
 | `src/systemc` | 3911 | future `rem6-systemc` or adapter crate | external-adapter | Preserve interoperability only through an adapter boundary. Core rem6 timing must not depend on SystemC. |
 | `src/sst` | 6 | future SST adapter crate | external-adapter | Preserve co-simulation value behind a typed boundary that cannot bypass rem6 partition ownership. |
@@ -221,7 +221,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 - Full-system RISC-V tests drive multicore fetch, data access, traps, host stop,
   statistics, and run summaries through the partitioned scheduler; workload
   topology tests reject RISC-V core fetch or data routes whose source partition
-  or source endpoint does not match the declared core placement.
+  or source endpoint does not match the declared core placement, and reject GPU
+  or accelerator command routes whose target endpoint does not match the
+  declared device control endpoint.
 - Transport, fabric, DRAM, cache, directory, and coherence crates expose typed
   activity records rather than depending on string logs.
 - MSI, MESI, MOESI, and initial CHI-like line-state, cache-controller,
@@ -349,8 +351,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   checkpoint lineage, typed QoS policy intent, typed Linux boot handoff intent
   with device-tree and initrd resource validation, explicit required-resource
   payload resolution bound to manifest identity, RISC-V core route source
-  partition and endpoint validation, result metadata, execution mode switches,
-  host action summaries, checkpoint restore labels, and statistics snapshots.
+  partition and endpoint validation, GPU and accelerator command endpoint
+  validation, result metadata, execution mode switches, host action summaries,
+  checkpoint restore labels, and statistics snapshots.
 
 ## Open Alignment Work
 

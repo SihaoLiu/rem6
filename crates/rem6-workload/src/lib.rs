@@ -1206,6 +1206,12 @@ pub enum WorkloadError {
         expected: u32,
         actual: u32,
     },
+    GpuCommandRouteEndpointMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
     MissingGpuDevice {
         device: u32,
     },
@@ -1246,6 +1252,12 @@ pub enum WorkloadError {
         route: WorkloadRouteId,
         expected: u32,
         actual: u32,
+    },
+    AcceleratorCommandRouteEndpointMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
     },
     MissingAcceleratorDevice {
         engine: u32,

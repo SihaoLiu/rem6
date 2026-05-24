@@ -235,6 +235,16 @@ impl fmt::Display for WorkloadError {
                 "GPU device {device} command route {} targets partition {actual}, expected {expected}",
                 route.as_str()
             ),
+            Self::GpuCommandRouteEndpointMismatch {
+                device,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "GPU device {device} command route {} targets endpoint {actual}, expected {expected}",
+                route.as_str()
+            ),
             Self::MissingGpuDevice { device } => {
                 write!(formatter, "GPU device {device} is not defined")
             }
@@ -287,6 +297,16 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "accelerator engine {engine} command route {} targets partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::AcceleratorCommandRouteEndpointMismatch {
+                engine,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "accelerator engine {engine} command route {} targets endpoint {actual}, expected {expected}",
                 route.as_str()
             ),
             Self::MissingAcceleratorDevice { engine } => {

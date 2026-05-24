@@ -427,7 +427,9 @@ fn replay_topology_with_gpu_kernel() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap()
         .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 2, 1).unwrap())
         .unwrap()
@@ -480,7 +482,9 @@ fn replay_topology_with_gpu_dma_copy() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap()
         .add_gpu_dma_copy(
             WorkloadGpuDmaCopy::new(
@@ -540,7 +544,14 @@ fn replay_topology_with_accelerator_command() -> WorkloadTopology {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                3,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_command(
@@ -610,12 +621,21 @@ fn replay_topology_with_contended_compute() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 1, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 1, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap()
         .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 3, 4).unwrap())
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 4, 1, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                4,
+                1,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_command(
@@ -696,7 +716,14 @@ fn replay_topology_with_accelerator_dma_copy() -> WorkloadTopology {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                3,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_dma_copy(
@@ -789,7 +816,9 @@ fn replay_topology_with_profiled_contended_dma_copies() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
-        .add_gpu_device(WorkloadGpuDevice::new(12, 3, 2, 1, route_id("gpu0.command")).unwrap())
+        .add_gpu_device(
+            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+        )
         .unwrap()
         .add_gpu_dma_copy(
             WorkloadGpuDmaCopy::new(
@@ -818,7 +847,14 @@ fn replay_topology_with_profiled_contended_dma_copies() -> WorkloadTopology {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 4, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                4,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_dma_copy(
@@ -923,7 +959,14 @@ fn replay_topology_with_cached_accelerator_dma_copy() -> WorkloadTopology {
         )
         .unwrap()
         .add_accelerator_device(
-            WorkloadAcceleratorDevice::new(22, 3, 2, route_id("accelerator0.command")).unwrap(),
+            WorkloadAcceleratorDevice::new(
+                22,
+                3,
+                2,
+                "accelerator0.control",
+                route_id("accelerator0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_accelerator_dma_copy(
