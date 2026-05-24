@@ -5,10 +5,14 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 mod expression;
+mod thermal;
 
 pub use expression::{
     PowerExpression, PowerExpressionInputs, PowerExpressionModel, PowerExpressionModelSnapshot,
     PowerMetricBinding, PowerMetricBindings, PowerMetricId, PowerStateExpression,
+};
+pub use thermal::{
+    ThermalDomainId, ThermalError, ThermalRcModel, ThermalRcSnapshot, ThermalUpdate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::{PowerError, PowerEstimate, PowerModelMode, PowerResidency, PowerStateKind};
+use crate::{
+    PowerError, PowerEstimate, PowerModelMode, PowerResidency, PowerStateKind, ThermalRcModel,
+};
 use rem6_stats::{StatId, StatSnapshot};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -104,6 +106,12 @@ impl PowerExpressionInputs {
     pub fn with_metric(mut self, metric: PowerMetricId, value: f64) -> Result<Self, PowerError> {
         validate_expression_input(value)?;
         self.metrics.insert(metric, value);
+        Ok(self)
+    }
+
+    pub fn with_thermal_domain(mut self, thermal: &ThermalRcModel) -> Result<Self, PowerError> {
+        validate_expression_input(thermal.current_temperature_c())?;
+        self.temperature_c = thermal.current_temperature_c();
         Ok(self)
     }
 
