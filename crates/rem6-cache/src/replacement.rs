@@ -12,6 +12,10 @@ pub enum CacheReplacementPolicyKind {
         hit_priority: bool,
         btp_percent: u8,
     },
+    Bip {
+        btp_percent: u8,
+    },
+    SecondChance,
     TreePlru,
 }
 
@@ -46,6 +50,13 @@ impl CacheReplacementPolicyConfig {
                     });
                 }
             }
+            CacheReplacementPolicyKind::Bip { btp_percent } => {
+                if btp_percent > 100 {
+                    return Err(CacheReplacementPolicyError::BtpOutOfRange {
+                        percent: btp_percent,
+                    });
+                }
+            }
             CacheReplacementPolicyKind::TreePlru => {
                 if !ways.is_power_of_two() {
                     return Err(CacheReplacementPolicyError::TreePlruWaysNotPowerOfTwo { ways });
@@ -54,7 +65,8 @@ impl CacheReplacementPolicyConfig {
             CacheReplacementPolicyKind::Lru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
-            | CacheReplacementPolicyKind::Lfu => {}
+            | CacheReplacementPolicyKind::Lfu
+            | CacheReplacementPolicyKind::SecondChance => {}
         }
         Ok(Self { kind, ways })
     }
@@ -128,6 +140,7 @@ pub struct ReplacementSet {
     entries: Vec<ReplacementEntry>,
     tree_bits: Option<Vec<bool>>,
     tick: u64,
+    bip_accumulator: u8,
     reset_count: u64,
     touch_count: u64,
     invalidate_count: u64,
@@ -146,6 +159,7 @@ impl ReplacementSet {
             entries,
             tree_bits,
             tick: 0,
+            bip_accumulator: 0,
             reset_count: 0,
             touch_count: 0,
             invalidate_count: 0,
@@ -197,11 +211,14 @@ impl ReplacementSet {
         self.check_way(way)?;
         let before = self.entries[way].clone();
         match self.config.kind() {
-            CacheReplacementPolicyKind::Lru | CacheReplacementPolicyKind::Mru => {
+            CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::Mru
+            | CacheReplacementPolicyKind::Bip { .. } => {
                 self.entries[way].last_touch_tick = 0;
             }
-            CacheReplacementPolicyKind::Fifo => {
+            CacheReplacementPolicyKind::Fifo | CacheReplacementPolicyKind::SecondChance => {
                 self.entries[way].insertion_tick = 0;
+                self.entries[way].second_chance = false;
             }
             CacheReplacementPolicyKind::Lfu => {
                 self.entries[way].reference_count = 0;
@@ -227,10 +244,15 @@ impl ReplacementSet {
         self.check_way(way)?;
         let before = self.entries[way].clone();
         match self.config.kind() {
-            CacheReplacementPolicyKind::Lru | CacheReplacementPolicyKind::Mru => {
+            CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::Mru
+            | CacheReplacementPolicyKind::Bip { .. } => {
                 self.entries[way].last_touch_tick = self.next_tick();
             }
             CacheReplacementPolicyKind::Fifo => {}
+            CacheReplacementPolicyKind::SecondChance => {
+                self.entries[way].second_chance = true;
+            }
             CacheReplacementPolicyKind::Lfu => {
                 self.entries[way].reference_count =
                     self.entries[way].reference_count.saturating_add(1);
@@ -281,6 +303,20 @@ impl ReplacementSet {
                 self.entries[way].rrpv = if btp_percent == 100 { max - 1 } else { max };
                 self.entries[way].valid = true;
             }
+            CacheReplacementPolicyKind::Bip { btp_percent } => {
+                self.entries[way].last_touch_tick = if self.bip_insert_as_mru(btp_percent) {
+                    self.next_tick()
+                } else {
+                    self.tick = self.tick.max(1);
+                    1
+                };
+                self.entries[way].valid = true;
+            }
+            CacheReplacementPolicyKind::SecondChance => {
+                self.entries[way].insertion_tick = self.next_tick();
+                self.entries[way].second_chance = false;
+                self.entries[way].valid = true;
+            }
             CacheReplacementPolicyKind::TreePlru => {
                 self.set_tree_points_away_from_leaf(way);
                 self.entries[way].valid = true;
@@ -314,9 +350,13 @@ impl ReplacementSet {
             CacheReplacementPolicyKind::Lru => {
                 self.min_by(&candidates, |entry| entry.last_touch_tick)
             }
+            CacheReplacementPolicyKind::Bip { .. } => {
+                self.min_by(&candidates, |entry| entry.last_touch_tick)
+            }
             CacheReplacementPolicyKind::Fifo => {
                 self.min_by(&candidates, |entry| entry.insertion_tick)
             }
+            CacheReplacementPolicyKind::SecondChance => self.second_chance_victim(&candidates),
             CacheReplacementPolicyKind::Mru => self.mru_victim(&candidates),
             CacheReplacementPolicyKind::Lfu => {
                 self.min_by(&candidates, |entry| entry.reference_count)
@@ -341,6 +381,7 @@ impl ReplacementSet {
             entries: self.entries.clone(),
             tree_bits: self.tree_bits.clone(),
             tick: self.tick,
+            bip_accumulator: self.bip_accumulator,
             reset_count: self.reset_count,
             touch_count: self.touch_count,
             invalidate_count: self.invalidate_count,
@@ -361,6 +402,7 @@ impl ReplacementSet {
         self.entries.clone_from(&snapshot.entries);
         self.tree_bits.clone_from(&snapshot.tree_bits);
         self.tick = snapshot.tick;
+        self.bip_accumulator = snapshot.bip_accumulator;
         self.reset_count = snapshot.reset_count;
         self.touch_count = snapshot.touch_count;
         self.invalidate_count = snapshot.invalidate_count;
@@ -385,6 +427,39 @@ impl ReplacementSet {
             }
         }
         self.max_by(candidates, |entry| entry.rrpv)
+    }
+
+    fn second_chance_victim(&mut self, candidates: &[usize]) -> usize {
+        if let Some(way) = candidates.iter().find(|way| {
+            self.entries[**way].insertion_tick == 0 && !self.entries[**way].second_chance
+        }) {
+            return *way;
+        }
+
+        loop {
+            let way = self.min_by(candidates, |entry| entry.insertion_tick);
+            if self.entries[way].second_chance {
+                let insertion_tick = self.next_tick();
+                self.entries[way].insertion_tick = insertion_tick;
+                self.entries[way].second_chance = false;
+                self.entries[way].valid = true;
+            } else {
+                return way;
+            }
+        }
+    }
+
+    fn bip_insert_as_mru(&mut self, btp_percent: u8) -> bool {
+        if btp_percent == 0 {
+            return false;
+        }
+        if btp_percent == 100 {
+            return true;
+        }
+
+        let next = self.bip_accumulator + btp_percent;
+        self.bip_accumulator = next % 100;
+        next >= 100
     }
 
     fn tree_plru_victim(&self, candidates: &[usize]) -> usize {
@@ -486,6 +561,7 @@ pub struct ReplacementEntry {
     insertion_tick: u64,
     reference_count: u64,
     rrpv: u64,
+    second_chance: bool,
 }
 
 impl ReplacementEntry {
@@ -502,6 +578,7 @@ impl ReplacementEntry {
             insertion_tick: 0,
             reference_count: 0,
             rrpv,
+            second_chance: false,
         }
     }
 
@@ -527,6 +604,10 @@ impl ReplacementEntry {
 
     pub const fn rrpv(&self) -> u64 {
         self.rrpv
+    }
+
+    pub const fn second_chance(&self) -> bool {
+        self.second_chance
     }
 }
 
@@ -583,6 +664,7 @@ pub struct ReplacementSetSnapshot {
     entries: Vec<ReplacementEntry>,
     tree_bits: Option<Vec<bool>>,
     tick: u64,
+    bip_accumulator: u8,
     reset_count: u64,
     touch_count: u64,
     invalidate_count: u64,
