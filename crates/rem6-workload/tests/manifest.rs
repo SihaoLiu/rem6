@@ -58,6 +58,18 @@ fn hbm_profile(target: u32) -> ExternalMemoryProfile {
     .unwrap()
 }
 
+fn nvm_profile(target: u32) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::nvm(
+        memory_target(target),
+        layout(),
+        2,
+        8,
+        dram_geometry(),
+        dram_timing(),
+    )
+    .unwrap()
+}
+
 fn hbm_profile_with_layout(target: u32, line_layout: CacheLineLayout) -> ExternalMemoryProfile {
     ExternalMemoryProfile::hbm(
         memory_target(target),
@@ -112,7 +124,7 @@ fn disk_resource() -> WorkloadResource {
 
 #[test]
 fn workload_memory_target_records_external_memory_profile() {
-    let profile = hbm_profile(0);
+    let profile = nvm_profile(0);
     let target = WorkloadMemoryTarget::new(
         0,
         16,
@@ -126,13 +138,13 @@ fn workload_memory_target_records_external_memory_profile() {
     assert_eq!(target.external_memory_profile(), Some(&profile));
     assert_eq!(
         target.external_memory_profile().unwrap().technology(),
-        DramMemoryTechnology::Hbm
+        DramMemoryTechnology::Nvm
     );
     assert_eq!(
         target.external_memory_profile().unwrap().topology(),
-        ExternalMemoryTopology::Hbm {
-            stacks: 2,
-            pseudo_channels_per_stack: 2,
+        ExternalMemoryTopology::Nvm {
+            controllers: 2,
+            media_banks_per_controller: 8,
         }
     );
 }
@@ -1432,6 +1444,15 @@ fn workload_manifest_identity_changes_with_external_memory_profile() {
         .unwrap(),
     )
     .unwrap();
+    let nvm_two_by_eight = WorkloadMemoryTarget::new(
+        0,
+        16,
+        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    )
+    .unwrap()
+    .with_external_memory_profile(nvm_profile(0))
+    .unwrap();
 
     let first = WorkloadManifest::builder(id("profiled-topology"), boot_image())
         .with_topology(
@@ -1458,8 +1479,21 @@ fn workload_manifest_identity_changes_with_external_memory_profile() {
         .add_required_resource(resource_id("kernel"))
         .build()
         .unwrap();
+    let third = WorkloadManifest::builder(id("profiled-topology"), boot_image())
+        .with_topology(
+            WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+                .unwrap()
+                .add_memory_target(nvm_two_by_eight)
+                .unwrap(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
 
     assert_ne!(first.identity(), second.identity());
+    assert_ne!(first.identity(), third.identity());
 }
 
 #[test]

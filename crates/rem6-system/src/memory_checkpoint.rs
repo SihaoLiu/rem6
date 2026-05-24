@@ -531,6 +531,14 @@ fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>)
             write_u32(payload, channels);
             write_u32(payload, dies_per_channel);
         }
+        ExternalMemoryTopology::Nvm {
+            controllers,
+            media_banks_per_controller,
+        } => {
+            write_u64(payload, 4);
+            write_u32(payload, controllers);
+            write_u32(payload, media_banks_per_controller);
+        }
     }
 }
 
@@ -731,6 +739,7 @@ fn read_profile(
         1 => ExternalMemoryProfile::ddr(target, line_layout, first, second, geometry, timing),
         2 => ExternalMemoryProfile::hbm(target, line_layout, first, second, geometry, timing),
         3 => ExternalMemoryProfile::lpddr(target, line_layout, first, second, geometry, timing),
+        4 => ExternalMemoryProfile::nvm(target, line_layout, first, second, geometry, timing),
         value => {
             return Err(cursor.invalid(format!(
                 "DRAM target {} has invalid profile technology {value}",

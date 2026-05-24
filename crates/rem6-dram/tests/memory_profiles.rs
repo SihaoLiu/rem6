@@ -55,6 +55,7 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     let hbm = ExternalMemoryProfile::hbm(target(2), layout(), 4, 2, geometry(), timing()).unwrap();
     let lpddr =
         ExternalMemoryProfile::lpddr(target(3), layout(), 2, 4, geometry(), timing()).unwrap();
+    let nvm = ExternalMemoryProfile::nvm(target(4), layout(), 3, 6, geometry(), timing()).unwrap();
 
     assert_eq!(ddr.technology(), DramMemoryTechnology::Ddr);
     assert_eq!(
@@ -80,6 +81,14 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
             dies_per_channel: 4,
         },
     );
+    assert_eq!(nvm.technology(), DramMemoryTechnology::Nvm);
+    assert_eq!(
+        nvm.topology(),
+        ExternalMemoryTopology::Nvm {
+            controllers: 3,
+            media_banks_per_controller: 6,
+        },
+    );
 
     let default_config = DramControllerConfig::new(target(1), layout(), geometry(), timing());
     assert_eq!(default_config.parallel_port_count(), 1);
@@ -98,6 +107,8 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     assert_eq!(lpddr.line_layout(), layout());
     assert_eq!(lpddr.parallel_port_count(), 2);
     assert_eq!(lpddr.controller_config().parallel_port_count(), 2);
+    assert_eq!(nvm.parallel_port_count(), 3);
+    assert_eq!(nvm.controller_config().parallel_port_count(), 3);
 }
 
 #[test]
@@ -137,6 +148,20 @@ fn external_memory_profiles_reject_zero_topology_counts() {
             field: DramProfileField::DiesPerChannel,
         },
     );
+    assert_eq!(
+        ExternalMemoryProfile::nvm(target(4), layout(), 0, 1, geometry(), timing()).unwrap_err(),
+        DramError::ZeroProfileTopology {
+            technology: DramMemoryTechnology::Nvm,
+            field: DramProfileField::Controllers,
+        },
+    );
+    assert_eq!(
+        ExternalMemoryProfile::nvm(target(4), layout(), 1, 0, geometry(), timing()).unwrap_err(),
+        DramError::ZeroProfileTopology {
+            technology: DramMemoryTechnology::Nvm,
+            field: DramProfileField::MediaBanksPerController,
+        },
+    );
 }
 
 #[test]
@@ -171,6 +196,34 @@ fn dram_memory_controller_adds_profiled_targets_and_restores_profile_metadata() 
         restored.dram_controller(profile.target()).unwrap().timing(),
         timing(),
     );
+}
+
+#[test]
+fn dram_memory_controller_reports_profile_metadata_in_target_activity() {
+    let profile =
+        ExternalMemoryProfile::nvm(target(6), layout(), 2, 8, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x5a; 64])
+        .unwrap();
+    controller.accept(10, &read(0x0008, 45)).unwrap();
+
+    let activity = controller.target_activity(profile.target()).unwrap();
+
+    assert_eq!(activity.memory_profile(), Some(&profile));
+    assert_eq!(
+        activity.memory_profile().unwrap().technology(),
+        DramMemoryTechnology::Nvm,
+    );
+    assert_eq!(activity.profile().access_count(), 1);
 }
 
 #[test]

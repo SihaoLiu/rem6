@@ -1373,10 +1373,7 @@ fn merge_run_dram_activity_maps(
         target
             .entry(activity.target())
             .and_modify(|stored| {
-                *stored = DramTargetActivity::new(
-                    stored.target(),
-                    stored.profile().merge_window(activity.profile()),
-                );
+                *stored = stored.clone().merge_window(activity.clone());
             })
             .or_insert_with(|| activity.clone());
     }

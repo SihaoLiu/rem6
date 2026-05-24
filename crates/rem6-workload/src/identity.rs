@@ -241,6 +241,7 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
         DramMemoryTechnology::Ddr => hash_str(hash, "ddr"),
         DramMemoryTechnology::Hbm => hash_str(hash, "hbm"),
         DramMemoryTechnology::Lpddr => hash_str(hash, "lpddr"),
+        DramMemoryTechnology::Nvm => hash_str(hash, "nvm"),
     }
     match profile.topology() {
         ExternalMemoryTopology::Ddr {
@@ -266,6 +267,14 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
             hash_str(hash, "lpddr.topology");
             hash_u64(hash, u64::from(channels));
             hash_u64(hash, u64::from(dies_per_channel));
+        }
+        ExternalMemoryTopology::Nvm {
+            controllers,
+            media_banks_per_controller,
+        } => {
+            hash_str(hash, "nvm.topology");
+            hash_u64(hash, u64::from(controllers));
+            hash_u64(hash, u64::from(media_banks_per_controller));
         }
     }
 }

@@ -3,7 +3,10 @@ use rem6_coherence::{
     ParallelCoherenceRunHistory, ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
 };
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
-use rem6_dram::{DramGeometry, DramTiming};
+use rem6_dram::{
+    DramActivityProfile, DramGeometry, DramMemoryTechnology, DramTargetActivity, DramTiming,
+    ExternalMemoryProfile,
+};
 use rem6_isa_riscv::Register;
 use rem6_kernel::{
     ClockDomain, ParallelRunProfile, PartitionId, RecordedConservativeRunSummary, WaitForEdgeKind,
@@ -925,6 +928,36 @@ fn topology_run_reports_fabric_and_dram_activity_for_fetch_window() {
     assert_eq!(
         run.resource_activity_count(),
         run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+    );
+}
+
+#[test]
+fn system_run_preserves_external_memory_profile_when_merging_dram_activity() {
+    let target = MemoryTargetId::new(3);
+    let profile = ExternalMemoryProfile::nvm(
+        target,
+        layout(),
+        2,
+        8,
+        DramGeometry::new(4, 64, layout().bytes()).unwrap(),
+        DramTiming::new(4, 8, 12, 3, 5).unwrap(),
+    )
+    .unwrap();
+    let activity = DramTargetActivity::new(target, DramActivityProfile::default())
+        .with_memory_profile(profile);
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 0 },
+    )
+    .with_dram_activity(vec![activity.clone(), activity]);
+
+    let merged = run.dram_target_activity(target).unwrap();
+
+    assert_eq!(merged.memory_profile(), Some(&profile));
+    assert_eq!(
+        merged.memory_profile().unwrap().technology(),
+        DramMemoryTechnology::Nvm,
     );
 }
 

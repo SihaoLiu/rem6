@@ -34,6 +34,7 @@ pub enum DramMemoryTechnology {
     Ddr,
     Hbm,
     Lpddr,
+    Nvm,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +44,8 @@ pub enum DramProfileField {
     Stacks,
     PseudoChannelsPerStack,
     DiesPerChannel,
+    Controllers,
+    MediaBanksPerController,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,6 +251,10 @@ pub enum ExternalMemoryTopology {
         channels: u32,
         dies_per_channel: u32,
     },
+    Nvm {
+        controllers: u32,
+        media_banks_per_controller: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -350,6 +357,37 @@ impl ExternalMemoryProfile {
         ))
     }
 
+    pub fn nvm(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        controllers: u32,
+        media_banks_per_controller: u32,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Result<Self, DramError> {
+        validate_profile_count(
+            DramMemoryTechnology::Nvm,
+            DramProfileField::Controllers,
+            controllers,
+        )?;
+        validate_profile_count(
+            DramMemoryTechnology::Nvm,
+            DramProfileField::MediaBanksPerController,
+            media_banks_per_controller,
+        )?;
+        Ok(Self::new(
+            target,
+            line_layout,
+            geometry,
+            timing,
+            DramMemoryTechnology::Nvm,
+            ExternalMemoryTopology::Nvm {
+                controllers,
+                media_banks_per_controller,
+            },
+        ))
+    }
+
     const fn new(
         target: MemoryTargetId,
         line_layout: CacheLineLayout,
@@ -406,6 +444,7 @@ impl ExternalMemoryTopology {
     pub const fn parallel_port_count(self) -> u32 {
         match self {
             Self::Ddr { channels, .. } | Self::Lpddr { channels, .. } => channels,
+            Self::Nvm { controllers, .. } => controllers,
             Self::Hbm {
                 stacks,
                 pseudo_channels_per_stack,
@@ -1593,9 +1632,13 @@ impl DramMemoryController {
     }
 
     pub fn target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
-        self.dram
-            .get(&target)
-            .map(|controller| DramTargetActivity::new(target, controller.activity_profile()))
+        self.dram.get(&target).map(|controller| {
+            let activity = DramTargetActivity::new(target, controller.activity_profile());
+            match self.profiles.get(&target).copied() {
+                Some(profile) => activity.with_memory_profile(profile),
+                None => activity,
+            }
+        })
     }
 
     pub fn target_activity_since(
@@ -1608,7 +1651,11 @@ impl DramMemoryController {
                 || controller.activity_profile(),
                 |marker| controller.activity_profile_since(marker),
             );
-            DramTargetActivity::new(target, profile)
+            let activity = DramTargetActivity::new(target, profile);
+            match self.profiles.get(&target).copied() {
+                Some(profile) => activity.with_memory_profile(profile),
+                None => activity,
+            }
         })
     }
 

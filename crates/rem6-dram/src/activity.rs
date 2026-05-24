@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
 
-use crate::{DramAccess, DramAccessKind};
+use crate::{DramAccess, DramAccessKind, ExternalMemoryProfile};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramActivityMarker {
@@ -443,15 +443,41 @@ impl DramMemoryActivityMarker {
 pub struct DramTargetActivity {
     target: MemoryTargetId,
     profile: DramActivityProfile,
+    memory_profile: Option<ExternalMemoryProfile>,
 }
 
 impl DramTargetActivity {
     pub const fn new(target: MemoryTargetId, profile: DramActivityProfile) -> Self {
-        Self { target, profile }
+        Self {
+            target,
+            profile,
+            memory_profile: None,
+        }
+    }
+
+    pub const fn with_memory_profile(mut self, memory_profile: ExternalMemoryProfile) -> Self {
+        self.memory_profile = Some(memory_profile);
+        self
+    }
+
+    pub fn merge_window(mut self, later: Self) -> Self {
+        self.profile = self.profile.merge_window(later.profile);
+        if self.memory_profile.is_none() {
+            self.memory_profile = later.memory_profile;
+        } else {
+            debug_assert!(
+                later.memory_profile.is_none() || self.memory_profile == later.memory_profile
+            );
+        }
+        self
     }
 
     pub const fn target(&self) -> MemoryTargetId {
         self.target
+    }
+
+    pub const fn memory_profile(&self) -> Option<&ExternalMemoryProfile> {
+        self.memory_profile.as_ref()
     }
 
     pub fn profile(&self) -> DramActivityProfile {

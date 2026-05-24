@@ -98,7 +98,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `configs/example` | 81 | `rem6-workload`, `rem6-system` tests | partial | Preserve easy examples, but every example should be reconstructable from a manifest and tested where practical. |
 | `configs/ruby` | 17 | `rem6-coherence`, protocol crates, `rem6-system` | partial | Keep multi-protocol examples while avoiding a separate Ruby-like engine. |
 | `configs/topologies` | 10 | `rem6-topology`, `rem6-fabric`, `rem6-transport` | partial | Topology definitions should be protocol-neutral and reusable across CPU, GPU, DMA, and accelerator traffic. |
-| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DRAM, HBM, LPDDR, DDR, and NVM profiles need typed geometry and activity summaries. DRAM profiles exist; breadth remains open. |
+| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, timing, manifest identity, checkpoint encoding, and activity metadata. Profile breadth and richer media behavior remain open. |
 | `configs/network` | 2 | `rem6-fabric`, `rem6-transport` | partial | Network configuration must map to NoC lanes, virtual networks, credits, and wait-for diagnostics. |
 | `configs/boot`, `configs/dist`, `configs/splash2`, `configs/learning_gem5`, `configs/deprecated` | 27 | `rem6-boot`, `rem6-workload`, tests | partial | Boot and benchmark examples should become manifest resources, not external scripts. Deprecated examples are audit input only. |
 
@@ -142,8 +142,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
 | `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, geometry, activity, and profiles. External DRAM simulators should be optional adapters. |
-| `configs/nvm`, memory profile code | `rem6-memory`, `rem6-dram` | planned | NVM and persistent memory behavior need target profiles and timing models. |
-| HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists; a broader library of validated profiles is still needed. |
+| `configs/nvm`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. Persistent media semantics and richer asymmetric timing remain open. |
+| HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists for DDR, HBM, LPDDR, and NVM; a broader library of validated profiles is still needed. |
 
 ### Heterogeneous Devices
 

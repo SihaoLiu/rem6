@@ -254,7 +254,7 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
 fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     let target = MemoryTargetId::new(50);
     let profile =
-        ExternalMemoryProfile::hbm(target, layout(), 1, 2, dram_geometry(), dram_timing()).unwrap();
+        ExternalMemoryProfile::nvm(target, layout(), 2, 8, dram_geometry(), dram_timing()).unwrap();
     let mut controller = DramMemoryController::new();
     controller.add_profile(profile).unwrap();
     controller
@@ -303,7 +303,7 @@ fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     assert_eq!(controller.memory_profile(target).unwrap(), &profile);
     assert_eq!(
         controller.memory_profile(target).unwrap().technology(),
-        DramMemoryTechnology::Hbm,
+        DramMemoryTechnology::Nvm,
     );
     assert_eq!(
         controller
