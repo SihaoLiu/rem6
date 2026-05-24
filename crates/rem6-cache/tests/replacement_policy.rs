@@ -143,6 +143,72 @@ fn replacement_set_bip_uses_deterministic_bimodal_insertion() {
 }
 
 #[test]
+fn replacement_set_ship_uses_signature_history_for_rrip_insertion() {
+    let mut set = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: 4,
+                insertion_threshold_percent: 1,
+            },
+            4,
+        )
+        .unwrap(),
+    );
+
+    set.reset_with_signature(0, 10).unwrap();
+    assert_eq!(set.entry(0).unwrap().ship_signature(), 2);
+    assert!(!set.entry(0).unwrap().ship_re_referenced());
+    assert_eq!(set.entry(0).unwrap().rrpv(), 3);
+
+    set.touch_with_signature(0, 10).unwrap();
+    assert_eq!(set.ship_signature_counters().unwrap(), &[0, 0, 1, 0]);
+    assert!(set.entry(0).unwrap().ship_re_referenced());
+    assert_eq!(set.entry(0).unwrap().rrpv(), 0);
+
+    set.reset_with_signature(1, 10).unwrap();
+    set.reset_with_signature(2, 11).unwrap();
+    assert_eq!(set.entry(1).unwrap().ship_signature(), 2);
+    assert_eq!(set.entry(1).unwrap().rrpv(), 2);
+    assert_eq!(set.entry(2).unwrap().ship_signature(), 3);
+    assert_eq!(set.entry(2).unwrap().rrpv(), 3);
+    assert_eq!(set.victim([0, 1, 2]).unwrap().way(), 2);
+}
+
+#[test]
+fn replacement_set_ship_detrains_unused_insertions_and_snapshots_predictor() {
+    let mut set = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: false,
+                shct_entries: 2,
+                insertion_threshold_percent: 1,
+            },
+            2,
+        )
+        .unwrap(),
+    );
+
+    set.reset_with_signature(0, 1).unwrap();
+    set.touch_with_signature(0, 1).unwrap();
+    assert_eq!(set.entry(0).unwrap().rrpv(), 2);
+    assert_eq!(set.ship_signature_counters().unwrap(), &[0, 1]);
+    let snapshot = set.snapshot();
+
+    set.reset_with_signature(1, 1).unwrap();
+    assert_eq!(set.entry(1).unwrap().rrpv(), 2);
+    set.invalidate(1).unwrap();
+    assert_eq!(set.ship_signature_counters().unwrap(), &[0, 0]);
+
+    set.restore(&snapshot).unwrap();
+    assert_eq!(set.ship_signature_counters().unwrap(), &[0, 1]);
+    set.reset_with_signature(1, 1).unwrap();
+    assert_eq!(set.entry(1).unwrap().rrpv(), 2);
+}
+
+#[test]
 fn replacement_set_second_chance_requeues_touched_fifo_victims() {
     let mut set = ReplacementSet::new(
         CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::SecondChance, 4).unwrap(),
@@ -226,6 +292,62 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
     assert_eq!(
         CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Bip { btp_percent: 101 }, 4,),
         Err(CacheReplacementPolicyError::BtpOutOfRange { percent: 101 })
+    );
+    assert_eq!(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 8,
+                hit_priority: true,
+                shct_entries: 4,
+                insertion_threshold_percent: 1,
+            },
+            4,
+        ),
+        Err(CacheReplacementPolicyError::RrpvBitsOutOfRange { bits: 8 })
+    );
+    assert_eq!(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: 0,
+                insertion_threshold_percent: 1,
+            },
+            4,
+        ),
+        Err(CacheReplacementPolicyError::SignatureHistoryTableEmpty)
+    );
+    assert_eq!(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: 4,
+                insertion_threshold_percent: 101,
+            },
+            4,
+        ),
+        Err(CacheReplacementPolicyError::InsertionThresholdOutOfRange { percent: 101 })
+    );
+    let mut ship = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: 4,
+                insertion_threshold_percent: 1,
+            },
+            2,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        ship.reset(0),
+        Err(CacheReplacementPolicyError::SignatureRequired)
+    );
+    assert_eq!(
+        ship.touch(0),
+        Err(CacheReplacementPolicyError::SignatureRequired)
     );
     assert_eq!(
         CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::TreePlru, 3),

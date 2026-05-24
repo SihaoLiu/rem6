@@ -12,6 +12,12 @@ pub enum CacheReplacementPolicyKind {
         hit_priority: bool,
         btp_percent: u8,
     },
+    Ship {
+        rrpv_bits: u8,
+        hit_priority: bool,
+        shct_entries: usize,
+        insertion_threshold_percent: u8,
+    },
     Bip {
         btp_percent: u8,
     },
@@ -47,6 +53,26 @@ impl CacheReplacementPolicyConfig {
                 if btp_percent > 100 {
                     return Err(CacheReplacementPolicyError::BtpOutOfRange {
                         percent: btp_percent,
+                    });
+                }
+            }
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits,
+                shct_entries,
+                insertion_threshold_percent,
+                ..
+            } => {
+                if !(1..=7).contains(&rrpv_bits) {
+                    return Err(CacheReplacementPolicyError::RrpvBitsOutOfRange {
+                        bits: rrpv_bits,
+                    });
+                }
+                if shct_entries == 0 {
+                    return Err(CacheReplacementPolicyError::SignatureHistoryTableEmpty);
+                }
+                if insertion_threshold_percent > 100 {
+                    return Err(CacheReplacementPolicyError::InsertionThresholdOutOfRange {
+                        percent: insertion_threshold_percent,
                     });
                 }
             }
@@ -89,9 +115,14 @@ pub enum CacheReplacementPolicyError {
     BtpOutOfRange {
         percent: u8,
     },
+    InsertionThresholdOutOfRange {
+        percent: u8,
+    },
+    SignatureHistoryTableEmpty,
     TreePlruWaysNotPowerOfTwo {
         ways: usize,
     },
+    SignatureRequired,
     UnknownWay {
         way: usize,
         ways: usize,
@@ -115,9 +146,20 @@ impl fmt::Display for CacheReplacementPolicyError {
                 formatter,
                 "cache replacement policy BTP {percent} is outside 0..=100"
             ),
+            Self::InsertionThresholdOutOfRange { percent } => write!(
+                formatter,
+                "cache replacement policy insertion threshold {percent} is outside 0..=100"
+            ),
+            Self::SignatureHistoryTableEmpty => {
+                write!(formatter, "SHiP replacement policy has no SHCT entries")
+            }
             Self::TreePlruWaysNotPowerOfTwo { ways } => write!(
                 formatter,
                 "TreePLRU replacement policy needs a power-of-two way count, got {ways}"
+            ),
+            Self::SignatureRequired => write!(
+                formatter,
+                "SHiP replacement policy requires an access signature"
             ),
             Self::UnknownWay { way, ways } => write!(
                 formatter,
@@ -139,6 +181,7 @@ pub struct ReplacementSet {
     config: CacheReplacementPolicyConfig,
     entries: Vec<ReplacementEntry>,
     tree_bits: Option<Vec<bool>>,
+    ship_signature_counters: Option<Vec<u8>>,
     tick: u64,
     bip_accumulator: u8,
     reset_count: u64,
@@ -151,6 +194,10 @@ impl ReplacementSet {
     pub fn new(config: CacheReplacementPolicyConfig) -> Self {
         let tree_bits = (config.kind() == CacheReplacementPolicyKind::TreePlru)
             .then(|| vec![false; config.ways() - 1]);
+        let ship_signature_counters = match config.kind() {
+            CacheReplacementPolicyKind::Ship { shct_entries, .. } => Some(vec![0; shct_entries]),
+            _ => None,
+        };
         let entries = (0..config.ways())
             .map(|way| ReplacementEntry::new(way, config.kind()))
             .collect();
@@ -158,6 +205,7 @@ impl ReplacementSet {
             config,
             entries,
             tree_bits,
+            ship_signature_counters,
             tick: 0,
             bip_accumulator: 0,
             reset_count: 0,
@@ -177,6 +225,10 @@ impl ReplacementSet {
 
     pub fn tree_bits(&self) -> Option<&[bool]> {
         self.tree_bits.as_deref()
+    }
+
+    pub fn ship_signature_counters(&self) -> Option<&[u8]> {
+        self.ship_signature_counters.as_deref()
     }
 
     pub const fn reset_count(&self) -> u64 {
@@ -226,6 +278,11 @@ impl ReplacementSet {
             CacheReplacementPolicyKind::Brrip { .. } => {
                 self.entries[way].valid = false;
             }
+            CacheReplacementPolicyKind::Ship { .. } => {
+                self.detrain_ship_entry_if_unused(way);
+                self.entries[way].valid = false;
+                self.entries[way].ship_re_referenced = false;
+            }
             CacheReplacementPolicyKind::TreePlru => {
                 self.set_tree_points_to_leaf(way);
                 self.entries[way].valid = false;
@@ -264,10 +321,46 @@ impl ReplacementSet {
                     self.entries[way].rrpv = self.entries[way].rrpv.saturating_sub(1);
                 }
             }
+            CacheReplacementPolicyKind::Ship { .. } => {
+                return Err(CacheReplacementPolicyError::SignatureRequired);
+            }
             CacheReplacementPolicyKind::TreePlru => {
                 self.set_tree_points_away_from_leaf(way);
                 self.entries[way].valid = true;
             }
+        }
+        self.touch_count += 1;
+        Ok(ReplacementUpdate {
+            way,
+            before,
+            after: self.entries[way].clone(),
+            update_count: self.touch_count,
+        })
+    }
+
+    pub fn touch_with_signature(
+        &mut self,
+        way: usize,
+        signature: u64,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        self.check_way(way)?;
+        let CacheReplacementPolicyKind::Ship {
+            rrpv_bits,
+            hit_priority,
+            ..
+        } = self.config.kind()
+        else {
+            return self.touch(way);
+        };
+
+        let before = self.entries[way].clone();
+        let signature_index = self.ship_signature_index(signature);
+        self.increment_ship_counter(signature_index, max_rrpv(rrpv_bits) as u8);
+        self.entries[way].ship_re_referenced = true;
+        if hit_priority {
+            self.entries[way].rrpv = 0;
+        } else {
+            self.entries[way].rrpv = self.entries[way].rrpv.saturating_sub(1);
         }
         self.touch_count += 1;
         Ok(ReplacementUpdate {
@@ -303,6 +396,9 @@ impl ReplacementSet {
                 self.entries[way].rrpv = if btp_percent == 100 { max - 1 } else { max };
                 self.entries[way].valid = true;
             }
+            CacheReplacementPolicyKind::Ship { .. } => {
+                return Err(CacheReplacementPolicyError::SignatureRequired);
+            }
             CacheReplacementPolicyKind::Bip { btp_percent } => {
                 self.entries[way].last_touch_tick = if self.bip_insert_as_mru(btp_percent) {
                     self.next_tick()
@@ -322,6 +418,40 @@ impl ReplacementSet {
                 self.entries[way].valid = true;
             }
         }
+        self.reset_count += 1;
+        Ok(ReplacementUpdate {
+            way,
+            before,
+            after: self.entries[way].clone(),
+            update_count: self.reset_count,
+        })
+    }
+
+    pub fn reset_with_signature(
+        &mut self,
+        way: usize,
+        signature: u64,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        self.check_way(way)?;
+        let CacheReplacementPolicyKind::Ship {
+            rrpv_bits,
+            insertion_threshold_percent,
+            ..
+        } = self.config.kind()
+        else {
+            return self.reset(way);
+        };
+
+        let before = self.entries[way].clone();
+        let signature_index = self.ship_signature_index(signature);
+        let max = max_rrpv(rrpv_bits);
+        self.entries[way].ship_signature = signature_index as u64;
+        self.entries[way].ship_re_referenced = false;
+        self.entries[way].rrpv = max;
+        if self.ship_counter_reaches_threshold(signature_index, max, insertion_threshold_percent) {
+            self.entries[way].rrpv = self.entries[way].rrpv.saturating_sub(1);
+        }
+        self.entries[way].valid = true;
         self.reset_count += 1;
         Ok(ReplacementUpdate {
             way,
@@ -364,6 +494,9 @@ impl ReplacementSet {
             CacheReplacementPolicyKind::Brrip { rrpv_bits, .. } => {
                 self.brrip_victim(&candidates, rrpv_bits)
             }
+            CacheReplacementPolicyKind::Ship { rrpv_bits, .. } => {
+                self.brrip_victim(&candidates, rrpv_bits)
+            }
             CacheReplacementPolicyKind::TreePlru => self.tree_plru_victim(&candidates),
         };
 
@@ -380,6 +513,7 @@ impl ReplacementSet {
             config: self.config.clone(),
             entries: self.entries.clone(),
             tree_bits: self.tree_bits.clone(),
+            ship_signature_counters: self.ship_signature_counters.clone(),
             tick: self.tick,
             bip_accumulator: self.bip_accumulator,
             reset_count: self.reset_count,
@@ -401,6 +535,8 @@ impl ReplacementSet {
         }
         self.entries.clone_from(&snapshot.entries);
         self.tree_bits.clone_from(&snapshot.tree_bits);
+        self.ship_signature_counters
+            .clone_from(&snapshot.ship_signature_counters);
         self.tick = snapshot.tick;
         self.bip_accumulator = snapshot.bip_accumulator;
         self.reset_count = snapshot.reset_count;
@@ -427,6 +563,50 @@ impl ReplacementSet {
             }
         }
         self.max_by(candidates, |entry| entry.rrpv)
+    }
+
+    fn detrain_ship_entry_if_unused(&mut self, way: usize) {
+        if !self.entries[way].valid || self.entries[way].ship_re_referenced {
+            return;
+        }
+        let signature = self.entries[way].ship_signature as usize;
+        if let Some(counters) = &mut self.ship_signature_counters {
+            if let Some(counter) = counters.get_mut(signature) {
+                *counter = counter.saturating_sub(1);
+            }
+        }
+    }
+
+    fn ship_signature_index(&self, signature: u64) -> usize {
+        let entries = self
+            .ship_signature_counters
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or(1);
+        (signature % entries as u64) as usize
+    }
+
+    fn increment_ship_counter(&mut self, signature: usize, max: u8) {
+        if let Some(counters) = &mut self.ship_signature_counters {
+            if let Some(counter) = counters.get_mut(signature) {
+                *counter = counter.saturating_add(1).min(max);
+            }
+        }
+    }
+
+    fn ship_counter_reaches_threshold(
+        &self,
+        signature: usize,
+        max: u64,
+        threshold_percent: u8,
+    ) -> bool {
+        let Some(counters) = &self.ship_signature_counters else {
+            return false;
+        };
+        let Some(counter) = counters.get(signature) else {
+            return false;
+        };
+        u64::from(*counter) * 100 >= u64::from(threshold_percent) * max
     }
 
     fn second_chance_victim(&mut self, candidates: &[usize]) -> usize {
@@ -562,14 +742,22 @@ pub struct ReplacementEntry {
     reference_count: u64,
     rrpv: u64,
     second_chance: bool,
+    ship_signature: u64,
+    ship_re_referenced: bool,
 }
 
 impl ReplacementEntry {
     fn new(way: usize, kind: CacheReplacementPolicyKind) -> Self {
-        let rrpv = if let CacheReplacementPolicyKind::Brrip { rrpv_bits, .. } = kind {
-            max_rrpv(rrpv_bits)
-        } else {
-            0
+        let rrpv = match kind {
+            CacheReplacementPolicyKind::Brrip { rrpv_bits, .. }
+            | CacheReplacementPolicyKind::Ship { rrpv_bits, .. } => max_rrpv(rrpv_bits),
+            CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::Fifo
+            | CacheReplacementPolicyKind::Mru
+            | CacheReplacementPolicyKind::Lfu
+            | CacheReplacementPolicyKind::Bip { .. }
+            | CacheReplacementPolicyKind::SecondChance
+            | CacheReplacementPolicyKind::TreePlru => 0,
         };
         Self {
             way,
@@ -579,6 +767,8 @@ impl ReplacementEntry {
             reference_count: 0,
             rrpv,
             second_chance: false,
+            ship_signature: 0,
+            ship_re_referenced: false,
         }
     }
 
@@ -608,6 +798,14 @@ impl ReplacementEntry {
 
     pub const fn second_chance(&self) -> bool {
         self.second_chance
+    }
+
+    pub const fn ship_signature(&self) -> u64 {
+        self.ship_signature
+    }
+
+    pub const fn ship_re_referenced(&self) -> bool {
+        self.ship_re_referenced
     }
 }
 
@@ -663,6 +861,7 @@ pub struct ReplacementSetSnapshot {
     config: CacheReplacementPolicyConfig,
     entries: Vec<ReplacementEntry>,
     tree_bits: Option<Vec<bool>>,
+    ship_signature_counters: Option<Vec<u8>>,
     tick: u64,
     bip_accumulator: u8,
     reset_count: u64,
