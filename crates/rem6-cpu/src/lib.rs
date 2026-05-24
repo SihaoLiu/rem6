@@ -15,7 +15,7 @@ use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryOperation,
     MemoryRequest, MemoryRequestId, ResponseStatus, TranslationRequestId,
 };
-use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
+use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId};
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
     ResponseDelivery, TargetOutcome, TransportEndpointId, TransportError,
@@ -33,6 +33,7 @@ mod ltage_predictor;
 mod multiperspective_perceptron;
 mod riscv_activity;
 mod riscv_cluster;
+mod riscv_data_access;
 mod riscv_translation;
 mod statistical_corrector;
 mod tage_predictor;
@@ -91,6 +92,10 @@ pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
     RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
+};
+pub use riscv_data_access::{
+    RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
+    RiscvLoadReservation,
 };
 pub use statistical_corrector::{
     StatisticalCorrector, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
@@ -895,6 +900,10 @@ impl RiscvCore {
             .clone()
     }
 
+    pub fn load_reservation(&self) -> Option<RiscvLoadReservation> {
+        self.state.lock().expect("riscv core lock").reservation
+    }
+
     pub fn issue_next_fetch<F>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -1295,17 +1304,7 @@ impl RiscvCore {
         match delivery.response().status() {
             ResponseStatus::Completed => {
                 let data = delivery.response().data().map(ToOwned::to_owned);
-                if let MemoryAccessKind::Load {
-                    rd, width, signed, ..
-                } = access.access
-                {
-                    let value = load_response_value(
-                        data.as_deref().expect("load response data"),
-                        width,
-                        signed,
-                    );
-                    state.hart.write(rd, value);
-                }
+                record_load_completion(&mut state, &access, data.as_deref(), "load response data");
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
                     data,
@@ -1328,17 +1327,12 @@ impl RiscvCore {
         match completion.response() {
             Ok(response) => {
                 let data = response.data().map(ToOwned::to_owned);
-                if let MemoryAccessKind::Load {
-                    rd, width, signed, ..
-                } = access.access
-                {
-                    let value = load_response_value(
-                        data.as_deref().expect("MMIO load response data"),
-                        width,
-                        signed,
-                    );
-                    state.hart.write(rd, value);
-                }
+                record_load_completion(
+                    &mut state,
+                    &access,
+                    data.as_deref(),
+                    "MMIO load response data",
+                );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
                     data,
@@ -1365,6 +1359,7 @@ struct RiscvCoreState {
     ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
     outstanding_data: BTreeMap<MemoryRequestId, IssuedDataAccess>,
     pending_trap: Option<RiscvTrap>,
+    reservation: Option<RiscvLoadReservation>,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
 }
@@ -1381,6 +1376,7 @@ impl RiscvCoreState {
             ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
             pending_trap: None,
+            reservation: None,
             events: Vec::new(),
             data_events: Vec::new(),
         }
@@ -1413,13 +1409,15 @@ impl OutstandingDataAccess {
     fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
         let line_layout = self.line_layout.expect("memory data access line layout");
         match &self.access {
-            MemoryAccessKind::Load { .. } => MemoryRequest::read_shared(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
+                MemoryRequest::read_shared(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::Store { value, .. } => MemoryRequest::write(
                 self.request_id,
                 self.physical_address,
@@ -1498,199 +1496,6 @@ pub enum RiscvCoreDriveAction {
     DataAccessIssued { event: PartitionEventId },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RiscvDataAccessEventKind {
-    Issued,
-    Completed,
-    Retry,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RiscvDataAccessTarget {
-    Memory {
-        route: MemoryRouteId,
-        endpoint: TransportEndpointId,
-    },
-    Mmio {
-        route: MmioRoute,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvDataAccessRecord {
-    tick: Tick,
-    partition: PartitionId,
-    target: RiscvDataAccessTarget,
-    request: MemoryRequestId,
-    fetch_request: MemoryRequestId,
-    access: MemoryAccessKind,
-    size: AccessSize,
-    physical_address: Address,
-}
-
-impl RiscvDataAccessRecord {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        tick: Tick,
-        partition: PartitionId,
-        target: RiscvDataAccessTarget,
-        request: MemoryRequestId,
-        fetch_request: MemoryRequestId,
-        access: MemoryAccessKind,
-        size: AccessSize,
-        physical_address: Address,
-    ) -> Self {
-        Self {
-            tick,
-            partition,
-            target,
-            request,
-            fetch_request,
-            access,
-            size,
-            physical_address,
-        }
-    }
-
-    pub fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub fn partition(&self) -> PartitionId {
-        self.partition
-    }
-
-    pub fn route(&self) -> Option<MemoryRouteId> {
-        match &self.target {
-            RiscvDataAccessTarget::Memory { route, .. } => Some(*route),
-            RiscvDataAccessTarget::Mmio { .. } => None,
-        }
-    }
-
-    pub fn endpoint(&self) -> Option<&TransportEndpointId> {
-        match &self.target {
-            RiscvDataAccessTarget::Memory { endpoint, .. } => Some(endpoint),
-            RiscvDataAccessTarget::Mmio { .. } => None,
-        }
-    }
-
-    pub fn target(&self) -> RiscvDataAccessTarget {
-        self.target.clone()
-    }
-
-    pub fn request_id(&self) -> MemoryRequestId {
-        self.request
-    }
-
-    pub fn fetch_request_id(&self) -> MemoryRequestId {
-        self.fetch_request
-    }
-
-    pub fn access(&self) -> &MemoryAccessKind {
-        &self.access
-    }
-
-    pub fn size(&self) -> AccessSize {
-        self.size
-    }
-
-    pub fn physical_address(&self) -> Address {
-        self.physical_address
-    }
-
-    pub fn operation(&self) -> MemoryOperation {
-        match self.access {
-            MemoryAccessKind::Load { .. } => MemoryOperation::ReadShared,
-            MemoryAccessKind::Store { .. } => MemoryOperation::Write,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvDataAccessEvent {
-    record: RiscvDataAccessRecord,
-    kind: RiscvDataAccessEventKind,
-    data: Option<Vec<u8>>,
-}
-
-impl RiscvDataAccessEvent {
-    pub fn issued(record: RiscvDataAccessRecord) -> Self {
-        Self {
-            record,
-            kind: RiscvDataAccessEventKind::Issued,
-            data: None,
-        }
-    }
-
-    pub fn completed(record: RiscvDataAccessRecord, data: Option<Vec<u8>>) -> Self {
-        Self {
-            record,
-            kind: RiscvDataAccessEventKind::Completed,
-            data,
-        }
-    }
-
-    pub fn retry(record: RiscvDataAccessRecord) -> Self {
-        Self {
-            record,
-            kind: RiscvDataAccessEventKind::Retry,
-            data: None,
-        }
-    }
-
-    pub fn tick(&self) -> Tick {
-        self.record.tick()
-    }
-
-    pub fn partition(&self) -> PartitionId {
-        self.record.partition()
-    }
-
-    pub fn route(&self) -> Option<MemoryRouteId> {
-        self.record.route()
-    }
-
-    pub fn endpoint(&self) -> Option<&TransportEndpointId> {
-        self.record.endpoint()
-    }
-
-    pub fn target(&self) -> RiscvDataAccessTarget {
-        self.record.target()
-    }
-
-    pub fn request_id(&self) -> MemoryRequestId {
-        self.record.request_id()
-    }
-
-    pub fn fetch_request_id(&self) -> MemoryRequestId {
-        self.record.fetch_request_id()
-    }
-
-    pub fn access(&self) -> &MemoryAccessKind {
-        self.record.access()
-    }
-
-    pub fn size(&self) -> AccessSize {
-        self.record.size()
-    }
-
-    pub fn physical_address(&self) -> Address {
-        self.record.physical_address()
-    }
-
-    pub fn operation(&self) -> MemoryOperation {
-        self.record.operation()
-    }
-
-    pub fn kind(&self) -> RiscvDataAccessEventKind {
-        self.kind
-    }
-
-    pub fn data(&self) -> Option<&[u8]> {
-        self.data.as_deref()
-    }
-}
-
 impl RiscvCpuExecutionEvent {
     pub const fn new(
         fetch: CpuFetchEvent,
@@ -1721,17 +1526,44 @@ impl RiscvCpuExecutionEvent {
     }
 }
 
+fn record_load_completion(
+    state: &mut RiscvCoreState,
+    access: &IssuedDataAccess,
+    data: Option<&[u8]>,
+    missing_data: &'static str,
+) {
+    match &access.access {
+        MemoryAccessKind::Load {
+            rd, width, signed, ..
+        } => {
+            let value = load_response_value(data.expect(missing_data), *width, *signed);
+            state.hart.write(*rd, value);
+        }
+        MemoryAccessKind::LoadReserved { rd, width, .. } => {
+            let value = load_response_value(data.expect(missing_data), *width, false);
+            state.hart.write(*rd, value);
+            state.reservation = Some(RiscvLoadReservation::new(
+                access.physical_address,
+                access.size,
+            ));
+        }
+        MemoryAccessKind::Store { .. } => {}
+    }
+}
+
 fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
     match access {
-        MemoryAccessKind::Load { width, .. } | MemoryAccessKind::Store { width, .. } => *width,
+        MemoryAccessKind::Load { width, .. }
+        | MemoryAccessKind::LoadReserved { width, .. }
+        | MemoryAccessKind::Store { width, .. } => *width,
     }
 }
 
 fn access_address(access: &MemoryAccessKind) -> u64 {
     match access {
-        MemoryAccessKind::Load { address, .. } | MemoryAccessKind::Store { address, .. } => {
-            *address
-        }
+        MemoryAccessKind::Load { address, .. }
+        | MemoryAccessKind::LoadReserved { address, .. }
+        | MemoryAccessKind::Store { address, .. } => *address,
     }
 }
 
@@ -1756,7 +1588,7 @@ fn mmio_request(
     address: Address,
 ) -> Result<MmioRequest, RiscvCpuError> {
     match access {
-        MemoryAccessKind::Load { .. } => {
+        MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
             MmioRequest::read(mmio_request_id(request), address, size).map_err(RiscvCpuError::Mmio)
         }
         MemoryAccessKind::Store { value, .. } => MmioRequest::write(

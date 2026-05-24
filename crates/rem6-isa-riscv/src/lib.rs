@@ -55,6 +55,13 @@ pub enum MemoryAccessKind {
         width: MemoryWidth,
         signed: bool,
     },
+    LoadReserved {
+        rd: Register,
+        address: u64,
+        width: MemoryWidth,
+        acquire: bool,
+        release: bool,
+    },
     Store {
         address: u64,
         width: MemoryWidth,
@@ -145,6 +152,13 @@ pub enum RiscvInstruction {
         offset: Immediate,
         width: MemoryWidth,
     },
+    LoadReserved {
+        rd: Register,
+        rs1: Register,
+        width: MemoryWidth,
+        acquire: bool,
+        release: bool,
+    },
     Ecall,
     Ebreak,
 }
@@ -164,6 +178,7 @@ impl RiscvInstruction {
                 imm: Immediate::new(u_imm(raw)),
             }),
             0x23 => decode_store(raw),
+            0x2f => decode_atomic(raw),
             0x33 => decode_op(raw),
             0x37 => Ok(Self::Lui {
                 rd: rd(raw),
@@ -279,6 +294,19 @@ fn decode_store(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         offset: Immediate::new(s_imm(raw)),
         width,
     })
+}
+
+fn decode_atomic(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct5(raw), funct3(raw), rs2(raw).index()) {
+        (0x02, 0x3, 0) => Ok(RiscvInstruction::LoadReserved {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            width: MemoryWidth::Doubleword,
+            acquire: aq(raw),
+            release: rl(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -483,6 +511,21 @@ impl RiscvHartState {
                     value: self.read(rs2),
                 });
             }
+            RiscvInstruction::LoadReserved {
+                rd,
+                rs1,
+                width,
+                acquire,
+                release,
+            } => {
+                memory_access = Some(MemoryAccessKind::LoadReserved {
+                    rd,
+                    address: self.read(rs1),
+                    width,
+                    acquire,
+                    release,
+                });
+            }
             RiscvInstruction::Ecall => {
                 next_pc = pc;
                 self.pc = next_pc;
@@ -568,6 +611,18 @@ fn funct3(raw: u32) -> u32 {
 
 fn funct7(raw: u32) -> u32 {
     (raw >> 25) & 0x7f
+}
+
+fn funct5(raw: u32) -> u32 {
+    (raw >> 27) & 0x1f
+}
+
+fn aq(raw: u32) -> bool {
+    ((raw >> 26) & 0x1) != 0
+}
+
+fn rl(raw: u32) -> bool {
+    ((raw >> 25) & 0x1) != 0
 }
 
 fn i_imm(raw: u32) -> i64 {

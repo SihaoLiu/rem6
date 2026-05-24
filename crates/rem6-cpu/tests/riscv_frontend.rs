@@ -4,7 +4,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
     RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind,
-    RiscvDataAccessTarget,
+    RiscvDataAccessTarget, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvTrap, RiscvTrapKind,
@@ -34,6 +34,17 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
 }
 
 fn j_type(imm: i32, rd: u8) -> u32 {
@@ -818,6 +829,74 @@ fn riscv_core_issues_load_access_and_updates_register_after_response() {
     assert_eq!(
         events[1].data(),
         Some(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..])
+    );
+}
+
+#[test]
+fn riscv_core_issues_load_reserved_and_records_reservation() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9008);
+    let store = loaded_store_with_data(
+        0x8000,
+        atomic_type(0x02, true, false, 0, 2, 0x3, 5),
+        0x9008,
+        vec![0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        event.execution().memory_access(),
+        Some(&MemoryAccessKind::LoadReserved {
+            rd: reg(5),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            acquire: true,
+            release: false,
+        })
+    );
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.load_reservation(), None);
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    assert_eq!(core.read_register(reg(5)), 0x90ab_cdef_1234_5678);
+    assert_eq!(
+        core.load_reservation(),
+        Some(RiscvLoadReservation::new(
+            Address::new(0x9008),
+            AccessSize::new(8).unwrap()
+        ))
+    );
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed
+        ]
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::ReadShared);
+    assert_eq!(
+        events[0].access(),
+        &MemoryAccessKind::LoadReserved {
+            rd: reg(5),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            acquire: true,
+            release: false,
+        }
+    );
+    assert_eq!(
+        events[1].data(),
+        Some(&[0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90][..])
     );
 }
 

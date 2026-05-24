@@ -12,6 +12,17 @@ fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u3
         | opcode
 }
 
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
@@ -213,6 +224,39 @@ fn hart_reports_memory_accesses_without_mutating_memory() {
             value: 0x1122_3344_5566_7788,
         })
     );
+}
+
+#[test]
+fn hart_reports_load_reserved_access_without_mutating_register() {
+    let mut hart = RiscvHartState::new(0x5000);
+    hart.write(reg(2), 0x9008);
+
+    let instruction =
+        RiscvInstruction::decode(atomic_type(0x02, true, false, 0, 2, 0x3, 5)).unwrap();
+    assert_eq!(
+        instruction,
+        RiscvInstruction::LoadReserved {
+            rd: reg(5),
+            rs1: reg(2),
+            width: MemoryWidth::Doubleword,
+            acquire: true,
+            release: false,
+        }
+    );
+
+    let load_reserved = hart.execute(instruction).unwrap();
+    assert_eq!(load_reserved.next_pc(), 0x5004);
+    assert_eq!(
+        load_reserved.memory_access(),
+        Some(&MemoryAccessKind::LoadReserved {
+            rd: reg(5),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            acquire: true,
+            release: false,
+        })
+    );
+    assert_eq!(hart.read(reg(5)), 0);
 }
 
 #[test]
