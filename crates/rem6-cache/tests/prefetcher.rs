@@ -5,8 +5,10 @@ use rem6_cache::{
     QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
     QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
-    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
-    TaggedPrefetcher, TaggedPrefetcherConfig,
+    SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
+    SignaturePathPrefetcherConfigOptions, SignaturePathRatio, StridePrefetchAccess,
+    StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher,
+    TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -32,6 +34,10 @@ fn bop_access(agent: u32, pc: u64, address: u64) -> BopPrefetchAccess {
 
 fn sbooe_access(agent: u32, pc: u64, address: u64) -> SbooePrefetchAccess {
     SbooePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn signature_path_access(agent: u32, pc: u64, address: u64) -> SignaturePathPrefetchAccess {
+    SignaturePathPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
 }
 
 #[test]
@@ -245,6 +251,108 @@ fn sbooe_prefetcher_tracks_latency_and_late_sandbox_hits() {
     assert_eq!(prefetcher.sandbox_scores(), vec![0, 0, 0]);
     assert_eq!(prefetcher.best_sandbox_stride(), Some(-1));
     assert_eq!(prefetcher.last_candidates(), &[]);
+}
+
+#[test]
+fn signature_path_prefetcher_trains_lookahead_and_restores_state() {
+    let config = SignaturePathPrefetcherConfig::new(SignaturePathPrefetcherConfigOptions {
+        line_size: 64,
+        page_bytes: 4096,
+        signature_shift: 3,
+        signature_bits: 12,
+        signature_table_entries: 8,
+        pattern_table_entries: 8,
+        strides_per_pattern_entry: 2,
+        counter_bits: 1,
+        prefetch_confidence_threshold: SignaturePathRatio::new(1, 1).unwrap(),
+        lookahead_confidence_threshold: SignaturePathRatio::new(3, 4).unwrap(),
+    })
+    .unwrap();
+    let mut prefetcher = SignaturePathPrefetcher::new(config.clone());
+
+    for address in [0x1000, 0x1040, 0x1080, 0x10c0] {
+        prefetcher
+            .observe(signature_path_access(7, 0xd00, address))
+            .unwrap();
+    }
+
+    assert!(prefetcher
+        .observe(signature_path_access(7, 0xd10, 0x2000))
+        .unwrap()
+        .is_empty());
+    let candidates = prefetcher
+        .observe(signature_path_access(7, 0xd14, 0x2040))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x2080), Address::new(0x20c0)]
+    );
+    assert_eq!(candidates[0].source_address(), Address::new(0x2040));
+    assert_eq!(candidates[0].context(), AgentId::new(7));
+    assert_eq!(candidates[0].pc(), 0xd14);
+    assert_eq!(candidates[0].delta_blocks(), 1);
+    assert_eq!(candidates[0].stride(), 64);
+    assert_eq!(candidates[0].signature(), 1);
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(candidates[0].path_confidence_ppm(), 1_000_000);
+    assert_eq!(candidates[1].signature(), 9);
+    assert_eq!(candidates[1].degree_index(), 2);
+    assert_eq!(candidates[1].path_confidence_ppm(), 950_000);
+    assert!(!candidates[0].auxiliary());
+    assert_eq!(prefetcher.signature_for_page(2, false), Some(1));
+    assert_eq!(prefetcher.last_candidates(), candidates.as_slice());
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = SignaturePathPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let restored_candidates = restored
+        .observe(signature_path_access(7, 0xd18, 0x2080))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        restored_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x20c0)]
+    );
+    assert_eq!(restored_candidates[0].signature(), 9);
+    assert_eq!(restored.signature_for_page(2, false), Some(9));
+}
+
+#[test]
+fn signature_path_prefetcher_replaces_low_confidence_stride_entries() {
+    let config = SignaturePathPrefetcherConfig::new(SignaturePathPrefetcherConfigOptions {
+        line_size: 64,
+        page_bytes: 4096,
+        signature_shift: 3,
+        signature_bits: 12,
+        signature_table_entries: 4,
+        pattern_table_entries: 4,
+        strides_per_pattern_entry: 2,
+        counter_bits: 2,
+        prefetch_confidence_threshold: SignaturePathRatio::new(1, 2).unwrap(),
+        lookahead_confidence_threshold: SignaturePathRatio::new(3, 4).unwrap(),
+    })
+    .unwrap();
+    let mut prefetcher = SignaturePathPrefetcher::new(config);
+
+    for address in [0x1000, 0x1040, 0x2000, 0x2080] {
+        prefetcher
+            .observe(signature_path_access(8, 0xd20, address))
+            .unwrap();
+    }
+
+    assert_eq!(prefetcher.pattern_strides(0), vec![(1, 0), (2, 1)]);
+    let snapshot = prefetcher.snapshot();
+    assert_eq!(snapshot.pattern_entries().len(), 1);
+    assert_eq!(snapshot.signature_entries().len(), 2);
 }
 
 #[test]

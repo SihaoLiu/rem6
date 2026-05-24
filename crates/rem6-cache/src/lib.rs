@@ -24,6 +24,7 @@ mod prefetch_bop;
 mod prefetch_dcpt;
 mod prefetch_multi;
 mod prefetch_sbooe;
+mod prefetch_signature_path;
 mod prefetch_throttle;
 mod replacement;
 
@@ -75,6 +76,13 @@ pub use prefetch_multi::{
 pub use prefetch_sbooe::{
     SbooePrefetchAccess, SbooePrefetchCandidate, SbooePrefetcher, SbooePrefetcherConfig,
     SbooePrefetcherError, SbooePrefetcherSnapshot, SbooeSandboxEntrySnapshot, SbooeSandboxSnapshot,
+};
+pub use prefetch_signature_path::{
+    SignaturePathPatternEntrySnapshot, SignaturePathPatternStrideSnapshot,
+    SignaturePathPrefetchAccess, SignaturePathPrefetchCandidate, SignaturePathPrefetcher,
+    SignaturePathPrefetcherConfig, SignaturePathPrefetcherConfigOptions,
+    SignaturePathPrefetcherError, SignaturePathPrefetcherSnapshot, SignaturePathRatio,
+    SignaturePathSignatureEntrySnapshot,
 };
 pub use prefetch_throttle::{
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
