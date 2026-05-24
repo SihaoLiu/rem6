@@ -13,6 +13,7 @@ use rem6_transport::TargetOutcome;
 
 mod bank;
 mod chi;
+mod chi_bank;
 mod mesi_bank;
 mod moesi;
 mod moesi_bank;
@@ -27,6 +28,7 @@ pub use chi::{
     ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
     ChiCacheControllerResultKind, ChiCacheControllerSnapshot, ChiPendingMissSnapshot,
 };
+pub use chi_bank::{ChiCacheBank, ChiCacheBankError, ChiCacheBankSnapshot};
 pub use mesi_bank::{MesiCacheBank, MesiCacheBankError, MesiCacheBankSnapshot};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,

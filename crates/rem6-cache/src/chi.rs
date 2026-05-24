@@ -138,10 +138,11 @@ pub struct ChiCacheControllerResult {
     transition: Option<ChiTransition>,
     downstream_request: Option<MemoryRequest>,
     target_outcome: Option<TargetOutcome>,
+    target_outcomes: Vec<TargetOutcome>,
 }
 
 impl ChiCacheControllerResult {
-    fn new(
+    pub(crate) fn new(
         kind: ChiCacheControllerResultKind,
         state: ChiState,
         transition: Option<ChiTransition>,
@@ -153,8 +154,15 @@ impl ChiCacheControllerResult {
             state,
             transition,
             downstream_request,
+            target_outcomes: target_outcome.iter().cloned().collect(),
             target_outcome,
         }
+    }
+
+    pub(crate) fn with_target_outcomes(mut self, target_outcomes: Vec<TargetOutcome>) -> Self {
+        self.target_outcome = target_outcomes.first().cloned();
+        self.target_outcomes = target_outcomes;
+        self
     }
 
     pub const fn kind(&self) -> ChiCacheControllerResultKind {
@@ -175,6 +183,10 @@ impl ChiCacheControllerResult {
 
     pub fn target_outcome(&self) -> Option<&TargetOutcome> {
         self.target_outcome.as_ref()
+    }
+
+    pub fn target_outcomes(&self) -> &[TargetOutcome] {
+        &self.target_outcomes
     }
 }
 
@@ -311,6 +323,10 @@ impl ChiCacheController {
 
     pub const fn next_sequence(&self) -> u64 {
         self.next_sequence
+    }
+
+    pub(crate) fn set_next_sequence(&mut self, next_sequence: u64) {
+        self.next_sequence = next_sequence;
     }
 
     pub fn cached_data(&self) -> Option<&[u8]> {
