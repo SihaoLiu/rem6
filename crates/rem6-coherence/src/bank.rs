@@ -13,7 +13,9 @@ use rem6_memory::{
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::TargetOutcome;
 
-use crate::{response_record, CpuResponseRecord, HarnessError, SubmitKind, SubmitResult};
+use crate::{
+    push_response_records_from_outcomes, CpuResponseRecord, HarnessError, SubmitKind, SubmitResult,
+};
 
 #[derive(Clone)]
 pub struct MsiBankDirectoryHarness {
@@ -1000,29 +1002,13 @@ impl MsiBankDirectoryHarness {
             .ok_or(HarnessError::UnknownCache { agent })
     }
 
-    fn record_cpu_response(
-        &mut self,
-        tick: u64,
-        cache_result: CacheControllerResultKind,
-        response: &MemoryResponse,
-    ) {
-        self.cpu_responses
-            .push(response_record(tick, cache_result, response));
-    }
-
     fn record_target_outcomes(
         &mut self,
         tick: u64,
         cache_result: CacheControllerResultKind,
         outcomes: &[TargetOutcome],
     ) -> usize {
-        let before = self.cpu_responses.len();
-        for outcome in outcomes {
-            if let TargetOutcome::Respond(response) = outcome {
-                self.record_cpu_response(tick, cache_result, response);
-            }
-        }
-        self.cpu_responses.len() - before
+        push_response_records_from_outcomes(&mut self.cpu_responses, tick, cache_result, outcomes)
     }
 
     fn validate_snapshot_identity(

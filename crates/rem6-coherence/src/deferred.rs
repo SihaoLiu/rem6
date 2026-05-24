@@ -10,12 +10,12 @@ use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_protocol_msi::MsiLineId;
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
-    TargetOutcome, TransportEndpointId, TransportError,
+    TransportEndpointId, TransportError,
 };
 
 use super::{
-    response_record, CpuResponseRecord, DirectoryDecisionRecord, DramMemoryAccessRecord,
-    HarnessError, LineBackingStore,
+    push_locked_response_records_from_outcomes, CpuResponseRecord, DirectoryDecisionRecord,
+    DramMemoryAccessRecord, HarnessError, LineBackingStore,
 };
 use crate::snoop::{schedule_directory_snoops, schedule_directory_snoops_parallel, SnoopRoute};
 use crate::wait_for::CoherenceWaitFor;
@@ -541,12 +541,12 @@ impl DeferredMemoryResponseWork {
                         .expect("cache lock")
                         .accept_fill(response)
                         .expect("cache fill");
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        self.responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(context.now(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &self.responses,
+                        context.now(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 } else {
                     self.schedule_cache_response_hop(context, hop_index - 1, response);
                 }
@@ -593,12 +593,12 @@ impl DeferredMemoryResponseWork {
                     if let Some(wait_for) = &self.wait_for {
                         wait_for.clear_cache_line(response_request);
                     }
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        self.responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(context.now(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &self.responses,
+                        context.now(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 } else {
                     self.schedule_cache_response_hop_parallel(context, hop_index - 1, response);
                 }

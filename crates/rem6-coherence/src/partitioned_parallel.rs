@@ -7,9 +7,9 @@ use rem6_transport::{TargetOutcome, TransportError};
 use super::deferred::{DeferredMemoryPath, DeferredMemoryWork, DeferredWaitFor};
 use super::snoop::{DirectorySnoopWork, SnoopRoute};
 use super::{
-    decision_uses_backing_memory, map_cache_error, partitioned_directory_response, response_record,
-    DirectoryDecisionRecord, HarnessError, PartitionedDirectoryLineHarness, SubmitKind,
-    SubmitResult,
+    decision_uses_backing_memory, map_cache_error, partitioned_directory_response,
+    push_locked_response_records_from_outcomes, DirectoryDecisionRecord, HarnessError,
+    PartitionedDirectoryLineHarness, SubmitKind, SubmitResult,
 };
 use rem6_memory::{AgentId, MemoryRequest};
 
@@ -40,15 +40,13 @@ impl PartitionedDirectoryLineHarness {
         };
         let cache_result = result.kind();
 
-        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-            self.cpu_responses
-                .lock()
-                .expect("response lock")
-                .push(response_record(
-                    self.scheduler.now(),
-                    cache_result,
-                    response,
-                ));
+        if push_locked_response_records_from_outcomes(
+            &self.cpu_responses,
+            self.scheduler.now(),
+            cache_result,
+            result.target_outcomes(),
+        ) > 0
+        {
             return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
         }
 
@@ -178,12 +176,12 @@ impl PartitionedDirectoryLineHarness {
                         .accept_fill(delivery.response().clone())
                         .expect("cache fill");
                     wait_for.clear_cache_line(response_request.agent(), line.address().get());
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(delivery.tick(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &responses,
+                        delivery.tick(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 },
             )
             .map_err(HarnessError::Transport)?;

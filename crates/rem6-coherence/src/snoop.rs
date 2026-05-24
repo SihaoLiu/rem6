@@ -12,10 +12,9 @@ use rem6_transport::{
 };
 
 use super::{
-    map_cache_error, partitioned_directory_source_data, response_record, CpuResponseRecord,
-    DirectoryDecisionRecord, HarnessError,
+    map_cache_error, partitioned_directory_source_data, push_locked_response_records_from_outcomes,
+    CpuResponseRecord, DirectoryDecisionRecord, HarnessError,
 };
-use rem6_transport::TargetOutcome;
 
 #[derive(Clone)]
 pub(super) struct SnoopRoute {
@@ -332,12 +331,12 @@ impl SnoopResponseWork {
                         .expect("cache lock")
                         .accept_fill(response)
                         .expect("cache fill");
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        self.responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(context.now(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &self.responses,
+                        context.now(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 } else {
                     self.schedule_response_hop(context, hop_index - 1, response);
                 }
@@ -381,12 +380,12 @@ impl SnoopResponseWork {
                         .expect("cache lock")
                         .accept_fill(response)
                         .expect("cache fill");
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        self.responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(context.now(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &self.responses,
+                        context.now(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 } else {
                     self.schedule_response_hop_parallel(context, hop_index - 1, response);
                 }

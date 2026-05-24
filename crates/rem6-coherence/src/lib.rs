@@ -35,6 +35,8 @@ mod mesi;
 mod moesi;
 mod partitioned_parallel;
 mod partitioned_snapshot;
+#[cfg(test)]
+mod response_record_tests;
 mod snoop;
 mod summary;
 mod topology;
@@ -357,8 +359,7 @@ impl DirectoryLineHarness {
             .map_err(map_cache_error)?;
         let cache_result = result.kind();
 
-        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-            self.record_cpu_response(0, cache_result, response);
+        if self.record_target_outcomes(0, cache_result, result.target_outcomes()) > 0 {
             return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
         }
 
@@ -376,9 +377,7 @@ impl DirectoryLineHarness {
             .cache_mut(agent)?
             .accept_fill(response)
             .map_err(map_cache_error)?;
-        if let Some(TargetOutcome::Respond(response)) = fill.target_outcome() {
-            self.record_cpu_response(0, fill.kind(), response);
-        }
+        self.record_target_outcomes(0, fill.kind(), fill.target_outcomes());
 
         Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
             .with_directory_decision(decision))
@@ -466,14 +465,13 @@ impl DirectoryLineHarness {
             .ok_or(HarnessError::UnknownCache { agent })
     }
 
-    fn record_cpu_response(
+    fn record_target_outcomes(
         &mut self,
         tick: u64,
         cache_result: CacheControllerResultKind,
-        response: &MemoryResponse,
-    ) {
-        self.cpu_responses
-            .push(response_record(tick, cache_result, response));
+        outcomes: &[TargetOutcome],
+    ) -> usize {
+        push_response_records_from_outcomes(&mut self.cpu_responses, tick, cache_result, outcomes)
     }
 }
 
@@ -1149,15 +1147,13 @@ impl PartitionedDirectoryLineHarness {
             .map_err(map_cache_error)?;
         let cache_result = result.kind();
 
-        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-            self.cpu_responses
-                .lock()
-                .expect("response lock")
-                .push(response_record(
-                    self.scheduler.now(),
-                    cache_result,
-                    response,
-                ));
+        if push_locked_response_records_from_outcomes(
+            &self.cpu_responses,
+            self.scheduler.now(),
+            cache_result,
+            result.target_outcomes(),
+        ) > 0
+        {
             return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
         }
 
@@ -1281,12 +1277,12 @@ impl PartitionedDirectoryLineHarness {
                         .expect("cache lock")
                         .accept_fill(delivery.response().clone())
                         .expect("cache fill");
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(delivery.tick(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &responses,
+                        delivery.tick(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 },
             )
             .map_err(HarnessError::Transport)?;
@@ -1647,8 +1643,13 @@ impl CoherentLineHarness {
             .map_err(map_cache_error)?;
         let cache_result = result.kind();
 
-        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-            self.record_cpu_response(self.scheduler.now(), cache_result, response);
+        if push_locked_response_records_from_outcomes(
+            &self.cpu_responses,
+            self.scheduler.now(),
+            cache_result,
+            result.target_outcomes(),
+        ) > 0
+        {
             return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
         }
 
@@ -1679,12 +1680,12 @@ impl CoherentLineHarness {
                         .expect("cache lock")
                         .accept_fill(delivery.response().clone())
                         .expect("cache fill");
-                    if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-                        responses
-                            .lock()
-                            .expect("response lock")
-                            .push(response_record(delivery.tick(), result.kind(), response));
-                    }
+                    push_locked_response_records_from_outcomes(
+                        &responses,
+                        delivery.tick(),
+                        result.kind(),
+                        result.target_outcomes(),
+                    );
                 },
             )
             .map_err(HarnessError::Transport)?;
@@ -1715,18 +1716,6 @@ impl CoherentLineHarness {
     pub fn backing_data(&self) -> Vec<u8> {
         self.backing.lock().expect("backing lock").data().to_vec()
     }
-
-    fn record_cpu_response(
-        &self,
-        tick: u64,
-        cache_result: CacheControllerResultKind,
-        response: &MemoryResponse,
-    ) {
-        self.cpu_responses
-            .lock()
-            .expect("response lock")
-            .push(response_record(tick, cache_result, response));
-    }
 }
 
 fn response_record(
@@ -1741,6 +1730,31 @@ fn response_record(
         response.status(),
         response.data().map(<[u8]>::to_vec),
     )
+}
+
+fn push_response_records_from_outcomes(
+    responses: &mut Vec<CpuResponseRecord>,
+    tick: u64,
+    cache_result: CacheControllerResultKind,
+    outcomes: &[TargetOutcome],
+) -> usize {
+    let before = responses.len();
+    for outcome in outcomes {
+        if let TargetOutcome::Respond(response) = outcome {
+            responses.push(response_record(tick, cache_result, response));
+        }
+    }
+    responses.len() - before
+}
+
+fn push_locked_response_records_from_outcomes(
+    responses: &Arc<Mutex<Vec<CpuResponseRecord>>>,
+    tick: u64,
+    cache_result: CacheControllerResultKind,
+    outcomes: &[TargetOutcome],
+) -> usize {
+    let mut responses = responses.lock().expect("response lock");
+    push_response_records_from_outcomes(&mut responses, tick, cache_result, outcomes)
 }
 
 fn map_cache_error(error: CacheControllerError) -> HarnessError {
