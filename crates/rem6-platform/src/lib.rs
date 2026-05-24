@@ -152,6 +152,140 @@ impl PlatformDeviceTree {
         self.root.write_dts(0, &mut output);
         output
     }
+
+    pub fn to_dtb(&self) -> Vec<u8> {
+        let mut writer = PlatformDeviceTreeBlobWriter::new();
+        writer.write_node(&self.root);
+        writer.finish()
+    }
+}
+
+const FDT_MAGIC: u32 = 0xd00d_feed;
+const FDT_VERSION: u32 = 17;
+const FDT_LAST_COMP_VERSION: u32 = 16;
+const FDT_HEADER_BYTES: usize = 40;
+const FDT_RESERVE_TERMINATOR_BYTES: usize = 16;
+const FDT_BEGIN_NODE: u32 = 1;
+const FDT_END_NODE: u32 = 2;
+const FDT_PROP: u32 = 3;
+const FDT_END: u32 = 9;
+
+#[derive(Clone, Debug, Default)]
+struct PlatformDeviceTreeBlobWriter {
+    structure: Vec<u8>,
+    strings: Vec<u8>,
+}
+
+impl PlatformDeviceTreeBlobWriter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn write_node(&mut self, node: &PlatformDeviceTreeNode) {
+        write_be32(&mut self.structure, FDT_BEGIN_NODE);
+        if node.name() == "/" {
+            write_be32(&mut self.structure, 0);
+        } else {
+            self.structure.extend_from_slice(node.name().as_bytes());
+            self.structure.push(0);
+            pad_to_4(&mut self.structure);
+        }
+
+        for property in node.properties() {
+            self.write_property(property);
+        }
+        for child in node.children() {
+            self.write_node(child);
+        }
+
+        write_be32(&mut self.structure, FDT_END_NODE);
+    }
+
+    fn write_property(&mut self, property: &PlatformDeviceTreeProperty) {
+        let value = encode_property_value(property.value());
+        let name_offset = self.string_offset(property.name());
+        write_be32(&mut self.structure, FDT_PROP);
+        write_be32(&mut self.structure, value.len() as u32);
+        write_be32(&mut self.structure, name_offset);
+        self.structure.extend_from_slice(&value);
+        pad_to_4(&mut self.structure);
+    }
+
+    fn string_offset(&mut self, name: &str) -> u32 {
+        let mut cursor = 0usize;
+        while cursor < self.strings.len() {
+            let end = self.strings[cursor..]
+                .iter()
+                .position(|byte| *byte == 0)
+                .map(|relative| cursor + relative)
+                .expect("device-tree string table entries are nul-terminated");
+            if &self.strings[cursor..end] == name.as_bytes() {
+                return cursor as u32;
+            }
+            cursor = end + 1;
+        }
+
+        let offset = self.strings.len() as u32;
+        self.strings.extend_from_slice(name.as_bytes());
+        self.strings.push(0);
+        offset
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        write_be32(&mut self.structure, FDT_END);
+
+        let reserve_offset = FDT_HEADER_BYTES;
+        let structure_offset = reserve_offset + FDT_RESERVE_TERMINATOR_BYTES;
+        let strings_offset = structure_offset + self.structure.len();
+        let total_size = strings_offset + self.strings.len();
+
+        let mut blob = Vec::with_capacity(total_size);
+        write_be32(&mut blob, FDT_MAGIC);
+        write_be32(&mut blob, total_size as u32);
+        write_be32(&mut blob, structure_offset as u32);
+        write_be32(&mut blob, strings_offset as u32);
+        write_be32(&mut blob, reserve_offset as u32);
+        write_be32(&mut blob, FDT_VERSION);
+        write_be32(&mut blob, FDT_LAST_COMP_VERSION);
+        write_be32(&mut blob, 0);
+        write_be32(&mut blob, self.strings.len() as u32);
+        write_be32(&mut blob, self.structure.len() as u32);
+        blob.extend_from_slice(&[0; FDT_RESERVE_TERMINATOR_BYTES]);
+        blob.extend_from_slice(&self.structure);
+        blob.extend_from_slice(&self.strings);
+        blob
+    }
+}
+
+fn encode_property_value(value: &PlatformDeviceTreePropertyValue) -> Vec<u8> {
+    match value {
+        PlatformDeviceTreePropertyValue::Empty => Vec::new(),
+        PlatformDeviceTreePropertyValue::Strings(values) => {
+            let mut encoded = Vec::new();
+            for value in values {
+                encoded.extend_from_slice(value.as_bytes());
+                encoded.push(0);
+            }
+            encoded
+        }
+        PlatformDeviceTreePropertyValue::Words(values) => {
+            let mut encoded = Vec::with_capacity(values.len() * 4);
+            for value in values {
+                write_be32(&mut encoded, *value);
+            }
+            encoded
+        }
+    }
+}
+
+fn write_be32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_be_bytes());
+}
+
+fn pad_to_4(output: &mut Vec<u8>) {
+    while !output.len().is_multiple_of(4) {
+        output.push(0);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -486,6 +486,101 @@ fn platform_builder_emits_typed_riscv_device_tree_for_clint_and_uart() {
 }
 
 #[test]
+fn platform_builder_emits_binary_riscv_device_tree_blob() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let clint_partition = PartitionId::new(2);
+    let uart_partition = PartitionId::new(3);
+    let controller_target = InterruptTargetId::new(0);
+
+    let platform = PlatformBuilder::new(4)
+        .add_interrupt_controller(PlatformInterruptControllerConfig {
+            base: Address::new(0x0c00_0000),
+            size: AccessSize::new(0x400_0000).unwrap(),
+            route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
+            target: controller_target,
+        })
+        .add_clint(PlatformClintConfig {
+            id: ClintId::new(0),
+            base: Address::new(0x0200_0000),
+            size: AccessSize::new(0x1_0000).unwrap(),
+            route: MmioRoute::new(cpu0, clint_partition, 2, 1).unwrap(),
+            reset_policy: ClintResetPolicy::preserve_mtimecmp(),
+            harts: vec![
+                PlatformClintHartConfig {
+                    hart: 0,
+                    target_partition: cpu0,
+                    interrupt_target: InterruptTargetId::new(0),
+                    software_interrupt_line: InterruptLineId::new(60),
+                    software_interrupt_source: InterruptSourceId::new(70),
+                    timer_interrupt_line: InterruptLineId::new(61),
+                    timer_interrupt_source: InterruptSourceId::new(71),
+                    interrupt_latency: 2,
+                },
+                PlatformClintHartConfig {
+                    hart: 1,
+                    target_partition: cpu1,
+                    interrupt_target: InterruptTargetId::new(1),
+                    software_interrupt_line: InterruptLineId::new(62),
+                    software_interrupt_source: InterruptSourceId::new(72),
+                    timer_interrupt_line: InterruptLineId::new(63),
+                    timer_interrupt_source: InterruptSourceId::new(73),
+                    interrupt_latency: 2,
+                },
+            ],
+        })
+        .add_uart(PlatformUartConfig {
+            id: UartId::new(1),
+            base: Address::new(0x1000_0000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: MmioRoute::new(cpu0, uart_partition, 2, 1).unwrap(),
+            interrupt_line: InterruptLineId::new(64),
+            interrupt_target: controller_target,
+            interrupt_source: InterruptSourceId::new(10),
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap();
+    let config =
+        PlatformRiscvDeviceTreeConfig::new(10_000_000, "rv64imafdc", "riscv,sv48", 0x384000)
+            .unwrap();
+
+    let dtb = platform.riscv_device_tree(&config).unwrap().to_dtb();
+
+    assert_eq!(be32_at(&dtb, 0), 0xd00d_feed);
+    assert_eq!(be32_at(&dtb, 4), dtb.len() as u32);
+    assert_eq!(be32_at(&dtb, 20), 17);
+    assert_eq!(be32_at(&dtb, 24), 16);
+    assert_eq!(be32_at(&dtb, 28), 0);
+
+    let struct_offset = be32_at(&dtb, 8) as usize;
+    let strings_offset = be32_at(&dtb, 12) as usize;
+    let reserve_offset = be32_at(&dtb, 16) as usize;
+    let strings_size = be32_at(&dtb, 32) as usize;
+    let struct_size = be32_at(&dtb, 36) as usize;
+    assert_eq!(reserve_offset, 40);
+    assert_eq!(struct_offset, 56);
+    assert_eq!(strings_offset, struct_offset + struct_size);
+    assert_eq!(strings_offset + strings_size, dtb.len());
+    assert_eq!(&dtb[reserve_offset..struct_offset], &[0; 16]);
+
+    let strings = std::str::from_utf8(&dtb[strings_offset..]).unwrap();
+    assert!(strings.contains("timebase-frequency\0"));
+    assert!(strings.contains("interrupts-extended\0"));
+    assert!(strings.contains("interrupt-parent\0"));
+    assert_eq!(strings.matches("compatible\0").count(), 1);
+
+    let struct_block = &dtb[struct_offset..strings_offset];
+    assert_eq!(be32_at(struct_block, 0), 1);
+    assert_eq!(be32_at(struct_block, struct_block.len() - 4), 9);
+    assert!(find_padded_ascii(struct_block, b"cpu@0\0"));
+    assert!(find_padded_ascii(struct_block, b"clint@2000000\0"));
+    assert!(find_padded_ascii(struct_block, b"uart@10000000\0"));
+    assert!(find_ascii(struct_block, b"riscv,clint0\0"));
+    assert!(find_ascii(struct_block, b"ns8250\0ns16550a\0"));
+}
+
+#[test]
 fn platform_builder_rejects_riscv_uart_device_tree_without_interrupt_controller() {
     let cpu = PartitionId::new(0);
     let uart_partition = PartitionId::new(1);
@@ -512,6 +607,21 @@ fn platform_builder_rejects_riscv_uart_device_tree_without_interrupt_controller(
             device: "uart@10000000".to_string(),
         })
     );
+}
+
+fn be32_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
+}
+
+fn find_padded_ascii(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .is_some_and(|offset| offset % 4 == 0)
+}
+
+fn find_ascii(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes.windows(needle.len()).any(|window| window == needle)
 }
 
 #[test]
