@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
 
-use crate::{DramAccess, DramAccessKind, ExternalMemoryProfile};
+use crate::{DramAccess, DramAccessKind, DramMemoryTechnology, ExternalMemoryProfile};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramActivityMarker {
@@ -19,6 +19,8 @@ impl DramActivityMarker {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DramBankActivity {
     access_count: usize,
+    read_byte_count: u64,
+    write_byte_count: u64,
     row_hit_count: usize,
     row_miss_count: usize,
     command_count: usize,
@@ -43,6 +45,10 @@ impl DramBankActivity {
             self.first_arrival_cycle = self.first_arrival_cycle.min(access.arrival_cycle());
         }
         self.access_count += 1;
+        match access.kind() {
+            DramAccessKind::Read => self.read_byte_count += access.byte_count(),
+            DramAccessKind::Write => self.write_byte_count += access.byte_count(),
+        }
         if access.row_hit() {
             self.row_hit_count += 1;
         } else {
@@ -80,6 +86,14 @@ impl DramBankActivity {
 
     pub const fn access_count(&self) -> usize {
         self.access_count
+    }
+
+    pub const fn read_byte_count(&self) -> u64 {
+        self.read_byte_count
+    }
+
+    pub const fn write_byte_count(&self) -> u64 {
+        self.write_byte_count
     }
 
     pub const fn row_hit_count(&self) -> usize {
@@ -219,6 +233,8 @@ pub struct DramActivityProfile {
     access_count: usize,
     read_count: usize,
     write_count: usize,
+    read_byte_count: u64,
+    write_byte_count: u64,
     row_hit_count: usize,
     row_miss_count: usize,
     command_count: usize,
@@ -254,6 +270,8 @@ impl DramActivityProfile {
         for bank in banks.values() {
             profile.row_hit_count += bank.row_hit_count();
             profile.row_miss_count += bank.row_miss_count();
+            profile.read_byte_count += bank.read_byte_count();
+            profile.write_byte_count += bank.write_byte_count();
             profile.total_ready_latency_cycles += bank.total_ready_latency_cycles();
             profile.max_ready_latency_cycles = profile
                 .max_ready_latency_cycles
@@ -287,6 +305,8 @@ impl DramActivityProfile {
         self.access_count += later.access_count;
         self.read_count += later.read_count;
         self.write_count += later.write_count;
+        self.read_byte_count += later.read_byte_count;
+        self.write_byte_count += later.write_byte_count;
         self.row_hit_count += later.row_hit_count;
         self.row_miss_count += later.row_miss_count;
         self.command_count += later.command_count;
@@ -335,6 +355,14 @@ impl DramActivityProfile {
 
     pub const fn write_count(&self) -> usize {
         self.write_count
+    }
+
+    pub const fn read_byte_count(&self) -> u64 {
+        self.read_byte_count
+    }
+
+    pub const fn write_byte_count(&self) -> u64 {
+        self.write_byte_count
     }
 
     pub const fn row_hit_count(&self) -> usize {
@@ -483,6 +511,28 @@ impl DramTargetActivity {
     pub fn profile(&self) -> DramActivityProfile {
         self.profile.clone()
     }
+
+    pub fn persistent_write_count(&self) -> usize {
+        if self.has_persistent_media() {
+            self.profile.write_count()
+        } else {
+            0
+        }
+    }
+
+    pub fn persistent_write_byte_count(&self) -> u64 {
+        if self.has_persistent_media() {
+            self.profile.write_byte_count()
+        } else {
+            0
+        }
+    }
+
+    fn has_persistent_media(&self) -> bool {
+        self.memory_profile
+            .as_ref()
+            .is_some_and(|profile| profile.technology() == DramMemoryTechnology::Nvm)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -532,6 +582,14 @@ impl DramMemoryActivityProfile {
 
     pub const fn write_count(&self) -> usize {
         self.profile.write_count()
+    }
+
+    pub const fn read_byte_count(&self) -> u64 {
+        self.profile.read_byte_count()
+    }
+
+    pub const fn write_byte_count(&self) -> u64 {
+        self.profile.write_byte_count()
     }
 
     pub const fn row_hit_count(&self) -> usize {

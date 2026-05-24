@@ -49,6 +49,16 @@ fn write(address: u64, sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn writeback_dirty(address: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::writeback_dirty(
+        request_id(sequence),
+        Address::new(address),
+        vec![0xcc; layout().bytes() as usize],
+        layout(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     let ddr = ExternalMemoryProfile::ddr(target(1), layout(), 2, 2, geometry(), timing()).unwrap();
@@ -224,6 +234,69 @@ fn dram_memory_controller_reports_profile_metadata_in_target_activity() {
         DramMemoryTechnology::Nvm,
     );
     assert_eq!(activity.profile().access_count(), 1);
+}
+
+#[test]
+fn nvm_activity_reports_typed_media_bytes_and_persistent_writes() {
+    let profile =
+        ExternalMemoryProfile::nvm(target(11), layout(), 2, 8, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+
+    let read_access = controller.accept(0, &read(0x0008, 70)).unwrap();
+    let write_access = controller.accept(0, &write(0x0010, 71)).unwrap();
+    let writeback_access = controller.accept(0, &writeback_dirty(0x0040, 72)).unwrap();
+
+    assert_eq!(read_access.dram_access().byte_count(), 8);
+    assert_eq!(write_access.dram_access().byte_count(), 4);
+    assert_eq!(writeback_access.dram_access().byte_count(), 64);
+
+    let activity = controller.target_activity(profile.target()).unwrap();
+    let activity_profile = activity.profile();
+
+    assert_eq!(activity_profile.read_byte_count(), 8);
+    assert_eq!(activity_profile.write_byte_count(), 68);
+    assert_eq!(activity.persistent_write_count(), 2);
+    assert_eq!(activity.persistent_write_byte_count(), 68);
+}
+
+#[test]
+fn volatile_memory_activity_keeps_persistent_write_counters_zero() {
+    let profile =
+        ExternalMemoryProfile::ddr(target(12), layout(), 1, 1, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x33; 64])
+        .unwrap();
+
+    controller.accept(0, &write(0x0004, 80)).unwrap();
+
+    let activity = controller.target_activity(profile.target()).unwrap();
+
+    assert_eq!(activity.profile().write_byte_count(), 4);
+    assert_eq!(activity.persistent_write_count(), 0);
+    assert_eq!(activity.persistent_write_byte_count(), 0);
 }
 
 #[test]

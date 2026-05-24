@@ -142,7 +142,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
 | `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, geometry, activity, and profiles. External DRAM simulators should be optional adapters. |
-| `configs/nvm`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. Persistent media semantics and richer asymmetric timing remain open. |
+| `configs/nvm`, `src/mem/NVMInterface.py`, `src/mem/nvm_interface.*`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. DRAM activity profiles now preserve typed read/write byte counts, and NVM target activity exposes persistent write access and byte counters without string stats. Persistent write completion queues, pending read/write media buffers, and richer asymmetric timing remain open. |
 | HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists for DDR, HBM, LPDDR, and NVM; a broader library of validated profiles is still needed. |
 
 ### Heterogeneous Devices
@@ -209,9 +209,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   before bank and bus timing are computed, plus typed read/write direction
   preference among same-priority timing candidates, explicit same-requestor
   priority escalation inside timing batches, and per-priority/per-requestor QoS
-  access and byte accounting in DRAM activity profiles. Coherence, system, DMA,
-  and workload-result summary tests cover direct DRAM QoS diagnostics over those
-  typed activity profiles.
+  access and byte accounting in DRAM activity profiles. NVM profile tests cover
+  typed read/write byte accounting and persistent write counters at the target
+  activity boundary. Coherence, system, DMA, and workload-result summary tests
+  cover direct DRAM QoS diagnostics over those typed activity profiles.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, typed QoS policy intent, result metadata, execution mode
   switches, host action summaries, checkpoint restore labels, and statistics
