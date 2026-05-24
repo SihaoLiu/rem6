@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
-    FabricPacket, FabricPacketId, FabricPath, FabricQosRequest, FabricWaitForMarker, QosPriority,
-    QosQueueArbiter, QosRequestorId, VirtualNetworkId,
+    FabricPacket, FabricPacketId, FabricPath, FabricQosRequest, FabricWaitForMarker,
+    QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosRequestorId, VirtualNetworkId,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -421,7 +421,7 @@ pub struct ParallelMemoryTransaction {
     trace: MemoryTrace,
     responder: ParallelRequestResponder,
     response_sink: ResponseSink,
-    qos_priority: QosPriority,
+    qos_priority: Option<QosPriority>,
 }
 
 impl ParallelMemoryTransaction {
@@ -444,12 +444,12 @@ impl ParallelMemoryTransaction {
             trace,
             responder: Box::new(responder),
             response_sink: Box::new(response_sink),
-            qos_priority: QosPriority::new(0),
+            qos_priority: None,
         }
     }
 
     pub fn with_qos_priority(mut self, priority: QosPriority) -> Self {
-        self.qos_priority = priority;
+        self.qos_priority = Some(priority);
         self
     }
 
@@ -478,6 +478,7 @@ pub struct MemoryTransport {
     routes: Vec<StoredRoute>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     qos_arbiter: Option<Arc<Mutex<QosQueueArbiter>>>,
+    qos_priority_policy: Option<QosFixedPriorityPolicy>,
 }
 
 impl MemoryTransport {
@@ -487,6 +488,7 @@ impl MemoryTransport {
             routes: Vec::new(),
             fabric: None,
             qos_arbiter: None,
+            qos_priority_policy: None,
         }
     }
 
@@ -496,6 +498,7 @@ impl MemoryTransport {
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
             qos_arbiter: None,
+            qos_priority_policy: None,
         }
     }
 
@@ -505,6 +508,7 @@ impl MemoryTransport {
             routes: Vec::new(),
             fabric: Some(fabric),
             qos_arbiter: None,
+            qos_priority_policy: None,
         }
     }
 
@@ -514,6 +518,21 @@ impl MemoryTransport {
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
             qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+            qos_priority_policy: None,
+        }
+    }
+
+    pub fn with_fabric_qos_policy(
+        fabric: FabricModel,
+        arbiter: QosQueueArbiter,
+        priority_policy: QosFixedPriorityPolicy,
+    ) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: Some(Arc::new(Mutex::new(fabric))),
+            qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+            qos_priority_policy: Some(priority_policy),
         }
     }
 
@@ -526,6 +545,21 @@ impl MemoryTransport {
             routes: Vec::new(),
             fabric: Some(fabric),
             qos_arbiter: Some(arbiter),
+            qos_priority_policy: None,
+        }
+    }
+
+    pub fn with_shared_fabric_qos_policy(
+        fabric: Arc<Mutex<FabricModel>>,
+        arbiter: Arc<Mutex<QosQueueArbiter>>,
+        priority_policy: QosFixedPriorityPolicy,
+    ) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: Some(fabric),
+            qos_arbiter: Some(arbiter),
+            qos_priority_policy: Some(priority_policy),
         }
     }
 
@@ -822,6 +856,17 @@ impl MemoryTransport {
             }));
         }
 
+        let qos_priority = transaction.qos_priority.unwrap_or_else(|| {
+            self.qos_priority_policy
+                .as_ref()
+                .map_or(QosPriority::new(0), |policy| {
+                    policy.priority_for(
+                        QosRequestorId::new(transaction.request.id().agent().get()),
+                        transaction.request.size().bytes(),
+                    )
+                })
+        });
+
         Ok(PreparedParallelTransaction {
             route_id: transaction.route,
             route,
@@ -830,7 +875,7 @@ impl MemoryTransport {
             responder: transaction.responder,
             response_sink: transaction.response_sink,
             first_hop_delay: 0,
-            qos_priority: transaction.qos_priority,
+            qos_priority,
         })
     }
 

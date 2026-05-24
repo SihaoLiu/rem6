@@ -37,10 +37,12 @@ use rem6_workload::{
 };
 
 mod cache_response;
+mod qos;
 mod summary;
 mod workload_replay_dma;
 
 use self::cache_response::{cached_memory_response, data_cache_agents, data_cache_response_result};
+use self::qos::{fixed_priority_policy, queue_arbiter};
 use self::summary::{parallel_execution_summary, WorkloadReplayActivityRefs};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
@@ -730,7 +732,15 @@ impl RiscvWorkloadReplay {
             .iter()
             .any(|route| route.hops().iter().any(|hop| hop.fabric().is_some()))
         {
-            MemoryTransport::with_fabric(FabricModel::new())
+            if let Some(policy) = topology.qos_policy() {
+                MemoryTransport::with_fabric_qos_policy(
+                    FabricModel::new(),
+                    queue_arbiter(policy),
+                    fixed_priority_policy(policy),
+                )
+            } else {
+                MemoryTransport::with_fabric(FabricModel::new())
+            }
         } else {
             MemoryTransport::new()
         };
