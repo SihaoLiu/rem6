@@ -400,6 +400,23 @@ impl MshrQueue {
                 .saturating_sub(self.config.demand_reserve + 1)
     }
 
+    pub fn can_allocate_entry(&self, source: MshrTargetSource) -> Result<(), MshrQueueError> {
+        if source == MshrTargetSource::Prefetch && !self.can_accept_prefetch() {
+            return Err(MshrQueueError::PrefetchReserveBlocked {
+                allocated: self.entries.len(),
+                entries: self.config.entries,
+                demand_reserve: self.config.demand_reserve,
+            });
+        }
+        if self.entries.len() >= self.config.entries {
+            return Err(MshrQueueError::EntrySlotsFull {
+                entries: self.config.entries,
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn entry(&self, handle: MshrHandle) -> Result<&MshrEntry, MshrQueueError> {
         self.entries
             .iter()
@@ -435,18 +452,7 @@ impl MshrQueue {
             return Ok(MshrQueueUpdate::new(entry, false, allocated_count));
         }
 
-        if source == MshrTargetSource::Prefetch && !self.can_accept_prefetch() {
-            return Err(MshrQueueError::PrefetchReserveBlocked {
-                allocated: self.entries.len(),
-                entries: self.config.entries,
-                demand_reserve: self.config.demand_reserve,
-            });
-        }
-        if self.entries.len() >= self.config.entries {
-            return Err(MshrQueueError::EntrySlotsFull {
-                entries: self.config.entries,
-            });
-        }
+        self.can_allocate_entry(source)?;
 
         let entry = MshrEntry::new(
             self.next_handle(),

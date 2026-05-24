@@ -1,4 +1,6 @@
-use rem6_cache::{CacheControllerResultKind, MsiCacheBank, MsiCacheBankError};
+use rem6_cache::{
+    CacheControllerResultKind, MshrQueueConfig, MshrQueueError, MsiCacheBank, MsiCacheBankError,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
 };
@@ -35,6 +37,14 @@ fn response_data(outcome: &TargetOutcome) -> &[u8] {
     match outcome {
         TargetOutcome::Respond(response) => response.data().unwrap(),
         other => panic!("expected immediate response, got {other:?}"),
+    }
+}
+
+fn response_id(outcome: &TargetOutcome) -> MemoryRequestId {
+    match outcome {
+        TargetOutcome::Respond(response) => response.request_id(),
+        TargetOutcome::RespondAfter { response, .. } => response.request_id(),
+        TargetOutcome::NoResponse => panic!("expected response outcome"),
     }
 }
 
@@ -109,6 +119,98 @@ fn msi_cache_bank_tracks_multiple_lines_with_unique_downstream_ids() {
     assert_eq!(
         response_data(second_hit.target_outcome().unwrap()),
         &[0x22; 8]
+    );
+}
+
+#[test]
+fn msi_cache_bank_mshr_coalesces_same_line_read_misses() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_mshr(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(2, 2, 0).unwrap(),
+    );
+
+    let first = read(cache_agent, 100, 0x1004);
+    let first_miss = bank.accept_cpu_request(first.clone()).unwrap();
+    let first_downstream = first_miss.downstream_request().unwrap().clone();
+    assert_eq!(first_miss.kind(), CacheControllerResultKind::Miss);
+    assert_eq!(bank.pending_fill_count(), 1);
+    assert_eq!(bank.mshr_allocated_count(), 1);
+    assert_eq!(bank.mshr_target_count(Address::new(0x1000)), Some(1));
+
+    let second = read(cache_agent, 101, 0x1008);
+    let second_miss = bank.accept_cpu_request(second.clone()).unwrap();
+    assert_eq!(second_miss.kind(), CacheControllerResultKind::Miss);
+    assert!(second_miss.downstream_request().is_none());
+    assert_eq!(second_miss.target_outcomes(), &[]);
+    assert_eq!(bank.pending_fill_count(), 1);
+    assert_eq!(bank.mshr_allocated_count(), 1);
+    assert_eq!(bank.mshr_target_count(Address::new(0x1000)), Some(2));
+
+    let fill_result = bank.accept_fill(fill(&first_downstream, 0x44)).unwrap();
+    assert_eq!(fill_result.kind(), CacheControllerResultKind::Fill);
+    assert_eq!(fill_result.target_outcomes().len(), 2);
+    assert_eq!(
+        fill_result
+            .target_outcomes()
+            .iter()
+            .map(response_id)
+            .collect::<Vec<_>>(),
+        vec![first.id(), second.id()]
+    );
+    assert_eq!(response_data(&fill_result.target_outcomes()[0]), &[0x44; 8]);
+    assert_eq!(response_data(&fill_result.target_outcomes()[1]), &[0x44; 8]);
+    assert_eq!(bank.pending_fill_count(), 0);
+    assert_eq!(bank.mshr_allocated_count(), 0);
+    assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Shared));
+}
+
+#[test]
+fn msi_cache_bank_mshr_restore_preserves_coalesced_targets_and_limits() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_mshr(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(1, 2, 0).unwrap(),
+    );
+
+    let first = read(cache_agent, 100, 0x2000);
+    let first_downstream = bank
+        .accept_cpu_request(first.clone())
+        .unwrap()
+        .downstream_request()
+        .unwrap()
+        .clone();
+    let second = read(cache_agent, 101, 0x2008);
+    bank.accept_cpu_request(second.clone()).unwrap();
+
+    assert_eq!(
+        bank.accept_cpu_request(read(cache_agent, 102, 0x2004)),
+        Err(MsiCacheBankError::Mshr(MshrQueueError::TargetSlotsFull {
+            handle: rem6_cache::MshrHandle::new(0),
+            line: Address::new(0x2000),
+            targets_per_mshr: 2,
+        }))
+    );
+
+    let snapshot = bank.snapshot();
+    let mut restored = MsiCacheBank::new_with_mshr(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(1, 2, 0).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.mshr_target_count(Address::new(0x2000)), Some(2));
+
+    let fill_result = restored.accept_fill(fill(&first_downstream, 0x55)).unwrap();
+    assert_eq!(
+        fill_result
+            .target_outcomes()
+            .iter()
+            .map(response_id)
+            .collect::<Vec<_>>(),
+        vec![first.id(), second.id()]
     );
 }
 
