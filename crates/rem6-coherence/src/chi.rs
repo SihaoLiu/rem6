@@ -11,15 +11,16 @@ use rem6_directory::{
     ChiDirectory, ChiDirectoryDataSource, ChiDirectoryDecision, ChiDirectoryError,
     ChiDirectoryGrant, ChiDirectoryLineState,
 };
+use rem6_dram::{DramMemoryController, DramMemoryError};
 use rem6_memory::{
-    Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse,
-    ResponseStatus,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
+    MemoryResponse, ResponseStatus,
 };
 use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
 use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::{
-    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, TargetOutcome,
-    TransportEndpointId, TransportError,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
+    TargetOutcome, TransportEndpointId, TransportError,
 };
 
 use rem6_fabric::FabricModel;
@@ -29,8 +30,8 @@ use rem6_kernel::{
 };
 
 use crate::{
-    HarnessError, LineBackingStore, PartitionedCacheAgentConfig, PartitionedRouteHopConfig,
-    SubmitKind,
+    HarnessError, LineBackingStore, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
+    PartitionedRouteHopConfig, SubmitKind,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +45,7 @@ pub enum ChiHarnessError {
     UnexpectedGrantState { state: ChiState },
     Cache(ChiCacheControllerError),
     Directory(ChiDirectoryError),
+    Dram(DramMemoryError),
     Memory(MemoryError),
     Scheduler(SchedulerError),
     Backing(HarnessError),
@@ -91,6 +93,7 @@ impl fmt::Display for ChiHarnessError {
             }
             Self::Cache(error) => write!(formatter, "{error}"),
             Self::Directory(error) => write!(formatter, "{error}"),
+            Self::Dram(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Backing(error) => write!(formatter, "{error}"),
@@ -109,6 +112,7 @@ impl Error for ChiHarnessError {
         match self {
             Self::Cache(error) => Some(error),
             Self::Directory(error) => Some(error),
+            Self::Dram(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Backing(error) => Some(error),
@@ -311,7 +315,9 @@ pub struct PartitionedChiDirectoryLineHarness {
     directory: Arc<Mutex<ChiDirectory>>,
     caches: BTreeMap<AgentId, Arc<Mutex<ChiCacheController>>>,
     routes: BTreeMap<AgentId, PartitionedChiRoute>,
+    memory_route: Option<PartitionedChiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<ChiDirectoryDecisionRecord>>>,
@@ -324,6 +330,7 @@ pub struct PartitionedChiDirectoryLineHarnessSnapshot {
     directory: ChiDirectoryLineState,
     caches: BTreeMap<AgentId, ChiCacheControllerSnapshot>,
     backing: LineBackingStore,
+    dram_memory: Option<DramMemoryController>,
     trace: Vec<MemoryTraceEvent>,
     cpu_responses: Vec<ChiCpuResponseRecord>,
     directory_decisions: Vec<ChiDirectoryDecisionRecord>,
@@ -337,6 +344,7 @@ impl PartitionedChiDirectoryLineHarnessSnapshot {
         directory: ChiDirectoryLineState,
         caches: BTreeMap<AgentId, ChiCacheControllerSnapshot>,
         backing: LineBackingStore,
+        dram_memory: Option<DramMemoryController>,
         trace: Vec<MemoryTraceEvent>,
         cpu_responses: Vec<ChiCpuResponseRecord>,
         directory_decisions: Vec<ChiDirectoryDecisionRecord>,
@@ -347,6 +355,7 @@ impl PartitionedChiDirectoryLineHarnessSnapshot {
             directory,
             caches,
             backing,
+            dram_memory,
             trace,
             cpu_responses,
             directory_decisions,
@@ -371,6 +380,10 @@ impl PartitionedChiDirectoryLineHarnessSnapshot {
 
     pub const fn backing(&self) -> &LineBackingStore {
         &self.backing
+    }
+
+    pub const fn dram_memory(&self) -> Option<&DramMemoryController> {
+        self.dram_memory.as_ref()
     }
 
     pub fn trace(&self) -> Vec<MemoryTraceEvent> {
@@ -721,7 +734,124 @@ impl PartitionedChiDirectoryLineHarness {
             directory: Arc::new(Mutex::new(ChiDirectory::new())),
             caches,
             routes,
+            memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
+            dram_memory: None,
+            trace: MemoryTrace::new(),
+            cpu_responses: Arc::new(Mutex::new(Vec::new())),
+            directory_decisions: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn new_with_dram_memory<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        directory_partition: PartitionId,
+        directory_endpoint: TransportEndpointId,
+        memory: PartitionedDramMemoryConfig,
+        agents: I,
+    ) -> Result<Self, ChiHarnessError>
+    where
+        I: IntoIterator<Item = PartitionedCacheAgentConfig>,
+    {
+        let line_address = layout.line_address(line_address);
+
+        let mut partition_count = directory_partition
+            .index()
+            .checked_add(1)
+            .ok_or(ChiHarnessError::Scheduler(SchedulerError::NoPartitions))?;
+        partition_count = partition_count.max(
+            memory
+                .partition()
+                .index()
+                .checked_add(1)
+                .ok_or(ChiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+        );
+        expand_partition_count_for_chi_hops(&mut partition_count, memory.route_hops())?;
+        let agent_configs: Vec<_> = agents.into_iter().collect();
+        let uses_fabric = chi_route_hops_use_fabric(memory.route_hops())
+            || agent_configs
+                .iter()
+                .any(|config| chi_route_hops_use_fabric(config.route_hops()));
+        let fabric = uses_fabric.then(|| Arc::new(Mutex::new(FabricModel::new())));
+        let mut transport = if let Some(fabric) = &fabric {
+            rem6_transport::MemoryTransport::with_shared_fabric(Arc::clone(fabric))
+        } else {
+            rem6_transport::MemoryTransport::new()
+        };
+        let memory_route = chi_route_from_config(
+            directory_endpoint.clone(),
+            directory_partition,
+            memory.endpoint().clone(),
+            memory.partition(),
+            memory.request_latency(),
+            memory.response_latency(),
+            memory.request_virtual_network(),
+            memory.response_virtual_network(),
+            memory.route_hops(),
+        )?;
+        let memory_route_id = transport
+            .add_route(memory_route.clone())
+            .map_err(ChiHarnessError::Transport)?;
+        let mut caches = BTreeMap::new();
+        let mut routes = BTreeMap::new();
+
+        for config in agent_configs {
+            partition_count = partition_count.max(
+                config
+                    .partition()
+                    .index()
+                    .checked_add(1)
+                    .ok_or(ChiHarnessError::Scheduler(SchedulerError::NoPartitions))?,
+            );
+            expand_partition_count_for_chi_hops(&mut partition_count, config.route_hops())?;
+            if caches
+                .insert(
+                    config.agent(),
+                    Arc::new(Mutex::new(ChiCacheController::new(
+                        config.agent(),
+                        layout,
+                        line_address,
+                    ))),
+                )
+                .is_some()
+            {
+                return Err(ChiHarnessError::DuplicateCache {
+                    agent: config.agent(),
+                });
+            }
+
+            let route = chi_route_from_config(
+                config.endpoint().clone(),
+                config.partition(),
+                directory_endpoint.clone(),
+                directory_partition,
+                config.request_latency(),
+                config.response_latency(),
+                config.request_virtual_network(),
+                config.response_virtual_network(),
+                config.route_hops(),
+            )?;
+            let route_id = transport
+                .add_route(route.clone())
+                .map_err(ChiHarnessError::Transport)?;
+            routes.insert(config.agent(), PartitionedChiRoute::new(route_id, route));
+        }
+
+        let dram_controller = memory.into_controller();
+        let backing = line_backing_from_chi_dram_memory(layout, line_address, &dram_controller)?;
+
+        Ok(Self {
+            scheduler: PartitionedScheduler::with_min_remote_delay(partition_count, 1)
+                .map_err(ChiHarnessError::Scheduler)?,
+            transport,
+            line: ChiLineId::new(line_address),
+            directory: Arc::new(Mutex::new(ChiDirectory::new())),
+            caches,
+            routes,
+            memory_route: Some(PartitionedChiRoute::new(memory_route_id, memory_route)),
+            backing: Arc::new(Mutex::new(backing)),
+            dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -767,7 +897,9 @@ impl PartitionedChiDirectoryLineHarness {
         let directory = Arc::clone(&self.directory);
         let caches = self.caches.clone();
         let cache_routes = self.routes.clone();
+        let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
+        let dram_memory = self.dram_memory.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
@@ -786,6 +918,39 @@ impl PartitionedChiDirectoryLineHarness {
                         .accept(delivery.request().clone())
                         .expect("directory decision");
                     let fill_event = chi_fill_event(&decision).expect("directory grant fill event");
+                    if let Some(memory_route) =
+                        memory_route.filter(|_| decision_uses_chi_backing_memory(&decision))
+                    {
+                        decisions.lock().expect("decision lock").push(
+                            ChiDirectoryDecisionRecord::new(
+                                delivery.tick(),
+                                delivery.request().id().agent(),
+                                decision.clone(),
+                            ),
+                        );
+                        let snoop_delay = schedule_partitioned_chi_snoops(
+                            context,
+                            &decision,
+                            &cache_routes,
+                            &caches,
+                        )
+                        .expect("scheduled directory snoops");
+                        schedule_partitioned_chi_memory_response(
+                            context,
+                            delivery.request().clone(),
+                            fill_event,
+                            requester_route,
+                            memory_route,
+                            backing,
+                            dram_memory,
+                            trace.clone(),
+                            response_cache,
+                            responses,
+                            snoop_delay,
+                        )
+                        .expect("scheduled memory response");
+                        return TargetOutcome::NoResponse;
+                    }
                     let response = partitioned_chi_directory_response(
                         delivery.request(),
                         &decision,
@@ -860,6 +1025,10 @@ impl PartitionedChiDirectoryLineHarness {
             .ok_or(ChiHarnessError::UnknownCache { agent })
     }
 
+    pub fn memory_route(&self) -> Option<MemoryRouteId> {
+        self.memory_route.as_ref().map(|route| route.id)
+    }
+
     pub fn trace(&self) -> Vec<MemoryTraceEvent> {
         self.trace.snapshot()
     }
@@ -898,6 +1067,9 @@ impl PartitionedChiDirectoryLineHarness {
                 .map(|(agent, cache)| (*agent, cache.lock().expect("cache lock").snapshot()))
                 .collect(),
             self.backing.lock().expect("backing lock").clone(),
+            self.dram_memory
+                .as_ref()
+                .map(|memory| memory.lock().expect("DRAM memory lock").clone()),
             self.trace.snapshot(),
             self.cpu_responses.lock().expect("response lock").clone(),
             self.directory_decisions
@@ -938,6 +1110,10 @@ impl PartitionedChiDirectoryLineHarness {
         self.directory = Arc::new(Mutex::new(directory));
         self.caches = caches;
         self.backing = Arc::new(Mutex::new(snapshot.backing.clone()));
+        self.dram_memory = snapshot
+            .dram_memory
+            .clone()
+            .map(|memory| Arc::new(Mutex::new(memory)));
         self.trace = MemoryTrace::from_events(snapshot.trace.clone());
         *self.cpu_responses.lock().expect("response lock") = snapshot.cpu_responses.clone();
         *self.directory_decisions.lock().expect("decision lock") =
@@ -1095,6 +1271,31 @@ fn chi_route_from_config(
     )
 }
 
+fn line_backing_from_chi_dram_memory(
+    layout: CacheLineLayout,
+    line_address: Address,
+    controller: &DramMemoryController,
+) -> Result<LineBackingStore, ChiHarnessError> {
+    let request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 0),
+        line_address,
+        AccessSize::new(layout.bytes()).map_err(ChiHarnessError::Memory)?,
+        layout,
+    )
+    .map_err(ChiHarnessError::Memory)?;
+    let mut probe = controller.clone();
+    let outcome = probe.accept(0, &request).map_err(ChiHarnessError::Dram)?;
+    let data = outcome
+        .response()
+        .and_then(MemoryResponse::data)
+        .map(<[u8]>::to_vec)
+        .ok_or(ChiHarnessError::Memory(MemoryError::MissingResponseData {
+            request: request.id(),
+        }))?;
+
+    LineBackingStore::new(layout, line_address, data).map_err(ChiHarnessError::Backing)
+}
+
 fn partitioned_chi_directory_response(
     request: &MemoryRequest,
     decision: &ChiDirectoryDecision,
@@ -1132,6 +1333,12 @@ fn partitioned_chi_directory_response(
             MemoryResponse::completed(request, None).map_err(ChiHarnessError::Memory)
         }
     }
+}
+
+fn decision_uses_chi_backing_memory(decision: &ChiDirectoryDecision) -> bool {
+    decision
+        .grant()
+        .is_some_and(|grant| matches!(grant.data_source(), ChiDirectoryDataSource::BackingMemory))
 }
 
 fn partitioned_chi_source_data(
@@ -1199,6 +1406,222 @@ fn schedule_partitioned_chi_snoops(
     }
 
     Ok(max_delay)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_partitioned_chi_memory_response(
+    context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+    request: MemoryRequest,
+    fill_event: ChiEvent,
+    requester_route: PartitionedChiRoute,
+    memory_route: PartitionedChiRoute,
+    backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<ChiCacheController>>,
+    responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
+    snoop_delay: u64,
+) -> Result<(), ChiHarnessError> {
+    trace.record(MemoryTraceEvent::request(
+        context.now(),
+        memory_route.id,
+        memory_route.route.source().clone(),
+        MemoryTraceKind::RequestSent,
+        request.id(),
+    ));
+    schedule_partitioned_chi_memory_request_hop(
+        context,
+        0,
+        request,
+        fill_event,
+        requester_route,
+        memory_route,
+        backing,
+        dram_memory,
+        trace,
+        response_cache,
+        responses,
+        snoop_delay,
+        context.now(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_partitioned_chi_memory_request_hop(
+    context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+    hop_index: usize,
+    request: MemoryRequest,
+    fill_event: ChiEvent,
+    requester_route: PartitionedChiRoute,
+    memory_route: PartitionedChiRoute,
+    backing: Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<ChiCacheController>>,
+    responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
+    snoop_delay: u64,
+    directory_tick: u64,
+) -> Result<(), ChiHarnessError> {
+    let hop = memory_route.route.hops()[hop_index].clone();
+    let route_id = memory_route.id;
+    context
+        .schedule_remote_after(hop.partition(), hop.request_latency(), move |context| {
+            trace.record(MemoryTraceEvent::request(
+                context.now(),
+                route_id,
+                hop.endpoint().clone(),
+                MemoryTraceKind::RequestArrived,
+                request.id(),
+            ));
+
+            if hop_index + 1 == memory_route.route.hops().len() {
+                let (ready_tick, response) = complete_partitioned_chi_memory_request(
+                    context.now(),
+                    &request,
+                    &backing,
+                    dram_memory.as_ref(),
+                )
+                .expect("CHI memory response");
+                context
+                    .schedule_local_after(
+                        ready_tick
+                            .checked_sub(context.now())
+                            .expect("DRAM ready tick is not in the past"),
+                        move |context| {
+                            let last_hop = memory_route.route.hops().len() - 1;
+                            schedule_partitioned_chi_memory_response_hop(
+                                context,
+                                last_hop,
+                                response,
+                                fill_event,
+                                requester_route,
+                                memory_route,
+                                trace,
+                                response_cache,
+                                responses,
+                                snoop_delay,
+                                directory_tick,
+                            )
+                            .expect("scheduled CHI memory response hop");
+                        },
+                    )
+                    .expect("validated CHI DRAM ready latency");
+            } else {
+                schedule_partitioned_chi_memory_request_hop(
+                    context,
+                    hop_index + 1,
+                    request,
+                    fill_event,
+                    requester_route,
+                    memory_route,
+                    backing,
+                    dram_memory,
+                    trace,
+                    response_cache,
+                    responses,
+                    snoop_delay,
+                    directory_tick,
+                )
+                .expect("scheduled CHI memory request hop");
+            }
+        })
+        .map(|_| ())
+        .map_err(ChiHarnessError::Scheduler)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_partitioned_chi_memory_response_hop(
+    context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+    hop_index: usize,
+    response: MemoryResponse,
+    fill_event: ChiEvent,
+    requester_route: PartitionedChiRoute,
+    memory_route: PartitionedChiRoute,
+    trace: MemoryTrace,
+    response_cache: Arc<Mutex<ChiCacheController>>,
+    responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
+    snoop_delay: u64,
+    directory_tick: u64,
+) -> Result<(), ChiHarnessError> {
+    let hop = memory_route.route.hops()[hop_index].clone();
+    let (endpoint, partition) =
+        partitioned_chi_route_response_destination(&memory_route.route, hop_index);
+    let route_id = memory_route.id;
+    context
+        .schedule_remote_after(partition, hop.response_latency(), move |context| {
+            trace.record(MemoryTraceEvent::response(
+                context.now(),
+                route_id,
+                endpoint,
+                response.request_id(),
+                response.status(),
+            ));
+
+            if hop_index == 0 {
+                let elapsed = context
+                    .now()
+                    .checked_sub(directory_tick)
+                    .expect("memory response is after directory request");
+                let wait_for_snoops = snoop_delay.saturating_sub(elapsed);
+                schedule_partitioned_chi_cache_response(
+                    context,
+                    wait_for_snoops,
+                    requester_route,
+                    response,
+                    fill_event,
+                    trace,
+                    response_cache,
+                    responses,
+                )
+                .expect("scheduled CHI cache response");
+            } else {
+                schedule_partitioned_chi_memory_response_hop(
+                    context,
+                    hop_index - 1,
+                    response,
+                    fill_event,
+                    requester_route,
+                    memory_route,
+                    trace,
+                    response_cache,
+                    responses,
+                    snoop_delay,
+                    directory_tick,
+                )
+                .expect("scheduled CHI memory response hop");
+            }
+        })
+        .map(|_| ())
+        .map_err(ChiHarnessError::Scheduler)
+}
+
+fn complete_partitioned_chi_memory_request(
+    now: u64,
+    request: &MemoryRequest,
+    backing: &Arc<Mutex<LineBackingStore>>,
+    dram_memory: Option<&Arc<Mutex<DramMemoryController>>>,
+) -> Result<(u64, MemoryResponse), ChiHarnessError> {
+    let Some(dram_memory) = dram_memory else {
+        let response = backing
+            .lock()
+            .expect("backing lock")
+            .respond(request)
+            .map_err(ChiHarnessError::Backing)?;
+        return Ok((now, response));
+    };
+
+    let outcome = dram_memory
+        .lock()
+        .expect("DRAM memory lock")
+        .accept(now, request)
+        .map_err(ChiHarnessError::Dram)?;
+    let response = outcome.response().cloned().ok_or(ChiHarnessError::Memory(
+        MemoryError::MissingResponseData {
+            request: request.id(),
+        },
+    ))?;
+
+    Ok((outcome.ready_cycle(), response))
 }
 
 #[allow(clippy::too_many_arguments)]

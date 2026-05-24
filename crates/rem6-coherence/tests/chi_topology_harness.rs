@@ -2,12 +2,14 @@ use rem6_cache::ChiCacheControllerResultKind;
 use rem6_coherence::{
     ChiCpuResponseRecord, ChiHarnessError, LineBackingStore, PartitionedChiDirectoryLineHarness,
     TopologyCacheAgentConfig, TopologyChiDirectoryHarnessConfig, TopologyDirectoryConfig,
+    TopologyDramMemoryConfig,
 };
+use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_fabric::FabricLinkId;
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    MemoryTargetId, ResponseStatus,
 };
 use rem6_protocol_chi::ChiState;
 use rem6_topology::{
@@ -48,6 +50,10 @@ fn request_id(agent: u32, sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(agent), sequence)
 }
 
+fn dram_target() -> MemoryTargetId {
+    MemoryTargetId::new(0)
+}
+
 fn line_data() -> Vec<u8> {
     (0..64).collect()
 }
@@ -85,6 +91,43 @@ fn harness_config() -> TopologyChiDirectoryHarnessConfig {
         Address::new(0x3000),
         backing(),
         TopologyDirectoryConfig::new(component("dir0"), port("cache_side"), port("unused_mem")),
+        [
+            TopologyCacheAgentConfig::new(agent(1), component("l1d0"), port("mem_side")),
+            TopologyCacheAgentConfig::new(agent(2), component("l1d1"), port("mem_side")),
+        ],
+    )
+}
+
+fn dram_memory() -> DramMemoryController {
+    let target = dram_target();
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(4, 256, 64).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x8000).unwrap(),
+        )
+        .unwrap();
+    memory
+        .insert_line(target, Address::new(0x3000), line_data())
+        .unwrap();
+    memory
+}
+
+fn dram_harness_config() -> TopologyChiDirectoryHarnessConfig {
+    TopologyChiDirectoryHarnessConfig::new_with_dram_memory(
+        layout(),
+        Address::new(0x3000),
+        TopologyDirectoryConfig::new(component("dir0"), port("cache_side"), port("mem_side")),
+        TopologyDramMemoryConfig::new(component("mem0"), port("requests"), dram_memory()),
         [
             TopologyCacheAgentConfig::new(agent(1), component("l1d0"), port("mem_side")),
             TopologyCacheAgentConfig::new(agent(2), component("l1d1"), port("mem_side")),
@@ -167,6 +210,119 @@ fn intermediate_topology() -> Topology {
         .unwrap()
 }
 
+fn dram_topology() -> Topology {
+    TopologyBuilder::new(6)
+        .add_component(
+            ComponentSpec::new(
+                component("l1d0"),
+                kind("l1_cache"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mesh_r0"),
+                kind("mesh_router"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("cache_in"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("dir_out"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mesh_r1"),
+                kind("mesh_router"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("dir_in"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_out"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("mem0"),
+                kind("dram"),
+                PartitionId::new(4),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1d1"),
+                kind("l1_cache"),
+                PartitionId::new(5),
+                clock(1),
+            )
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("l1d0"), port("mem_side")),
+            Endpoint::new(component("mesh_r0"), port("cache_in")),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("mesh_r0"), port("dir_out")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            5,
+            7,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("dir0"), port("mem_side")),
+            Endpoint::new(component("mesh_r1"), port("dir_in")),
+            4,
+            6,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("mesh_r1"), port("mem_out")),
+            Endpoint::new(component("mem0"), port("requests")),
+            8,
+            9,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            Endpoint::new(component("l1d1"), port("mem_side")),
+            Endpoint::new(component("dir0"), port("cache_side")),
+            4,
+            6,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn fabric_topology() -> Topology {
     TopologyBuilder::new(2)
         .add_component(
@@ -204,6 +360,114 @@ fn fabric_topology() -> Topology {
         .unwrap()
         .build()
         .unwrap()
+}
+
+#[test]
+fn topology_chi_harness_routes_backing_read_through_dram_path() {
+    let topology = dram_topology();
+    let mut harness =
+        PartitionedChiDirectoryLineHarness::new_with_topology(&topology, dram_harness_config())
+            .unwrap();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+
+    assert_eq!(run.final_tick(), 52);
+    assert_eq!(
+        harness.cache_state(agent(1)).unwrap(),
+        ChiState::SharedClean
+    );
+    assert_eq!(
+        harness.cpu_responses(),
+        vec![ChiCpuResponseRecord::new(
+            52,
+            ChiCacheControllerResultKind::Fill,
+            request_id(1, 0),
+            ResponseStatus::Completed,
+            Some(vec![4, 5, 6, 7]),
+        )]
+    );
+
+    let cache_route = harness.route(agent(1)).unwrap();
+    let memory_route = harness.memory_route().unwrap();
+    assert_eq!(
+        harness
+            .trace()
+            .iter()
+            .map(|event| {
+                (
+                    event.tick(),
+                    event.route(),
+                    event.endpoint().as_str().to_owned(),
+                    event.kind(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                0,
+                cache_route,
+                "l1d0".to_owned(),
+                MemoryTraceKind::RequestSent,
+            ),
+            (
+                2,
+                cache_route,
+                "mesh_r0".to_owned(),
+                MemoryTraceKind::RequestArrived,
+            ),
+            (
+                7,
+                cache_route,
+                "dir0".to_owned(),
+                MemoryTraceKind::RequestArrived,
+            ),
+            (
+                7,
+                memory_route,
+                "dir0".to_owned(),
+                MemoryTraceKind::RequestSent,
+            ),
+            (
+                11,
+                memory_route,
+                "mesh_r1".to_owned(),
+                MemoryTraceKind::RequestArrived,
+            ),
+            (
+                19,
+                memory_route,
+                "mem0".to_owned(),
+                MemoryTraceKind::RequestArrived,
+            ),
+            (
+                36,
+                memory_route,
+                "mesh_r1".to_owned(),
+                MemoryTraceKind::ResponseArrived,
+            ),
+            (
+                42,
+                memory_route,
+                "dir0".to_owned(),
+                MemoryTraceKind::ResponseArrived,
+            ),
+            (
+                49,
+                cache_route,
+                "mesh_r0".to_owned(),
+                MemoryTraceKind::ResponseArrived,
+            ),
+            (
+                52,
+                cache_route,
+                "l1d0".to_owned(),
+                MemoryTraceKind::ResponseArrived,
+            ),
+        ]
+    );
 }
 
 #[test]

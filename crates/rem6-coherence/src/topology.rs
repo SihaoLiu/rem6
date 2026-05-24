@@ -112,7 +112,8 @@ pub struct TopologyDirectoryHarnessConfig {
 pub struct TopologyChiDirectoryHarnessConfig {
     layout: CacheLineLayout,
     line_address: Address,
-    backing: LineBackingStore,
+    backing: Option<LineBackingStore>,
+    memory: Option<TopologyDramMemoryConfig>,
     directory: TopologyDirectoryConfig,
     caches: Vec<TopologyCacheAgentConfig>,
 }
@@ -131,7 +132,28 @@ impl TopologyChiDirectoryHarnessConfig {
         Self {
             layout,
             line_address,
-            backing,
+            backing: Some(backing),
+            memory: None,
+            directory,
+            caches: caches.into_iter().collect(),
+        }
+    }
+
+    pub fn new_with_dram_memory<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        directory: TopologyDirectoryConfig,
+        memory: TopologyDramMemoryConfig,
+        caches: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = TopologyCacheAgentConfig>,
+    {
+        Self {
+            layout,
+            line_address,
+            backing: None,
+            memory: Some(memory),
             directory,
             caches: caches.into_iter().collect(),
         }
@@ -145,8 +167,12 @@ impl TopologyChiDirectoryHarnessConfig {
         self.line_address
     }
 
-    pub const fn backing(&self) -> &LineBackingStore {
-        &self.backing
+    pub const fn backing(&self) -> Option<&LineBackingStore> {
+        self.backing.as_ref()
+    }
+
+    pub const fn memory(&self) -> Option<&TopologyDramMemoryConfig> {
+        self.memory.as_ref()
     }
 
     pub const fn directory(&self) -> &TopologyDirectoryConfig {
@@ -223,12 +249,42 @@ impl PartitionedChiDirectoryLineHarness {
             layout,
             line_address,
             backing,
+            memory,
             directory,
             caches,
         } = config;
         let directory_component =
             topology_component(topology, directory.component()).map_err(map_chi_topology_error)?;
         let directory_endpoint = transport_endpoint_chi(directory.component())?;
+        let memory = if let Some(memory) = memory {
+            let memory_component =
+                topology_component(topology, memory.component()).map_err(map_chi_topology_error)?;
+            let memory_path = topology_route_path(
+                topology,
+                Endpoint::new(
+                    directory.component().clone(),
+                    directory.memory_port().clone(),
+                ),
+                Endpoint::new(memory.component().clone(), memory.port().clone()),
+            )
+            .map_err(map_chi_topology_error)?;
+            Some(
+                PartitionedDramMemoryConfig::new(
+                    memory_component.partition(),
+                    transport_endpoint_chi(memory.component())?,
+                    memory_path.request,
+                    memory_path.response,
+                    memory.into_controller(),
+                )
+                .with_virtual_networks(
+                    memory_path.request_virtual_network,
+                    memory_path.response_virtual_network,
+                )
+                .with_route_hops(memory_path.route_hops),
+            )
+        } else {
+            None
+        };
 
         let mut agents = Vec::with_capacity(caches.len());
         for cache in caches {
@@ -259,14 +315,28 @@ impl PartitionedChiDirectoryLineHarness {
             );
         }
 
-        Self::new(
-            layout,
-            line_address,
-            backing,
-            directory_component.partition(),
-            directory_endpoint,
-            agents,
-        )
+        if let Some(memory) = memory {
+            Self::new_with_dram_memory(
+                layout,
+                line_address,
+                directory_component.partition(),
+                directory_endpoint,
+                memory,
+                agents,
+            )
+        } else {
+            let backing = backing.ok_or(ChiHarnessError::Backing(
+                HarnessError::MissingBackingMemory { line: line_address },
+            ))?;
+            Self::new(
+                layout,
+                line_address,
+                backing,
+                directory_component.partition(),
+                directory_endpoint,
+                agents,
+            )
+        }
     }
 }
 
