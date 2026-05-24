@@ -481,6 +481,14 @@ pub enum TranslationError {
         latency: u64,
     },
     QueueOrderOverflow,
+    ZeroTlbCapacity,
+    TlbCapacityExceeded {
+        capacity: usize,
+    },
+    DuplicateTlbEntry {
+        virtual_page: Address,
+    },
+    TlbOrderOverflow,
     ZeroPageSize,
     NonPowerOfTwoPageSize {
         bytes: u64,
@@ -547,6 +555,21 @@ impl fmt::Display for TranslationError {
                     formatter,
                     "translation queue stable order counter overflowed"
                 )
+            }
+            Self::ZeroTlbCapacity => write!(formatter, "translation TLB capacity must be nonzero"),
+            Self::TlbCapacityExceeded { capacity } => {
+                write!(
+                    formatter,
+                    "translation TLB snapshot exceeds capacity {capacity}"
+                )
+            }
+            Self::DuplicateTlbEntry { virtual_page } => write!(
+                formatter,
+                "translation TLB entry for virtual page {:#x} is duplicated",
+                virtual_page.get()
+            ),
+            Self::TlbOrderOverflow => {
+                write!(formatter, "translation TLB stable order counter overflowed")
             }
             Self::ZeroPageSize => write!(formatter, "translation page size must be nonzero"),
             Self::NonPowerOfTwoPageSize { bytes } => {

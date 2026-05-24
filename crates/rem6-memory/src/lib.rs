@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 mod translation;
+mod translation_tlb;
 
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
@@ -10,6 +11,10 @@ pub use translation::{
     TranslationPagePermissions, TranslationPageSize, TranslationQueue, TranslationQueueConfig,
     TranslationQueueEntrySnapshot, TranslationQueueSnapshot, TranslationRequest,
     TranslationRequestId, TranslationResolution,
+};
+pub use translation_tlb::{
+    TranslationTlb, TranslationTlbConfig, TranslationTlbEntrySnapshot, TranslationTlbLookup,
+    TranslationTlbLookupKind, TranslationTlbSnapshot, TranslationTlbStats,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
