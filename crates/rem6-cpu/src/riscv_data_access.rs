@@ -41,6 +41,14 @@ impl RiscvLoadReservation {
     pub const fn size(self) -> AccessSize {
         self.size
     }
+
+    pub fn overlaps(self, address: Address, size: AccessSize) -> bool {
+        let reservation_start = self.address.get();
+        let reservation_end = reservation_start.saturating_add(self.size.bytes());
+        let access_start = address.get();
+        let access_end = access_start.saturating_add(size.bytes());
+        reservation_start < access_end && access_start < reservation_end
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

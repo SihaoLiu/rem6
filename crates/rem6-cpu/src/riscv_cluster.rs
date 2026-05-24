@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity, ParallelRunProfile,
@@ -16,6 +17,7 @@ use rem6_transport::{
 };
 
 use crate::riscv_activity::{drive_action_partition, RiscvCoreDriveActivity};
+use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
     CpuId, OutstandingDataAccess, OutstandingFetch, PreparedDataParallelAccess, RiscvCore,
     RiscvCoreDriveAction, RiscvCpuError,
@@ -45,6 +47,7 @@ enum PreparedParallelAction {
 #[derive(Clone, Debug)]
 pub struct RiscvCluster {
     cores: BTreeMap<CpuId, RiscvCore>,
+    reservations: Arc<Mutex<RiscvReservationTracker>>,
 }
 
 impl RiscvCluster {
@@ -94,7 +97,17 @@ impl RiscvCluster {
             by_cpu.insert(cpu, core);
         }
 
-        Ok(Self { cores: by_cpu })
+        Ok(Self {
+            cores: by_cpu,
+            reservations: Arc::new(Mutex::new(RiscvReservationTracker::default())),
+        })
+    }
+
+    fn reconcile_reservation_invalidations(&self) {
+        self.reservations
+            .lock()
+            .expect("riscv cluster reservation tracker lock")
+            .reconcile(self.cores.iter());
     }
 
     pub fn core_count(&self) -> usize {
@@ -127,6 +140,7 @@ impl RiscvCluster {
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        self.reconcile_reservation_invalidations();
         self.core(cpu)?
             .drive_next_action(
                 scheduler,
@@ -155,6 +169,7 @@ impl RiscvCluster {
         FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        self.reconcile_reservation_invalidations();
         let mut actions = Vec::new();
         for (cpu, core) in &self.cores {
             if let Some(action) = core
@@ -188,6 +203,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.reconcile_reservation_invalidations();
         let mut prepared_actions = Vec::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
@@ -261,6 +277,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.reconcile_reservation_invalidations();
         let mut prepared_actions = Vec::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
@@ -365,6 +382,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.reconcile_reservation_invalidations();
         let mut prepared_actions = Vec::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
@@ -476,6 +494,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.reconcile_reservation_invalidations();
         let mut prepared_actions = Vec::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
@@ -669,6 +688,7 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
+        self.reconcile_reservation_invalidations();
         let mut actions = Vec::new();
         for (cpu, core) in &self.cores {
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
@@ -766,7 +786,9 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        Ok(RiscvClusterTurn::scheduler(scheduler.run_next_epoch()))
+        let turn = RiscvClusterTurn::scheduler(scheduler.run_next_epoch());
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
     }
 
     pub fn drive_turn_parallel_fetch<F, FR>(
@@ -796,7 +818,9 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        drive_parallel_scheduler_turn(scheduler)
+        let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -835,7 +859,9 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        drive_parallel_scheduler_turn(scheduler)
+        let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -876,7 +902,9 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        drive_parallel_scheduler_turn(scheduler)
+        let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -919,7 +947,9 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        drive_parallel_scheduler_turn(scheduler)
+        let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -960,7 +990,9 @@ impl RiscvCluster {
             return Ok(RiscvClusterTurn::idle(scheduler.now()));
         }
 
-        drive_parallel_scheduler_turn(scheduler)
+        let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
     }
 
     #[allow(clippy::too_many_arguments)]

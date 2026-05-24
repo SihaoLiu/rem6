@@ -34,6 +34,7 @@ mod multiperspective_perceptron;
 mod riscv_activity;
 mod riscv_cluster;
 mod riscv_data_access;
+mod riscv_reservation;
 mod riscv_translation;
 mod statistical_corrector;
 mod tage_predictor;
@@ -902,6 +903,20 @@ impl RiscvCore {
 
     pub fn load_reservation(&self) -> Option<RiscvLoadReservation> {
         self.state.lock().expect("riscv core lock").reservation
+    }
+
+    pub(crate) fn invalidate_load_reservation_if_overlaps(
+        &self,
+        address: Address,
+        size: AccessSize,
+    ) -> Option<RiscvLoadReservation> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let reservation = state.reservation?;
+        if !reservation.overlaps(address, size) {
+            return None;
+        }
+        state.reservation = None;
+        Some(reservation)
     }
 
     pub fn issue_next_fetch<F>(
