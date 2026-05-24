@@ -1,6 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
+use rem6_fabric::{
+    FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosPriority, QosQueueArbiter,
+    QosQueuePolicyKind,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
@@ -47,8 +50,12 @@ fn credit_fabric_path(
 }
 
 fn request(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
+    request_from(1, sequence, address, bytes)
+}
+
+fn request_from(agent: u32, sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
     MemoryRequest::read_shared(
-        MemoryRequestId::new(AgentId::new(1), sequence),
+        MemoryRequestId::new(AgentId::new(agent), sequence),
         Address::new(address),
         AccessSize::new(bytes).unwrap(),
         line_layout(),
@@ -1043,6 +1050,137 @@ fn transport_parallel_batch_reserves_shared_fabric_by_stable_packet_order() {
             (route_from_partition_zero, 6, second_by_packet.id()),
         ],
     );
+}
+
+#[test]
+fn transport_parallel_batch_can_use_qos_for_shared_fabric_order() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric_qos(
+        FabricModel::new(),
+        QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted),
+    );
+    let memory = endpoint("memory0");
+    let shared_path = fabric_path("mesh_qos_transport", 2, 4);
+    let route_low_lrg_first = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core_low_a"),
+                PartitionId::new(0),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_low_lrg_second = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core_low_b"),
+                PartitionId::new(1),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path.clone()),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_high = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("core_high"),
+                PartitionId::new(2),
+                [
+                    MemoryRouteHop::new(memory.clone(), PartitionId::new(3), 2, 2)
+                        .unwrap()
+                        .with_request_fabric_path(shared_path),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let low_lrg_first = request_from(2, 101, 0x1000, 8);
+    let low_lrg_second = request_from(1, 102, 0x2000, 8);
+    let high = request_from(9, 103, 0x3000, 8);
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+
+    let first_delivery = Arc::clone(&deliveries);
+    let second_delivery = Arc::clone(&deliveries);
+    let high_delivery = Arc::clone(&deliveries);
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route_low_lrg_first,
+                    low_lrg_first.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        first_delivery.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(1)),
+                ParallelMemoryTransaction::new(
+                    route_low_lrg_second,
+                    low_lrg_second.clone(),
+                    trace.clone(),
+                    move |delivery, _context| {
+                        second_delivery.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(1)),
+                ParallelMemoryTransaction::new(
+                    route_high,
+                    high.clone(),
+                    trace,
+                    move |delivery, _context| {
+                        high_delivery.lock().unwrap().push((
+                            delivery.route(),
+                            delivery.tick(),
+                            delivery.request().id(),
+                        ));
+                        TargetOutcome::NoResponse
+                    },
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(0)),
+            ],
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 6);
+    assert_eq!(summary.final_tick(), 8);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![
+            (route_high, 4, high.id()),
+            (route_low_lrg_first, 6, low_lrg_first.id()),
+            (route_low_lrg_second, 8, low_lrg_second.id()),
+        ],
+    );
+    let activity = transport.fabric_lane_activities().unwrap().remove(0);
+    assert_eq!(activity.link(), &fabric_link("mesh_qos_transport"));
+    assert_eq!(activity.transfer_count(), 3);
+    assert_eq!(activity.queue_delay_ticks(), 6);
 }
 
 #[test]

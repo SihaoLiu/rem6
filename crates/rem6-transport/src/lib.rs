@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
-    FabricPacket, FabricPacketId, FabricPath, FabricWaitForMarker, VirtualNetworkId,
+    FabricPacket, FabricPacketId, FabricPath, FabricQosRequest, FabricWaitForMarker, QosPriority,
+    QosQueueArbiter, QosRequestorId, VirtualNetworkId,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -420,6 +421,7 @@ pub struct ParallelMemoryTransaction {
     trace: MemoryTrace,
     responder: ParallelRequestResponder,
     response_sink: ResponseSink,
+    qos_priority: QosPriority,
 }
 
 impl ParallelMemoryTransaction {
@@ -442,7 +444,13 @@ impl ParallelMemoryTransaction {
             trace,
             responder: Box::new(responder),
             response_sink: Box::new(response_sink),
+            qos_priority: QosPriority::new(0),
         }
+    }
+
+    pub fn with_qos_priority(mut self, priority: QosPriority) -> Self {
+        self.qos_priority = priority;
+        self
     }
 
     pub fn route(&self) -> MemoryRouteId {
@@ -462,12 +470,14 @@ struct PreparedParallelTransaction {
     responder: ParallelRequestResponder,
     response_sink: ResponseSink,
     first_hop_delay: Tick,
+    qos_priority: QosPriority,
 }
 
 pub struct MemoryTransport {
     next_route_id: u64,
     routes: Vec<StoredRoute>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
+    qos_arbiter: Option<Arc<Mutex<QosQueueArbiter>>>,
 }
 
 impl MemoryTransport {
@@ -476,6 +486,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: None,
+            qos_arbiter: None,
         }
     }
 
@@ -484,6 +495,7 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
+            qos_arbiter: None,
         }
     }
 
@@ -492,6 +504,28 @@ impl MemoryTransport {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(fabric),
+            qos_arbiter: None,
+        }
+    }
+
+    pub fn with_fabric_qos(fabric: FabricModel, arbiter: QosQueueArbiter) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: Some(Arc::new(Mutex::new(fabric))),
+            qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+        }
+    }
+
+    pub fn with_shared_fabric_qos(
+        fabric: Arc<Mutex<FabricModel>>,
+        arbiter: Arc<Mutex<QosQueueArbiter>>,
+    ) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: Some(fabric),
+            qos_arbiter: Some(arbiter),
         }
     }
 
@@ -728,6 +762,7 @@ impl MemoryTransport {
                 responder,
                 response_sink,
                 first_hop_delay,
+                qos_priority: _,
             } = transaction;
             let source_partition = route.source_partition();
             let fabric = self.fabric.clone();
@@ -795,6 +830,7 @@ impl MemoryTransport {
             responder: transaction.responder,
             response_sink: transaction.response_sink,
             first_hop_delay: 0,
+            qos_priority: transaction.qos_priority,
         })
     }
 
@@ -831,7 +867,13 @@ impl MemoryTransport {
                 transaction.route.request_virtual_network(),
             )
             .map_err(TransportError::Fabric)?;
-            fabric_requests.push((index, packet, path.clone()));
+            fabric_requests.push((
+                index,
+                packet,
+                path.clone(),
+                transaction.request.id().agent(),
+                transaction.qos_priority,
+            ));
         }
 
         if fabric_requests.is_empty() {
@@ -842,16 +884,33 @@ impl MemoryTransport {
             .fabric
             .as_ref()
             .expect("fabric presence is checked before batch reservation");
-        let transfers = fabric
-            .lock()
-            .expect("fabric lock")
-            .transmit_batch(
+        let transfers = if let Some(arbiter) = &self.qos_arbiter {
+            let mut fabric = fabric.lock().expect("fabric lock");
+            let mut arbiter = arbiter.lock().expect("QoS arbiter lock");
+            fabric.transmit_qos_batch(
+                now,
+                fabric_requests.iter().enumerate().map(
+                    |(order, (_, packet, path, agent, priority))| {
+                        FabricQosRequest::new(
+                            QosRequestorId::new(agent.get()),
+                            *priority,
+                            order as u64,
+                            packet.clone(),
+                            path.clone(),
+                        )
+                    },
+                ),
+                &mut arbiter,
+            )
+        } else {
+            fabric.lock().expect("fabric lock").transmit_batch(
                 now,
                 fabric_requests
                     .iter()
-                    .map(|(_, packet, path)| (packet.clone(), path.clone())),
+                    .map(|(_, packet, path, _, _)| (packet.clone(), path.clone())),
             )
-            .map_err(TransportError::Fabric)?;
+        }
+        .map_err(TransportError::Fabric)?;
         let mut arrivals = transfers
             .into_iter()
             .map(|transfer| {
@@ -863,7 +922,7 @@ impl MemoryTransport {
             })
             .collect::<Result<BTreeMap<_, _>, TransportError>>()?;
 
-        for (index, packet, _) in fabric_requests {
+        for (index, packet, _, _, _) in fabric_requests {
             delays[index] = arrivals
                 .remove(&packet.id())
                 .expect("fabric batch returns every accepted packet");
