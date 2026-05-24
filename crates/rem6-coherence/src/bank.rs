@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cache::{
-    CacheControllerError, CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MsiCacheBank,
-    MsiCacheBankSnapshot,
+    CacheControllerError, CacheControllerResultKind, MshrQosClass, MshrQosProfile, MshrQueueConfig,
+    MsiCacheBank, MsiCacheBankSnapshot,
 };
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, MsiDirectory,
@@ -539,6 +539,19 @@ impl MsiBankDirectoryHarnessSnapshot {
         self.cache_snapshots.get(&agent)
     }
 
+    pub fn cache_mshr_qos_profile(&self, agent: AgentId) -> Option<MshrQosProfile> {
+        self.cache_snapshot(agent)
+            .and_then(MsiCacheBankSnapshot::mshr_qos_profile)
+    }
+
+    pub fn mshr_qos_profile(&self) -> MshrQosProfile {
+        MshrQosProfile::from_profiles(
+            self.cache_snapshots
+                .values()
+                .filter_map(MsiCacheBankSnapshot::mshr_qos_profile),
+        )
+    }
+
     pub fn directory_states(&self) -> &[DirectoryLineState] {
         &self.directory_states
     }
@@ -1015,6 +1028,21 @@ impl MsiBankDirectoryHarness {
         address: Address,
     ) -> Result<Option<MshrQosClass>, HarnessError> {
         Ok(self.cache(agent)?.mshr_effective_qos(address))
+    }
+
+    pub fn cache_mshr_qos_profile(
+        &self,
+        agent: AgentId,
+    ) -> Result<Option<MshrQosProfile>, HarnessError> {
+        Ok(self.cache(agent)?.mshr_qos_profile())
+    }
+
+    pub fn mshr_qos_profile(&self) -> MshrQosProfile {
+        MshrQosProfile::from_profiles(
+            self.caches
+                .values()
+                .filter_map(MsiCacheBank::mshr_qos_profile),
+        )
     }
 
     pub fn directory_state(&self, address: Address) -> DirectoryLineState {

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_cache::{CacheControllerResultKind, MshrQosClass, MshrQueueConfig};
+use rem6_cache::{CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MsiCacheBank};
 use rem6_coherence::{
     CpuResponseRecord, HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
     SubmitKind,
@@ -67,6 +67,22 @@ fn backing_line_addresses(snapshot: &MsiBankDirectoryHarnessSnapshot) -> Vec<u64
         .collect()
 }
 
+fn pending_bank_snapshot(
+    cache_agent: AgentId,
+    sequence: u64,
+    address: u64,
+    qos: MshrQosClass,
+) -> rem6_cache::MsiCacheBankSnapshot {
+    let mut bank = MsiCacheBank::new_with_mshr(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    );
+    bank.accept_cpu_request_with_qos(read(cache_agent.get(), sequence, address), qos)
+        .unwrap();
+    bank.snapshot()
+}
+
 #[test]
 fn msi_bank_harness_reports_stable_live_indexes() {
     let mut harness =
@@ -126,6 +142,70 @@ fn msi_bank_harness_snapshot_exposes_stable_indexes() {
         Some(second_line.as_slice())
     );
     assert_eq!(snapshot.backing_line(Address::new(0x2000)), None);
+}
+
+#[test]
+fn msi_bank_harness_snapshot_aggregates_cache_mshr_qos_profiles() {
+    let snapshot = MsiBankDirectoryHarnessSnapshot::new(
+        layout(),
+        BTreeMap::from([
+            (
+                agent(1),
+                pending_bank_snapshot(agent(1), 10, 0x2004, MshrQosClass::new(20, 5)),
+            ),
+            (
+                agent(2),
+                pending_bank_snapshot(agent(2), 20, 0x2014, MshrQosClass::new(40, 1)),
+            ),
+        ]),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let profile = snapshot.mshr_qos_profile();
+    assert_eq!(profile.entry_count(), 2);
+    assert_eq!(profile.target_count(), 2);
+    assert_eq!(profile.qos_target_count(), 2);
+    assert_eq!(profile.effective_entry_count(), 2);
+    assert_eq!(profile.priority_target_count(1), 1);
+    assert_eq!(profile.priority_target_count(5), 1);
+    assert_eq!(profile.requestor_target_count(20), 1);
+    assert_eq!(profile.requestor_target_count(40), 1);
+    assert_eq!(profile.effective_priority_entry_count(1), 1);
+    assert_eq!(profile.effective_priority_entry_count(5), 1);
+    assert_eq!(profile.effective_requestor_entry_count(20), 1);
+    assert_eq!(profile.effective_requestor_entry_count(40), 1);
+    assert_eq!(profile.best_effective_priority(), Some(1));
+    assert!(profile.has_qos());
+    assert_eq!(
+        snapshot
+            .cache_mshr_qos_profile(agent(2))
+            .unwrap()
+            .best_effective_priority(),
+        Some(1)
+    );
+    assert!(snapshot.cache_mshr_qos_profile(agent(9)).is_none());
+
+    let mut restored = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [agent(1), agent(2)],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.mshr_qos_profile(), profile);
+    assert_eq!(
+        restored
+            .cache_mshr_qos_profile(agent(1))
+            .unwrap()
+            .unwrap()
+            .best_effective_priority(),
+        Some(5)
+    );
+    assert!(restored.cache_mshr_qos_profile(agent(9)).is_err());
 }
 
 #[test]

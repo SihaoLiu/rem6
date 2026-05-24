@@ -417,6 +417,39 @@ impl MshrQosProfile {
         profile
     }
 
+    pub fn from_profiles<I>(profiles: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        profiles
+            .into_iter()
+            .fold(Self::default(), |merged, profile| merged.merge(profile))
+    }
+
+    pub fn merge(mut self, other: Self) -> Self {
+        self.entry_count += other.entry_count;
+        self.target_count += other.target_count;
+        self.qos_target_count += other.qos_target_count;
+        self.effective_entry_count += other.effective_entry_count;
+        merge_counts(&mut self.priority_targets, other.priority_targets);
+        merge_counts(&mut self.requestor_targets, other.requestor_targets);
+        merge_counts(
+            &mut self.effective_priority_entries,
+            other.effective_priority_entries,
+        );
+        merge_counts(
+            &mut self.effective_requestor_entries,
+            other.effective_requestor_entries,
+        );
+        self.best_effective_priority =
+            match (self.best_effective_priority, other.best_effective_priority) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(priority), None) | (None, Some(priority)) => Some(priority),
+                (None, None) => None,
+            };
+        self
+    }
+
     pub const fn entry_count(&self) -> usize {
         self.entry_count
     }
@@ -435,6 +468,10 @@ impl MshrQosProfile {
 
     pub const fn has_qos(&self) -> bool {
         self.qos_target_count != 0
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.entry_count == 0 && self.target_count == 0
     }
 
     pub fn priority_target_count(&self, priority: u8) -> usize {
@@ -477,6 +514,15 @@ impl MshrQosProfile {
 
     pub const fn best_effective_priority(&self) -> Option<u8> {
         self.best_effective_priority
+    }
+}
+
+fn merge_counts<K>(counts: &mut BTreeMap<K, usize>, other: BTreeMap<K, usize>)
+where
+    K: Ord,
+{
+    for (key, value) in other {
+        *counts.entry(key).or_insert(0) += value;
     }
 }
 
