@@ -1,6 +1,6 @@
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
-    StridePrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetcher, StridePrefetchAccess,
+    StridePrefetcher, StridePrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -80,5 +80,35 @@ fn queued_prefetcher_delays_deduplicates_and_snapshots_candidates() {
     assert_eq!(second.len(), 1);
     assert_eq!(second[0].address(), Address::new(0x1100));
     assert_eq!(second[0].degree_index(), 2);
+    assert_eq!(restored.pending_count(), 0);
+}
+
+#[test]
+fn queued_prefetcher_squashes_same_line_demand_accesses() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 2, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config.clone());
+    assert_eq!(queue.enqueue_candidates(10, &candidates).unwrap(), 2);
+
+    let demand = QueuedPrefetchDemandAccess::new(Address::new(0x10d8), false);
+    assert_eq!(queue.squash_demand_access(demand), 1);
+    assert_eq!(queue.pending_count(), 1);
+    assert_eq!(
+        queue.snapshot().pending()[0].address(),
+        Address::new(0x1100)
+    );
+
+    let snapshot = queue.snapshot();
+    let mut restored = QueuedPrefetcher::new(queue_config);
+    restored.restore(&snapshot).unwrap();
+
+    let issued = restored.issue_ready(13);
+    assert_eq!(issued.len(), 1);
+    assert_eq!(issued[0].address(), Address::new(0x1100));
     assert_eq!(restored.pending_count(), 0);
 }

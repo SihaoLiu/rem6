@@ -12,6 +12,7 @@ pub struct QueuedPrefetchConfig {
     latency: u64,
     max_issue_per_tick: usize,
     filter_duplicates: bool,
+    line_size: u64,
 }
 
 impl QueuedPrefetchConfig {
@@ -21,11 +22,24 @@ impl QueuedPrefetchConfig {
         max_issue_per_tick: usize,
         filter_duplicates: bool,
     ) -> Result<Self, QueuedPrefetcherError> {
+        Self::with_line_size(capacity, latency, max_issue_per_tick, filter_duplicates, 1)
+    }
+
+    pub fn with_line_size(
+        capacity: usize,
+        latency: u64,
+        max_issue_per_tick: usize,
+        filter_duplicates: bool,
+        line_size: u64,
+    ) -> Result<Self, QueuedPrefetcherError> {
         if capacity == 0 {
             return Err(QueuedPrefetcherError::ZeroCapacity);
         }
         if max_issue_per_tick == 0 {
             return Err(QueuedPrefetcherError::ZeroIssueWidth);
+        }
+        if line_size == 0 {
+            return Err(QueuedPrefetcherError::ZeroLineSize);
         }
 
         Ok(Self {
@@ -33,6 +47,7 @@ impl QueuedPrefetchConfig {
             latency,
             max_issue_per_tick,
             filter_duplicates,
+            line_size,
         })
     }
 
@@ -51,12 +66,17 @@ impl QueuedPrefetchConfig {
     pub const fn filter_duplicates(&self) -> bool {
         self.filter_duplicates
     }
+
+    pub const fn line_size(&self) -> u64 {
+        self.line_size
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueuedPrefetcherError {
     ZeroCapacity,
     ZeroIssueWidth,
+    ZeroLineSize,
     QueueFull {
         capacity: usize,
     },
@@ -79,6 +99,7 @@ impl fmt::Display for QueuedPrefetcherError {
         match self {
             Self::ZeroCapacity => write!(formatter, "queued prefetch capacity is zero"),
             Self::ZeroIssueWidth => write!(formatter, "queued prefetch issue width is zero"),
+            Self::ZeroLineSize => write!(formatter, "queued prefetch line size is zero"),
             Self::QueueFull { capacity } => write!(
                 formatter,
                 "queued prefetch resource is full at capacity {capacity}"
@@ -103,6 +124,26 @@ impl fmt::Display for QueuedPrefetcherError {
 }
 
 impl Error for QueuedPrefetcherError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchDemandAccess {
+    address: Address,
+    secure: bool,
+}
+
+impl QueuedPrefetchDemandAccess {
+    pub const fn new(address: Address, secure: bool) -> Self {
+        Self { address, secure }
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrefetchEntrySnapshot {
@@ -243,12 +284,13 @@ struct QueuedPrefetchEntry {
 impl QueuedPrefetchEntry {
     fn from_candidate(
         candidate: &StridePrefetchCandidate,
+        address: Address,
         source_tick: u64,
         ready_tick: u64,
         order: u64,
     ) -> Self {
         Self {
-            address: candidate.address(),
+            address,
             context: candidate.context(),
             pc: candidate.pc(),
             secure: candidate.secure(),
@@ -302,8 +344,8 @@ impl QueuedPrefetchEntry {
         }
     }
 
-    fn same_request(&self, candidate: &StridePrefetchCandidate) -> bool {
-        self.address == candidate.address()
+    fn same_request(&self, address: Address, candidate: &StridePrefetchCandidate) -> bool {
+        self.address == address
             && self.context == candidate.context()
             && self.secure == candidate.secure()
     }
@@ -346,11 +388,12 @@ impl QueuedPrefetcher {
         )?;
         let mut accepted = 0;
         for candidate in candidates {
+            let address = self.normalized_address(candidate.address());
             if self.config.filter_duplicates()
                 && self
                     .pending
                     .iter()
-                    .any(|entry| entry.same_request(candidate))
+                    .any(|entry| entry.same_request(address, candidate))
             {
                 continue;
             }
@@ -362,6 +405,7 @@ impl QueuedPrefetcher {
 
             let entry = QueuedPrefetchEntry::from_candidate(
                 candidate,
+                address,
                 source_tick,
                 ready_tick,
                 self.next_order,
@@ -371,6 +415,14 @@ impl QueuedPrefetcher {
             accepted += 1;
         }
         Ok(accepted)
+    }
+
+    pub fn squash_demand_access(&mut self, access: QueuedPrefetchDemandAccess) -> usize {
+        let line_address = self.normalized_address(access.address());
+        let original_len = self.pending.len();
+        self.pending
+            .retain(|entry| !(entry.address == line_address && entry.secure == access.secure()));
+        original_len - self.pending.len()
     }
 
     pub fn issue_ready(&mut self, tick: u64) -> Vec<QueuedPrefetchIssue> {
@@ -425,6 +477,10 @@ impl QueuedPrefetcher {
         self.pending = pending;
         self.next_order = snapshot.next_order();
         Ok(())
+    }
+
+    fn normalized_address(&self, address: Address) -> Address {
+        Address::new(address.get() / self.config.line_size() * self.config.line_size())
     }
 }
 
