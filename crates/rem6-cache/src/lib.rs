@@ -24,6 +24,7 @@ mod prefetch_bop;
 mod prefetch_dcpt;
 mod prefetch_fdp;
 mod prefetch_multi;
+mod prefetch_pif;
 mod prefetch_sbooe;
 mod prefetch_signature_path;
 mod prefetch_sms;
@@ -82,6 +83,11 @@ pub use prefetch_fdp::{
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,
+};
+pub use prefetch_pif::{
+    PifCompactorEntrySnapshot, PifHistoryEntrySnapshot, PifIndexEntrySnapshot, PifPrefetchAccess,
+    PifPrefetchCandidate, PifPrefetcher, PifPrefetcherConfig, PifPrefetcherError,
+    PifPrefetcherSnapshot,
 };
 pub use prefetch_sbooe::{
     SbooePrefetchAccess, SbooePrefetchCandidate, SbooePrefetcher, SbooePrefetcherConfig,
