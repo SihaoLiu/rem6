@@ -23,6 +23,7 @@ mod prefetch_ampm;
 mod prefetch_bop;
 mod prefetch_dcpt;
 mod prefetch_fdp;
+mod prefetch_indirect_memory;
 mod prefetch_isb;
 mod prefetch_multi;
 mod prefetch_pif;
@@ -82,6 +83,13 @@ pub use prefetch_fdp::{
     FetchDirectedRemoveSummary, FetchDirectedStatsSnapshot, FetchDirectedTarget,
     FetchDirectedTranslation, FetchDirectedTranslationEntrySnapshot,
     FetchDirectedTranslationOutcome,
+};
+pub use prefetch_indirect_memory::{
+    IndirectMemoryPatternDetectorEntrySnapshot, IndirectMemoryPrefetchAccess,
+    IndirectMemoryPrefetchCandidate, IndirectMemoryPrefetchEntrySnapshot,
+    IndirectMemoryPrefetchKeySnapshot, IndirectMemoryPrefetchKind, IndirectMemoryPrefetcher,
+    IndirectMemoryPrefetcherConfig, IndirectMemoryPrefetcherError,
+    IndirectMemoryPrefetcherSnapshot,
 };
 pub use prefetch_isb::{
     IrregularStreamBufferAccess, IrregularStreamBufferCandidate, IrregularStreamBufferConfig,
