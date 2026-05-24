@@ -23,6 +23,7 @@ mod prefetch_ampm;
 mod prefetch_bop;
 mod prefetch_dcpt;
 mod prefetch_fdp;
+mod prefetch_isb;
 mod prefetch_multi;
 mod prefetch_pif;
 mod prefetch_sbooe;
@@ -80,6 +81,13 @@ pub use prefetch_fdp::{
     FetchDirectedRemoveSummary, FetchDirectedStatsSnapshot, FetchDirectedTarget,
     FetchDirectedTranslation, FetchDirectedTranslationEntrySnapshot,
     FetchDirectedTranslationOutcome,
+};
+pub use prefetch_isb::{
+    IrregularStreamBufferAccess, IrregularStreamBufferCandidate, IrregularStreamBufferConfig,
+    IrregularStreamBufferError, IrregularStreamBufferMappingEntrySnapshot,
+    IrregularStreamBufferMappingKeySnapshot, IrregularStreamBufferMappingSnapshot,
+    IrregularStreamBufferPrefetcher, IrregularStreamBufferSnapshot,
+    IrregularStreamBufferTrainingEntrySnapshot, IrregularStreamBufferTrainingKeySnapshot,
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,
