@@ -8,8 +8,13 @@ use rem6_protocol_mesi::{
 };
 use rem6_protocol_msi::{DirectoryLineSnapshot, MsiEvent, MsiLineId, MsiState};
 
+mod chi;
 mod moesi;
 
+pub use chi::{
+    ChiDirectory, ChiDirectoryDataSource, ChiDirectoryDecision, ChiDirectoryError,
+    ChiDirectoryGrant, ChiDirectoryLineState, ChiDirectorySnoop,
+};
 pub use moesi::{
     MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,
     MoesiDirectoryGrant, MoesiDirectoryLineState, MoesiDirectorySnoop,
