@@ -3,7 +3,7 @@ use rem6_proto::{
     DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader,
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
-    TraceHeader, TraceSourceId,
+    TraceFrameStreamCursor, TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -86,6 +86,90 @@ fn trace_frame_stream_round_trips_ordered_frames() {
         decoded.frames()[2].identity(),
         second_trace.identity().as_str()
     );
+}
+
+#[test]
+fn trace_frame_stream_cursor_reads_ordered_frames_with_byte_offsets() {
+    let first_trace = instruction_trace("cpu0.proto", 10);
+    let dependency_trace = dependency_trace();
+    let first = TraceFrame::from_proto_trace(&first_trace, vec![1, 2, 3]).unwrap();
+    let dependency = TraceFrame::from_dependency_trace(&dependency_trace, vec![8, 9]).unwrap();
+    let first_len = first.encode().len();
+    let dependency_len = dependency.encode().len();
+    let encoded = TraceFrameStream::new(vec![first.clone(), dependency.clone()])
+        .unwrap()
+        .encode();
+
+    let mut cursor = TraceFrameStreamCursor::new(&encoded).unwrap();
+    assert_eq!(cursor.next_index(), 0);
+    assert_eq!(cursor.byte_position(), 6);
+
+    let first_record = cursor.next_frame().unwrap().unwrap();
+    assert_eq!(first_record.index(), 0);
+    assert_eq!(first_record.length_offset(), 6);
+    assert!(first_record.frame_offset() > first_record.length_offset());
+    assert_eq!(first_record.frame_len(), first_len);
+    assert_eq!(first_record.frame(), &first);
+    assert_eq!(cursor.next_index(), 1);
+    assert_eq!(
+        cursor.byte_position(),
+        first_record.frame_offset() + first_record.frame_len()
+    );
+
+    let second_length_offset = cursor.byte_position();
+    let second_record = cursor.next_frame().unwrap().unwrap();
+    assert_eq!(second_record.index(), 1);
+    assert_eq!(second_record.length_offset(), second_length_offset);
+    assert_eq!(second_record.frame_len(), dependency_len);
+    assert_eq!(second_record.frame(), &dependency);
+    assert!(cursor.is_finished());
+    assert!(cursor.next_frame().unwrap().is_none());
+
+    cursor.reset();
+    assert_eq!(cursor.next_index(), 0);
+    assert_eq!(cursor.byte_position(), 6);
+    assert_eq!(cursor.next_frame().unwrap().unwrap().frame(), &first);
+}
+
+#[test]
+fn trace_frame_stream_cursor_rejects_bad_input_without_advancing() {
+    let header_len = 6;
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+
+    assert_eq!(
+        TraceFrameStreamCursor::new(&encoded[..header_len]).unwrap_err(),
+        ProtoError::EmptyFrameStream,
+    );
+
+    let mut bad_magic = encoded.clone();
+    bad_magic[0] = b'X';
+    assert_eq!(
+        TraceFrameStreamCursor::new(&bad_magic).unwrap_err(),
+        ProtoError::InvalidFrameStreamMagic,
+    );
+
+    let mut truncated_length = encoded[..header_len].to_vec();
+    truncated_length.push(0x80);
+    let mut truncated_cursor = TraceFrameStreamCursor::new(&truncated_length).unwrap();
+    assert_eq!(
+        truncated_cursor.next_frame().unwrap_err(),
+        ProtoError::TruncatedFrameStream,
+    );
+    assert_eq!(truncated_cursor.byte_position(), header_len);
+    assert_eq!(truncated_cursor.next_index(), 0);
+
+    let mut corrupt_frame = encoded;
+    let last = corrupt_frame.len() - 1;
+    corrupt_frame[last] ^= 0xff;
+    let mut corrupt_cursor = TraceFrameStreamCursor::new(&corrupt_frame).unwrap();
+    assert_eq!(
+        corrupt_cursor.next_frame().unwrap_err(),
+        ProtoError::FrameChecksumMismatch,
+    );
+    assert_eq!(corrupt_cursor.byte_position(), header_len);
+    assert_eq!(corrupt_cursor.next_index(), 0);
 }
 
 #[test]

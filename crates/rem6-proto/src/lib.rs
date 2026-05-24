@@ -9,7 +9,7 @@ mod frame;
 mod frame_stream;
 
 pub use frame::{TraceFrame, TraceFrameKind};
-pub use frame_stream::TraceFrameStream;
+pub use frame_stream::{TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamRecord};
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;

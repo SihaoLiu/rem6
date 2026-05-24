@@ -9,6 +9,44 @@ pub struct TraceFrameStream {
     frames: Vec<TraceFrame>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamRecord {
+    index: usize,
+    length_offset: usize,
+    frame_offset: usize,
+    frame_len: usize,
+    frame: TraceFrame,
+}
+
+impl TraceFrameStreamRecord {
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    pub const fn length_offset(&self) -> usize {
+        self.length_offset
+    }
+
+    pub const fn frame_offset(&self) -> usize {
+        self.frame_offset
+    }
+
+    pub const fn frame_len(&self) -> usize {
+        self.frame_len
+    }
+
+    pub const fn frame(&self) -> &TraceFrame {
+        &self.frame
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TraceFrameStreamCursor<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+    index: usize,
+}
+
 impl TraceFrameStream {
     pub fn new(frames: Vec<TraceFrame>) -> Result<Self, ProtoError> {
         if frames.is_empty() {
@@ -36,40 +74,91 @@ impl TraceFrameStream {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ProtoError> {
-        if bytes.len() < STREAM_HEADER_BYTES {
-            return Err(ProtoError::TruncatedFrameStream);
-        }
-        if &bytes[..4] != FRAME_STREAM_MAGIC {
-            return Err(ProtoError::InvalidFrameStreamMagic);
-        }
-
-        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != FRAME_STREAM_VERSION {
-            return Err(ProtoError::UnsupportedFrameStreamVersion { version });
-        }
-
+        let mut cursor = TraceFrameStreamCursor::new(bytes)?;
         let mut frames = Vec::new();
-        let mut cursor = STREAM_HEADER_BYTES;
-        while cursor < bytes.len() {
-            let (frame_len, next_cursor) = read_varint32(bytes, cursor)?;
-            cursor = next_cursor;
-            let frame_len =
-                usize::try_from(frame_len).map_err(|_| ProtoError::InvalidFrameStreamLength)?;
-            if frame_len == 0 {
-                return Err(ProtoError::InvalidFrameStreamLength);
-            }
-            let frame_end = cursor
-                .checked_add(frame_len)
-                .ok_or(ProtoError::TruncatedFrameStream)?;
-            if frame_end > bytes.len() {
-                return Err(ProtoError::TruncatedFrameStream);
-            }
-            frames.push(TraceFrame::decode(&bytes[cursor..frame_end])?);
-            cursor = frame_end;
+        while let Some(record) = cursor.next_frame()? {
+            frames.push(record.frame);
         }
 
         Self::new(frames)
     }
+}
+
+impl<'a> TraceFrameStreamCursor<'a> {
+    pub fn new(bytes: &'a [u8]) -> Result<Self, ProtoError> {
+        validate_stream_header(bytes)?;
+        if bytes.len() == STREAM_HEADER_BYTES {
+            return Err(ProtoError::EmptyFrameStream);
+        }
+        Ok(Self {
+            bytes,
+            cursor: STREAM_HEADER_BYTES,
+            index: 0,
+        })
+    }
+
+    pub const fn byte_position(&self) -> usize {
+        self.cursor
+    }
+
+    pub const fn next_index(&self) -> usize {
+        self.index
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.cursor == self.bytes.len()
+    }
+
+    pub fn reset(&mut self) {
+        self.cursor = STREAM_HEADER_BYTES;
+        self.index = 0;
+    }
+
+    pub fn next_frame(&mut self) -> Result<Option<TraceFrameStreamRecord>, ProtoError> {
+        if self.is_finished() {
+            return Ok(None);
+        }
+
+        let length_offset = self.cursor;
+        let (frame_len, frame_offset) = read_varint32(self.bytes, length_offset)?;
+        let frame_len =
+            usize::try_from(frame_len).map_err(|_| ProtoError::InvalidFrameStreamLength)?;
+        if frame_len == 0 {
+            return Err(ProtoError::InvalidFrameStreamLength);
+        }
+        let frame_end = frame_offset
+            .checked_add(frame_len)
+            .ok_or(ProtoError::TruncatedFrameStream)?;
+        if frame_end > self.bytes.len() {
+            return Err(ProtoError::TruncatedFrameStream);
+        }
+        let frame = TraceFrame::decode(&self.bytes[frame_offset..frame_end])?;
+        let record = TraceFrameStreamRecord {
+            index: self.index,
+            length_offset,
+            frame_offset,
+            frame_len,
+            frame,
+        };
+        self.cursor = frame_end;
+        self.index += 1;
+        Ok(Some(record))
+    }
+}
+
+fn validate_stream_header(bytes: &[u8]) -> Result<(), ProtoError> {
+    if bytes.len() < STREAM_HEADER_BYTES {
+        return Err(ProtoError::TruncatedFrameStream);
+    }
+    if &bytes[..4] != FRAME_STREAM_MAGIC {
+        return Err(ProtoError::InvalidFrameStreamMagic);
+    }
+
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version != FRAME_STREAM_VERSION {
+        return Err(ProtoError::UnsupportedFrameStreamVersion { version });
+    }
+    Ok(())
 }
 
 fn write_varint32(mut value: u32, bytes: &mut Vec<u8>) {
