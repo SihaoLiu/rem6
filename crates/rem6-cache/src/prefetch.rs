@@ -189,6 +189,8 @@ impl QueuedPrefetchRedundantLine {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueuedPrefetchEnqueueResult {
     accepted: usize,
+    duplicate_hits: usize,
+    updated_priorities: usize,
     dropped_redundant: usize,
     dropped_throttled: usize,
     evicted_full: usize,
@@ -197,6 +199,14 @@ pub struct QueuedPrefetchEnqueueResult {
 impl QueuedPrefetchEnqueueResult {
     pub const fn accepted(&self) -> usize {
         self.accepted
+    }
+
+    pub const fn duplicate_hits(&self) -> usize {
+        self.duplicate_hits
+    }
+
+    pub const fn updated_priorities(&self) -> usize {
+        self.updated_priorities
     }
 
     pub const fn dropped_redundant(&self) -> usize {
@@ -447,6 +457,16 @@ impl QueuedPrefetchEntry {
             && self.context == candidate.context()
             && self.secure == candidate.secure()
     }
+
+    fn update_priority(&mut self, candidate: &StridePrefetchCandidate) -> bool {
+        let priority = queued_prefetch_priority(candidate);
+        if priority <= self.priority {
+            return false;
+        }
+
+        self.priority = priority;
+        true
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -531,6 +551,8 @@ impl QueuedPrefetcher {
         )?;
         let accepted_limit = accepted_limit.min(candidates.len());
         let mut accepted = 0;
+        let mut duplicate_hits = 0;
+        let mut updated_priorities = 0;
         let mut dropped_redundant = 0;
         let mut dropped_throttled = 0;
         let mut evicted_full = 0;
@@ -545,13 +567,18 @@ impl QueuedPrefetcher {
                 dropped_redundant += 1;
                 continue;
             }
-            if self.config.filter_duplicates()
-                && self
+            if self.config.filter_duplicates() {
+                if let Some(index) = self
                     .pending
                     .iter()
-                    .any(|entry| entry.same_request(address, candidate))
-            {
-                continue;
+                    .position(|entry| entry.same_request(address, candidate))
+                {
+                    duplicate_hits += 1;
+                    if self.pending[index].update_priority(candidate) {
+                        updated_priorities += 1;
+                    }
+                    continue;
+                }
             }
             if self.pending.len() == self.config.capacity() {
                 match self.config.full_policy() {
@@ -581,6 +608,8 @@ impl QueuedPrefetcher {
         }
         Ok(QueuedPrefetchEnqueueResult {
             accepted,
+            duplicate_hits,
+            updated_priorities,
             dropped_redundant,
             dropped_throttled,
             evicted_full,

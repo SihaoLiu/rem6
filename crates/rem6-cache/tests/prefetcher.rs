@@ -150,6 +150,54 @@ fn queued_prefetcher_filters_candidates_already_in_cache_resources() {
 }
 
 #[test]
+fn queued_prefetcher_updates_duplicate_candidate_priority() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 3, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let initial_candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(
+        queue.enqueue_candidates(10, &initial_candidates).unwrap(),
+        3
+    );
+    let old_priority = queue
+        .snapshot()
+        .pending()
+        .iter()
+        .find(|entry| entry.address() == Address::new(0x1100))
+        .unwrap()
+        .priority();
+
+    let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    assert_eq!(next_candidates[0].address(), Address::new(0x1100));
+    assert_eq!(next_candidates[1].address(), Address::new(0x1140));
+    assert_eq!(next_candidates[2].address(), Address::new(0x1180));
+    let result = queue
+        .enqueue_candidates_filtered(11, &next_candidates, &[])
+        .unwrap();
+
+    assert_eq!(result.accepted(), 1);
+    assert_eq!(result.duplicate_hits(), 2);
+    assert_eq!(result.updated_priorities(), 2);
+    assert_eq!(queue.pending_count(), 4);
+
+    let snapshot = queue.snapshot();
+    let updated = snapshot
+        .pending()
+        .iter()
+        .find(|entry| entry.address() == Address::new(0x1100))
+        .unwrap();
+    assert!(updated.priority() > old_priority);
+    assert!(snapshot
+        .pending()
+        .iter()
+        .any(|entry| entry.address() == Address::new(0x1180)));
+}
+
+#[test]
 fn queued_prefetcher_can_evict_oldest_lowest_priority_entry_when_full() {
     let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
     let mut stride = StridePrefetcher::new(stride_config);
@@ -167,8 +215,9 @@ fn queued_prefetcher_can_evict_oldest_lowest_priority_entry_when_full() {
     );
 
     let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    assert_eq!(next_candidates[1].address(), Address::new(0x1140));
     let result = queue
-        .enqueue_candidates_filtered(11, &next_candidates, &[])
+        .enqueue_candidates_filtered(11, &next_candidates[1..], &[])
         .unwrap();
 
     assert_eq!(result.accepted(), 1);
