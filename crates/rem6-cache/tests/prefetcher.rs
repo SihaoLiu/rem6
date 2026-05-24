@@ -214,6 +214,43 @@ fn queued_prefetcher_exposes_next_ready_tick_for_scheduler_planning() {
 }
 
 #[test]
+fn queued_prefetcher_applies_accuracy_throttle_before_candidate_enqueue() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 5, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+    assert_eq!(candidates.len(), 5);
+
+    let mut throttle = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(60).unwrap());
+    throttle.record_issued(10).unwrap();
+    throttle.record_useful(5).unwrap();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(8, 3, 8, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    let result = queue
+        .enqueue_candidates_throttled(10, &candidates, &[], &throttle)
+        .unwrap();
+
+    assert_eq!(result.accepted(), 3);
+    assert_eq!(result.dropped_throttled(), 2);
+    assert_eq!(queue.pending_count(), 3);
+    assert_eq!(
+        queue
+            .snapshot()
+            .pending()
+            .iter()
+            .map(|entry| entry.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x10c0),
+            Address::new(0x1100),
+            Address::new(0x1140)
+        ]
+    );
+}
+
+#[test]
 fn queued_prefetch_throttle_uses_accuracy_and_snapshots_counters() {
     let config = QueuedPrefetchThrottleConfig::new(60).unwrap();
     let mut throttle = QueuedPrefetchThrottle::new(config.clone());

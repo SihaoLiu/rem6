@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+use crate::prefetch_throttle::QueuedPrefetchThrottle;
 use rem6_memory::{Address, AgentId};
 
 const MAX_CONFIDENCE: u8 = 3;
@@ -189,6 +190,7 @@ impl QueuedPrefetchRedundantLine {
 pub struct QueuedPrefetchEnqueueResult {
     accepted: usize,
     dropped_redundant: usize,
+    dropped_throttled: usize,
     evicted_full: usize,
 }
 
@@ -199,6 +201,10 @@ impl QueuedPrefetchEnqueueResult {
 
     pub const fn dropped_redundant(&self) -> usize {
         self.dropped_redundant
+    }
+
+    pub const fn dropped_throttled(&self) -> usize {
+        self.dropped_throttled
     }
 
     pub const fn evicted_full(&self) -> usize {
@@ -487,16 +493,53 @@ impl QueuedPrefetcher {
         candidates: &[StridePrefetchCandidate],
         redundant_lines: &[QueuedPrefetchRedundantLine],
     ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
+        self.enqueue_candidates_filtered_limited(
+            source_tick,
+            candidates,
+            redundant_lines,
+            candidates.len(),
+        )
+    }
+
+    pub fn enqueue_candidates_throttled(
+        &mut self,
+        source_tick: u64,
+        candidates: &[StridePrefetchCandidate],
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+        throttle: &QueuedPrefetchThrottle,
+    ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
+        self.enqueue_candidates_filtered_limited(
+            source_tick,
+            candidates,
+            redundant_lines,
+            throttle.max_permitted(candidates.len()),
+        )
+    }
+
+    fn enqueue_candidates_filtered_limited(
+        &mut self,
+        source_tick: u64,
+        candidates: &[StridePrefetchCandidate],
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+        accepted_limit: usize,
+    ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
         let ready_tick = source_tick.checked_add(self.config.latency()).ok_or(
             QueuedPrefetcherError::ReadyTickOverflow {
                 source_tick,
                 latency: self.config.latency(),
             },
         )?;
+        let accepted_limit = accepted_limit.min(candidates.len());
         let mut accepted = 0;
         let mut dropped_redundant = 0;
+        let mut dropped_throttled = 0;
         let mut evicted_full = 0;
-        for candidate in candidates {
+        for (index, candidate) in candidates.iter().enumerate() {
+            if accepted == accepted_limit {
+                dropped_throttled = candidates.len() - index;
+                break;
+            }
+
             let address = self.normalized_address(candidate.address());
             if self.is_redundant(address, candidate.secure(), redundant_lines) {
                 dropped_redundant += 1;
@@ -539,6 +582,7 @@ impl QueuedPrefetcher {
         Ok(QueuedPrefetchEnqueueResult {
             accepted,
             dropped_redundant,
+            dropped_throttled,
             evicted_full,
         })
     }
