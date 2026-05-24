@@ -20,6 +20,16 @@ mod parallel_qos;
 type ParallelRequestResponder =
     Box<dyn FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send>;
 type ResponseSink = Box<dyn FnOnce(ResponseDelivery) + Send>;
+type ParallelTargetBatchResponder = Arc<
+    dyn for<'a> Fn(
+            Vec<RequestDelivery>,
+            &mut ParallelSchedulerContext<'a>,
+        ) -> Option<Vec<TargetBatchOutcome>>
+        + Send
+        + Sync,
+>;
+type DirectTargetBatchKey = (Tick, PartitionId, TransportEndpointId);
+type SharedPendingDirectTargetBatch = Arc<Mutex<PendingDirectTargetBatch>>;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TransportEndpointId(String);
@@ -475,12 +485,20 @@ struct PreparedParallelTransaction {
     qos_priority: QosPriority,
 }
 
+struct PendingDirectTargetBatch {
+    event: Option<PartitionEventId>,
+    transactions: Vec<PreparedParallelTransaction>,
+}
+
 pub struct MemoryTransport {
     next_route_id: u64,
     routes: Vec<StoredRoute>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     qos_arbiter: Option<Arc<Mutex<QosQueueArbiter>>>,
     qos_priority_policy: Option<QosFixedPriorityPolicy>,
+    direct_target_batch_responder: Option<ParallelTargetBatchResponder>,
+    direct_target_batches:
+        Arc<Mutex<BTreeMap<DirectTargetBatchKey, SharedPendingDirectTargetBatch>>>,
 }
 
 impl MemoryTransport {
@@ -491,6 +509,8 @@ impl MemoryTransport {
             fabric: None,
             qos_arbiter: None,
             qos_priority_policy: None,
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -501,6 +521,8 @@ impl MemoryTransport {
             fabric: Some(Arc::new(Mutex::new(fabric))),
             qos_arbiter: None,
             qos_priority_policy: None,
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -511,6 +533,8 @@ impl MemoryTransport {
             fabric: Some(fabric),
             qos_arbiter: None,
             qos_priority_policy: None,
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -521,6 +545,8 @@ impl MemoryTransport {
             fabric: Some(Arc::new(Mutex::new(fabric))),
             qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
             qos_priority_policy: None,
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -534,6 +560,8 @@ impl MemoryTransport {
             fabric: None,
             qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
             qos_priority_policy: Some(priority_policy),
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -548,6 +576,8 @@ impl MemoryTransport {
             fabric: Some(Arc::new(Mutex::new(fabric))),
             qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
             qos_priority_policy: Some(priority_policy),
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -561,6 +591,8 @@ impl MemoryTransport {
             fabric: Some(fabric),
             qos_arbiter: Some(arbiter),
             qos_priority_policy: None,
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -575,7 +607,23 @@ impl MemoryTransport {
             fabric: Some(fabric),
             qos_arbiter: Some(arbiter),
             qos_priority_policy: Some(priority_policy),
+            direct_target_batch_responder: None,
+            direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    pub fn with_direct_target_batch_responder<F>(mut self, responder: F) -> Self
+    where
+        F: for<'a> Fn(
+                Vec<RequestDelivery>,
+                &mut ParallelSchedulerContext<'a>,
+            ) -> Option<Vec<TargetBatchOutcome>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.direct_target_batch_responder = Some(Arc::new(responder));
+        self
     }
 
     pub fn fabric(&self) -> Option<Arc<Mutex<FabricModel>>> {
@@ -1601,6 +1649,30 @@ pub enum TargetOutcome {
         response: MemoryResponse,
     },
     NoResponse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetBatchOutcome {
+    request: MemoryRequestId,
+    outcome: TargetOutcome,
+}
+
+impl TargetBatchOutcome {
+    pub const fn new(request: MemoryRequestId, outcome: TargetOutcome) -> Self {
+        Self { request, outcome }
+    }
+
+    pub const fn request(&self) -> MemoryRequestId {
+        self.request
+    }
+
+    pub const fn outcome(&self) -> &TargetOutcome {
+        &self.outcome
+    }
+
+    pub fn into_outcome(self) -> TargetOutcome {
+        self.outcome
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

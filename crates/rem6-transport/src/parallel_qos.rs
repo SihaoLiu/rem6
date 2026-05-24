@@ -5,8 +5,20 @@ use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, Scheduler
 
 use crate::{
     MemoryTraceEvent, MemoryTraceKind, MemoryTransport, PreparedParallelTransaction,
-    RequestDelivery, TargetOutcome, TransportEndpointId, TransportError,
+    RequestDelivery, ResponseSink, TargetBatchOutcome, TargetOutcome, TransportEndpointId,
+    TransportError,
 };
+
+struct DirectTargetEntry {
+    route_id: crate::MemoryRouteId,
+    route: crate::MemoryRoute,
+    trace: crate::MemoryTrace,
+    responder: crate::ParallelRequestResponder,
+    response_sink: ResponseSink,
+    last_hop_index: usize,
+    request_id: rem6_memory::MemoryRequestId,
+    delivery: RequestDelivery,
+}
 
 impl MemoryTransport {
     pub(crate) fn can_submit_direct_qos_parallel_batch(
@@ -14,7 +26,8 @@ impl MemoryTransport {
         transactions: &[PreparedParallelTransaction],
     ) -> bool {
         self.qos_arbiter.is_some()
-            && transactions.len() > 1
+            && (transactions.len() > 1 || self.direct_target_batch_responder.is_some())
+            && !transactions.is_empty()
             && transactions.iter().all(|transaction| {
                 transaction
                     .route
@@ -53,7 +66,26 @@ impl MemoryTransport {
         }
 
         for ((arrival_tick, target_partition, _), group) in groups {
-            for (index, transaction) in self.order_direct_qos_group(group) {
+            let ordered = self.order_direct_qos_group(group);
+            if self.direct_target_batch_responder.is_some() {
+                let indexes = ordered.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                let event = self.schedule_or_append_direct_parallel_target_batch(
+                    scheduler,
+                    start_tick,
+                    arrival_tick,
+                    target_partition,
+                    ordered
+                        .into_iter()
+                        .map(|(_, transaction)| transaction)
+                        .collect(),
+                )?;
+                for index in indexes {
+                    events[index] = Some(event);
+                }
+                continue;
+            }
+
+            for (index, transaction) in ordered {
                 let event = self.schedule_direct_parallel_target_event(
                     scheduler,
                     start_tick,
@@ -139,39 +171,238 @@ impl MemoryTransport {
                     request,
                 };
 
-                match responder(delivery, context) {
-                    TargetOutcome::Respond(response) => {
+                let outcome = responder(delivery, context);
+                Self::schedule_direct_parallel_target_outcome(
+                    context,
+                    route_id,
+                    route,
+                    last_hop_index,
+                    outcome,
+                    trace,
+                    fabric,
+                    response_sink,
+                );
+            })
+            .map_err(TransportError::Scheduler)
+    }
+
+    fn schedule_or_append_direct_parallel_target_batch(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        start_tick: Tick,
+        arrival_tick: Tick,
+        target_partition: PartitionId,
+        transactions: Vec<PreparedParallelTransaction>,
+    ) -> Result<PartitionEventId, TransportError> {
+        let key = (
+            arrival_tick,
+            target_partition,
+            transactions
+                .first()
+                .expect("direct target batch is nonempty")
+                .route
+                .target()
+                .clone(),
+        );
+        for transaction in &transactions {
+            record_direct_request_trace(
+                &transaction.trace,
+                start_tick,
+                transaction.route_id,
+                &transaction.route,
+                transaction.request.id(),
+            )?;
+        }
+
+        if let Some(pending) = self
+            .direct_target_batches
+            .lock()
+            .expect("direct target batch lock")
+            .get(&key)
+            .cloned()
+        {
+            let mut pending = pending.lock().expect("pending direct target batch lock");
+            pending.transactions.extend(transactions);
+            return Ok(pending
+                .event
+                .expect("scheduled direct target batch has an event"));
+        }
+
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(crate::PendingDirectTargetBatch {
+            event: None,
+            transactions,
+        }));
+        let fabric = self.fabric.clone();
+        let batch_responder = self
+            .direct_target_batch_responder
+            .as_ref()
+            .map(std::sync::Arc::clone);
+        let pending_for_event = std::sync::Arc::clone(&pending);
+        let batches = std::sync::Arc::clone(&self.direct_target_batches);
+        let key_for_event = key.clone();
+
+        let event = scheduler
+            .schedule_parallel_at(target_partition, arrival_tick, move |context| {
+                batches
+                    .lock()
+                    .expect("direct target batch lock")
+                    .remove(&key_for_event);
+                let transactions = std::mem::take(
+                    &mut pending_for_event
+                        .lock()
+                        .expect("pending direct target batch lock")
+                        .transactions,
+                );
+                Self::run_direct_parallel_target_batch(
+                    context,
+                    transactions,
+                    batch_responder,
+                    fabric,
+                );
+            })
+            .map_err(TransportError::Scheduler)?;
+        pending
+            .lock()
+            .expect("pending direct target batch lock")
+            .event = Some(event);
+        self.direct_target_batches
+            .lock()
+            .expect("direct target batch lock")
+            .insert(key, pending);
+        Ok(event)
+    }
+
+    fn run_direct_parallel_target_batch(
+        context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+        transactions: Vec<PreparedParallelTransaction>,
+        batch_responder: Option<crate::ParallelTargetBatchResponder>,
+        fabric: Option<std::sync::Arc<std::sync::Mutex<rem6_fabric::FabricModel>>>,
+    ) {
+        let mut entries = Vec::with_capacity(transactions.len());
+        let mut deliveries = Vec::with_capacity(transactions.len());
+        for transaction in transactions {
+            let PreparedParallelTransaction {
+                route_id,
+                route,
+                request,
+                trace,
+                responder,
+                response_sink,
+                first_hop_delay: _,
+                qos_priority: _,
+            } = transaction;
+            let request_id = request.id();
+            let last_hop_index = route.hops().len() - 1;
+            let hop = route.hops()[last_hop_index].clone();
+            let delivery = RequestDelivery {
+                tick: context.now(),
+                route: route_id,
+                endpoint: hop.endpoint().clone(),
+                request,
+            };
+            deliveries.push(delivery.clone());
+            entries.push(DirectTargetEntry {
+                route_id,
+                route,
+                trace,
+                responder,
+                response_sink,
+                last_hop_index,
+                request_id,
+                delivery,
+            });
+        }
+
+        if let Some(batch_responder) = &batch_responder {
+            if let Some(outcomes) = batch_responder(deliveries, context) {
+                Self::schedule_direct_parallel_batch_outcomes(context, outcomes, entries, fabric);
+                return;
+            }
+        }
+
+        for entry in entries {
+            let outcome = (entry.responder)(entry.delivery, context);
+            Self::schedule_direct_parallel_target_outcome(
+                context,
+                entry.route_id,
+                entry.route,
+                entry.last_hop_index,
+                outcome,
+                entry.trace,
+                fabric.clone(),
+                entry.response_sink,
+            );
+        }
+    }
+
+    fn schedule_direct_parallel_batch_outcomes(
+        context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+        outcomes: Vec<TargetBatchOutcome>,
+        mut entries: Vec<DirectTargetEntry>,
+        fabric: Option<std::sync::Arc<std::sync::Mutex<rem6_fabric::FabricModel>>>,
+    ) {
+        for outcome in outcomes {
+            let entry_index = entries
+                .iter()
+                .position(|entry| entry.request_id == outcome.request())
+                .expect("batch responder returned an unknown request");
+            let entry = entries.remove(entry_index);
+            Self::schedule_direct_parallel_target_outcome(
+                context,
+                entry.route_id,
+                entry.route,
+                entry.last_hop_index,
+                outcome.into_outcome(),
+                entry.trace,
+                fabric.clone(),
+                entry.response_sink,
+            );
+        }
+        assert!(entries.is_empty(), "batch responder omitted a request");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn schedule_direct_parallel_target_outcome(
+        context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+        route_id: crate::MemoryRouteId,
+        route: crate::MemoryRoute,
+        hop_index: usize,
+        outcome: TargetOutcome,
+        trace: crate::MemoryTrace,
+        fabric: Option<std::sync::Arc<std::sync::Mutex<rem6_fabric::FabricModel>>>,
+        response_sink: ResponseSink,
+    ) {
+        match outcome {
+            TargetOutcome::Respond(response) => {
+                Self::schedule_parallel_response_hop(
+                    context,
+                    route_id,
+                    route,
+                    hop_index,
+                    response,
+                    trace,
+                    fabric,
+                    response_sink,
+                );
+            }
+            TargetOutcome::RespondAfter { delay, response } => {
+                context
+                    .schedule_local_after(delay, move |context| {
                         Self::schedule_parallel_response_hop(
                             context,
                             route_id,
                             route,
-                            last_hop_index,
+                            hop_index,
                             response,
                             trace,
                             fabric,
                             response_sink,
                         );
-                    }
-                    TargetOutcome::RespondAfter { delay, response } => {
-                        context
-                            .schedule_local_after(delay, move |context| {
-                                Self::schedule_parallel_response_hop(
-                                    context,
-                                    route_id,
-                                    route,
-                                    last_hop_index,
-                                    response,
-                                    trace,
-                                    fabric,
-                                    response_sink,
-                                );
-                            })
-                            .expect("validated target response delay");
-                    }
-                    TargetOutcome::NoResponse => {}
-                }
-            })
-            .map_err(TransportError::Scheduler)
+                    })
+                    .expect("validated target response delay");
+            }
+            TargetOutcome::NoResponse => {}
+        }
     }
 }
 

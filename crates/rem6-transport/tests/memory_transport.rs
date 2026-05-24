@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
-    FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosPriority, QosQueueArbiter,
-    QosQueuePolicyKind,
+    FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosFixedPriorityPolicy, QosPriority,
+    QosQueueArbiter, QosQueuePolicyKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
@@ -11,8 +11,8 @@ use rem6_memory::{
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind,
-    MemoryTransport, ParallelMemoryTransaction, RequestDelivery, ResponseDelivery, TargetOutcome,
-    TransportEndpointId, TransportError, TransportLatency,
+    MemoryTransport, ParallelMemoryTransaction, RequestDelivery, ResponseDelivery,
+    TargetBatchOutcome, TargetOutcome, TransportEndpointId, TransportError, TransportLatency,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -1412,6 +1412,98 @@ fn transport_parallel_batch_routes_response_after_batched_request_arrival() {
             MemoryTraceEvent::request(3, route, memory, MemoryTraceKind::RequestArrived, req.id()),
             MemoryTraceEvent::response(6, route, core, req.id(), ResponseStatus::Completed),
         ],
+    );
+}
+
+#[test]
+fn transport_coalesces_same_tick_direct_qos_target_batches_across_submissions() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let batch_log = Arc::new(Mutex::new(Vec::new()));
+    let responder_log = Arc::clone(&batch_log);
+    let mut transport = MemoryTransport::with_qos_policy(
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+        QosFixedPriorityPolicy::new(2, QosPriority::new(0)).unwrap(),
+    )
+    .with_direct_target_batch_responder(move |deliveries, _context| {
+        responder_log.lock().unwrap().push(
+            deliveries
+                .iter()
+                .map(|delivery| (delivery.tick(), delivery.request().id()))
+                .collect::<Vec<_>>(),
+        );
+        Some(
+            deliveries
+                .iter()
+                .map(|delivery| {
+                    TargetBatchOutcome::new(delivery.request().id(), TargetOutcome::NoResponse)
+                })
+                .collect(),
+        )
+    });
+    let memory = endpoint("memory0");
+    let route_a = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                memory.clone(),
+                PartitionId::new(2),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_b = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core1"),
+                PartitionId::new(1),
+                memory,
+                PartitionId::new(2),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req_a = request_from(1, 170, 0x1700, 8);
+    let req_b = request_from(2, 171, 0x1800, 8);
+    let trace = MemoryTrace::new();
+
+    let events_a = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [ParallelMemoryTransaction::new(
+                route_a,
+                req_a.clone(),
+                trace.clone(),
+                |_, _| panic!("batch responder should handle the request"),
+                |_| panic!("request-only transfer must not deliver a response"),
+            )],
+        )
+        .unwrap();
+    let events_b = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [ParallelMemoryTransaction::new(
+                route_b,
+                req_b.clone(),
+                trace,
+                |_, _| panic!("batch responder should handle the request"),
+                |_| panic!("request-only transfer must not deliver a response"),
+            )],
+        )
+        .unwrap();
+
+    assert_eq!(events_a, events_b);
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        *batch_log.lock().unwrap(),
+        vec![vec![(4, req_a.id()), (4, req_b.id())]]
     );
 }
 
