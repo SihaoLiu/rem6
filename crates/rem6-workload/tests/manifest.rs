@@ -1,6 +1,7 @@
 use rem6_boot::BootImage;
 use rem6_dram::{
     DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology,
+    NvmMediaTiming,
 };
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::Tick;
@@ -1415,24 +1416,20 @@ fn workload_topology_exposes_external_memory_profile_by_target() {
 
 #[test]
 fn workload_manifest_identity_changes_with_external_memory_profile() {
-    let hbm_two_by_two = WorkloadMemoryTarget::new(
-        0,
-        16,
-        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
-            .unwrap(),
-    )
-    .unwrap()
-    .with_external_memory_profile(hbm_profile(0))
-    .unwrap();
+    let profiled_target = |profile| {
+        WorkloadMemoryTarget::new(
+            0,
+            16,
+            rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+        .with_external_memory_profile(profile)
+        .unwrap()
+    };
 
-    let hbm_one_by_four = WorkloadMemoryTarget::new(
-        0,
-        16,
-        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
-            .unwrap(),
-    )
-    .unwrap()
-    .with_external_memory_profile(
+    let hbm_two_by_two = profiled_target(hbm_profile(0));
+    let hbm_one_by_four = profiled_target(
         ExternalMemoryProfile::hbm(
             memory_target(0),
             layout(),
@@ -1442,17 +1439,13 @@ fn workload_manifest_identity_changes_with_external_memory_profile() {
             dram_timing(),
         )
         .unwrap(),
-    )
-    .unwrap();
-    let nvm_two_by_eight = WorkloadMemoryTarget::new(
-        0,
-        16,
-        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+    );
+    let nvm_two_by_eight = profiled_target(nvm_profile(0));
+    let nvm_two_by_eight_with_media = profiled_target(
+        nvm_profile(0)
+            .with_nvm_media_timing(NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap())
             .unwrap(),
-    )
-    .unwrap()
-    .with_external_memory_profile(nvm_profile(0))
-    .unwrap();
+    );
 
     let first = WorkloadManifest::builder(id("profiled-topology"), boot_image())
         .with_topology(
@@ -1491,9 +1484,22 @@ fn workload_manifest_identity_changes_with_external_memory_profile() {
         .add_required_resource(resource_id("kernel"))
         .build()
         .unwrap();
+    let fourth = WorkloadManifest::builder(id("profiled-topology"), boot_image())
+        .with_topology(
+            WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+                .unwrap()
+                .add_memory_target(nvm_two_by_eight_with_media)
+                .unwrap(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
 
     assert_ne!(first.identity(), second.identity());
     assert_ne!(first.identity(), third.identity());
+    assert_ne!(third.identity(), fourth.identity());
 }
 
 #[test]

@@ -7,7 +7,7 @@ use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry
 use rem6_dram::{
     DramAccessKind, DramBankState, DramControllerSnapshot, DramGeometry, DramMemoryController,
     DramMemoryError, DramMemorySnapshot, DramMemoryTargetSnapshot, DramPortState, DramTiming,
-    ExternalMemoryProfile, ExternalMemoryTopology,
+    ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot,
@@ -478,6 +478,11 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_u64(&mut payload, timing.precharge_latency());
         write_u64(&mut payload, timing.bus_turnaround());
         write_profile(&mut payload, target.profile());
+        write_nvm_media_state(
+            &mut payload,
+            controller.nvm_media_timing(),
+            controller.nvm_pending_write_completions(),
+        );
         write_u64(&mut payload, controller.parallel_port_count() as u64);
         write_u64(&mut payload, controller.banks().len() as u64);
         for bank in controller.banks() {
@@ -540,6 +545,33 @@ fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>)
             write_u32(payload, media_banks_per_controller);
         }
     }
+    write_nvm_media_timing(payload, profile.nvm_media_timing());
+}
+
+fn write_nvm_media_state(
+    payload: &mut Vec<u8>,
+    nvm_media_timing: Option<NvmMediaTiming>,
+    pending_write_completions: &[u64],
+) {
+    write_nvm_media_timing(payload, nvm_media_timing);
+    write_u64(payload, pending_write_completions.len() as u64);
+    for completion in pending_write_completions {
+        write_u64(payload, *completion);
+    }
+}
+
+fn write_nvm_media_timing(payload: &mut Vec<u8>, nvm_media_timing: Option<NvmMediaTiming>) {
+    let Some(nvm_media_timing) = nvm_media_timing else {
+        write_u64(payload, 0);
+        return;
+    };
+
+    write_u64(payload, 1);
+    write_u64(payload, nvm_media_timing.read_media_latency());
+    write_u64(payload, nvm_media_timing.write_media_latency());
+    write_u64(payload, nvm_media_timing.send_latency());
+    write_u32(payload, nvm_media_timing.max_pending_reads());
+    write_u32(payload, nvm_media_timing.max_pending_writes());
 }
 
 fn write_access_kind(payload: &mut Vec<u8>, kind: Option<DramAccessKind>) {
@@ -649,6 +681,8 @@ fn decode_dram_memory(
             ))
         })?;
         let profile = read_profile(&mut cursor, target, line_layout, geometry, timing)?;
+        let (nvm_media_timing, nvm_pending_write_completions) =
+            read_nvm_media_state(&mut cursor, target)?;
         let port_count = cursor.read_count("DRAM parallel port count")?;
         if port_count == 0 {
             return Err(cursor.invalid(format!(
@@ -693,7 +727,8 @@ fn decode_dram_memory(
             ));
         }
 
-        let controller = DramControllerSnapshot::with_ports(geometry, timing, banks, ports);
+        let controller = DramControllerSnapshot::with_ports(geometry, timing, banks, ports)
+            .with_nvm_media_state(nvm_media_timing, nvm_pending_write_completions);
         if let Some(profile) = profile {
             targets.push(DramMemoryTargetSnapshot::with_profile(
                 target, controller, profile,
@@ -754,7 +789,60 @@ fn read_profile(
         ))
     })?;
 
+    let nvm_media_timing = read_nvm_media_timing(cursor, target)?;
+    let profile = match nvm_media_timing {
+        Some(nvm_media_timing) => profile.with_nvm_media_timing(nvm_media_timing),
+        None => Ok(profile),
+    }
+    .map_err(|error| {
+        cursor.invalid(format!(
+            "DRAM target {} has invalid profile NVM media timing: {error}",
+            target.get()
+        ))
+    })?;
+
     Ok(Some(profile))
+}
+
+fn read_nvm_media_state(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+) -> Result<(Option<NvmMediaTiming>, Vec<u64>), DramMemoryCheckpointError> {
+    let nvm_media_timing = read_nvm_media_timing(cursor, target)?;
+    let pending_count = cursor.read_count("DRAM NVM pending write completion count")?;
+    let mut pending_write_completions = Vec::with_capacity(pending_count);
+    for _ in 0..pending_count {
+        pending_write_completions.push(cursor.read_u64("DRAM NVM pending write completion")?);
+    }
+    pending_write_completions.sort_unstable();
+    Ok((nvm_media_timing, pending_write_completions))
+}
+
+fn read_nvm_media_timing(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+) -> Result<Option<NvmMediaTiming>, DramMemoryCheckpointError> {
+    match cursor.read_u64("DRAM NVM media timing presence")? {
+        0 => Ok(None),
+        1 => NvmMediaTiming::new(
+            cursor.read_u64("DRAM NVM read media latency")?,
+            cursor.read_u64("DRAM NVM write media latency")?,
+            cursor.read_u64("DRAM NVM send latency")?,
+            cursor.read_u32("DRAM NVM max pending reads")?,
+            cursor.read_u32("DRAM NVM max pending writes")?,
+        )
+        .map(Some)
+        .map_err(|error| {
+            cursor.invalid(format!(
+                "DRAM target {} has invalid NVM media timing: {error}",
+                target.get()
+            ))
+        }),
+        value => Err(cursor.invalid(format!(
+            "DRAM target {} has invalid NVM media timing presence {value}",
+            target.get()
+        ))),
+    }
 }
 
 fn read_access_kind(

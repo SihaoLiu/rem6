@@ -98,7 +98,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `configs/example` | 81 | `rem6-workload`, `rem6-system` tests | partial | Preserve easy examples, but every example should be reconstructable from a manifest and tested where practical. |
 | `configs/ruby` | 17 | `rem6-coherence`, protocol crates, `rem6-system` | partial | Keep multi-protocol examples while avoiding a separate Ruby-like engine. |
 | `configs/topologies` | 10 | `rem6-topology`, `rem6-fabric`, `rem6-transport` | partial | Topology definitions should be protocol-neutral and reusable across CPU, GPU, DMA, and accelerator traffic. |
-| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, timing, manifest identity, checkpoint encoding, and activity metadata. Profile breadth and richer media behavior remain open. |
+| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, timing, manifest identity, checkpoint encoding, and activity metadata. NVM media timing can model separate read-media, write-media, send latency, and pending-write queue depth. Profile breadth and fuller media behavior remain open. |
 | `configs/network` | 2 | `rem6-fabric`, `rem6-transport` | partial | Network configuration must map to NoC lanes, virtual networks, credits, and wait-for diagnostics. |
 | `configs/boot`, `configs/dist`, `configs/splash2`, `configs/learning_gem5`, `configs/deprecated` | 27 | `rem6-boot`, `rem6-workload`, tests | partial | Boot and benchmark examples should become manifest resources, not external scripts. Deprecated examples are audit input only. |
 
@@ -142,7 +142,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
 | `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, geometry, activity, and profiles. External DRAM simulators should be optional adapters. |
-| `configs/nvm`, `src/mem/NVMInterface.py`, `src/mem/nvm_interface.*`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. DRAM activity profiles now preserve typed read/write byte counts, and NVM target activity exposes persistent write access and byte counters without string stats. Persistent write completion queues, pending read/write media buffers, and richer asymmetric timing remain open. |
+| `configs/nvm`, `src/mem/NVMInterface.py`, `src/mem/nvm_interface.*`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. DRAM activity profiles preserve typed read/write byte counts, and NVM target activity exposes persistent write access, byte counters, max pending persistent writes, profile-level media timing, access-level persistent-ready cycles, checkpointed pending write completions, and manifest identity for NVM media timing without string stats. Pending read media buffers and richer bandwidth/window behavior remain open. |
 | HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists for DDR, HBM, LPDDR, and NVM; a broader library of validated profiles is still needed. |
 
 ### Heterogeneous Devices
@@ -210,9 +210,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   preference among same-priority timing candidates, explicit same-requestor
   priority escalation inside timing batches, and per-priority/per-requestor QoS
   access and byte accounting in DRAM activity profiles. NVM profile tests cover
-  typed read/write byte accounting and persistent write counters at the target
-  activity boundary. Coherence, system, DMA, and workload-result summary tests
-  cover direct DRAM QoS diagnostics over those typed activity profiles.
+  typed read/write byte accounting, persistent write counters, NVM media timing,
+  pending-write queue limits, checkpoint round-trip of media/pending state, and
+  manifest identity changes for media timing. Coherence, system, DMA, and
+  workload-result summary tests cover direct DRAM QoS diagnostics over those
+  typed activity profiles.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, typed QoS policy intent, result metadata, execution mode
   switches, host action summaries, checkpoint restore labels, and statistics

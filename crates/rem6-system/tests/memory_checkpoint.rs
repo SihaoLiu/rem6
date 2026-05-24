@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryTechnology, DramTiming,
-    ExternalMemoryProfile,
+    ExternalMemoryProfile, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -253,8 +253,12 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
 #[test]
 fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     let target = MemoryTargetId::new(50);
+    let media_timing = NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap();
     let profile =
-        ExternalMemoryProfile::nvm(target, layout(), 2, 8, dram_geometry(), dram_timing()).unwrap();
+        ExternalMemoryProfile::nvm(target, layout(), 2, 8, dram_geometry(), dram_timing())
+            .unwrap()
+            .with_nvm_media_timing(media_timing)
+            .unwrap();
     let mut controller = DramMemoryController::new();
     controller.add_profile(profile).unwrap();
     controller
@@ -276,7 +280,8 @@ fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
         .unwrap();
     assert_eq!(first.dram_access().parallel_port(), 0);
     assert_eq!(second.dram_access().parallel_port(), 1);
-    assert_eq!(second.ready_cycle(), 10);
+    assert_eq!(second.ready_cycle(), 9);
+    assert_eq!(second.dram_access().persistent_ready_cycle(), Some(59));
     let controller = Arc::new(Mutex::new(controller));
     let component = CheckpointComponentId::new("dram-profiled").unwrap();
     let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
@@ -307,6 +312,13 @@ fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     );
     assert_eq!(
         controller
+            .memory_profile(target)
+            .unwrap()
+            .nvm_media_timing(),
+        Some(media_timing),
+    );
+    assert_eq!(
+        controller
             .dram_controller(target)
             .unwrap()
             .parallel_port_count(),
@@ -319,5 +331,5 @@ fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     let row_hit = controller.accept(14, &read(0x0040, 4, 33)).unwrap();
     assert_eq!(row_hit.dram_access().parallel_port(), 1);
     assert!(row_hit.dram_access().row_hit());
-    assert_eq!(row_hit.ready_cycle(), 19);
+    assert_eq!(row_hit.ready_cycle(), 95);
 }

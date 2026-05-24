@@ -277,6 +277,17 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
             hash_u64(hash, u64::from(media_banks_per_controller));
         }
     }
+    match profile.nvm_media_timing() {
+        Some(nvm_media_timing) => {
+            hash_str(hash, "nvm.media");
+            hash_u64(hash, nvm_media_timing.read_media_latency());
+            hash_u64(hash, nvm_media_timing.write_media_latency());
+            hash_u64(hash, nvm_media_timing.send_latency());
+            hash_u64(hash, u64::from(nvm_media_timing.max_pending_reads()));
+            hash_u64(hash, u64::from(nvm_media_timing.max_pending_writes()));
+        }
+        None => hash_str(hash, "nvm.media.none"),
+    }
 }
 
 fn hash_route_fabric(hash: &mut u64, fabric: Option<&crate::WorkloadRouteFabric>) {

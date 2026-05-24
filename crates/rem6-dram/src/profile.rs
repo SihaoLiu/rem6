@@ -22,6 +22,67 @@ pub enum DramProfileField {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NvmMediaTimingField {
+    ReadMediaLatency,
+    WriteMediaLatency,
+    SendLatency,
+    MaxPendingReads,
+    MaxPendingWrites,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NvmMediaTiming {
+    read_media_latency: u64,
+    write_media_latency: u64,
+    send_latency: u64,
+    max_pending_reads: u32,
+    max_pending_writes: u32,
+}
+
+impl NvmMediaTiming {
+    pub fn new(
+        read_media_latency: u64,
+        write_media_latency: u64,
+        send_latency: u64,
+        max_pending_reads: u32,
+        max_pending_writes: u32,
+    ) -> Result<Self, DramError> {
+        validate_nvm_media_u64(NvmMediaTimingField::ReadMediaLatency, read_media_latency)?;
+        validate_nvm_media_u64(NvmMediaTimingField::WriteMediaLatency, write_media_latency)?;
+        validate_nvm_media_u64(NvmMediaTimingField::SendLatency, send_latency)?;
+        validate_nvm_media_u32(NvmMediaTimingField::MaxPendingReads, max_pending_reads)?;
+        validate_nvm_media_u32(NvmMediaTimingField::MaxPendingWrites, max_pending_writes)?;
+        Ok(Self {
+            read_media_latency,
+            write_media_latency,
+            send_latency,
+            max_pending_reads,
+            max_pending_writes,
+        })
+    }
+
+    pub const fn read_media_latency(self) -> u64 {
+        self.read_media_latency
+    }
+
+    pub const fn write_media_latency(self) -> u64 {
+        self.write_media_latency
+    }
+
+    pub const fn send_latency(self) -> u64 {
+        self.send_latency
+    }
+
+    pub const fn max_pending_reads(self) -> u32 {
+        self.max_pending_reads
+    }
+
+    pub const fn max_pending_writes(self) -> u32 {
+        self.max_pending_writes
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExternalMemoryTopology {
     Ddr {
         channels: u32,
@@ -62,6 +123,7 @@ pub struct ExternalMemoryProfile {
     timing: DramTiming,
     technology: DramMemoryTechnology,
     topology: ExternalMemoryTopology,
+    nvm_media_timing: Option<NvmMediaTiming>,
 }
 
 impl ExternalMemoryProfile {
@@ -93,6 +155,7 @@ impl ExternalMemoryProfile {
                 channels,
                 ranks_per_channel,
             },
+            None,
         ))
     }
 
@@ -120,6 +183,7 @@ impl ExternalMemoryProfile {
                 stacks,
                 pseudo_channels_per_stack,
             },
+            None,
         ))
     }
 
@@ -151,6 +215,7 @@ impl ExternalMemoryProfile {
                 channels,
                 dies_per_channel,
             },
+            None,
         ))
     }
 
@@ -182,6 +247,7 @@ impl ExternalMemoryProfile {
                 controllers,
                 media_banks_per_controller,
             },
+            None,
         ))
     }
 
@@ -192,6 +258,7 @@ impl ExternalMemoryProfile {
         timing: DramTiming,
         technology: DramMemoryTechnology,
         topology: ExternalMemoryTopology,
+        nvm_media_timing: Option<NvmMediaTiming>,
     ) -> Self {
         Self {
             target,
@@ -200,7 +267,21 @@ impl ExternalMemoryProfile {
             timing,
             technology,
             topology,
+            nvm_media_timing,
         }
+    }
+
+    pub fn with_nvm_media_timing(
+        mut self,
+        nvm_media_timing: NvmMediaTiming,
+    ) -> Result<Self, DramError> {
+        if self.technology != DramMemoryTechnology::Nvm {
+            return Err(DramError::NvmMediaTimingOnVolatileProfile {
+                technology: self.technology,
+            });
+        }
+        self.nvm_media_timing = Some(nvm_media_timing);
+        Ok(self)
     }
 
     pub const fn target(self) -> MemoryTargetId {
@@ -227,13 +308,22 @@ impl ExternalMemoryProfile {
         self.topology
     }
 
+    pub const fn nvm_media_timing(self) -> Option<NvmMediaTiming> {
+        self.nvm_media_timing
+    }
+
     pub const fn parallel_port_count(self) -> u32 {
         self.topology.parallel_port_count()
     }
 
     pub const fn controller_config(self) -> DramControllerConfig {
-        DramControllerConfig::new(self.target, self.line_layout, self.geometry, self.timing)
-            .with_profile_parallel_ports(self.parallel_port_count())
+        let config =
+            DramControllerConfig::new(self.target, self.line_layout, self.geometry, self.timing)
+                .with_profile_parallel_ports(self.parallel_port_count());
+        match self.nvm_media_timing {
+            Some(nvm_media_timing) => config.with_nvm_media_timing(nvm_media_timing),
+            None => config,
+        }
     }
 }
 
@@ -244,6 +334,22 @@ fn validate_profile_count(
 ) -> Result<(), DramError> {
     if value == 0 {
         return Err(DramError::ZeroProfileTopology { technology, field });
+    }
+
+    Ok(())
+}
+
+fn validate_nvm_media_u64(field: NvmMediaTimingField, value: u64) -> Result<(), DramError> {
+    if value == 0 {
+        return Err(DramError::ZeroNvmMediaTiming { field });
+    }
+
+    Ok(())
+}
+
+fn validate_nvm_media_u32(field: NvmMediaTimingField, value: u32) -> Result<(), DramError> {
+    if value == 0 {
+        return Err(DramError::ZeroNvmMediaTiming { field });
     }
 
     Ok(())

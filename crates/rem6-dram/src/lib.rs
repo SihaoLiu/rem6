@@ -14,6 +14,7 @@ pub use activity::{
 };
 pub use profile::{
     DramMemoryTechnology, DramProfileField, ExternalMemoryProfile, ExternalMemoryTopology,
+    NvmMediaTiming, NvmMediaTimingField,
 };
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
 
@@ -48,6 +49,12 @@ pub enum DramError {
     ZeroProfileTopology {
         technology: DramMemoryTechnology,
         field: DramProfileField,
+    },
+    ZeroNvmMediaTiming {
+        field: NvmMediaTimingField,
+    },
+    NvmMediaTimingOnVolatileProfile {
+        technology: DramMemoryTechnology,
     },
     LineSizeMismatch {
         request: MemoryRequestId,
@@ -89,6 +96,13 @@ impl fmt::Display for DramError {
             Self::ZeroProfileTopology { technology, field } => write!(
                 formatter,
                 "DRAM profile {technology:?} topology field {field:?} must be nonzero"
+            ),
+            Self::ZeroNvmMediaTiming { field } => {
+                write!(formatter, "NVM media timing field {field:?} must be nonzero")
+            }
+            Self::NvmMediaTimingOnVolatileProfile { technology } => write!(
+                formatter,
+                "NVM media timing cannot be attached to {technology:?} memory profiles"
             ),
             Self::LineSizeMismatch {
                 request,
@@ -133,6 +147,8 @@ impl Error for DramError {
             | Self::RowSizeNotLineMultiple { .. }
             | Self::ZeroTimingLatency { .. }
             | Self::ZeroProfileTopology { .. }
+            | Self::ZeroNvmMediaTiming { .. }
+            | Self::NvmMediaTimingOnVolatileProfile { .. }
             | Self::LineSizeMismatch { .. }
             | Self::RequestCrossesRow { .. }
             | Self::UnsupportedOperation { .. } => None,
@@ -483,6 +499,8 @@ pub struct DramAccess {
     request: MemoryRequestId,
     kind: DramAccessKind,
     byte_count: u64,
+    persistent_ready_cycle: Option<u64>,
+    pending_persistent_write_count: usize,
     parallel_port: u32,
     bank: u32,
     row: u64,
@@ -505,6 +523,14 @@ impl DramAccess {
 
     pub const fn byte_count(&self) -> u64 {
         self.byte_count
+    }
+
+    pub const fn persistent_ready_cycle(&self) -> Option<u64> {
+        self.persistent_ready_cycle
+    }
+
+    pub const fn pending_persistent_write_count(&self) -> usize {
+        self.pending_persistent_write_count
     }
 
     pub const fn parallel_port(&self) -> u32 {
@@ -764,6 +790,8 @@ pub struct DramController {
     timing: DramTiming,
     banks: Vec<DramBankState>,
     ports: Vec<DramPortState>,
+    nvm_media_timing: Option<NvmMediaTiming>,
+    nvm_pending_write_completions: Vec<u64>,
     activity_log: Vec<DramAccess>,
     wait_log: Vec<DramWaitRecord>,
 }
@@ -786,9 +814,21 @@ impl DramController {
                 geometry.bank_count() as usize * parallel_port_count as usize
             ],
             ports: vec![DramPortState::new(); parallel_port_count as usize],
+            nvm_media_timing: None,
+            nvm_pending_write_completions: Vec::new(),
             activity_log: Vec::new(),
             wait_log: Vec::new(),
         }
+    }
+
+    fn with_config(config: DramControllerConfig) -> Self {
+        let mut controller = Self::with_parallel_port_count(
+            config.geometry(),
+            config.timing(),
+            config.parallel_port_count(),
+        );
+        controller.nvm_media_timing = config.nvm_media_timing();
+        controller
     }
 
     pub const fn geometry(&self) -> DramGeometry {
@@ -811,12 +851,24 @@ impl DramController {
         self.ports.len() as u32
     }
 
+    pub const fn nvm_media_timing(&self) -> Option<NvmMediaTiming> {
+        self.nvm_media_timing
+    }
+
+    pub fn nvm_pending_write_completions(&self) -> &[u64] {
+        &self.nvm_pending_write_completions
+    }
+
     pub fn snapshot(&self) -> DramControllerSnapshot {
         DramControllerSnapshot::with_ports(
             self.geometry,
             self.timing,
             self.banks.clone(),
             self.ports.clone(),
+        )
+        .with_nvm_media_state(
+            self.nvm_media_timing,
+            self.nvm_pending_write_completions.clone(),
         )
     }
 
@@ -834,6 +886,8 @@ impl DramController {
             } else {
                 snapshot.ports().to_vec()
             },
+            nvm_media_timing: snapshot.nvm_media_timing(),
+            nvm_pending_write_completions: snapshot.nvm_pending_write_completions().to_vec(),
             activity_log: Vec::new(),
             wait_log: Vec::new(),
         }
@@ -983,7 +1037,16 @@ impl DramController {
                 bus_ready_cycle - 1,
             ));
         }
-        let command_cycle = next_cycle.max(bus_ready_cycle);
+        let mut command_cycle = next_cycle.max(bus_ready_cycle);
+        if kind == DramAccessKind::Write {
+            if let Some(nvm_media_timing) = self.nvm_media_timing {
+                command_cycle = reserve_nvm_write_slot(
+                    &mut self.nvm_pending_write_completions,
+                    nvm_media_timing.max_pending_writes(),
+                    command_cycle,
+                );
+            }
+        }
         commands.push(DramCommand::new(
             command_cycle,
             decoded.parallel_port,
@@ -991,15 +1054,43 @@ impl DramController {
             decoded.row,
             kind.command_kind(),
         ));
-        let ready_cycle = command_cycle + self.timing.data_latency(kind);
+        let ready_cycle = match self.nvm_media_timing {
+            Some(nvm_media_timing) => match kind {
+                DramAccessKind::Read => {
+                    command_cycle
+                        + nvm_media_timing.read_media_latency()
+                        + nvm_media_timing.send_latency()
+                }
+                DramAccessKind::Write => command_cycle + nvm_media_timing.send_latency(),
+            },
+            None => command_cycle + self.timing.data_latency(kind),
+        };
+        let persistent_ready_cycle = if kind == DramAccessKind::Write {
+            self.nvm_media_timing.map(|nvm_media_timing| {
+                ready_cycle.max(bank.available_cycle) + nvm_media_timing.write_media_latency()
+            })
+        } else {
+            None
+        };
 
-        bank.available_cycle = ready_cycle;
+        bank.available_cycle = persistent_ready_cycle.unwrap_or(ready_cycle);
         self.ports[port_index] = DramPortState::from_snapshot(command_cycle, Some(kind));
+        let pending_persistent_write_count =
+            if let Some(persistent_ready_cycle) = persistent_ready_cycle {
+                self.nvm_pending_write_completions
+                    .push(persistent_ready_cycle);
+                self.nvm_pending_write_completions.sort_unstable();
+                self.nvm_pending_write_completions.len()
+            } else {
+                0
+            };
 
         let access = DramAccess {
             request: request.id(),
             kind,
             byte_count: request.size().bytes(),
+            persistent_ready_cycle,
+            pending_persistent_write_count,
             parallel_port: decoded.parallel_port,
             bank: decoded.bank,
             row: decoded.row,
@@ -1060,12 +1151,29 @@ impl DramController {
     }
 }
 
+fn reserve_nvm_write_slot(
+    pending_write_completions: &mut Vec<u64>,
+    max_pending_writes: u32,
+    mut command_cycle: u64,
+) -> u64 {
+    pending_write_completions.retain(|completion| *completion > command_cycle);
+    if pending_write_completions.len() >= max_pending_writes as usize {
+        if let Some(next_completion) = pending_write_completions.iter().copied().min() {
+            command_cycle = command_cycle.max(next_completion);
+            pending_write_completions.retain(|completion| *completion > command_cycle);
+        }
+    }
+    command_cycle
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DramControllerSnapshot {
     geometry: DramGeometry,
     timing: DramTiming,
     banks: Vec<DramBankState>,
     ports: Vec<DramPortState>,
+    nvm_media_timing: Option<NvmMediaTiming>,
+    nvm_pending_write_completions: Vec<u64>,
 }
 
 impl DramControllerSnapshot {
@@ -1084,6 +1192,8 @@ impl DramControllerSnapshot {
                 bus_available_cycle,
                 last_access_kind,
             )],
+            nvm_media_timing: None,
+            nvm_pending_write_completions: Vec::new(),
         }
     }
 
@@ -1098,7 +1208,20 @@ impl DramControllerSnapshot {
             timing,
             banks,
             ports,
+            nvm_media_timing: None,
+            nvm_pending_write_completions: Vec::new(),
         }
+    }
+
+    pub fn with_nvm_media_state(
+        mut self,
+        nvm_media_timing: Option<NvmMediaTiming>,
+        nvm_pending_write_completions: Vec<u64>,
+    ) -> Self {
+        self.nvm_media_timing = nvm_media_timing;
+        self.nvm_pending_write_completions = nvm_pending_write_completions;
+        self.nvm_pending_write_completions.sort_unstable();
+        self
     }
 
     pub const fn geometry(&self) -> DramGeometry {
@@ -1130,6 +1253,14 @@ impl DramControllerSnapshot {
     pub fn parallel_port_count(&self) -> u32 {
         self.ports.len() as u32
     }
+
+    pub const fn nvm_media_timing(&self) -> Option<NvmMediaTiming> {
+        self.nvm_media_timing
+    }
+
+    pub fn nvm_pending_write_completions(&self) -> &[u64] {
+        &self.nvm_pending_write_completions
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1139,6 +1270,7 @@ pub struct DramControllerConfig {
     geometry: DramGeometry,
     timing: DramTiming,
     parallel_port_count: u32,
+    nvm_media_timing: Option<NvmMediaTiming>,
 }
 
 impl DramControllerConfig {
@@ -1154,11 +1286,17 @@ impl DramControllerConfig {
             geometry,
             timing,
             parallel_port_count: 1,
+            nvm_media_timing: None,
         }
     }
 
     const fn with_profile_parallel_ports(mut self, parallel_port_count: u32) -> Self {
         self.parallel_port_count = parallel_port_count;
+        self
+    }
+
+    pub const fn with_nvm_media_timing(mut self, nvm_media_timing: NvmMediaTiming) -> Self {
+        self.nvm_media_timing = Some(nvm_media_timing);
         self
     }
 
@@ -1180,6 +1318,10 @@ impl DramControllerConfig {
 
     pub const fn parallel_port_count(self) -> u32 {
         self.parallel_port_count
+    }
+
+    pub const fn nvm_media_timing(self) -> Option<NvmMediaTiming> {
+        self.nvm_media_timing
     }
 }
 
@@ -1309,14 +1451,8 @@ impl DramMemoryController {
         self.store
             .add_partition(config.target(), config.layout())
             .map_err(DramMemoryError::Memory)?;
-        self.dram.insert(
-            config.target(),
-            DramController::with_parallel_port_count(
-                config.geometry(),
-                config.timing(),
-                config.parallel_port_count(),
-            ),
-        );
+        self.dram
+            .insert(config.target(), DramController::with_config(config));
         Ok(())
     }
 

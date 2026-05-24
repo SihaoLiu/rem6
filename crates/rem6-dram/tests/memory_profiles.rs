@@ -1,6 +1,6 @@
 use rem6_dram::{
     DramControllerConfig, DramError, DramGeometry, DramMemoryController, DramMemoryTechnology,
-    DramProfileField, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology,
+    DramProfileField, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -234,6 +234,53 @@ fn dram_memory_controller_reports_profile_metadata_in_target_activity() {
         DramMemoryTechnology::Nvm,
     );
     assert_eq!(activity.profile().access_count(), 1);
+}
+
+#[test]
+fn nvm_media_timing_delays_reads_and_tracks_persistent_write_queue() {
+    let media_timing = NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap();
+    let profile = ExternalMemoryProfile::nvm(target(10), layout(), 2, 8, geometry(), timing())
+        .unwrap()
+        .with_nvm_media_timing(media_timing)
+        .unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+
+    let read_access = controller.accept(0, &read(0x0008, 65)).unwrap();
+    let first_write = controller.accept(0, &write(0x0008, 66)).unwrap();
+    let second_write = controller.accept(0, &write(0x0048, 67)).unwrap();
+
+    assert_eq!(profile.nvm_media_timing(), Some(media_timing));
+    assert_eq!(
+        profile.controller_config().nvm_media_timing(),
+        Some(media_timing)
+    );
+    assert_eq!(read_access.ready_cycle(), 40);
+    assert_eq!(read_access.dram_access().persistent_ready_cycle(), None);
+    assert_eq!(first_write.ready_cycle(), 46);
+    assert_eq!(first_write.dram_access().persistent_ready_cycle(), Some(96));
+    assert_eq!(second_write.dram_access().command_cycle(), 96);
+    assert_eq!(second_write.ready_cycle(), 102);
+    assert_eq!(
+        second_write.dram_access().persistent_ready_cycle(),
+        Some(152)
+    );
+
+    let activity = controller.target_activity(profile.target()).unwrap();
+    assert_eq!(activity.max_pending_persistent_writes(), 1);
 }
 
 #[test]
