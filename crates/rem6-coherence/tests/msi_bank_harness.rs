@@ -465,6 +465,17 @@ fn msi_bank_harness_parallel_cycle_records_mshr_qos_for_scheduled_misses() {
             .cache_mshr_effective_qos(),
         Some(MshrQosClass::new(70, 2))
     );
+
+    let history = rebuilt.parallel_cycle_history();
+    assert!(history.has_mshr_qos());
+    assert_eq!(history.total_mshr_qos_accepted(), 2);
+    assert_eq!(history.accepted_by_effective_mshr_qos_priority(2), 1);
+    assert_eq!(history.accepted_by_effective_mshr_qos_priority(4), 1);
+    assert_eq!(history.accepted_by_effective_mshr_qos_priority(7), 0);
+    assert_eq!(history.accepted_by_effective_mshr_qos_requestor(50), 1);
+    assert_eq!(history.accepted_by_effective_mshr_qos_requestor(70), 1);
+    assert_eq!(history.mshr_qos_parallel_cycle_count(), 1);
+    assert_eq!(history.best_mshr_qos_priority(), Some(2));
 }
 
 #[test]

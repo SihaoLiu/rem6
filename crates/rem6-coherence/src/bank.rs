@@ -209,6 +209,11 @@ pub struct MsiBankCycleHistory {
     accepted_by_agent: BTreeMap<AgentId, usize>,
     accepted_by_line: BTreeMap<Address, usize>,
     accepted_by_tick: BTreeMap<u64, usize>,
+    total_mshr_qos_accepted: usize,
+    mshr_qos_parallel_cycle_count: usize,
+    accepted_by_effective_mshr_qos_priority: BTreeMap<u8, usize>,
+    accepted_by_effective_mshr_qos_requestor: BTreeMap<u32, usize>,
+    best_mshr_qos_priority: Option<u8>,
 }
 
 impl MsiBankCycleHistory {
@@ -219,15 +224,21 @@ impl MsiBankCycleHistory {
         let mut total_responses = 0;
         let mut total_immediate_hits = 0;
         let mut total_scheduled_misses = 0;
+        let mut total_mshr_qos_accepted = 0;
         let mut max_accepted_per_cycle = 0;
         let mut has_parallel_work = false;
         let mut parallel_cycle_count = 0;
         let mut single_request_cycle_count = 0;
+        let mut mshr_qos_parallel_cycle_count = 0;
         let mut ticks = Vec::with_capacity(runs.len());
         let mut accepted_by_line = BTreeMap::new();
         let mut accepted_by_tick = BTreeMap::new();
+        let mut accepted_by_effective_mshr_qos_priority = BTreeMap::new();
+        let mut accepted_by_effective_mshr_qos_requestor = BTreeMap::new();
+        let mut best_mshr_qos_priority = None;
 
         for run in runs {
+            let mut run_has_mshr_qos = false;
             ticks.push(run.tick());
             total_accepted += run.accepted_count();
             total_responses += run.response_count();
@@ -245,6 +256,23 @@ impl MsiBankCycleHistory {
                 touched_lines.insert(accepted.line_address());
                 *accepted_by_agent.entry(accepted.agent()).or_insert(0) += 1;
                 *accepted_by_line.entry(accepted.line_address()).or_insert(0) += 1;
+                if let Some(qos) = accepted.result().cache_mshr_effective_qos() {
+                    run_has_mshr_qos = true;
+                    total_mshr_qos_accepted += 1;
+                    *accepted_by_effective_mshr_qos_priority
+                        .entry(qos.priority())
+                        .or_insert(0) += 1;
+                    *accepted_by_effective_mshr_qos_requestor
+                        .entry(qos.requestor())
+                        .or_insert(0) += 1;
+                    best_mshr_qos_priority = Some(
+                        best_mshr_qos_priority
+                            .map_or(qos.priority(), |priority: u8| priority.min(qos.priority())),
+                    );
+                }
+            }
+            if run.has_parallel_work() && run_has_mshr_qos {
+                mshr_qos_parallel_cycle_count += 1;
             }
         }
 
@@ -263,6 +291,11 @@ impl MsiBankCycleHistory {
             accepted_by_agent,
             accepted_by_line,
             accepted_by_tick,
+            total_mshr_qos_accepted,
+            mshr_qos_parallel_cycle_count,
+            accepted_by_effective_mshr_qos_priority,
+            accepted_by_effective_mshr_qos_requestor,
+            best_mshr_qos_priority,
         }
     }
 
@@ -336,6 +369,44 @@ impl MsiBankCycleHistory {
 
     pub fn accepted_by_tick_counts(&self) -> BTreeMap<u64, usize> {
         self.accepted_by_tick.clone()
+    }
+
+    pub const fn total_mshr_qos_accepted(&self) -> usize {
+        self.total_mshr_qos_accepted
+    }
+
+    pub const fn has_mshr_qos(&self) -> bool {
+        self.total_mshr_qos_accepted != 0
+    }
+
+    pub const fn mshr_qos_parallel_cycle_count(&self) -> usize {
+        self.mshr_qos_parallel_cycle_count
+    }
+
+    pub fn accepted_by_effective_mshr_qos_priority(&self, priority: u8) -> usize {
+        self.accepted_by_effective_mshr_qos_priority
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn accepted_by_effective_mshr_qos_priority_counts(&self) -> BTreeMap<u8, usize> {
+        self.accepted_by_effective_mshr_qos_priority.clone()
+    }
+
+    pub fn accepted_by_effective_mshr_qos_requestor(&self, requestor: u32) -> usize {
+        self.accepted_by_effective_mshr_qos_requestor
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn accepted_by_effective_mshr_qos_requestor_counts(&self) -> BTreeMap<u32, usize> {
+        self.accepted_by_effective_mshr_qos_requestor.clone()
+    }
+
+    pub const fn best_mshr_qos_priority(&self) -> Option<u8> {
+        self.best_mshr_qos_priority
     }
 }
 

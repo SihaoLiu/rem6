@@ -190,6 +190,66 @@ fn mshr_queue_orders_ready_entries_by_qos_and_promotes_merged_targets() {
 }
 
 #[test]
+fn mshr_queue_qos_profile_counts_targets_and_effective_entries() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(3, 3, 0).unwrap());
+
+    let low = queue
+        .allocate_or_merge_with_qos(
+            request(0, 0x8000),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(30, 4),
+        )
+        .unwrap();
+    queue
+        .allocate_or_merge_with_qos(
+            request(1, 0x9000),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(10, 1),
+        )
+        .unwrap();
+    queue
+        .allocate_or_merge_with_qos(
+            request(2, 0x8010),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(40, 0),
+        )
+        .unwrap();
+    queue
+        .allocate_or_merge(request(3, 0xa000), 10, MshrTargetSource::Demand, true)
+        .unwrap();
+
+    assert_eq!(
+        queue.entry(low.handle()).unwrap().effective_qos(),
+        Some(MshrQosClass::new(40, 0))
+    );
+
+    let profile = queue.qos_profile();
+    assert!(profile.has_qos());
+    assert_eq!(profile.entry_count(), 3);
+    assert_eq!(profile.target_count(), 4);
+    assert_eq!(profile.qos_target_count(), 3);
+    assert_eq!(profile.effective_entry_count(), 2);
+    assert_eq!(profile.priority_target_count(0), 1);
+    assert_eq!(profile.priority_target_count(1), 1);
+    assert_eq!(profile.priority_target_count(4), 1);
+    assert_eq!(profile.priority_target_count(7), 0);
+    assert_eq!(profile.requestor_target_count(40), 1);
+    assert_eq!(profile.requestor_target_count(30), 1);
+    assert_eq!(profile.effective_priority_entry_count(0), 1);
+    assert_eq!(profile.effective_priority_entry_count(1), 1);
+    assert_eq!(profile.effective_requestor_entry_count(40), 1);
+    assert_eq!(profile.effective_requestor_entry_count(10), 1);
+    assert_eq!(profile.best_effective_priority(), Some(0));
+    assert_eq!(queue.snapshot().qos_profile(), profile);
+}
+
+#[test]
 fn mshr_queue_rejects_bad_configs_unknown_handles_and_wrong_snapshots() {
     assert_eq!(
         MshrQueueConfig::new(0, 2, 0),

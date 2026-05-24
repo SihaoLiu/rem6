@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -44,6 +45,19 @@ impl MshrQosClass {
     pub const fn priority(self) -> u8 {
         self.priority
     }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MshrQosProfile {
+    entry_count: usize,
+    target_count: usize,
+    qos_target_count: usize,
+    effective_entry_count: usize,
+    priority_targets: BTreeMap<u8, usize>,
+    requestor_targets: BTreeMap<u32, usize>,
+    effective_priority_entries: BTreeMap<u8, usize>,
+    effective_requestor_entries: BTreeMap<u32, usize>,
+    best_effective_priority: Option<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -360,6 +374,112 @@ impl MshrEntry {
     }
 }
 
+impl MshrQosProfile {
+    pub fn from_entries<'a, I>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = &'a MshrEntry>,
+    {
+        let mut profile = Self::default();
+
+        for entry in entries {
+            profile.entry_count += 1;
+            profile.target_count += entry.target_count();
+
+            for target in entry.targets() {
+                if let Some(qos) = target.qos() {
+                    profile.qos_target_count += 1;
+                    *profile.priority_targets.entry(qos.priority()).or_insert(0) += 1;
+                    *profile
+                        .requestor_targets
+                        .entry(qos.requestor())
+                        .or_insert(0) += 1;
+                }
+            }
+
+            if let Some(qos) = entry.effective_qos() {
+                profile.effective_entry_count += 1;
+                *profile
+                    .effective_priority_entries
+                    .entry(qos.priority())
+                    .or_insert(0) += 1;
+                *profile
+                    .effective_requestor_entries
+                    .entry(qos.requestor())
+                    .or_insert(0) += 1;
+                profile.best_effective_priority = Some(
+                    profile
+                        .best_effective_priority
+                        .map_or(qos.priority(), |priority| priority.min(qos.priority())),
+                );
+            }
+        }
+
+        profile
+    }
+
+    pub const fn entry_count(&self) -> usize {
+        self.entry_count
+    }
+
+    pub const fn target_count(&self) -> usize {
+        self.target_count
+    }
+
+    pub const fn qos_target_count(&self) -> usize {
+        self.qos_target_count
+    }
+
+    pub const fn effective_entry_count(&self) -> usize {
+        self.effective_entry_count
+    }
+
+    pub const fn has_qos(&self) -> bool {
+        self.qos_target_count != 0
+    }
+
+    pub fn priority_target_count(&self, priority: u8) -> usize {
+        self.priority_targets.get(&priority).copied().unwrap_or(0)
+    }
+
+    pub fn priority_target_counts(&self) -> BTreeMap<u8, usize> {
+        self.priority_targets.clone()
+    }
+
+    pub fn requestor_target_count(&self, requestor: u32) -> usize {
+        self.requestor_targets.get(&requestor).copied().unwrap_or(0)
+    }
+
+    pub fn requestor_target_counts(&self) -> BTreeMap<u32, usize> {
+        self.requestor_targets.clone()
+    }
+
+    pub fn effective_priority_entry_count(&self, priority: u8) -> usize {
+        self.effective_priority_entries
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn effective_priority_entry_counts(&self) -> BTreeMap<u8, usize> {
+        self.effective_priority_entries.clone()
+    }
+
+    pub fn effective_requestor_entry_count(&self, requestor: u32) -> usize {
+        self.effective_requestor_entries
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn effective_requestor_entry_counts(&self) -> BTreeMap<u32, usize> {
+        self.effective_requestor_entries.clone()
+    }
+
+    pub const fn best_effective_priority(&self) -> Option<u8> {
+        self.best_effective_priority
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MshrQueueUpdate {
     handle: MshrHandle,
@@ -468,6 +588,10 @@ impl MshrQueueSnapshot {
     pub const fn next_order(&self) -> u64 {
         self.next_order
     }
+
+    pub fn qos_profile(&self) -> MshrQosProfile {
+        MshrQosProfile::from_entries(&self.entries)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -498,6 +622,10 @@ impl MshrQueue {
 
     pub fn in_service_count(&self) -> usize {
         self.entries.iter().filter(|entry| entry.in_service).count()
+    }
+
+    pub fn qos_profile(&self) -> MshrQosProfile {
+        MshrQosProfile::from_entries(&self.entries)
     }
 
     pub fn can_accept_prefetch(&self) -> bool {
