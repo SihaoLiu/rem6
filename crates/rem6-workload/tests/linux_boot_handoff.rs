@@ -52,8 +52,19 @@ fn initrd_resource() -> WorkloadResource {
     .unwrap()
 }
 
+fn device_tree_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("dtb"),
+        WorkloadResourceKind::DeviceTree,
+        "sha256:dtb",
+        "resources/riscv.dtb",
+    )
+    .unwrap()
+}
+
 fn linux_handoff() -> WorkloadLinuxBootHandoff {
     WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
+        .with_device_tree_resource(resource_id("dtb"))
         .with_bootargs("console=ttyS0 root=/dev/vda")
         .with_initrd(
             WorkloadLinuxInitrd::new(
@@ -68,6 +79,8 @@ fn linux_handoff() -> WorkloadLinuxBootHandoff {
 fn linux_manifest() -> WorkloadManifest {
     WorkloadManifest::builder(id("linux-handoff"), boot_image())
         .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
         .unwrap()
         .add_resource(initrd_resource())
         .unwrap()
@@ -85,19 +98,29 @@ fn workload_manifest_records_linux_boot_handoff_resources() {
     let initrd = handoff.initrd().unwrap();
 
     assert_eq!(handoff.dtb_addr(), Address::new(0x87e0_0000));
+    assert_eq!(handoff.device_tree_resource(), Some(&resource_id("dtb")));
     assert_eq!(handoff.bootargs(), Some("console=ttyS0 root=/dev/vda"));
     assert_eq!(initrd.resource(), &resource_id("initrd"));
     assert_eq!(initrd.start(), Address::new(0x8800_0000));
     assert_eq!(initrd.end(), Address::new(0x8800_0008));
     assert_eq!(
         manifest.required_resources(),
-        &[resource_id("initrd"), resource_id("kernel")]
+        &[
+            resource_id("dtb"),
+            resource_id("initrd"),
+            resource_id("kernel")
+        ]
     );
     assert!(plan
         .required_resources()
         .iter()
         .any(|resource| resource.id() == &resource_id("initrd")
             && resource.kind() == WorkloadResourceKind::Initrd));
+    assert!(plan
+        .required_resources()
+        .iter()
+        .any(|resource| resource.id() == &resource_id("dtb")
+            && resource.kind() == WorkloadResourceKind::DeviceTree));
     assert_eq!(plan.linux_boot_handoff(), Some(handoff));
 }
 
@@ -108,6 +131,8 @@ fn workload_resolved_resources_validate_linux_initrd_payload() {
         &manifest,
         [
             WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13, 0x00])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0, 0xd1])
                 .unwrap(),
             WorkloadResourcePayload::new(
                 resource_id("initrd"),
@@ -125,6 +150,10 @@ fn workload_resolved_resources_validate_linux_initrd_payload() {
         &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]
     );
     assert_eq!(
+        resources.linux_device_tree_data(handoff).unwrap(),
+        &[0xd0, 0xd1]
+    );
+    assert_eq!(
         resources.linux_initrd_data(handoff).unwrap(),
         &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]
     );
@@ -139,6 +168,7 @@ fn workload_resolved_resources_reject_bad_required_payloads() {
         [
             WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
                 .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
         ],
     )
     .unwrap_err();
@@ -154,6 +184,7 @@ fn workload_resolved_resources_reject_bad_required_payloads() {
         [
             WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
                 .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
             WorkloadResourcePayload::new(resource_id("initrd"), "sha256:other", vec![0; 8])
                 .unwrap(),
         ],
@@ -173,6 +204,7 @@ fn workload_resolved_resources_reject_bad_required_payloads() {
         [
             WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
                 .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
             WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 7])
                 .unwrap(),
         ],
@@ -192,6 +224,7 @@ fn workload_resolved_resources_reject_bad_required_payloads() {
         [
             WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
                 .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
             WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 8])
                 .unwrap(),
             WorkloadResourcePayload::new(resource_id("extra"), "sha256:extra", vec![0xee]).unwrap(),
@@ -210,6 +243,7 @@ fn workload_resolved_resources_reject_bad_required_payloads() {
         [
             WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
                 .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
             WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 8])
                 .unwrap(),
             WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![1; 8])
@@ -230,6 +264,8 @@ fn workload_manifest_identity_changes_with_linux_boot_handoff() {
     let plain = WorkloadManifest::builder(id("linux-handoff-identity"), boot_image())
         .add_resource(kernel_resource())
         .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
         .add_resource(initrd_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
@@ -237,6 +273,8 @@ fn workload_manifest_identity_changes_with_linux_boot_handoff() {
         .unwrap();
     let with_handoff = WorkloadManifest::builder(id("linux-handoff-identity"), boot_image())
         .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
         .unwrap()
         .add_resource(initrd_resource())
         .unwrap()
@@ -247,11 +285,14 @@ fn workload_manifest_identity_changes_with_linux_boot_handoff() {
     let different_bootargs = WorkloadManifest::builder(id("linux-handoff-identity"), boot_image())
         .add_resource(kernel_resource())
         .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
         .add_resource(initrd_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
         .with_linux_boot_handoff(
             WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
+                .with_device_tree_resource(resource_id("dtb"))
                 .with_bootargs("console=ttyS1 root=/dev/vda")
                 .with_initrd(
                     WorkloadLinuxInitrd::new(
@@ -274,6 +315,8 @@ fn workload_linux_boot_handoff_rejects_missing_or_wrong_initrd_resource() {
     let missing = WorkloadManifest::builder(id("missing-initrd"), boot_image())
         .add_resource(kernel_resource())
         .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
         .with_linux_boot_handoff(linux_handoff())
         .build()
         .unwrap_err();
@@ -286,6 +329,8 @@ fn workload_linux_boot_handoff_rejects_missing_or_wrong_initrd_resource() {
 
     let wrong_kind = WorkloadManifest::builder(id("wrong-initrd-kind"), boot_image())
         .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
         .unwrap()
         .add_resource(disk_resource())
         .unwrap()
@@ -306,6 +351,45 @@ fn workload_linux_boot_handoff_rejects_missing_or_wrong_initrd_resource() {
         WorkloadError::ResourceKindMismatch {
             resource: resource_id("disk"),
             expected: WorkloadResourceKind::Initrd,
+            actual: WorkloadResourceKind::DiskImage,
+        }
+    );
+}
+
+#[test]
+fn workload_linux_boot_handoff_rejects_missing_or_wrong_device_tree_resource() {
+    let missing = WorkloadManifest::builder(id("missing-dtb"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .with_linux_boot_handoff(
+            WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
+                .with_device_tree_resource(resource_id("dtb")),
+        )
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        missing,
+        WorkloadError::MissingRequiredResource {
+            resource: resource_id("dtb"),
+        }
+    );
+
+    let wrong_kind = WorkloadManifest::builder(id("wrong-dtb-kind"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(disk_resource())
+        .unwrap()
+        .with_linux_boot_handoff(
+            WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
+                .with_device_tree_resource(resource_id("disk")),
+        )
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        wrong_kind,
+        WorkloadError::ResourceKindMismatch {
+            resource: resource_id("disk"),
+            expected: WorkloadResourceKind::DeviceTree,
             actual: WorkloadResourceKind::DiskImage,
         }
     );

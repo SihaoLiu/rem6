@@ -595,6 +595,13 @@ impl WorkloadManifestBuilder {
     }
 
     pub fn build(mut self) -> Result<WorkloadManifest, WorkloadError> {
+        if let Some(resource) = self
+            .linux_boot_handoff
+            .as_ref()
+            .and_then(WorkloadLinuxBootHandoff::device_tree_resource)
+        {
+            self.required_resources.insert(resource.clone());
+        }
         if let Some(initrd) = self
             .linux_boot_handoff
             .as_ref()
@@ -623,6 +630,23 @@ impl WorkloadManifestBuilder {
                 return Err(WorkloadError::ResourceKindMismatch {
                     resource: resource.id().clone(),
                     expected: WorkloadResourceKind::Initrd,
+                    actual: resource.kind(),
+                });
+            }
+        }
+        if let Some(resource_id) = self
+            .linux_boot_handoff
+            .as_ref()
+            .and_then(WorkloadLinuxBootHandoff::device_tree_resource)
+        {
+            let resource = self
+                .resources
+                .get(resource_id)
+                .expect("required resource was checked above");
+            if resource.kind() != WorkloadResourceKind::DeviceTree {
+                return Err(WorkloadError::ResourceKindMismatch {
+                    resource: resource.id().clone(),
+                    expected: WorkloadResourceKind::DeviceTree,
                     actual: resource.kind(),
                 });
             }

@@ -42,6 +42,7 @@ impl WorkloadLinuxInitrd {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadLinuxBootHandoff {
     dtb_addr: Address,
+    device_tree_resource: Option<WorkloadResourceId>,
     bootargs: Option<String>,
     initrd: Option<WorkloadLinuxInitrd>,
 }
@@ -50,9 +51,15 @@ impl WorkloadLinuxBootHandoff {
     pub const fn new(dtb_addr: Address) -> Self {
         Self {
             dtb_addr,
+            device_tree_resource: None,
             bootargs: None,
             initrd: None,
         }
+    }
+
+    pub fn with_device_tree_resource(mut self, resource: WorkloadResourceId) -> Self {
+        self.device_tree_resource = Some(resource);
+        self
     }
 
     pub fn with_bootargs(mut self, bootargs: impl Into<String>) -> Self {
@@ -67,6 +74,10 @@ impl WorkloadLinuxBootHandoff {
 
     pub const fn dtb_addr(&self) -> Address {
         self.dtb_addr
+    }
+
+    pub const fn device_tree_resource(&self) -> Option<&WorkloadResourceId> {
+        self.device_tree_resource.as_ref()
     }
 
     pub fn bootargs(&self) -> Option<&str> {

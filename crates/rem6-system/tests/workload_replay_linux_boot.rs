@@ -49,6 +49,16 @@ fn initrd_resource() -> WorkloadResource {
     .unwrap()
 }
 
+fn device_tree_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("dtb"),
+        WorkloadResourceKind::DeviceTree,
+        "sha256:dtb",
+        "resources/riscv.dtb",
+    )
+    .unwrap()
+}
+
 fn replay_topology() -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
@@ -97,13 +107,16 @@ fn replay_topology() -> WorkloadTopology {
         .unwrap()
 }
 
-fn replay_manifest_with_linux_initrd_handoff() -> WorkloadManifest {
+fn replay_manifest_with_linux_boot_handoff() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-linux-initrd-replay"), boot_image())
         .with_topology(replay_topology())
+        .add_resource(device_tree_resource())
+        .unwrap()
         .add_resource(initrd_resource())
         .unwrap()
         .with_linux_boot_handoff(
             WorkloadLinuxBootHandoff::new(Address::new(0x97c0))
+                .with_device_tree_resource(resource_id("dtb"))
                 .with_bootargs("console=ttyS0 root=/dev/vda")
                 .with_initrd(
                     WorkloadLinuxInitrd::new(
@@ -154,21 +167,25 @@ fn snapshot_blob(
 }
 
 #[test]
-fn workload_replay_installs_resolved_linux_initrd_payload() {
-    let manifest = replay_manifest_with_linux_initrd_handoff();
+fn workload_replay_installs_resolved_linux_boot_payloads() {
+    let manifest = replay_manifest_with_linux_boot_handoff();
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let dtb_data = vec![0xd0, 0x0d, 0xfe, 0xed, 0x00, 0x01];
     let initrd_data = (0..20).map(|byte| 0xa0 + byte as u8).collect::<Vec<_>>();
-    let resources =
-        WorkloadResolvedResources::from_manifest(
-            &manifest,
-            [WorkloadResourcePayload::new(
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", dtb_data.clone())
+                .unwrap(),
+            WorkloadResourcePayload::new(
                 resource_id("initrd"),
                 "sha256:initrd",
                 initrd_data.clone(),
             )
-            .unwrap()],
-        )
-        .unwrap();
+            .unwrap(),
+        ],
+    )
+    .unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
@@ -176,6 +193,15 @@ fn workload_replay_installs_resolved_linux_initrd_payload() {
         .run_parallel()
         .unwrap();
 
+    assert_eq!(
+        snapshot_blob(
+            outcome.memory_snapshot(),
+            MemoryTargetId::new(0),
+            Address::new(0x97c0),
+            dtb_data.len(),
+        ),
+        dtb_data
+    );
     assert_eq!(
         snapshot_blob(
             outcome.memory_snapshot(),

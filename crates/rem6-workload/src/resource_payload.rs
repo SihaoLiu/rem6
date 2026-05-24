@@ -84,6 +84,7 @@ impl WorkloadResolvedResources {
                 });
             }
         }
+        validate_linux_device_tree_payload(manifest, &resolved)?;
         validate_linux_initrd_payload(manifest, &resolved)?;
 
         Ok(Self { payloads: resolved })
@@ -100,6 +101,11 @@ impl WorkloadResolvedResources {
     pub fn linux_initrd_data(&self, handoff: &WorkloadLinuxBootHandoff) -> Option<&[u8]> {
         let initrd = handoff.initrd()?;
         self.payload_data(initrd.resource())
+    }
+
+    pub fn linux_device_tree_data(&self, handoff: &WorkloadLinuxBootHandoff) -> Option<&[u8]> {
+        let resource = handoff.device_tree_resource()?;
+        self.payload_data(resource)
     }
 }
 
@@ -137,6 +143,37 @@ fn validate_linux_initrd_payload(
             resource: initrd.resource().clone(),
             expected_bytes,
             actual_bytes: payload.data().len(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_linux_device_tree_payload(
+    manifest: &WorkloadManifest,
+    resolved: &BTreeMap<WorkloadResourceId, WorkloadResourcePayload>,
+) -> Result<(), WorkloadError> {
+    let Some(resource_id) = manifest
+        .linux_boot_handoff()
+        .and_then(WorkloadLinuxBootHandoff::device_tree_resource)
+    else {
+        return Ok(());
+    };
+    let resource =
+        manifest
+            .resource(resource_id)
+            .ok_or_else(|| WorkloadError::MissingRequiredResource {
+                resource: resource_id.clone(),
+            })?;
+    if resource.kind() != WorkloadResourceKind::DeviceTree {
+        return Err(WorkloadError::ResourceKindMismatch {
+            resource: resource.id().clone(),
+            expected: WorkloadResourceKind::DeviceTree,
+            actual: resource.kind(),
+        });
+    }
+    if !resolved.contains_key(resource_id) {
+        return Err(WorkloadError::MissingResourcePayload {
+            resource: resource_id.clone(),
         });
     }
     Ok(())

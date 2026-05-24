@@ -59,8 +59,15 @@ fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHan
         return;
     };
 
-    hash_str(hash, "linux.boot_handoff.v1");
+    hash_str(hash, "linux.boot_handoff.v2");
     hash_u64(hash, handoff.dtb_addr().get());
+    match handoff.device_tree_resource() {
+        Some(resource) => {
+            hash_str(hash, "device_tree.some");
+            hash_str(hash, resource.as_str());
+        }
+        None => hash_str(hash, "device_tree.none"),
+    }
     match handoff.bootargs() {
         Some(bootargs) => {
             hash_str(hash, "bootargs.some");

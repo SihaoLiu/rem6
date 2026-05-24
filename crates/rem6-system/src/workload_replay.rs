@@ -465,6 +465,19 @@ fn dram_snapshot_line_data(
         .map(|line| line.data().to_vec())
 }
 
+fn load_payload_at(
+    store: &mut PartitionedMemoryStore,
+    address: Address,
+    payload: &[u8],
+) -> Result<(), RiscvWorkloadReplayError> {
+    BootImage::new(address)
+        .add_segment(address, payload.to_vec())
+        .map_err(RiscvWorkloadReplayError::Boot)?
+        .load_into_partitioned_store_by_address(store)
+        .map(|_| ())
+        .map_err(RiscvWorkloadReplayError::Boot)
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplay {
     plan: WorkloadReplayPlan,
@@ -1186,8 +1199,32 @@ impl RiscvWorkloadReplay {
             .map_err(RiscvWorkloadReplayError::Workload)?
             .load_into_partitioned_store_by_address(&mut store)
             .map_err(RiscvWorkloadReplayError::Boot)?;
+        self.load_linux_device_tree_payload(&mut store)?;
         self.load_linux_initrd_payload(&mut store)?;
         Ok(store)
+    }
+
+    fn load_linux_device_tree_payload(
+        &self,
+        store: &mut PartitionedMemoryStore,
+    ) -> Result<(), RiscvWorkloadReplayError> {
+        let Some(handoff) = self.plan.linux_boot_handoff() else {
+            return Ok(());
+        };
+        let Some(resource) = handoff.device_tree_resource() else {
+            return Ok(());
+        };
+        let payload = self
+            .resolved_resources
+            .as_ref()
+            .and_then(|resources| resources.linux_device_tree_data(handoff))
+            .ok_or_else(|| {
+                RiscvWorkloadReplayError::Workload(WorkloadError::MissingResourcePayload {
+                    resource: resource.clone(),
+                })
+            })?;
+
+        load_payload_at(store, handoff.dtb_addr(), payload)
     }
 
     fn load_linux_initrd_payload(
@@ -1210,12 +1247,7 @@ impl RiscvWorkloadReplay {
                 })
             })?;
 
-        BootImage::new(initrd.start())
-            .add_segment(initrd.start(), payload.to_vec())
-            .map_err(RiscvWorkloadReplayError::Boot)?
-            .load_into_partitioned_store_by_address(store)
-            .map(|_| ())
-            .map_err(RiscvWorkloadReplayError::Boot)
+        load_payload_at(store, initrd.start(), payload)
     }
 
     fn result_from_run(
