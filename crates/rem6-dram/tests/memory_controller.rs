@@ -1,7 +1,8 @@
 use rem6_dram::{
     DramAccessKind, DramControllerConfig, DramError, DramGeometry, DramMemoryController,
-    DramMemoryError, DramTiming,
+    DramMemoryError, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
 };
+use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
@@ -160,6 +161,48 @@ fn dram_memory_controller_keeps_independent_timing_per_target() {
     assert_eq!(controller.target_count(), 2);
     assert_eq!(controller.line_count(low).unwrap(), 1);
     assert_eq!(controller.line_count(high).unwrap(), 1);
+}
+
+#[test]
+fn dram_memory_controller_accepts_qos_batch_before_storage_response() {
+    let (mut controller, low, _) = controller_with_targets();
+    let read_after_write = read(0x1000, 4, 10);
+    let write_first = write(0x1000, &[0xaa, 0xbb, 0xcc, 0xdd], 11);
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+
+    let outcomes = controller
+        .accept_qos_batch_with_policy(
+            10,
+            [
+                DramQosRequest::new(&read_after_write, QosPriority::new(2), 0),
+                DramQosRequest::new(&write_first, QosPriority::new(0), 1),
+            ],
+            &mut arbiter,
+            DramQosSchedulingPolicy::new().with_turnaround(DramQosTurnaroundPolicy::RequestOrder),
+        )
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(outcomes[0].dram_access().request(), write_first.id());
+    assert_eq!(outcomes[0].dram_access().kind(), DramAccessKind::Write);
+    assert_eq!(outcomes[0].response().unwrap().data(), None);
+    assert_eq!(outcomes[1].dram_access().request(), read_after_write.id());
+    assert_eq!(outcomes[1].dram_access().kind(), DramAccessKind::Read);
+    assert_eq!(
+        outcomes[1].response().unwrap().data().unwrap(),
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+    assert_eq!(
+        &controller.line_data(low, Address::new(0x1000)).unwrap()[..4],
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+    assert_eq!(controller.activity_profile().qos_access_count(), 2);
+    assert_eq!(
+        controller
+            .activity_profile()
+            .qos_priority_access_count(QosPriority::new(0)),
+        1
+    );
 }
 
 #[test]
