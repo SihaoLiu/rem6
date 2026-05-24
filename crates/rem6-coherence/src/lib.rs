@@ -52,8 +52,9 @@ pub use bank::{
     MsiBankCyclePlan, MsiBankCycleRun, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
 };
 pub use chi::{
-    ChiCpuResponseRecord, ChiDirectoryLineHarness, ChiDirectoryLineHarnessSnapshot,
-    ChiHarnessError, ChiSubmitResult,
+    ChiCpuResponseRecord, ChiDirectoryDecisionRecord, ChiDirectoryLineHarness,
+    ChiDirectoryLineHarnessSnapshot, ChiHarnessError, ChiSubmitResult,
+    PartitionedChiDirectoryLineHarness, PartitionedChiDirectoryLineHarnessSnapshot,
 };
 pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{

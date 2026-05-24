@@ -1,11 +1,16 @@
 use rem6_cache::ChiCacheControllerResultKind;
-use rem6_coherence::{ChiCpuResponseRecord, ChiDirectoryLineHarness, LineBackingStore, SubmitKind};
+use rem6_coherence::{
+    ChiCpuResponseRecord, ChiDirectoryLineHarness, LineBackingStore, PartitionedCacheAgentConfig,
+    PartitionedChiDirectoryLineHarness, PartitionedRouteHopConfig, SubmitKind,
+};
 use rem6_directory::{ChiDirectoryDataSource, ChiDirectoryLineState, ChiDirectorySnoop};
+use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     ResponseStatus,
 };
 use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
+use rem6_transport::{MemoryTraceKind, TransportEndpointId};
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(64).unwrap()
@@ -56,6 +61,69 @@ fn harness() -> ChiDirectoryLineHarness {
         Address::new(0x6000),
         LineBackingStore::new(layout(), Address::new(0x6000), line_data()).unwrap(),
         [agent(1), agent(2), agent(3)],
+    )
+    .unwrap()
+}
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
+}
+
+fn cache_config(
+    agent_id: u32,
+    partition: u32,
+    endpoint_name: &str,
+    request_latency: u64,
+    response_latency: u64,
+) -> PartitionedCacheAgentConfig {
+    PartitionedCacheAgentConfig::new(
+        agent(agent_id),
+        PartitionId::new(partition),
+        endpoint(endpoint_name),
+        request_latency,
+        response_latency,
+    )
+}
+
+fn route_hop(
+    partition: u32,
+    endpoint_name: &str,
+    request_latency: u64,
+    response_latency: u64,
+) -> PartitionedRouteHopConfig {
+    PartitionedRouteHopConfig::new(
+        PartitionId::new(partition),
+        endpoint(endpoint_name),
+        request_latency,
+        response_latency,
+    )
+}
+
+fn partitioned_harness() -> PartitionedChiDirectoryLineHarness {
+    PartitionedChiDirectoryLineHarness::new(
+        layout(),
+        Address::new(0x6000),
+        LineBackingStore::new(layout(), Address::new(0x6000), line_data()).unwrap(),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        [
+            cache_config(1, 0, "l1d0", 3, 9),
+            cache_config(2, 1, "l1d1", 5, 7),
+            cache_config(3, 3, "l1d2", 2, 4),
+        ],
+    )
+    .unwrap()
+}
+
+fn partitioned_harness_with_hop() -> PartitionedChiDirectoryLineHarness {
+    PartitionedChiDirectoryLineHarness::new(
+        layout(),
+        Address::new(0x6000),
+        LineBackingStore::new(layout(), Address::new(0x6000), line_data()).unwrap(),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        [cache_config(1, 0, "l1d0", 0, 0)
+            .with_route_hops([route_hop(1, "noc0", 2, 6), route_hop(2, "dir0", 3, 8)])],
     )
     .unwrap()
 }
@@ -255,5 +323,150 @@ fn chi_harness_snapshot_restore_reinstates_serial_state() {
             ResponseStatus::Completed,
             Some(vec![0, 1, 0xdd, 3]),
         ))
+    );
+}
+
+#[test]
+fn partitioned_chi_harness_waits_for_owner_snoop_before_peer_fill() {
+    let mut harness = partitioned_harness();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x6002, vec![0xaa, 0xbb]))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+    assert_eq!(run.final_tick(), 12);
+    assert_eq!(
+        harness.cache_state(agent(1)).unwrap(),
+        ChiState::UniqueDirty
+    );
+
+    harness
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x6000, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+    assert_eq!(run.final_tick(), 26);
+    assert_eq!(
+        harness.cache_state(agent(1)).unwrap(),
+        ChiState::SharedClean
+    );
+    assert_eq!(
+        harness.cache_state(agent(2)).unwrap(),
+        ChiState::SharedClean
+    );
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&ChiCpuResponseRecord::new(
+            26,
+            ChiCacheControllerResultKind::Fill,
+            request_id(2, 0),
+            ResponseStatus::Completed,
+            Some(vec![0, 1, 0xaa, 0xbb]),
+        ))
+    );
+    let decisions = harness.directory_decisions();
+    assert_eq!(decisions.len(), 2);
+    assert_eq!(decisions[1].tick(), 17);
+    assert_eq!(decisions[1].requester(), agent(2));
+    assert_eq!(
+        decisions[1].decision().snoops(),
+        &[ChiDirectorySnoop::new(agent(1), ChiEvent::SnoopShared)]
+    );
+}
+
+#[test]
+fn partitioned_chi_harness_quiescent_snapshot_restores_state() {
+    let mut source = partitioned_harness();
+    source
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x6002, vec![0xaa, 0xbb]))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    source
+        .submit_cpu_request_parallel(agent(2), read(2, 0, 0x6000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+
+    let mut restored = partitioned_harness();
+    restored
+        .submit_cpu_request_parallel(agent(3), write(3, 7, 0x6001, vec![0xee]))
+        .unwrap();
+    restored.run_until_idle_parallel().unwrap();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+    assert_eq!(
+        restored.directory_state(),
+        ChiDirectoryLineState::new(line())
+            .with_sharer(agent(1), ChiState::SharedClean)
+            .with_sharer(agent(2), ChiState::SharedClean)
+    );
+
+    let hit = restored
+        .submit_cpu_request_parallel(agent(2), read(2, 9, 0x6000, 4))
+        .unwrap();
+    assert_eq!(hit.kind(), SubmitKind::ImmediateHit);
+    assert_eq!(
+        restored.cpu_responses().last(),
+        Some(&ChiCpuResponseRecord::new(
+            snapshot.scheduler().now(),
+            ChiCacheControllerResultKind::Hit,
+            request_id(2, 9),
+            ResponseStatus::Completed,
+            Some(vec![0, 1, 0xaa, 0xbb]),
+        ))
+    );
+}
+
+#[test]
+fn partitioned_chi_harness_records_multihop_response_trace() {
+    let mut harness = partitioned_harness_with_hop();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x6002, vec![0xaa, 0xbb]))
+        .unwrap();
+    let run = harness.run_until_idle_parallel().unwrap();
+    assert_eq!(run.final_tick(), 19);
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&ChiCpuResponseRecord::new(
+            19,
+            ChiCacheControllerResultKind::Fill,
+            request_id(1, 0),
+            ResponseStatus::Completed,
+            None,
+        ))
+    );
+
+    let route = harness.route(agent(1)).unwrap();
+    let trace = harness.trace();
+    assert!(trace.iter().all(|event| event.route() == route));
+    assert_eq!(
+        trace
+            .iter()
+            .map(|event| (
+                event.tick(),
+                event.endpoint().as_str().to_owned(),
+                event.kind()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, "l1d0".to_owned(), MemoryTraceKind::RequestSent),
+            (2, "noc0".to_owned(), MemoryTraceKind::RequestArrived),
+            (5, "dir0".to_owned(), MemoryTraceKind::RequestArrived),
+            (13, "noc0".to_owned(), MemoryTraceKind::ResponseArrived),
+            (19, "l1d0".to_owned(), MemoryTraceKind::ResponseArrived),
+        ]
+    );
+    assert_eq!(
+        trace
+            .iter()
+            .filter(|event| event.kind() == MemoryTraceKind::ResponseArrived)
+            .map(|event| event.response_status())
+            .collect::<Vec<_>>(),
+        vec![
+            Some(ResponseStatus::Completed),
+            Some(ResponseStatus::Completed)
+        ]
     );
 }
