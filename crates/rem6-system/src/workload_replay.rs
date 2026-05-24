@@ -786,12 +786,12 @@ impl RiscvWorkloadReplay {
             .plan
             .topology()
             .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
-        let layout = self.instruction_layout()?;
         let fetch_size = AccessSize::new(4).map_err(RiscvWorkloadReplayError::Memory)?;
         let cores = topology
             .riscv_cores()
             .iter()
             .map(|core| {
+                let layout = self.instruction_layout(topology, core.entry(), fetch_size)?;
                 let route = route_map.get(core.fetch_route()).copied().ok_or_else(|| {
                     RiscvWorkloadReplayError::MissingRoute {
                         route: core.fetch_route().clone(),
@@ -1108,14 +1108,18 @@ impl RiscvWorkloadReplay {
             })
     }
 
-    fn instruction_layout(&self) -> Result<CacheLineLayout, RiscvWorkloadReplayError> {
-        let topology = self
-            .plan
-            .topology()
-            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+    fn instruction_layout(
+        &self,
+        topology: &WorkloadTopology,
+        entry: Address,
+        fetch_size: AccessSize,
+    ) -> Result<CacheLineLayout, RiscvWorkloadReplayError> {
+        let fetch_range = rem6_memory::AddressRange::new(entry, fetch_size)
+            .map_err(RiscvWorkloadReplayError::Memory)?;
         let target = topology
             .memory_targets()
-            .first()
+            .iter()
+            .find(|target| target.range().contains_range(fetch_range))
             .ok_or(RiscvWorkloadReplayError::MissingMemoryTarget)?;
         CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)
     }

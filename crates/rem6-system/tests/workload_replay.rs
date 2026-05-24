@@ -73,6 +73,12 @@ fn boot_image() -> BootImage {
         .unwrap()
 }
 
+fn boot_image_with_second_target_entry() -> BootImage {
+    BootImage::new(Address::new(0x9000))
+        .add_segment(Address::new(0x9000), word(0x0000_0073))
+        .unwrap()
+}
+
 fn boot_image_with_data_load() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(u_type(0x9000, 2, 0x37)))
@@ -208,6 +214,46 @@ fn replay_topology() -> WorkloadTopology {
                 Address::new(0x9000),
                 "cpu1.ifetch",
                 route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_second_target_entry() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x1000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                1,
+                32,
+                AddressRange::new(Address::new(0x9000), AccessSize::new(0x1000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x9000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
             )
             .unwrap(),
         )
@@ -518,6 +564,25 @@ fn replay_manifest() -> WorkloadManifest {
         ))
         .build()
         .unwrap()
+}
+
+fn replay_manifest_with_second_target_entry() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-second-target-entry"),
+        boot_image_with_second_target_entry(),
+    )
+    .with_topology(replay_topology_with_second_target_entry())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
 }
 
 fn replay_manifest_with_profiled_contended_fetches() -> WorkloadManifest {
@@ -888,6 +953,22 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     assert_eq!(outcome.run().scheduled_traps().len(), 2);
     assert!(outcome.run().active_partition_count() >= 2);
     assert!(outcome.run().max_parallel_scheduler_workers() >= 1);
+}
+
+#[test]
+fn workload_replay_uses_entry_target_layout_for_fetches() {
+    let manifest = replay_manifest_with_second_target_entry();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(outcome.result().manifest_identity(), manifest.identity());
+    assert_eq!(outcome.result().stop_reason(), Some("host-stop"));
+    assert_eq!(outcome.run().active_cpu_count(), 1);
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]
