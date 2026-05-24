@@ -92,7 +92,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats`, `rem6-power` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, typed probe events, typed power domains, and checkpoints exist. |
 | `src/systemc` | 3911 | future `rem6-systemc` or adapter crate | external-adapter | Preserve interoperability only through an adapter boundary. Core rem6 timing must not depend on SystemC. |
 | `src/sst` | 6 | future SST adapter crate | external-adapter | Preserve co-simulation value behind a typed boundary that cannot bypass rem6 partition ownership. |
-| `src/proto` | 9 | future serialization boundary | planned | Any protobuf-like exchange must produce typed rem6 data before entering simulation. |
+| `src/proto` | 9 | `rem6-proto`, future adapters | partial | Protobuf-like exchange must produce typed rem6 data before entering simulation. rem6-proto has typed instruction and packet trace records, validation, canonical id-string maps, and stable identity; binary protobuf adapters remain open. |
 | `src/learning_gem5`, `src/doc`, `src/doxygen`, `src/test_objects` | 39 | docs and tests | partial | Keep useful examples as audit input, but rem6 acceptance is through Rust tests and architecture docs. |
 
 ## Configuration and Experiment Surface
@@ -229,6 +229,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   typed activity profiles.
 - Stats tests cover counter reset epochs and typed probe point, listener,
   event, payload, and snapshot records.
+- Proto-boundary tests cover typed instruction and packet trace records,
+  one-of instruction encoding, memory-access and packet-size validation,
+  duplicate id-string rejection, canonical id-string ordering, and stable trace
+  identity.
 - Power tests cover typed power state domains, leader/follower matching,
   residency accounting, transition counters, invalid transition rejection, and
   snapshot restore. Power-model tests cover residency-weighted dynamic/static
