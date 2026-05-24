@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 
+use crate::{FabricPacket, FabricPath};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct QosRequestorId(u32);
 
@@ -224,6 +226,68 @@ impl QosGrant {
 
     pub const fn bytes(&self) -> u64 {
         self.bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricQosRequest {
+    requestor: QosRequestorId,
+    priority: QosPriority,
+    order: u64,
+    packet: FabricPacket,
+    path: FabricPath,
+}
+
+impl FabricQosRequest {
+    pub fn new(
+        requestor: QosRequestorId,
+        priority: QosPriority,
+        order: u64,
+        packet: FabricPacket,
+        path: FabricPath,
+    ) -> Self {
+        Self {
+            requestor,
+            priority,
+            order,
+            packet,
+            path,
+        }
+    }
+
+    pub const fn requestor(&self) -> QosRequestorId {
+        self.requestor
+    }
+
+    pub const fn priority(&self) -> QosPriority {
+        self.priority
+    }
+
+    pub const fn order(&self) -> u64 {
+        self.order
+    }
+
+    pub fn packet(&self) -> &FabricPacket {
+        &self.packet
+    }
+
+    pub fn path(&self) -> &FabricPath {
+        &self.path
+    }
+
+    pub(crate) fn queued_request(&self) -> QosQueuedRequest {
+        QosQueuedRequest::new(
+            QosRequestId::new(self.packet.id().get()),
+            self.requestor,
+            self.priority,
+            self.packet.bytes(),
+            self.order,
+        )
+        .expect("fabric packets always have nonzero bytes")
+    }
+
+    pub(crate) fn into_packet_path(self) -> (FabricPacket, FabricPath) {
+        (self.packet, self.path)
     }
 }
 

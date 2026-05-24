@@ -7,7 +7,7 @@ use rem6_kernel::{Tick, WaitForEdgeKind, WaitForGraph, WaitForNode};
 mod qos;
 
 pub use qos::{
-    QosError, QosFixedPriorityPolicy, QosGrant, QosPriority, QosQueueArbiter,
+    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosGrant, QosPriority, QosQueueArbiter,
     QosQueueArbiterSnapshot, QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId,
 };
 
@@ -70,6 +70,7 @@ pub enum FabricError {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
     },
+    QosNoGrant,
     TickOverflow,
 }
 
@@ -94,6 +95,7 @@ impl fmt::Display for FabricError {
                 link.as_str(),
                 virtual_network.get()
             ),
+            Self::QosNoGrant => write!(formatter, "QoS arbiter did not select a queued request"),
             Self::TickOverflow => write!(formatter, "fabric tick calculation overflowed"),
         }
     }
@@ -784,6 +786,42 @@ impl FabricModel {
             .into_iter()
             .map(|(packet, path)| self.reserve_transfer(injection_tick, packet, &path))
             .collect()
+    }
+
+    pub fn transmit_qos_batch<I>(
+        &mut self,
+        injection_tick: Tick,
+        requests: I,
+        arbiter: &mut QosQueueArbiter,
+    ) -> Result<Vec<FabricTransfer>, FabricError>
+    where
+        I: IntoIterator<Item = FabricQosRequest>,
+    {
+        let mut pending: Vec<_> = requests.into_iter().collect();
+        let mut seen = BTreeSet::new();
+        for request in &pending {
+            if !seen.insert(request.packet().id()) {
+                return Err(FabricError::DuplicatePacketInBatch {
+                    packet: request.packet().id(),
+                });
+            }
+        }
+
+        let mut transfers = Vec::with_capacity(pending.len());
+        while !pending.is_empty() {
+            let queue: Vec<_> = pending
+                .iter()
+                .map(FabricQosRequest::queued_request)
+                .collect();
+            let Some(grant) = arbiter.grant(&queue) else {
+                return Err(FabricError::QosNoGrant);
+            };
+            let request = pending.remove(grant.queue_index());
+            let (packet, path) = request.into_packet_path();
+            transfers.push(self.reserve_transfer(injection_tick, packet, &path)?);
+        }
+
+        Ok(transfers)
     }
 
     pub fn lane_snapshots(&self) -> Vec<FabricLaneSnapshot> {

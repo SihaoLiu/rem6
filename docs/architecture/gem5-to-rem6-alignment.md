@@ -97,7 +97,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/mem/ruby` | `rem6-coherence`, `rem6-directory`, `rem6-fabric` | partial | rem6 keeps detailed coherence and NoC behavior without a second memory-stack vocabulary. |
 | `src/mem/slicc` | protocol crates and typed transition records | partial | rem6 should preserve protocol expressiveness while avoiding generated controllers that hide transient behavior. |
 | `src/mem/protocol` | `rem6-protocol-msi`, `rem6-protocol-mesi`, `rem6-protocol-moesi`, future CHI-like crate | partial | MSI, MESI, MOESI exist. CHI-like behavior is required for the completion bar. |
-| `src/mem/qos` | `rem6-fabric`, `rem6-dram`, `rem6-transport` | partial | rem6-fabric has typed QoS requestor IDs, checked priorities, fixed-priority assignment, FIFO/LIFO/LRG queue arbitration, non-mutating empty polls, and queue-arbiter snapshots. This preserves gem5's fixed-priority and queue-policy concepts while avoiding global requestor lookup and memory-controller back pointers. Integration with DRAM timing queues, transport batch scheduling, priority escalation, turnaround policy, bandwidth accounting, and run-summary diagnostics remains open. |
+| `src/mem/qos` | `rem6-fabric`, `rem6-dram`, `rem6-transport` | partial | rem6-fabric has typed QoS requestor IDs, checked priorities, fixed-priority assignment, FIFO/LIFO/LRG queue arbitration, non-mutating empty polls, queue-arbiter snapshots, and QoS-ordered fabric batch transmission that reserves shared links in grant order. This preserves gem5's fixed-priority and queue-policy concepts while avoiding global requestor lookup and memory-controller back pointers. Integration with DRAM timing queues, transport batch scheduling, priority escalation, turnaround policy, bandwidth accounting, and run-summary diagnostics remains open. |
 | `src/mem/probes` | `rem6-stats`, runtime summaries | partial | Observability should be typed counters and run summaries, not string-only probes. |
 | memory ports, packets, requests in `src/mem` root | `rem6-transport`, `rem6-memory` | partial | Shared request/response transport exists; more gem5 packet semantics need mapping as features are added. |
 
@@ -166,7 +166,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   single-entry issue from the selected source.
 - Fabric QoS tests cover explicit fixed-priority requestor mapping,
   highest-priority queue selection, FIFO/LIFO same-priority ordering, LRG
-  requestor rotation, non-mutating empty polls, and snapshot replay.
+  requestor rotation, non-mutating empty polls, snapshot replay, and
+  QoS-driven fabric batch reservation order on a shared link.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, result metadata, execution mode switches, host action
   summaries, checkpoint restore labels, and statistics snapshots.

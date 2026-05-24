@@ -1,6 +1,7 @@
 use rem6_fabric::{
-    QosError, QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosQueuePolicyKind,
-    QosQueuedRequest, QosRequestId, QosRequestorId,
+    FabricLinkId, FabricModel, FabricPacket, FabricPacketId, FabricPath, FabricPathHop,
+    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosPriority, QosQueueArbiter,
+    QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId, VirtualNetworkId,
 };
 
 fn request(id: u64, requestor: u32, priority: u8, bytes: u64, order: u64) -> QosQueuedRequest {
@@ -12,6 +13,28 @@ fn request(id: u64, requestor: u32, priority: u8, bytes: u64, order: u64) -> Qos
         order,
     )
     .unwrap()
+}
+
+fn packet(id: u64) -> FabricPacket {
+    FabricPacket::new(FabricPacketId::new(id), 8, VirtualNetworkId::new(0)).unwrap()
+}
+
+fn link(name: &str) -> FabricLinkId {
+    FabricLinkId::new(name).unwrap()
+}
+
+fn path(name: &str) -> FabricPath {
+    FabricPath::new([FabricPathHop::new(link(name), 1, 8).unwrap()]).unwrap()
+}
+
+fn fabric_qos_request(id: u64, requestor: u32, priority: u8, order: u64) -> FabricQosRequest {
+    FabricQosRequest::new(
+        QosRequestorId::new(requestor),
+        QosPriority::new(priority),
+        order,
+        packet(id),
+        path("mesh_qos"),
+    )
 }
 
 #[test]
@@ -135,4 +158,70 @@ fn qos_lrg_round_robins_requestors_without_mutating_empty_polls() {
     assert_eq!(third.queue_index(), 0);
     assert_eq!(third.requestor(), QosRequestorId::new(1));
     assert_eq!(third.request_id(), QosRequestId::new(11));
+}
+
+#[test]
+fn qos_batch_transmit_orders_fabric_reservations_by_priority_and_lrg() {
+    let mut fabric = FabricModel::new();
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted);
+
+    let transfers = fabric
+        .transmit_qos_batch(
+            0,
+            [
+                fabric_qos_request(30, 3, 1, 0),
+                fabric_qos_request(10, 1, 0, 1),
+                fabric_qos_request(20, 2, 0, 2),
+                fabric_qos_request(11, 1, 0, 3),
+            ],
+            &mut arbiter,
+        )
+        .unwrap();
+
+    let ids: Vec<_> = transfers
+        .iter()
+        .map(|transfer| transfer.packet().id())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            FabricPacketId::new(10),
+            FabricPacketId::new(20),
+            FabricPacketId::new(11),
+            FabricPacketId::new(30)
+        ]
+    );
+    assert_eq!(transfers[0].hops()[0].start_tick(), 0);
+    assert_eq!(transfers[1].hops()[0].start_tick(), 1);
+    assert_eq!(transfers[2].hops()[0].start_tick(), 2);
+    assert_eq!(transfers[3].hops()[0].start_tick(), 3);
+    assert_eq!(fabric.total_queue_delay_ticks(), 6);
+
+    let snapshot = arbiter.snapshot();
+    let replayed = fabric
+        .transmit_qos_batch(
+            10,
+            [
+                fabric_qos_request(40, 2, 0, 0),
+                fabric_qos_request(41, 1, 0, 1),
+            ],
+            &mut arbiter,
+        )
+        .unwrap();
+    assert_eq!(replayed[0].packet().id(), FabricPacketId::new(40));
+    assert_eq!(replayed[1].packet().id(), FabricPacketId::new(41));
+
+    arbiter.restore(snapshot);
+    let replayed_again = fabric
+        .transmit_qos_batch(
+            20,
+            [
+                fabric_qos_request(50, 2, 0, 0),
+                fabric_qos_request(51, 1, 0, 1),
+            ],
+            &mut arbiter,
+        )
+        .unwrap();
+    assert_eq!(replayed_again[0].packet().id(), FabricPacketId::new(50));
+    assert_eq!(replayed_again[1].packet().id(), FabricPacketId::new(51));
 }
