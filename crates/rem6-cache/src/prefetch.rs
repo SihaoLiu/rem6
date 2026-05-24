@@ -576,6 +576,7 @@ impl QueuedPrefetcher {
                     duplicate_hits += 1;
                     if self.pending[index].update_priority(candidate) {
                         updated_priorities += 1;
+                        sort_pending_entries(&mut self.pending);
                     }
                     continue;
                 }
@@ -672,7 +673,7 @@ impl QueuedPrefetcher {
             .iter()
             .map(QueuedPrefetchEntry::from_snapshot)
             .collect();
-        pending.sort_by_key(|entry| (entry.ready_tick, entry.order));
+        sort_pending_entries(&mut pending);
         self.pending = pending;
         self.next_order = snapshot.next_order();
         Ok(())
@@ -697,11 +698,31 @@ impl QueuedPrefetcher {
 fn insert_pending_entry(pending: &mut Vec<QueuedPrefetchEntry>, entry: QueuedPrefetchEntry) {
     let index = pending
         .iter()
-        .position(|existing| {
-            (entry.ready_tick, entry.order) < (existing.ready_tick, existing.order)
-        })
+        .position(|existing| pending_entry_precedes(&entry, existing))
         .unwrap_or(pending.len());
     pending.insert(index, entry);
+}
+
+fn sort_pending_entries(pending: &mut [QueuedPrefetchEntry]) {
+    pending.sort_by(|left, right| {
+        if pending_entry_precedes(left, right) {
+            std::cmp::Ordering::Less
+        } else if pending_entry_precedes(right, left) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+}
+
+fn pending_entry_precedes(left: &QueuedPrefetchEntry, right: &QueuedPrefetchEntry) -> bool {
+    if left.ready_tick != right.ready_tick {
+        return left.ready_tick < right.ready_tick;
+    }
+    if left.priority != right.priority {
+        return left.priority > right.priority;
+    }
+    left.order < right.order
 }
 
 fn oldest_lowest_priority_index(pending: &[QueuedPrefetchEntry]) -> usize {

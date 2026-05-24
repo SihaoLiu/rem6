@@ -86,6 +86,43 @@ fn queued_prefetcher_delays_deduplicates_and_snapshots_candidates() {
 }
 
 #[test]
+fn queued_prefetcher_orders_same_tick_candidates_by_priority() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+    assert_eq!(candidates[0].address(), Address::new(0x10c0));
+    assert_eq!(candidates[1].address(), Address::new(0x1100));
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 2, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(10, &candidates[1..], &[])
+            .unwrap()
+            .accepted(),
+        1
+    );
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(10, &candidates[..1], &[])
+            .unwrap()
+            .accepted(),
+        1
+    );
+
+    let issued = queue.issue_ready(13);
+    assert_eq!(
+        issued
+            .iter()
+            .map(|entry| entry.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x10c0), Address::new(0x1100)]
+    );
+}
+
+#[test]
 fn queued_prefetcher_squashes_same_line_demand_accesses() {
     let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
     let mut stride = StridePrefetcher::new(stride_config);
