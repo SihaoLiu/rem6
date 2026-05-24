@@ -748,6 +748,7 @@ impl RiscvTopologySystem {
         mut self,
         memory: PartitionedMemoryStore,
     ) -> Result<Self, RiscvTopologySystemError> {
+        self.attach_store_line_layouts_to_cores(&memory)?;
         self.memory = Some(RiscvTopologyMemoryBackend::Store {
             component: default_memory_checkpoint_component(MemoryTargetId::new(0)),
             memory: Arc::new(Mutex::new(memory)),
@@ -767,6 +768,7 @@ impl RiscvTopologySystem {
         image
             .load_into_partitioned_store(&mut memory, config.target())
             .map_err(RiscvTopologySystemError::Boot)?;
+        self.attach_store_line_layouts_to_cores(&memory)?;
         self.memory = Some(RiscvTopologyMemoryBackend::Store {
             component: config.checkpoint_component().clone(),
             memory: Arc::new(Mutex::new(memory)),
@@ -807,24 +809,40 @@ impl RiscvTopologySystem {
         Ok(self)
     }
 
+    fn attach_store_line_layouts_to_cores(
+        &self,
+        memory: &PartitionedMemoryStore,
+    ) -> Result<(), RiscvTopologySystemError> {
+        for (target, range) in memory.regions() {
+            let layout = memory
+                .partition_layout(*target)
+                .map_err(RiscvTopologySystemError::Memory)?;
+            self.attach_line_layout_range_to_cores(*range, layout);
+        }
+        Ok(())
+    }
+
     fn attach_dram_line_layouts_to_cores(
         &self,
         config: &RiscvTopologyDramConfig,
     ) -> Result<(), RiscvTopologySystemError> {
-        let core_ids = self.cluster.core_ids();
         for target in &config.targets {
             for region in target.regions() {
                 let range = AddressRange::new(region.start(), region.size())
                     .map_err(RiscvTopologySystemError::Memory)?;
-                for cpu in &core_ids {
-                    self.cluster
-                        .core(*cpu)
-                        .expect("cluster core id")
-                        .add_memory_line_layout_range(range, target.line_layout());
-                }
+                self.attach_line_layout_range_to_cores(range, target.line_layout());
             }
         }
         Ok(())
+    }
+
+    fn attach_line_layout_range_to_cores(&self, range: AddressRange, line_layout: CacheLineLayout) {
+        for cpu in self.cluster.core_ids() {
+            self.cluster
+                .core(cpu)
+                .expect("cluster core id")
+                .add_memory_line_layout_range(range, line_layout);
+        }
     }
 
     pub fn install_riscv_device_tree_handoff(
