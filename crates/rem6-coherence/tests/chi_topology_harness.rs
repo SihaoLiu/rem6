@@ -471,6 +471,39 @@ fn topology_chi_harness_routes_backing_read_through_dram_path() {
 }
 
 #[test]
+fn topology_chi_harness_recorded_parallel_run_reports_dram_resources() {
+    let topology = dram_topology();
+    let mut harness =
+        PartitionedChiDirectoryLineHarness::new_with_topology(&topology, dram_harness_config())
+            .unwrap();
+
+    harness
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x3004, 4))
+        .unwrap();
+    let run = harness.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.final_tick(), 52);
+    assert_eq!(run.cpu_response_count(), 1);
+    assert_eq!(run.directory_decision_count(), 1);
+    assert_eq!(run.dram_access_count(), 1);
+    assert_eq!(run.protocol_activity_count(), 3);
+    assert!(run.has_parallel_work());
+    assert!(run.has_directory_activity());
+    assert!(run.has_dram_activity());
+    assert!(run.has_resource_activity());
+    assert_eq!(run.active_dram_target_count(), 1);
+    assert_eq!(run.dram_profile().access_count(), 1);
+
+    let history = harness.parallel_run_history();
+    assert_eq!(history.run_count(), 1);
+    assert_eq!(history.total_cpu_responses(), 1);
+    assert_eq!(history.total_directory_decisions(), 1);
+    assert_eq!(history.total_dram_accesses(), 1);
+    assert!(history.has_dram_activity());
+    assert!(history.has_resource_activity());
+}
+
+#[test]
 fn topology_chi_harness_builds_intermediate_cache_directory_path() {
     let topology = intermediate_topology();
     let mut harness =

@@ -26,11 +26,13 @@ use rem6_transport::{
 use rem6_fabric::FabricModel;
 use rem6_kernel::{
     ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError, SchedulerSnapshot,
-    Tick,
+    Tick, WaitForGraph,
 };
 
+use crate::summary::CoherenceResourceActivityWindow;
 use crate::{
-    HarnessError, LineBackingStore, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
+    HarnessError, LineBackingStore, ParallelCoherenceRunHistory, ParallelCoherenceRunSummary,
+    ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
     PartitionedRouteHopConfig, SubmitKind,
 };
 
@@ -321,6 +323,7 @@ pub struct PartitionedChiDirectoryLineHarness {
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<ChiDirectoryDecisionRecord>>>,
+    parallel_runs: Vec<ParallelCoherenceRunSummary>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -740,6 +743,7 @@ impl PartitionedChiDirectoryLineHarness {
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            parallel_runs: Vec::new(),
         })
     }
 
@@ -855,6 +859,7 @@ impl PartitionedChiDirectoryLineHarness {
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
+            parallel_runs: Vec::new(),
         })
     }
 
@@ -997,10 +1002,56 @@ impl PartitionedChiDirectoryLineHarness {
     }
 
     pub fn run_until_idle_parallel(&mut self) -> Result<ConservativeRunSummary, ChiHarnessError> {
-        self.scheduler
-            .run_until_idle_parallel_recorded()
+        self.run_until_idle_parallel_recorded()
             .map(|run| run.summary())
-            .map_err(ChiHarnessError::Scheduler)
+    }
+
+    pub fn run_until_idle_parallel_recorded(
+        &mut self,
+    ) -> Result<ParallelCoherenceRunSummary, ChiHarnessError> {
+        let cpu_responses_before = self.cpu_responses.lock().expect("response lock").len();
+        let directory_decisions_before = self
+            .directory_decisions
+            .lock()
+            .expect("decision lock")
+            .len();
+        let resource_window =
+            CoherenceResourceActivityWindow::mark(&self.transport, self.dram_memory.as_ref());
+        let scheduler_run = self
+            .scheduler
+            .run_until_idle_parallel_recorded()
+            .map_err(ChiHarnessError::Scheduler)?;
+        let cpu_response_count = self
+            .cpu_responses
+            .lock()
+            .expect("response lock")
+            .len()
+            .saturating_sub(cpu_responses_before);
+        let directory_decision_count = self
+            .directory_decisions
+            .lock()
+            .expect("decision lock")
+            .len()
+            .saturating_sub(directory_decisions_before);
+        let (fabric_activity, dram_activity) =
+            resource_window.collect(&self.transport, self.dram_memory.as_ref());
+        let dram_access_count = dram_activity
+            .iter()
+            .map(|activity| activity.profile().access_count())
+            .sum();
+        let run = ParallelCoherenceRunSummary::new(
+            scheduler_run,
+            cpu_response_count,
+            directory_decision_count,
+            dram_access_count,
+            fabric_activity,
+            dram_activity,
+            ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new()),
+        );
+        if run.has_parallel_observation() {
+            self.parallel_runs.push(run.clone());
+        }
+        Ok(run)
     }
 
     pub fn now(&self) -> Tick {
@@ -1042,6 +1093,14 @@ impl PartitionedChiDirectoryLineHarness {
             .lock()
             .expect("decision lock")
             .clone()
+    }
+
+    pub fn parallel_runs(&self) -> &[ParallelCoherenceRunSummary] {
+        &self.parallel_runs
+    }
+
+    pub fn parallel_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::from_runs(&self.parallel_runs)
     }
 
     pub const fn line(&self) -> ChiLineId {
