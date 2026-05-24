@@ -73,6 +73,7 @@ pub use topology::{
 pub enum SubmitKind {
     ImmediateHit,
     ScheduledMiss,
+    CoalescedMiss,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

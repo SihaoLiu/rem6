@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cache::{
-    CacheControllerError, CacheControllerResultKind, MsiCacheBank, MsiCacheBankSnapshot,
+    CacheControllerError, CacheControllerResultKind, MshrQueueConfig, MsiCacheBank,
+    MsiCacheBankSnapshot,
 };
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, MsiDirectory,
@@ -538,6 +539,38 @@ impl MsiBankDirectoryHarness {
         })
     }
 
+    pub fn new_with_mshr<I>(
+        layout: CacheLineLayout,
+        agents: I,
+        mshr_config: MshrQueueConfig,
+    ) -> Result<Self, HarnessError>
+    where
+        I: IntoIterator<Item = AgentId>,
+    {
+        let mut caches = BTreeMap::new();
+        for agent in agents {
+            if caches
+                .insert(
+                    agent,
+                    MsiCacheBank::new_with_mshr(agent, layout, mshr_config.clone()),
+                )
+                .is_some()
+            {
+                return Err(HarnessError::DuplicateCache { agent });
+            }
+        }
+
+        Ok(Self {
+            layout,
+            directory: MsiDirectory::new(),
+            caches,
+            backing: BTreeMap::new(),
+            cpu_responses: Vec::new(),
+            directory_decisions: Vec::new(),
+            parallel_cycle_runs: Vec::new(),
+        })
+    }
+
     pub fn insert_backing_line(
         &mut self,
         line_address: Address,
@@ -573,6 +606,79 @@ impl MsiBankDirectoryHarness {
         request: MemoryRequest,
     ) -> Result<SubmitResult, HarnessError> {
         self.submit_cpu_request_at(0, agent, request)
+    }
+
+    pub fn submit_coalesced_cpu_requests<I>(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        requests: I,
+    ) -> Result<Vec<SubmitResult>, HarnessError>
+    where
+        I: IntoIterator<Item = MemoryRequest>,
+    {
+        self.cache(agent)?;
+        let requests = requests.into_iter().collect::<Vec<_>>();
+        let Some(first) = requests.first() else {
+            return Ok(Vec::new());
+        };
+        let expected_line = self.layout.line_address(first.line_address());
+        for request in &requests {
+            let actual = self.layout.line_address(request.line_address());
+            if actual != expected_line {
+                return Err(HarnessError::WrongLine {
+                    expected: expected_line,
+                    actual,
+                });
+            }
+        }
+
+        let mut results = Vec::with_capacity(requests.len());
+        let mut pending_fill = None;
+        for request in requests {
+            let result = self
+                .cache_mut(agent)?
+                .accept_cpu_request(request)
+                .map_err(HarnessError::CacheBank)?;
+            let cache_result = result.kind();
+            if self.record_target_outcomes(tick, cache_result, result.target_outcomes()) > 0 {
+                results.push(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
+                continue;
+            }
+
+            if let Some(downstream) = result.downstream_request().cloned() {
+                if let Some((first, _, _)) = &pending_fill {
+                    return Err(HarnessError::ParallelLineConflict {
+                        line: expected_line,
+                        first: *first,
+                        second: downstream.id(),
+                    });
+                }
+                let decision = self
+                    .directory
+                    .accept(downstream.clone())
+                    .map_err(HarnessError::Directory)?;
+                self.directory_decisions.push(decision.clone());
+                pending_fill = Some((downstream.id(), downstream, decision.clone()));
+                results.push(
+                    SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
+                        .with_directory_decision(decision),
+                );
+            } else {
+                results.push(SubmitResult::new(SubmitKind::CoalescedMiss, cache_result));
+            }
+        }
+
+        if let Some((_, downstream, decision)) = pending_fill {
+            let response = self.directory_response(&downstream, &decision)?;
+            let fill = self
+                .cache_mut(agent)?
+                .accept_fill(response)
+                .map_err(HarnessError::CacheBank)?;
+            self.record_target_outcomes(tick, fill.kind(), fill.target_outcomes());
+        }
+
+        Ok(results)
     }
 
     pub fn submit_parallel_cycle<I>(
@@ -672,8 +778,7 @@ impl MsiBankDirectoryHarness {
             .map_err(HarnessError::CacheBank)?;
         let cache_result = result.kind();
 
-        if let Some(TargetOutcome::Respond(response)) = result.target_outcome() {
-            self.record_cpu_response(tick, cache_result, response);
+        if self.record_target_outcomes(tick, cache_result, result.target_outcomes()) > 0 {
             return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
         }
 
@@ -691,9 +796,7 @@ impl MsiBankDirectoryHarness {
             .cache_mut(agent)?
             .accept_fill(response)
             .map_err(HarnessError::CacheBank)?;
-        if let Some(TargetOutcome::Respond(response)) = fill.target_outcome() {
-            self.record_cpu_response(tick, fill.kind(), response);
-        }
+        self.record_target_outcomes(tick, fill.kind(), fill.target_outcomes());
 
         Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
             .with_directory_decision(decision))
@@ -905,6 +1008,21 @@ impl MsiBankDirectoryHarness {
     ) {
         self.cpu_responses
             .push(response_record(tick, cache_result, response));
+    }
+
+    fn record_target_outcomes(
+        &mut self,
+        tick: u64,
+        cache_result: CacheControllerResultKind,
+        outcomes: &[TargetOutcome],
+    ) -> usize {
+        let before = self.cpu_responses.len();
+        for outcome in outcomes {
+            if let TargetOutcome::Respond(response) = outcome {
+                self.record_cpu_response(tick, cache_result, response);
+            }
+        }
+        self.cpu_responses.len() - before
     }
 
     fn validate_snapshot_identity(

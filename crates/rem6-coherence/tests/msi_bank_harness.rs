@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_cache::CacheControllerResultKind;
+use rem6_cache::{CacheControllerResultKind, MshrQueueConfig};
 use rem6_coherence::{
     CpuResponseRecord, HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
     SubmitKind,
@@ -191,6 +191,52 @@ fn msi_bank_harness_keeps_independent_lines_in_one_cache_bank() {
     assert_eq!(responses[0].data().unwrap(), &[0x11; 8]);
     assert_eq!(responses[1].request(), request_id(1, 11));
     assert_eq!(responses[1].data().unwrap(), &[0x22; 8]);
+}
+
+#[test]
+fn msi_bank_harness_coalesced_batch_records_all_mshr_targets() {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [agent(1)],
+        MshrQueueConfig::new(2, 2, 0).unwrap(),
+    )
+    .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x3000), line_data(0x66))
+        .unwrap();
+
+    let results = harness
+        .submit_coalesced_cpu_requests(7, agent(1), [read(1, 100, 0x3004), read(1, 101, 0x3008)])
+        .unwrap();
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].kind(), SubmitKind::ScheduledMiss);
+    assert_eq!(results[0].cache_result(), CacheControllerResultKind::Miss);
+    assert_eq!(
+        results[0]
+            .directory_decision()
+            .unwrap()
+            .grant()
+            .unwrap()
+            .data_source(),
+        DirectoryDataSource::BackingMemory
+    );
+    assert_eq!(results[1].kind(), SubmitKind::CoalescedMiss);
+    assert_eq!(results[1].cache_result(), CacheControllerResultKind::Miss);
+    assert_eq!(harness.directory_decisions().len(), 1);
+    assert_eq!(
+        harness.cache_state(agent(1), Address::new(0x3000)).unwrap(),
+        Some(MsiState::Shared)
+    );
+
+    let responses = harness.cpu_responses();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0].tick(), 7);
+    assert_eq!(responses[0].request(), request_id(1, 100));
+    assert_eq!(responses[0].data().unwrap(), &[0x66; 8]);
+    assert_eq!(responses[1].tick(), 7);
+    assert_eq!(responses[1].request(), request_id(1, 101));
+    assert_eq!(responses[1].data().unwrap(), &[0x66; 8]);
 }
 
 #[test]

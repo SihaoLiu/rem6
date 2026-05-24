@@ -713,6 +713,7 @@ fn submit_kind_to_u8(kind: SubmitKind) -> u8 {
     match kind {
         SubmitKind::ImmediateHit => 0,
         SubmitKind::ScheduledMiss => 1,
+        SubmitKind::CoalescedMiss => 2,
     }
 }
 
@@ -720,6 +721,7 @@ fn u8_to_submit_kind(value: u8) -> Result<SubmitKind, String> {
     match value {
         0 => Ok(SubmitKind::ImmediateHit),
         1 => Ok(SubmitKind::ScheduledMiss),
+        2 => Ok(SubmitKind::CoalescedMiss),
         _ => Err(format!("unknown MSI submit kind {value}")),
     }
 }
