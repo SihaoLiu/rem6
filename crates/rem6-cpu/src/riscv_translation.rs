@@ -1,10 +1,13 @@
-use rem6_kernel::{PartitionEventId, PartitionedScheduler, SchedulerContext, Tick};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
+};
 use rem6_memory::{
     Address, ByteMask, MemoryRequestId, TranslationFault, TranslationPageMap, TranslationRequestId,
     TranslationTlbStats,
 };
 use rem6_transport::{
-    MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportError,
+    MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
+    TransportError,
 };
 
 use crate::{
@@ -144,14 +147,9 @@ impl RiscvCore {
     where
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
-        self.complete_ready_data_translations_with_page_map(scheduler.now(), page_map)?;
-        let mut issue = self.prepare_ready_translated_data_access(scheduler.now(), transport)?;
-        if issue.is_none() && self.enqueue_next_data_translation(scheduler.now())? {
-            self.complete_ready_data_translations_with_page_map(scheduler.now(), page_map)?;
-            issue = self.prepare_ready_translated_data_access(scheduler.now(), transport)?;
-        }
-
-        let Some(issue) = issue else {
+        let Some(issue) =
+            self.prepare_next_translated_data_access(scheduler.now(), transport, page_map)?
+        else {
             return Ok(None);
         };
         let request = issue.memory_request()?;
@@ -170,6 +168,60 @@ impl RiscvCore {
 
         self.record_data_issue(issue);
         Ok(Some(event))
+    }
+
+    pub fn issue_next_translated_data_access_parallel<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        page_map: &TranslationPageMap,
+        responder: F,
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let Some(issue) =
+            self.prepare_next_translated_data_access(scheduler.now(), transport, page_map)?
+        else {
+            return Ok(None);
+        };
+        let request = issue.memory_request()?;
+        let core = self.clone();
+        let transaction = ParallelMemoryTransaction::new(
+            issue.memory_route(),
+            request,
+            trace,
+            responder,
+            move |delivery| core.record_data_response(delivery),
+        );
+        let event = transport
+            .submit_parallel_batch(scheduler, [transaction])
+            .map_err(RiscvCpuError::Transport)?
+            .into_iter()
+            .next()
+            .expect("single translated data transaction returns one event");
+
+        self.record_data_issue(issue);
+        Ok(Some(event))
+    }
+
+    fn prepare_next_translated_data_access(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        page_map: &TranslationPageMap,
+    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        self.complete_ready_data_translations_with_page_map(tick, page_map)?;
+        let mut issue = self.prepare_ready_translated_data_access(tick, transport)?;
+        if issue.is_none() && self.enqueue_next_data_translation(tick)? {
+            self.complete_ready_data_translations_with_page_map(tick, page_map)?;
+            issue = self.prepare_ready_translated_data_access(tick, transport)?;
+        }
+
+        Ok(issue)
     }
 
     fn enqueue_next_data_translation(&self, tick: Tick) -> Result<bool, RiscvCpuError> {

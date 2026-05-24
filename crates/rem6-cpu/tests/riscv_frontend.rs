@@ -894,6 +894,64 @@ fn riscv_core_issues_translated_load_through_data_tlb() {
 }
 
 #[test]
+fn riscv_core_issues_parallel_translated_load_through_data_tlb() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one_parallel(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+
+    core.issue_next_translated_data_access_parallel(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, context| {
+            assert_eq!(context.partition(), PartitionId::new(1));
+            assert_eq!(delivery.request().range().start(), Address::new(0x9008));
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(core.read_register(reg(5)), 0x0123_4567_89ab_cdef);
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert_eq!(events[0].physical_address(), Address::new(0x9008));
+    assert_eq!(events[1].physical_address(), Address::new(0x9008));
+}
+
+#[test]
 fn riscv_core_issues_ready_translated_data_after_translation_latency() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
