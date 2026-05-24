@@ -8,7 +8,7 @@ mod expression;
 
 pub use expression::{
     PowerExpression, PowerExpressionInputs, PowerExpressionModel, PowerExpressionModelSnapshot,
-    PowerMetricId, PowerStateExpression,
+    PowerMetricBinding, PowerMetricBindings, PowerMetricId, PowerStateExpression,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -868,6 +868,15 @@ pub enum PowerError {
     MissingPowerMetric {
         metric: PowerMetricId,
     },
+    DuplicatePowerMetricBinding {
+        metric: PowerMetricId,
+    },
+    DuplicateBoundStat {
+        stat: rem6_stats::StatId,
+    },
+    MissingBoundStat {
+        stat: rem6_stats::StatId,
+    },
     InvalidPowerExpressionResult,
     DuplicatePowerStateExpressionModel {
         state: PowerStateKind,
@@ -946,6 +955,27 @@ impl fmt::Display for PowerError {
             }
             Self::MissingPowerMetric { metric } => {
                 write!(formatter, "missing power metric id {}", metric.get())
+            }
+            Self::DuplicatePowerMetricBinding { metric } => {
+                write!(
+                    formatter,
+                    "duplicate power metric binding for metric {}",
+                    metric.get()
+                )
+            }
+            Self::DuplicateBoundStat { stat } => {
+                write!(
+                    formatter,
+                    "duplicate power metric binding for stat {}",
+                    stat.get()
+                )
+            }
+            Self::MissingBoundStat { stat } => {
+                write!(
+                    formatter,
+                    "power metric binding references missing stat {}",
+                    stat.get()
+                )
             }
             Self::InvalidPowerExpressionResult => {
                 write!(

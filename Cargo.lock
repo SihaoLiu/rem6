@@ -152,6 +152,7 @@ name = "rem6-power"
 version = "0.1.0"
 dependencies = [
  "rem6-kernel",
+ "rem6-stats",
 ]
 
 [[package]]

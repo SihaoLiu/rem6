@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{PowerError, PowerEstimate, PowerModelMode, PowerResidency, PowerStateKind};
+use rem6_stats::{StatId, StatSnapshot};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PowerMetricId(u64);
@@ -12,6 +13,64 @@ impl PowerMetricId {
 
     pub const fn get(self) -> u64 {
         self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PowerMetricBinding {
+    metric: PowerMetricId,
+    stat: StatId,
+}
+
+impl PowerMetricBinding {
+    pub const fn new(metric: PowerMetricId, stat: StatId) -> Self {
+        Self { metric, stat }
+    }
+
+    pub const fn metric(&self) -> PowerMetricId {
+        self.metric
+    }
+
+    pub const fn stat(&self) -> StatId {
+        self.stat
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PowerMetricBindings {
+    by_metric: BTreeMap<PowerMetricId, StatId>,
+    by_stat: BTreeMap<StatId, PowerMetricId>,
+}
+
+impl PowerMetricBindings {
+    pub fn new(bindings: Vec<PowerMetricBinding>) -> Result<Self, PowerError> {
+        let mut by_metric = BTreeMap::new();
+        let mut by_stat = BTreeMap::new();
+        for binding in bindings {
+            if by_metric.insert(binding.metric(), binding.stat()).is_some() {
+                return Err(PowerError::DuplicatePowerMetricBinding {
+                    metric: binding.metric(),
+                });
+            }
+            if by_stat.insert(binding.stat(), binding.metric()).is_some() {
+                return Err(PowerError::DuplicateBoundStat {
+                    stat: binding.stat(),
+                });
+            }
+        }
+        Ok(Self { by_metric, by_stat })
+    }
+
+    pub fn stat_for(&self, metric: PowerMetricId) -> Option<StatId> {
+        self.by_metric.get(&metric).copied()
+    }
+
+    pub fn metric_for(&self, stat: StatId) -> Option<PowerMetricId> {
+        self.by_stat.get(&stat).copied()
+    }
+
+    pub fn entries(&self) -> &BTreeMap<PowerMetricId, StatId> {
+        &self.by_metric
     }
 }
 
@@ -46,6 +105,28 @@ impl PowerExpressionInputs {
         validate_expression_input(value)?;
         self.metrics.insert(metric, value);
         Ok(self)
+    }
+
+    pub fn from_stat_snapshot(
+        temperature_c: f64,
+        voltage_v: f64,
+        clock_period_ticks: f64,
+        snapshot: &StatSnapshot,
+        bindings: &PowerMetricBindings,
+    ) -> Result<Self, PowerError> {
+        let stat_values = snapshot
+            .samples()
+            .iter()
+            .map(|sample| (sample.id(), sample.value() as f64))
+            .collect::<BTreeMap<_, _>>();
+        let mut inputs = Self::new(temperature_c, voltage_v, clock_period_ticks)?;
+        for (metric, stat) in bindings.entries() {
+            let Some(value) = stat_values.get(stat) else {
+                return Err(PowerError::MissingBoundStat { stat: *stat });
+            };
+            inputs = inputs.with_metric(*metric, *value)?;
+        }
+        Ok(inputs)
     }
 
     pub const fn temperature_c(&self) -> f64 {
