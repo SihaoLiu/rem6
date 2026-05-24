@@ -31,6 +31,8 @@ fn dram_timing() -> DramTiming {
         .unwrap()
         .with_burst_spacing(2)
         .unwrap()
+        .with_command_window(10, 2)
+        .unwrap()
 }
 
 fn fast_dram_timing() -> DramTiming {
@@ -220,6 +222,10 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
             .burst_spacing(),
         2
     );
+    assert_eq!(
+        captured.snapshot().targets()[0].controller().ports()[0].command_window_starts(),
+        &[0, 0]
+    );
     assert!(registry.chunk(&component, "dram").unwrap().len() > 192);
 
     {
@@ -244,6 +250,10 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
             .burst_spacing(),
         2
     );
+    assert_eq!(
+        restored.snapshot().targets()[0].controller().ports()[0].command_window_starts(),
+        &[0, 0]
+    );
     let mut controller = controller.lock().unwrap();
     assert_eq!(controller.snapshot(), captured.snapshot().clone());
     assert_eq!(
@@ -264,7 +274,8 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
 
     let row_hit = controller.accept(8, &read(0x1008, 4, 23)).unwrap();
     assert!(row_hit.dram_access().row_hit());
-    assert_eq!(row_hit.ready_cycle(), 13);
+    assert_eq!(row_hit.dram_access().command_cycle(), 10);
+    assert_eq!(row_hit.ready_cycle(), 15);
 }
 
 #[test]

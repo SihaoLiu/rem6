@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_dram::{
-    DramAccessKind, DramBankState, DramControllerSnapshot, DramGeometry, DramMemoryController,
-    DramMemoryError, DramMemorySnapshot, DramMemoryTargetSnapshot, DramPortState, DramTiming,
-    ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
+    DramAccessKind, DramBankState, DramCommandWindow, DramControllerSnapshot, DramGeometry,
+    DramMemoryController, DramMemoryError, DramMemorySnapshot, DramMemoryTargetSnapshot,
+    DramPortState, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot,
@@ -478,6 +478,7 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_u64(&mut payload, timing.precharge_latency());
         write_u64(&mut payload, timing.bus_turnaround());
         write_u64(&mut payload, timing.burst_spacing());
+        write_command_window(&mut payload, timing.command_window());
         write_profile(&mut payload, target.profile());
         write_nvm_media_state(
             &mut payload,
@@ -500,10 +501,25 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         for port in controller.ports() {
             write_u64(&mut payload, port.bus_available_cycle());
             write_access_kind(&mut payload, port.last_access_kind());
+            write_u64(&mut payload, port.command_window_starts().len() as u64);
+            for window_start in port.command_window_starts() {
+                write_u64(&mut payload, *window_start);
+            }
         }
     }
 
     payload
+}
+
+fn write_command_window(payload: &mut Vec<u8>, command_window: Option<DramCommandWindow>) {
+    let Some(command_window) = command_window else {
+        write_u64(payload, 0);
+        return;
+    };
+
+    write_u64(payload, 1);
+    write_u64(payload, command_window.window_cycles());
+    write_u32(payload, command_window.max_commands());
 }
 
 fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>) {
@@ -688,6 +704,7 @@ fn decode_dram_memory(
                 target.get()
             ))
         })?;
+        let timing = read_command_window(&mut cursor, target, timing)?;
         let line_layout = CacheLineLayout::new(line_size).map_err(|error| {
             cursor.invalid(format!(
                 "DRAM target {} has invalid profile line layout: {error}",
@@ -735,9 +752,15 @@ fn decode_dram_memory(
         for port in 0..port_count {
             let bus_available_cycle = cursor.read_u64("DRAM port bus available cycle")?;
             let last_access_kind = read_access_kind(&mut cursor, target, format!("port {port}"))?;
-            ports.push(DramPortState::from_snapshot(
+            let command_window_count = cursor.read_count("DRAM port command window start count")?;
+            let mut command_window_starts = Vec::with_capacity(command_window_count);
+            for _ in 0..command_window_count {
+                command_window_starts.push(cursor.read_u64("DRAM port command window start")?);
+            }
+            ports.push(DramPortState::from_snapshot_with_command_windows(
                 bus_available_cycle,
                 last_access_kind,
+                command_window_starts,
             ));
         }
 
@@ -868,6 +891,31 @@ fn read_nvm_media_timing(
         }),
         value => Err(cursor.invalid(format!(
             "DRAM target {} has invalid NVM media timing presence {value}",
+            target.get()
+        ))),
+    }
+}
+
+fn read_command_window(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+    timing: DramTiming,
+) -> Result<DramTiming, DramMemoryCheckpointError> {
+    match cursor.read_u64("DRAM command window presence")? {
+        0 => Ok(timing),
+        1 => timing
+            .with_command_window(
+                cursor.read_u64("DRAM command window cycles")?,
+                cursor.read_u32("DRAM command window max commands")?,
+            )
+            .map_err(|error| {
+                cursor.invalid(format!(
+                    "DRAM target {} has invalid command window timing: {error}",
+                    target.get()
+                ))
+            }),
+        value => Err(cursor.invalid(format!(
+            "DRAM target {} has invalid command window presence {value}",
             target.get()
         ))),
     }

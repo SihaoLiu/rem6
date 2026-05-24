@@ -238,6 +238,14 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
     hash_u64(hash, profile.timing().precharge_latency());
     hash_u64(hash, profile.timing().bus_turnaround());
     hash_u64(hash, profile.timing().burst_spacing());
+    match profile.timing().command_window() {
+        Some(command_window) => {
+            hash_str(hash, "timing.command_window.some");
+            hash_u64(hash, command_window.window_cycles());
+            hash_u64(hash, u64::from(command_window.max_commands()));
+        }
+        None => hash_str(hash, "timing.command_window.none"),
+    }
     match profile.technology() {
         DramMemoryTechnology::Ddr => hash_str(hash, "ddr"),
         DramMemoryTechnology::Hbm => hash_str(hash, "hbm"),

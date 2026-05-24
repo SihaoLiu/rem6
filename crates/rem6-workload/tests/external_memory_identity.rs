@@ -62,3 +62,16 @@ fn workload_manifest_identity_changes_with_external_memory_burst_spacing() {
 
     assert_ne!(base.identity(), spaced.identity());
 }
+
+#[test]
+fn workload_manifest_identity_changes_with_external_memory_command_window() {
+    let base = manifest_with_timing(DramTiming::new(4, 8, 10, 3, 5).unwrap());
+    let windowed = manifest_with_timing(
+        DramTiming::new(4, 8, 10, 3, 5)
+            .unwrap()
+            .with_command_window(10, 2)
+            .unwrap(),
+    );
+
+    assert_ne!(base.identity(), windowed.identity());
+}

@@ -289,7 +289,7 @@ fn current_direction_candidates<'a>(
         let decoded = controller
             .geometry
             .decode_request(controller.parallel_port_count(), request.request())?;
-        let port = controller.ports[decoded.parallel_port as usize];
+        let port = &controller.ports[decoded.parallel_port as usize];
         if port.last_access_kind() == Some(kind) {
             matching_direction.push(index);
         }

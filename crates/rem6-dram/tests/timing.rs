@@ -232,6 +232,37 @@ fn dram_controller_enforces_burst_spacing_across_banks() {
 }
 
 #[test]
+fn dram_controller_enforces_command_window_across_row_commands() {
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_command_window(10, 2)
+        .unwrap();
+    let mut controller = DramController::new(geometry(), timing);
+    let marker = controller.mark_wait_for();
+
+    let first = controller.schedule(0, &read(0x0000, 8, 52)).unwrap();
+    let second = controller.schedule(0, &read(0x0040, 8, 53)).unwrap();
+
+    assert_eq!(first.commands()[0].cycle(), 0);
+    assert_eq!(first.command_cycle(), 3);
+    assert_eq!(first.ready_cycle(), 8);
+    assert_eq!(second.bank(), 1);
+    assert_eq!(second.commands()[0].kind(), DramCommandKind::Activate);
+    assert_eq!(second.commands()[0].cycle(), 10);
+    assert_eq!(second.command_cycle(), 13);
+    assert_eq!(second.ready_cycle(), 18);
+
+    let request = WaitForNode::transaction("dram.agent.2.request.53").unwrap();
+    let bus = WaitForNode::resource("dram.port.0.bus").unwrap();
+    let graph = controller.wait_for_graph_since(marker).snapshot();
+
+    assert_eq!(graph.edge_count(), 1);
+    assert_eq!(graph.first_observed_tick(), Some(0));
+    assert_eq!(graph.last_observed_tick(), Some(9));
+    assert!(graph.contains_edge(&request, &bus, WaitForEdgeKind::Resource));
+}
+
+#[test]
 fn dram_controller_keeps_open_row_for_row_hits() {
     let mut controller = DramController::new(geometry(), timing());
     controller.schedule(0, &read(0x0000, 8, 1)).unwrap();

@@ -18,7 +18,7 @@ pub use profile::{
     NvmMediaTiming, NvmMediaTimingField,
 };
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
-pub use timing::{DramGeometry, DramTiming, DramTimingField};
+pub use timing::{DramCommandWindow, DramGeometry, DramTiming, DramTimingField};
 
 use rem6_fabric::{QosError, QosQueueArbiter};
 use rem6_kernel::{WaitForEdgeKind, WaitForGraph, WaitForNode};
@@ -40,6 +40,8 @@ pub enum DramError {
     ZeroTimingLatency {
         field: DramTimingField,
     },
+    ZeroCommandWindow,
+    ZeroCommandWindowMaxCommands,
     ZeroProfileTopology {
         technology: DramMemoryTechnology,
         field: DramProfileField,
@@ -86,6 +88,15 @@ impl fmt::Display for DramError {
             ),
             Self::ZeroTimingLatency { field } => {
                 write!(formatter, "DRAM timing field {field:?} must be nonzero")
+            }
+            Self::ZeroCommandWindow => {
+                write!(formatter, "DRAM command window must be nonzero")
+            }
+            Self::ZeroCommandWindowMaxCommands => {
+                write!(
+                    formatter,
+                    "DRAM maximum commands per command window must be nonzero"
+                )
             }
             Self::ZeroProfileTopology { technology, field } => write!(
                 formatter,
@@ -140,6 +151,8 @@ impl Error for DramError {
             | Self::ZeroLineSize
             | Self::RowSizeNotLineMultiple { .. }
             | Self::ZeroTimingLatency { .. }
+            | Self::ZeroCommandWindow
+            | Self::ZeroCommandWindowMaxCommands
             | Self::ZeroProfileTopology { .. }
             | Self::ZeroNvmMediaTiming { .. }
             | Self::NvmMediaTimingOnVolatileProfile { .. }
@@ -595,10 +608,11 @@ impl DramBankState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DramPortState {
     bus_available_cycle: u64,
     last_access_kind: Option<DramAccessKind>,
+    command_window_starts: Vec<u64>,
 }
 
 impl DramPortState {
@@ -606,28 +620,43 @@ impl DramPortState {
         Self {
             bus_available_cycle: 0,
             last_access_kind: None,
+            command_window_starts: Vec::new(),
         }
     }
 
-    pub const fn from_snapshot(
+    pub fn from_snapshot(
         bus_available_cycle: u64,
         last_access_kind: Option<DramAccessKind>,
     ) -> Self {
+        Self::from_snapshot_with_command_windows(bus_available_cycle, last_access_kind, Vec::new())
+    }
+
+    pub fn from_snapshot_with_command_windows(
+        bus_available_cycle: u64,
+        last_access_kind: Option<DramAccessKind>,
+        mut command_window_starts: Vec<u64>,
+    ) -> Self {
+        command_window_starts.sort_unstable();
         Self {
             bus_available_cycle,
             last_access_kind,
+            command_window_starts,
         }
     }
 
-    pub const fn bus_available_cycle(self) -> u64 {
+    pub const fn bus_available_cycle(&self) -> u64 {
         self.bus_available_cycle
     }
 
-    pub const fn last_access_kind(self) -> Option<DramAccessKind> {
+    pub const fn last_access_kind(&self) -> Option<DramAccessKind> {
         self.last_access_kind
     }
 
-    fn ready_cycle(self, kind: DramAccessKind, timing: DramTiming) -> u64 {
+    pub fn command_window_starts(&self) -> &[u64] {
+        &self.command_window_starts
+    }
+
+    fn ready_cycle(&self, kind: DramAccessKind, timing: DramTiming) -> u64 {
         if self
             .last_access_kind
             .is_some_and(|previous| previous != kind)
@@ -636,6 +665,34 @@ impl DramPortState {
         } else {
             self.bus_available_cycle
         }
+    }
+
+    fn reserve_command_window(&mut self, timing: DramTiming, mut command_cycle: u64) -> u64 {
+        let Some(command_window) = timing.command_window() else {
+            return command_cycle;
+        };
+        loop {
+            let window_cycles = command_window.window_cycles();
+            let window_start = command_cycle - command_cycle % window_cycles;
+            self.command_window_starts
+                .retain(|start| *start + window_cycles > command_cycle);
+            let command_count = self
+                .command_window_starts
+                .iter()
+                .filter(|start| **start == window_start)
+                .count();
+            if command_count < command_window.max_commands() as usize {
+                self.command_window_starts.push(window_start);
+                self.command_window_starts.sort_unstable();
+                return command_cycle;
+            }
+            command_cycle = window_start + window_cycles;
+        }
+    }
+
+    fn set_bus_state(&mut self, bus_available_cycle: u64, last_access_kind: DramAccessKind) {
+        self.bus_available_cycle = bus_available_cycle;
+        self.last_access_kind = Some(last_access_kind);
     }
 }
 
@@ -701,7 +758,7 @@ impl DramController {
     }
 
     pub fn port_state(&self, parallel_port: u32) -> Option<DramPortState> {
-        self.ports.get(parallel_port as usize).copied()
+        self.ports.get(parallel_port as usize).cloned()
     }
 
     pub fn parallel_port_count(&self) -> u32 {
@@ -853,7 +910,8 @@ impl DramController {
             .geometry
             .decode_request(self.parallel_port_count(), request)?;
         let port_index = decoded.parallel_port as usize;
-        let bus_ready_cycle = self.ports[port_index].ready_cycle(kind, self.timing);
+        let mut port = self.ports[port_index].clone();
+        let bus_ready_cycle = port.ready_cycle(kind, self.timing);
         let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
         let bank = &mut self.banks[bank_index];
         let mut commands = Vec::new();
@@ -872,23 +930,39 @@ impl DramController {
 
         if !row_hit {
             if let Some(open_row) = bank.open_row {
-                commands.push(DramCommand::new(
+                let precharge_cycle = reserve_dram_command(
+                    &mut port,
+                    self.timing,
+                    request.id(),
+                    decoded.parallel_port,
                     next_cycle,
+                    &mut waits,
+                );
+                commands.push(DramCommand::new(
+                    precharge_cycle,
                     decoded.parallel_port,
                     decoded.bank,
                     open_row,
                     DramCommandKind::Precharge,
                 ));
-                next_cycle += self.timing.precharge_latency();
+                next_cycle = precharge_cycle + self.timing.precharge_latency();
             }
-            commands.push(DramCommand::new(
+            let activate_cycle = reserve_dram_command(
+                &mut port,
+                self.timing,
+                request.id(),
+                decoded.parallel_port,
                 next_cycle,
+                &mut waits,
+            );
+            commands.push(DramCommand::new(
+                activate_cycle,
                 decoded.parallel_port,
                 decoded.bank,
                 decoded.row,
                 DramCommandKind::Activate,
             ));
-            next_cycle += self.timing.activate_latency();
+            next_cycle = activate_cycle + self.timing.activate_latency();
             bank.open_row = Some(decoded.row);
         }
 
@@ -935,6 +1009,14 @@ impl DramController {
                 }
             }
         }
+        command_cycle = reserve_dram_command(
+            &mut port,
+            self.timing,
+            request.id(),
+            decoded.parallel_port,
+            command_cycle,
+            &mut waits,
+        );
         commands.push(DramCommand::new(
             command_cycle,
             decoded.parallel_port,
@@ -962,8 +1044,8 @@ impl DramController {
         };
 
         bank.available_cycle = persistent_ready_cycle.unwrap_or(ready_cycle);
-        self.ports[port_index] =
-            DramPortState::from_snapshot(command_cycle + self.timing.burst_spacing(), Some(kind));
+        port.set_bus_state(command_cycle + self.timing.burst_spacing(), kind);
+        self.ports[port_index] = port;
         let pending_nvm_read_count =
             if kind == DramAccessKind::Read && self.nvm_media_timing.is_some() {
                 self.nvm_pending_read_completions.push(ready_cycle);
@@ -1060,6 +1142,26 @@ fn reserve_nvm_completion_slot(
             command_cycle = command_cycle.max(next_completion);
             pending_completions.retain(|completion| *completion > command_cycle);
         }
+    }
+    command_cycle
+}
+
+fn reserve_dram_command(
+    port: &mut DramPortState,
+    timing: DramTiming,
+    request: MemoryRequestId,
+    parallel_port: u32,
+    requested_cycle: u64,
+    waits: &mut Vec<DramWaitRecord>,
+) -> u64 {
+    let command_cycle = port.reserve_command_window(timing, requested_cycle);
+    if command_cycle > requested_cycle {
+        waits.push(DramWaitRecord::bus_resource(
+            request,
+            parallel_port,
+            requested_cycle,
+            command_cycle - 1,
+        ));
     }
     command_cycle
 }

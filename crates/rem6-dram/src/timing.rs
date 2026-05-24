@@ -18,6 +18,7 @@ pub struct DramTiming {
     precharge_latency: u64,
     bus_turnaround: u64,
     burst_spacing: u64,
+    command_window: Option<DramCommandWindow>,
 }
 
 impl DramTiming {
@@ -56,11 +57,21 @@ impl DramTiming {
             precharge_latency,
             bus_turnaround,
             burst_spacing: 0,
+            command_window: None,
         })
     }
 
     pub const fn with_burst_spacing(mut self, burst_spacing: u64) -> Result<Self, DramError> {
         self.burst_spacing = burst_spacing;
+        Ok(self)
+    }
+
+    pub fn with_command_window(
+        mut self,
+        window_cycles: u64,
+        max_commands: u32,
+    ) -> Result<Self, DramError> {
+        self.command_window = Some(DramCommandWindow::new(window_cycles, max_commands)?);
         Ok(self)
     }
 
@@ -88,11 +99,45 @@ impl DramTiming {
         self.burst_spacing
     }
 
+    pub const fn command_window(self) -> Option<DramCommandWindow> {
+        self.command_window
+    }
+
     pub(crate) fn data_latency(self, kind: DramAccessKind) -> u64 {
         match kind {
             DramAccessKind::Read => self.read_latency,
             DramAccessKind::Write => self.write_latency,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramCommandWindow {
+    window_cycles: u64,
+    max_commands: u32,
+}
+
+impl DramCommandWindow {
+    pub const fn new(window_cycles: u64, max_commands: u32) -> Result<Self, DramError> {
+        if window_cycles == 0 {
+            return Err(DramError::ZeroCommandWindow);
+        }
+        if max_commands == 0 {
+            return Err(DramError::ZeroCommandWindowMaxCommands);
+        }
+
+        Ok(Self {
+            window_cycles,
+            max_commands,
+        })
+    }
+
+    pub const fn window_cycles(self) -> u64 {
+        self.window_cycles
+    }
+
+    pub const fn max_commands(self) -> u32 {
+        self.max_commands
     }
 }
 
