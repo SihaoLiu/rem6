@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError};
-use rem6_boot::BootError;
+use rem6_boot::{BootError, BootImage};
 use rem6_coherence::{
     ChiHarnessError, HarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
     PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
@@ -34,8 +34,8 @@ use rem6_transport::{
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadError, WorkloadGpuDmaCopy,
     WorkloadHostActionSummary, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
-    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 mod cache_response;
@@ -468,6 +468,7 @@ fn dram_snapshot_line_data(
 #[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplay {
     plan: WorkloadReplayPlan,
+    resolved_resources: Option<WorkloadResolvedResources>,
     max_turns: usize,
 }
 
@@ -475,8 +476,14 @@ impl RiscvWorkloadReplay {
     pub const fn new(plan: WorkloadReplayPlan) -> Self {
         Self {
             plan,
+            resolved_resources: None,
             max_turns: DEFAULT_MAX_TURNS,
         }
+    }
+
+    pub fn with_resolved_resources(mut self, resources: WorkloadResolvedResources) -> Self {
+        self.resolved_resources = Some(resources);
+        self
     }
 
     pub const fn with_max_turns(mut self, max_turns: usize) -> Self {
@@ -1179,7 +1186,36 @@ impl RiscvWorkloadReplay {
             .map_err(RiscvWorkloadReplayError::Workload)?
             .load_into_partitioned_store_by_address(&mut store)
             .map_err(RiscvWorkloadReplayError::Boot)?;
+        self.load_linux_initrd_payload(&mut store)?;
         Ok(store)
+    }
+
+    fn load_linux_initrd_payload(
+        &self,
+        store: &mut PartitionedMemoryStore,
+    ) -> Result<(), RiscvWorkloadReplayError> {
+        let Some(handoff) = self.plan.linux_boot_handoff() else {
+            return Ok(());
+        };
+        let Some(initrd) = handoff.initrd() else {
+            return Ok(());
+        };
+        let payload = self
+            .resolved_resources
+            .as_ref()
+            .and_then(|resources| resources.linux_initrd_data(handoff))
+            .ok_or_else(|| {
+                RiscvWorkloadReplayError::Workload(WorkloadError::MissingResourcePayload {
+                    resource: initrd.resource().clone(),
+                })
+            })?;
+
+        BootImage::new(initrd.start())
+            .add_segment(initrd.start(), payload.to_vec())
+            .map_err(RiscvWorkloadReplayError::Boot)?
+            .load_into_partitioned_store_by_address(store)
+            .map(|_| ())
+            .map_err(RiscvWorkloadReplayError::Boot)
     }
 
     fn result_from_run(
