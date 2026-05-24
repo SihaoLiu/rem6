@@ -4,6 +4,13 @@ use std::fmt;
 
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForGraph, WaitForNode};
 
+mod qos;
+
+pub use qos::{
+    QosError, QosFixedPriorityPolicy, QosGrant, QosPriority, QosQueueArbiter,
+    QosQueueArbiterSnapshot, QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId,
+};
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FabricLinkId(String);
 
