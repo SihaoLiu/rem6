@@ -238,12 +238,12 @@ impl MsiBankCycleHistory {
         let mut best_mshr_qos_priority = None;
 
         for run in runs {
-            let mut run_has_mshr_qos = false;
             ticks.push(run.tick());
             total_accepted += run.accepted_count();
             total_responses += run.response_count();
             total_immediate_hits += run.immediate_hit_count();
             total_scheduled_misses += run.scheduled_miss_count();
+            total_mshr_qos_accepted += run.mshr_qos_accepted_count();
             max_accepted_per_cycle = max_accepted_per_cycle.max(run.accepted_count());
             has_parallel_work |= run.has_parallel_work();
             if run.has_parallel_work() {
@@ -252,26 +252,26 @@ impl MsiBankCycleHistory {
                 single_request_cycle_count += 1;
             }
             accepted_by_tick.insert(run.tick(), run.accepted_count());
+            for (priority, count) in run.accepted_by_effective_mshr_qos_priority_counts() {
+                *accepted_by_effective_mshr_qos_priority
+                    .entry(priority)
+                    .or_insert(0) += count;
+            }
+            for (requestor, count) in run.accepted_by_effective_mshr_qos_requestor_counts() {
+                *accepted_by_effective_mshr_qos_requestor
+                    .entry(requestor)
+                    .or_insert(0) += count;
+            }
+            if let Some(priority) = run.best_mshr_qos_priority() {
+                best_mshr_qos_priority =
+                    Some(best_mshr_qos_priority.map_or(priority, |best: u8| best.min(priority)));
+            }
             for accepted in run.accepted() {
                 touched_lines.insert(accepted.line_address());
                 *accepted_by_agent.entry(accepted.agent()).or_insert(0) += 1;
                 *accepted_by_line.entry(accepted.line_address()).or_insert(0) += 1;
-                if let Some(qos) = accepted.result().cache_mshr_effective_qos() {
-                    run_has_mshr_qos = true;
-                    total_mshr_qos_accepted += 1;
-                    *accepted_by_effective_mshr_qos_priority
-                        .entry(qos.priority())
-                        .or_insert(0) += 1;
-                    *accepted_by_effective_mshr_qos_requestor
-                        .entry(qos.requestor())
-                        .or_insert(0) += 1;
-                    best_mshr_qos_priority = Some(
-                        best_mshr_qos_priority
-                            .map_or(qos.priority(), |priority: u8| priority.min(qos.priority())),
-                    );
-                }
             }
-            if run.has_parallel_work() && run_has_mshr_qos {
+            if run.has_parallel_work() && run.has_mshr_qos() {
                 mshr_qos_parallel_cycle_count += 1;
             }
         }
@@ -490,11 +490,61 @@ impl MsiBankCycleRun {
             .count()
     }
 
+    pub fn mshr_qos_accepted_count(&self) -> usize {
+        self.accepted_mshr_qos().count()
+    }
+
+    pub fn has_mshr_qos(&self) -> bool {
+        self.accepted
+            .iter()
+            .any(|accepted| accepted.result().cache_mshr_effective_qos().is_some())
+    }
+
+    pub fn accepted_by_effective_mshr_qos_priority(&self, priority: u8) -> usize {
+        self.accepted_by_effective_mshr_qos_priority_counts()
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn accepted_by_effective_mshr_qos_priority_counts(&self) -> BTreeMap<u8, usize> {
+        let mut counts = BTreeMap::new();
+        for qos in self.accepted_mshr_qos() {
+            *counts.entry(qos.priority()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    pub fn accepted_by_effective_mshr_qos_requestor(&self, requestor: u32) -> usize {
+        self.accepted_by_effective_mshr_qos_requestor_counts()
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn accepted_by_effective_mshr_qos_requestor_counts(&self) -> BTreeMap<u32, usize> {
+        let mut counts = BTreeMap::new();
+        for qos in self.accepted_mshr_qos() {
+            *counts.entry(qos.requestor()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    pub fn best_mshr_qos_priority(&self) -> Option<u8> {
+        self.accepted_mshr_qos().map(|qos| qos.priority()).min()
+    }
+
     pub fn accepted_lines(&self) -> Vec<Address> {
         self.accepted
             .iter()
             .map(MsiBankCycleAccepted::line_address)
             .collect()
+    }
+
+    fn accepted_mshr_qos(&self) -> impl Iterator<Item = MshrQosClass> + '_ {
+        self.accepted
+            .iter()
+            .filter_map(|accepted| accepted.result().cache_mshr_effective_qos())
     }
 }
 

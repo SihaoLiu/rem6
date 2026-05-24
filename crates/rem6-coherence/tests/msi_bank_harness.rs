@@ -520,6 +520,23 @@ fn msi_bank_harness_parallel_cycle_records_mshr_qos_for_scheduled_misses() {
         run.accepted()[1].result().cache_mshr_effective_qos(),
         Some(MshrQosClass::new(70, 2))
     );
+    assert!(run.has_mshr_qos());
+    assert_eq!(run.mshr_qos_accepted_count(), 2);
+    assert_eq!(run.accepted_by_effective_mshr_qos_priority(2), 1);
+    assert_eq!(run.accepted_by_effective_mshr_qos_priority(4), 1);
+    assert_eq!(run.accepted_by_effective_mshr_qos_priority(7), 0);
+    assert_eq!(
+        run.accepted_by_effective_mshr_qos_priority_counts(),
+        BTreeMap::from([(2, 1), (4, 1)])
+    );
+    assert_eq!(run.accepted_by_effective_mshr_qos_requestor(50), 1);
+    assert_eq!(run.accepted_by_effective_mshr_qos_requestor(70), 1);
+    assert_eq!(run.accepted_by_effective_mshr_qos_requestor(90), 0);
+    assert_eq!(
+        run.accepted_by_effective_mshr_qos_requestor_counts(),
+        BTreeMap::from([(50, 1), (70, 1)])
+    );
+    assert_eq!(run.best_mshr_qos_priority(), Some(2));
     assert_eq!(
         harness.cache_mshr_effective_qos(agent(1), Address::new(0x1000)),
         Ok(None)
