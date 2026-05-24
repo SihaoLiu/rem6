@@ -898,10 +898,12 @@ fn read_profile(
     Ok(Some(profile))
 }
 
+type NvmMediaCheckpointState = (Option<NvmMediaTiming>, Vec<u64>, Vec<u64>);
+
 fn read_nvm_media_state(
     cursor: &mut DramPayloadCursor<'_>,
     target: MemoryTargetId,
-) -> Result<(Option<NvmMediaTiming>, Vec<u64>, Vec<u64>), DramMemoryCheckpointError> {
+) -> Result<NvmMediaCheckpointState, DramMemoryCheckpointError> {
     let nvm_media_timing = read_nvm_media_timing(cursor, target)?;
     let pending_read_count = cursor.read_count("DRAM NVM pending read completion count")?;
     let mut pending_read_completions = Vec::with_capacity(pending_read_count);

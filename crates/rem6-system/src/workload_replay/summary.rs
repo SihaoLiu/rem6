@@ -174,6 +174,7 @@ fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDat
         RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
         RiscvDataCacheProtocol::Mesi => WorkloadDataCacheProtocol::Mesi,
         RiscvDataCacheProtocol::Moesi => WorkloadDataCacheProtocol::Moesi,
+        RiscvDataCacheProtocol::Chi => WorkloadDataCacheProtocol::Chi,
     }
 }
 

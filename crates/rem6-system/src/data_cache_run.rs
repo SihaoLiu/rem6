@@ -14,6 +14,7 @@ pub enum RiscvDataCacheProtocol {
     Msi,
     Mesi,
     Moesi,
+    Chi,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -240,6 +241,7 @@ impl RiscvSystemRun {
             RiscvDataCacheProtocol::Msi,
             RiscvDataCacheProtocol::Mesi,
             RiscvDataCacheProtocol::Moesi,
+            RiscvDataCacheProtocol::Chi,
         ] {
             let history = self.data_cache_parallel_run_history_for_protocol(protocol);
             if !history.is_empty() {

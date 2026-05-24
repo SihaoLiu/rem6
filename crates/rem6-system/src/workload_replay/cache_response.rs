@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_coherence::{
-    CpuResponseRecord, HarnessError, MesiCpuResponseRecord, MesiHarnessError,
-    MoesiCpuResponseRecord, MoesiHarnessError, ParallelCoherenceRunSummary,
-    PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness,
-    PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
+    ChiCpuResponseRecord, ChiHarnessError, CpuResponseRecord, HarnessError, MesiCpuResponseRecord,
+    MesiHarnessError, MoesiCpuResponseRecord, MoesiHarnessError, ParallelCoherenceRunSummary,
+    PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
+    PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
+    PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
@@ -197,6 +198,34 @@ impl WorkloadDataCacheResponseHarness for PartitionedMoesiDirectoryLineHarness {
     }
 }
 
+impl WorkloadDataCacheResponseHarness for PartitionedChiDirectoryLineHarness {
+    type Error = ChiHarnessError;
+    type Response = ChiCpuResponseRecord;
+
+    fn now(&self) -> u64 {
+        PartitionedChiDirectoryLineHarness::now(self)
+    }
+
+    fn cpu_responses(&self) -> Vec<Self::Response> {
+        PartitionedChiDirectoryLineHarness::cpu_responses(self)
+    }
+
+    fn submit_cpu_request_parallel(
+        &mut self,
+        agent: AgentId,
+        request: MemoryRequest,
+    ) -> Result<(), Self::Error> {
+        PartitionedChiDirectoryLineHarness::submit_cpu_request_parallel(self, agent, request)
+            .map(|_| ())
+    }
+
+    fn run_until_idle_parallel_recorded(
+        &mut self,
+    ) -> Result<ParallelCoherenceRunSummary, Self::Error> {
+        PartitionedChiDirectoryLineHarness::run_until_idle_parallel_recorded(self)
+    }
+}
+
 fn workload_route<'a>(
     topology: &'a WorkloadTopology,
     route: &WorkloadRouteId,
@@ -268,6 +297,24 @@ impl WorkloadDataCacheResponseRecord for MesiCpuResponseRecord {
 }
 
 impl WorkloadDataCacheResponseRecord for MoesiCpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+
+    fn request(&self) -> MemoryRequestId {
+        self.request()
+    }
+}
+
+impl WorkloadDataCacheResponseRecord for ChiCpuResponseRecord {
     fn status(&self) -> ResponseStatus {
         self.status()
     }

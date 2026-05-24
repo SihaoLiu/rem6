@@ -46,11 +46,12 @@ fn workload_result_records_parallel_execution_summary() {
         .with_scheduler_counts(3, 1, 7, 5)
         .with_scheduler_partitions(4, 2)
         .with_riscv_core_counts(2, 2, 4, 3, 1, 2)
-        .with_data_cache_parallel_counts(6, 9, 11, 13, 3)
-        .with_data_cache_run_attribution(5, 1)
+        .with_data_cache_parallel_counts(7, 9, 11, 13, 3)
+        .with_data_cache_run_attribution(6, 1)
         .with_data_cache_protocol_counts([
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Chi, 1),
         ])
         .with_data_cache_diagnostics(17, 19)
         .with_fabric_activity(2, 7, 224, 31, 13, 8, 1)
@@ -86,18 +87,19 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.riscv_data_access_issue_count(), 1);
     assert_eq!(summary.riscv_scheduled_trap_count(), 2);
     assert!(summary.has_riscv_core_activity());
-    assert_eq!(summary.data_cache_parallel_run_count(), 6);
+    assert_eq!(summary.data_cache_parallel_run_count(), 7);
     assert_eq!(summary.data_cache_parallel_scheduler_epoch_count(), 9);
     assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 13);
     assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
-    assert_eq!(summary.attributed_data_cache_parallel_run_count(), 5);
+    assert_eq!(summary.attributed_data_cache_parallel_run_count(), 6);
     assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 1);
     assert_eq!(
         summary.data_cache_protocol_counts(),
         &[
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Chi, 1),
         ]
     );
     assert_eq!(
@@ -105,14 +107,16 @@ fn workload_result_records_parallel_execution_summary() {
         vec![
             WorkloadDataCacheProtocol::Msi,
             WorkloadDataCacheProtocol::Moesi,
+            WorkloadDataCacheProtocol::Chi,
         ],
     );
     assert_eq!(WorkloadDataCacheProtocol::Msi.as_str(), "msi");
     assert_eq!(WorkloadDataCacheProtocol::Mesi.as_str(), "mesi");
     assert_eq!(WorkloadDataCacheProtocol::Moesi.as_str(), "moesi");
+    assert_eq!(WorkloadDataCacheProtocol::Chi.as_str(), "chi");
     assert!(!summary.data_cache_protocol_counts()[0].is_empty());
     assert!(WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Mesi, 0).is_empty());
-    assert_eq!(summary.attributed_data_cache_protocol_run_count(), 5);
+    assert_eq!(summary.attributed_data_cache_protocol_run_count(), 6);
     assert_eq!(
         summary
             .data_cache_protocol_count_map()
@@ -127,7 +131,12 @@ fn workload_result_records_parallel_execution_summary() {
         summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Moesi),
         3,
     );
+    assert_eq!(
+        summary.data_cache_parallel_run_count_for_protocol(WorkloadDataCacheProtocol::Chi),
+        1,
+    );
     assert!(summary.has_data_cache_protocol(WorkloadDataCacheProtocol::Msi));
+    assert!(summary.has_data_cache_protocol(WorkloadDataCacheProtocol::Chi));
     assert!(!summary.has_data_cache_protocol(WorkloadDataCacheProtocol::Mesi));
     assert_eq!(summary.data_cache_wait_for_edge_count(), 17);
     assert_eq!(summary.data_cache_deadlock_diagnostic_count(), 19);

@@ -697,10 +697,12 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
     let msi_run = empty_coherence_run(8);
     let mesi_run = empty_coherence_run(13);
     let moesi_run = coherence_run_with_waits();
+    let chi_run = empty_coherence_run(21);
     let records = vec![
         RiscvDataCacheRunRecord::new(RiscvDataCacheProtocol::Msi, msi_run.clone()),
         RiscvDataCacheRunRecord::new(RiscvDataCacheProtocol::Mesi, mesi_run.clone()),
         RiscvDataCacheRunRecord::new(RiscvDataCacheProtocol::Moesi, moesi_run.clone()),
+        RiscvDataCacheRunRecord::new(RiscvDataCacheProtocol::Chi, chi_run.clone()),
     ];
 
     let run = RiscvSystemRun::new(
@@ -710,10 +712,15 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
     )
     .with_data_cache_run_records(records.clone());
 
-    assert_eq!(run.data_cache_run_count(), 3);
+    assert_eq!(run.data_cache_run_count(), 4);
     assert_eq!(
         run.data_cache_runs(),
-        &[msi_run.clone(), mesi_run.clone(), moesi_run.clone()]
+        &[
+            msi_run.clone(),
+            mesi_run.clone(),
+            moesi_run.clone(),
+            chi_run.clone()
+        ]
     );
     assert_eq!(run.data_cache_run_records(), records);
     assert_eq!(
@@ -722,6 +729,7 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
             Some(RiscvDataCacheProtocol::Msi),
             Some(RiscvDataCacheProtocol::Mesi),
             Some(RiscvDataCacheProtocol::Moesi),
+            Some(RiscvDataCacheProtocol::Chi),
         ],
     );
     assert_eq!(run.unattributed_data_cache_run_count(), 0);
@@ -744,6 +752,12 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         Some(1),
     );
     assert_eq!(
+        run.data_cache_protocol_counts()
+            .get(&RiscvDataCacheProtocol::Chi)
+            .copied(),
+        Some(1),
+    );
+    assert_eq!(
         run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
         1,
     );
@@ -755,9 +769,14 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Moesi),
         1,
     );
+    assert_eq!(
+        run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Chi),
+        1,
+    );
     assert!(run.has_data_cache_protocol(RiscvDataCacheProtocol::Msi));
     assert!(run.has_data_cache_protocol(RiscvDataCacheProtocol::Mesi));
     assert!(run.has_data_cache_protocol(RiscvDataCacheProtocol::Moesi));
+    assert!(run.has_data_cache_protocol(RiscvDataCacheProtocol::Chi));
     assert_eq!(
         run.data_cache_runs_for_protocol(RiscvDataCacheProtocol::Msi),
         vec![msi_run],
@@ -770,7 +789,11 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         run.data_cache_runs_for_protocol(RiscvDataCacheProtocol::Moesi),
         vec![moesi_run],
     );
-    assert_eq!(run.data_cache_parallel_run_history().run_count(), 3);
+    assert_eq!(
+        run.data_cache_runs_for_protocol(RiscvDataCacheProtocol::Chi),
+        vec![chi_run],
+    );
+    assert_eq!(run.data_cache_parallel_run_history().run_count(), 4);
     assert_eq!(
         run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi)
             .run_count(),
@@ -787,6 +810,11 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         1,
     );
     assert_eq!(
+        run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Chi)
+            .run_count(),
+        1,
+    );
+    assert_eq!(
         run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
         1,
     );
@@ -798,9 +826,14 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Moesi),
         1,
     );
+    assert_eq!(
+        run.data_cache_parallel_run_count_for_protocol(RiscvDataCacheProtocol::Chi),
+        1,
+    );
     assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi));
     assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Mesi));
     assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi));
+    assert!(run.has_data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Chi));
     assert!(run
         .data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi)
         .has_wait_for_edges());
@@ -831,7 +864,14 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
             .run_count(),
         1,
     );
-    assert_eq!(histories.len(), 3);
+    assert_eq!(
+        histories
+            .get(&RiscvDataCacheProtocol::Chi)
+            .unwrap()
+            .run_count(),
+        1,
+    );
+    assert_eq!(histories.len(), 4);
     let history_records = run.data_cache_parallel_run_history_records();
     assert_eq!(
         history_records,
@@ -848,6 +888,10 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
                 RiscvDataCacheProtocol::Moesi,
                 run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Moesi),
             ),
+            RiscvDataCacheRunHistoryRecord::new(
+                RiscvDataCacheProtocol::Chi,
+                run.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Chi),
+            ),
         ],
     );
     assert_eq!(
@@ -862,7 +906,7 @@ fn system_run_tracks_protocol_tagged_data_cache_runs() {
         run.unattributed_data_cache_parallel_run_history(),
         ParallelCoherenceRunHistory::default()
     );
-    assert_eq!(run.attributed_data_cache_parallel_run_count(), 3);
+    assert_eq!(run.attributed_data_cache_parallel_run_count(), 4);
     assert_eq!(run.unattributed_data_cache_parallel_run_count(), 0);
 }
 

@@ -7,6 +7,7 @@ pub enum WorkloadDataCacheProtocol {
     Msi,
     Mesi,
     Moesi,
+    Chi,
 }
 
 impl WorkloadDataCacheProtocol {
@@ -15,6 +16,7 @@ impl WorkloadDataCacheProtocol {
             Self::Msi => "msi",
             Self::Mesi => "mesi",
             Self::Moesi => "moesi",
+            Self::Chi => "chi",
         }
     }
 }

@@ -19,11 +19,16 @@ impl RiscvTopologySystem {
         ParallelCoherenceRunHistory::from_runs(&self.moesi_data_cache_runs())
     }
 
+    pub fn chi_data_cache_run_history(&self) -> ParallelCoherenceRunHistory {
+        ParallelCoherenceRunHistory::default()
+    }
+
     pub fn data_cache_parallel_run_history(&self) -> ParallelCoherenceRunHistory {
         ParallelCoherenceRunHistory::from_histories([
             self.msi_data_cache_run_history(),
             self.mesi_data_cache_run_history(),
             self.moesi_data_cache_run_history(),
+            self.chi_data_cache_run_history(),
         ])
     }
 
@@ -35,6 +40,7 @@ impl RiscvTopologySystem {
             RiscvDataCacheProtocol::Msi => self.msi_data_cache_run_history(),
             RiscvDataCacheProtocol::Mesi => self.mesi_data_cache_run_history(),
             RiscvDataCacheProtocol::Moesi => self.moesi_data_cache_run_history(),
+            RiscvDataCacheProtocol::Chi => self.chi_data_cache_run_history(),
         }
     }
 
@@ -61,6 +67,7 @@ impl RiscvTopologySystem {
             RiscvDataCacheProtocol::Msi,
             RiscvDataCacheProtocol::Mesi,
             RiscvDataCacheProtocol::Moesi,
+            RiscvDataCacheProtocol::Chi,
         ] {
             let history = self.data_cache_parallel_run_history_for_protocol(protocol);
             if !history.is_empty() {

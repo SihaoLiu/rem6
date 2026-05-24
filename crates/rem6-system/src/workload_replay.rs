@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError};
 use rem6_boot::BootError;
 use rem6_coherence::{
-    HarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
-    PartitionedCacheAgentConfig, PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
+    ChiHarnessError, HarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
+    PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
+    PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
     PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_cpu::{
@@ -88,6 +89,7 @@ enum WorkloadDataCacheHarness {
     Msi(PartitionedDirectoryLineHarness),
     Mesi(PartitionedMesiDirectoryLineHarness),
     Moesi(PartitionedMoesiDirectoryLineHarness),
+    Chi(PartitionedChiDirectoryLineHarness),
 }
 
 enum WorkloadDataCacheLineMemory {
@@ -211,6 +213,38 @@ impl WorkloadDataCacheLineBackend {
                     .map_err(RiscvWorkloadReplayError::MoesiDataCache)?,
                 ),
             ),
+            WorkloadDataCacheProtocol::Chi => (
+                RiscvDataCacheProtocol::Chi,
+                WorkloadDataCacheHarness::Chi(
+                    match memory {
+                        WorkloadDataCacheLineMemory::Line(line_data) => {
+                            LineBackingStore::new(layout, line, line_data)
+                                .map_err(ChiHarnessError::Backing)
+                                .and_then(|backing| {
+                                    PartitionedChiDirectoryLineHarness::new(
+                                        layout,
+                                        line,
+                                        backing,
+                                        directory_partition,
+                                        directory_endpoint,
+                                        agents,
+                                    )
+                                })
+                        }
+                        WorkloadDataCacheLineMemory::Dram(memory) => {
+                            PartitionedChiDirectoryLineHarness::new_with_dram_memory(
+                                layout,
+                                line,
+                                directory_partition,
+                                directory_endpoint,
+                                memory,
+                                agents,
+                            )
+                        }
+                    }
+                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?,
+                ),
+            ),
         };
 
         Ok(Self {
@@ -282,6 +316,16 @@ impl WorkloadDataCacheLineBackend {
                     .find_map(|cache| cache.cached_data().map(<[u8]>::to_vec))
                     .unwrap_or_else(|| snapshot.backing().data().to_vec()))
             }
+            WorkloadDataCacheHarness::Chi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?;
+                Ok(snapshot
+                    .caches()
+                    .values()
+                    .find_map(|cache| cache.cached_data().map(<[u8]>::to_vec))
+                    .unwrap_or_else(|| snapshot.backing().data().to_vec()))
+            }
         }
     }
 
@@ -310,6 +354,13 @@ impl WorkloadDataCacheLineBackend {
                 harness,
                 delivery,
                 RiscvWorkloadReplayError::MoesiDataCache,
+            ),
+            WorkloadDataCacheHarness::Chi(harness) => data_cache_response_result(
+                self.protocol,
+                &mut self.records,
+                harness,
+                delivery,
+                RiscvWorkloadReplayError::ChiDataCache,
             ),
         };
         Some(match outcome {
@@ -1461,6 +1512,7 @@ pub enum RiscvWorkloadReplayError {
     MsiDataCache(HarnessError),
     MesiDataCache(MesiHarnessError),
     MoesiDataCache(MoesiHarnessError),
+    ChiDataCache(ChiHarnessError),
     Cpu(CpuError),
     RiscvCluster(rem6_cpu::RiscvClusterError),
     Scheduler(SchedulerError),
@@ -1526,6 +1578,7 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::MsiDataCache(error) => write!(formatter, "{error}"),
             Self::MesiDataCache(error) => write!(formatter, "{error}"),
             Self::MoesiDataCache(error) => write!(formatter, "{error}"),
+            Self::ChiDataCache(error) => write!(formatter, "{error}"),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
@@ -1548,6 +1601,7 @@ impl Error for RiscvWorkloadReplayError {
             Self::MsiDataCache(error) => Some(error),
             Self::MesiDataCache(error) => Some(error),
             Self::MoesiDataCache(error) => Some(error),
+            Self::ChiDataCache(error) => Some(error),
             Self::Cpu(error) => Some(error),
             Self::RiscvCluster(error) => Some(error),
             Self::Scheduler(error) => Some(error),
@@ -1579,5 +1633,6 @@ mod tests {
         assert_response_harness::<PartitionedDirectoryLineHarness>();
         assert_response_harness::<PartitionedMesiDirectoryLineHarness>();
         assert_response_harness::<PartitionedMoesiDirectoryLineHarness>();
+        assert_response_harness::<PartitionedChiDirectoryLineHarness>();
     }
 }
