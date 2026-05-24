@@ -386,8 +386,8 @@ struct QueuedPrefetchEntry {
 }
 
 impl QueuedPrefetchEntry {
-    fn from_candidate(
-        candidate: &StridePrefetchCandidate,
+    fn from_candidate<C: PrefetchCandidate>(
+        candidate: &C,
         address: Address,
         source_tick: u64,
         ready_tick: u64,
@@ -452,13 +452,13 @@ impl QueuedPrefetchEntry {
         }
     }
 
-    fn same_request(&self, address: Address, candidate: &StridePrefetchCandidate) -> bool {
+    fn same_request<C: PrefetchCandidate>(&self, address: Address, candidate: &C) -> bool {
         self.address == address
             && self.context == candidate.context()
             && self.secure == candidate.secure()
     }
 
-    fn update_priority(&mut self, candidate: &StridePrefetchCandidate) -> bool {
+    fn update_priority<C: PrefetchCandidate>(&mut self, candidate: &C) -> bool {
         let priority = queued_prefetch_priority(candidate);
         if priority <= self.priority {
             return false;
@@ -497,20 +497,20 @@ impl QueuedPrefetcher {
         self.pending.first().map(|entry| entry.ready_tick)
     }
 
-    pub fn enqueue_candidates(
+    pub fn enqueue_candidates<C: PrefetchCandidate>(
         &mut self,
         source_tick: u64,
-        candidates: &[StridePrefetchCandidate],
+        candidates: &[C],
     ) -> Result<usize, QueuedPrefetcherError> {
         Ok(self
             .enqueue_candidates_filtered(source_tick, candidates, &[])?
             .accepted())
     }
 
-    pub fn enqueue_candidates_filtered(
+    pub fn enqueue_candidates_filtered<C: PrefetchCandidate>(
         &mut self,
         source_tick: u64,
-        candidates: &[StridePrefetchCandidate],
+        candidates: &[C],
         redundant_lines: &[QueuedPrefetchRedundantLine],
     ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
         self.enqueue_candidates_filtered_limited(
@@ -521,10 +521,10 @@ impl QueuedPrefetcher {
         )
     }
 
-    pub fn enqueue_candidates_throttled(
+    pub fn enqueue_candidates_throttled<C: PrefetchCandidate>(
         &mut self,
         source_tick: u64,
-        candidates: &[StridePrefetchCandidate],
+        candidates: &[C],
         redundant_lines: &[QueuedPrefetchRedundantLine],
         throttle: &QueuedPrefetchThrottle,
     ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
@@ -536,10 +536,10 @@ impl QueuedPrefetcher {
         )
     }
 
-    fn enqueue_candidates_filtered_limited(
+    fn enqueue_candidates_filtered_limited<C: PrefetchCandidate>(
         &mut self,
         source_tick: u64,
-        candidates: &[StridePrefetchCandidate],
+        candidates: &[C],
         redundant_lines: &[QueuedPrefetchRedundantLine],
         accepted_limit: usize,
     ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
@@ -737,9 +737,272 @@ fn oldest_lowest_priority_index(pending: &[QueuedPrefetchEntry]) -> usize {
         .unwrap_or(0)
 }
 
-fn queued_prefetch_priority(candidate: &StridePrefetchCandidate) -> i32 {
+fn queued_prefetch_priority<C: PrefetchCandidate>(candidate: &C) -> i32 {
     let degree = candidate.degree_index().min(i32::MAX as u32) as i32;
     i32::MAX.saturating_sub(degree)
+}
+
+fn normalized_address(address: Address, line_size: u64) -> Address {
+    Address::new(address.get() / line_size * line_size)
+}
+
+pub trait PrefetchCandidate {
+    fn address(&self) -> Address;
+    fn context(&self) -> AgentId;
+    fn pc(&self) -> u64;
+    fn secure(&self) -> bool;
+    fn stride(&self) -> i64;
+    fn degree_index(&self) -> u32;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaggedPrefetcherConfig {
+    line_size: u64,
+    degree: u32,
+}
+
+impl TaggedPrefetcherConfig {
+    pub fn new(line_size: u64, degree: u32) -> Result<Self, TaggedPrefetcherError> {
+        if line_size == 0 {
+            return Err(TaggedPrefetcherError::ZeroLineSize);
+        }
+        if degree == 0 {
+            return Err(TaggedPrefetcherError::ZeroDegree);
+        }
+
+        Ok(Self { line_size, degree })
+    }
+
+    pub const fn line_size(&self) -> u64 {
+        self.line_size
+    }
+
+    pub const fn degree(&self) -> u32 {
+        self.degree
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TaggedPrefetcherError {
+    ZeroLineSize,
+    ZeroDegree,
+    SnapshotConfigMismatch {
+        expected: TaggedPrefetcherConfig,
+        actual: TaggedPrefetcherConfig,
+    },
+}
+
+impl fmt::Display for TaggedPrefetcherError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroLineSize => write!(formatter, "tagged prefetcher line size is zero"),
+            Self::ZeroDegree => write!(formatter, "tagged prefetcher degree is zero"),
+            Self::SnapshotConfigMismatch { expected, actual } => write!(
+                formatter,
+                "tagged prefetcher snapshot config {actual:?} does not match {expected:?}"
+            ),
+        }
+    }
+}
+
+impl Error for TaggedPrefetcherError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TaggedPrefetchAccess {
+    requestor: AgentId,
+    pc: u64,
+    address: Address,
+    secure: bool,
+}
+
+impl TaggedPrefetchAccess {
+    pub const fn new(requestor: AgentId, pc: u64, address: Address, secure: bool) -> Self {
+        Self {
+            requestor,
+            pc,
+            address,
+            secure,
+        }
+    }
+
+    pub const fn requestor(&self) -> AgentId {
+        self.requestor
+    }
+
+    pub const fn pc(&self) -> u64 {
+        self.pc
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaggedPrefetchCandidate {
+    address: Address,
+    context: AgentId,
+    pc: u64,
+    secure: bool,
+    stride: i64,
+    degree_index: u32,
+}
+
+impl TaggedPrefetchCandidate {
+    fn new(
+        address: Address,
+        context: AgentId,
+        pc: u64,
+        secure: bool,
+        stride: i64,
+        degree_index: u32,
+    ) -> Self {
+        Self {
+            address,
+            context,
+            pc,
+            secure,
+            stride,
+            degree_index,
+        }
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn context(&self) -> AgentId {
+        self.context
+    }
+
+    pub const fn pc(&self) -> u64 {
+        self.pc
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+
+    pub const fn stride(&self) -> i64 {
+        self.stride
+    }
+
+    pub const fn degree_index(&self) -> u32 {
+        self.degree_index
+    }
+}
+
+impl PrefetchCandidate for TaggedPrefetchCandidate {
+    fn address(&self) -> Address {
+        self.address()
+    }
+
+    fn context(&self) -> AgentId {
+        self.context()
+    }
+
+    fn pc(&self) -> u64 {
+        self.pc()
+    }
+
+    fn secure(&self) -> bool {
+        self.secure()
+    }
+
+    fn stride(&self) -> i64 {
+        self.stride()
+    }
+
+    fn degree_index(&self) -> u32 {
+        self.degree_index()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaggedPrefetcherSnapshot {
+    config: TaggedPrefetcherConfig,
+    last_candidates: Vec<TaggedPrefetchCandidate>,
+}
+
+impl TaggedPrefetcherSnapshot {
+    pub const fn config(&self) -> &TaggedPrefetcherConfig {
+        &self.config
+    }
+
+    pub fn last_candidates(&self) -> &[TaggedPrefetchCandidate] {
+        &self.last_candidates
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaggedPrefetcher {
+    config: TaggedPrefetcherConfig,
+    last_candidates: Vec<TaggedPrefetchCandidate>,
+}
+
+impl TaggedPrefetcher {
+    pub fn new(config: TaggedPrefetcherConfig) -> Self {
+        Self {
+            config,
+            last_candidates: Vec::new(),
+        }
+    }
+
+    pub const fn config(&self) -> &TaggedPrefetcherConfig {
+        &self.config
+    }
+
+    pub fn last_candidates(&self) -> &[TaggedPrefetchCandidate] {
+        &self.last_candidates
+    }
+
+    pub fn observe(
+        &mut self,
+        access: TaggedPrefetchAccess,
+    ) -> Result<&[TaggedPrefetchCandidate], TaggedPrefetcherError> {
+        self.last_candidates.clear();
+        let line_address = normalized_address(access.address(), self.config.line_size());
+        let stride = self.config.line_size().min(i64::MAX as u64) as i64;
+        for degree_index in 1..=self.config.degree() {
+            let offset = u64::from(degree_index).saturating_mul(self.config.line_size());
+            if let Some(address) = line_address.get().checked_add(offset) {
+                self.last_candidates.push(TaggedPrefetchCandidate::new(
+                    Address::new(address),
+                    access.requestor(),
+                    access.pc(),
+                    access.secure(),
+                    stride,
+                    degree_index,
+                ));
+            }
+        }
+        Ok(&self.last_candidates)
+    }
+
+    pub fn snapshot(&self) -> TaggedPrefetcherSnapshot {
+        TaggedPrefetcherSnapshot {
+            config: self.config.clone(),
+            last_candidates: self.last_candidates.clone(),
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &TaggedPrefetcherSnapshot,
+    ) -> Result<(), TaggedPrefetcherError> {
+        if snapshot.config() != &self.config {
+            return Err(TaggedPrefetcherError::SnapshotConfigMismatch {
+                expected: self.config.clone(),
+                actual: snapshot.config().clone(),
+            });
+        }
+        self.last_candidates = snapshot.last_candidates().to_vec();
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -947,6 +1210,32 @@ impl StridePrefetchCandidate {
 
     pub const fn degree_index(&self) -> u32 {
         self.degree_index
+    }
+}
+
+impl PrefetchCandidate for StridePrefetchCandidate {
+    fn address(&self) -> Address {
+        self.address()
+    }
+
+    fn context(&self) -> AgentId {
+        self.context()
+    }
+
+    fn pc(&self) -> u64 {
+        self.pc()
+    }
+
+    fn secure(&self) -> bool {
+        self.secure()
+    }
+
+    fn stride(&self) -> i64 {
+        self.stride()
+    }
+
+    fn degree_index(&self) -> u32 {
+        self.degree_index()
     }
 }
 

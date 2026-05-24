@@ -2,12 +2,66 @@ use rem6_cache::{
     QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
     QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
     QueuedPrefetchThrottleError, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
-    StridePrefetcherConfig,
+    StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn tagged_access(agent: u32, pc: u64, address: u64) -> TaggedPrefetchAccess {
+    TaggedPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+#[test]
+fn tagged_prefetcher_generates_next_lines_and_queues_candidates() {
+    let config = TaggedPrefetcherConfig::new(64, 3).unwrap();
+    let mut prefetcher = TaggedPrefetcher::new(config.clone());
+
+    let candidates = prefetcher
+        .observe(tagged_access(4, 0x90, 0x1018))
+        .unwrap()
+        .to_vec();
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x1040),
+            Address::new(0x1080),
+            Address::new(0x10c0)
+        ]
+    );
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(candidates[0].context(), AgentId::new(4));
+    assert_eq!(candidates[0].pc(), 0x90);
+    assert!(!candidates[0].secure());
+    assert_eq!(prefetcher.last_candidates(), candidates.as_slice());
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = TaggedPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 2, 3, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(queue.enqueue_candidates(5, &candidates).unwrap(), 3);
+
+    let issued = queue.issue_ready(7);
+    assert_eq!(
+        issued
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x1040),
+            Address::new(0x1080),
+            Address::new(0x10c0)
+        ]
+    );
 }
 
 #[test]
