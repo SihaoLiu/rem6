@@ -1,5 +1,8 @@
 use rem6_kernel::Tick;
-use rem6_stats::{StatId, StatSample, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
+use rem6_stats::{
+    ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot, StatId,
+    StatSample, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord,
+};
 
 #[test]
 fn stats_registry_snapshots_counters_and_resets_epochs() {
@@ -105,5 +108,62 @@ fn stats_snapshot_rejects_time_before_last_reset() {
             tick: 49 as Tick,
             reset_tick: 50,
         }
+    );
+}
+
+#[test]
+fn probe_registry_records_typed_events_and_listener_state() {
+    let mut probes = ProbeRegistry::new();
+    let committed = probes.register_point("cpu0", "commit").unwrap();
+    let miss = probes.register_point("l1d", "miss").unwrap();
+
+    assert_eq!(committed, ProbePointId::new(0));
+    assert_eq!(miss, ProbePointId::new(1));
+    assert_eq!(
+        probes.add_listener(committed, "commit_counter").unwrap(),
+        ProbeListenerId::new(0)
+    );
+    let trace_listener = probes.add_listener(committed, "commit_trace").unwrap();
+
+    let event = probes
+        .emit(10, committed, ProbePayload::Counter { amount: 4 })
+        .unwrap()
+        .clone();
+    assert_eq!(
+        event,
+        ProbeEvent::new(10, 0, committed, 2, ProbePayload::Counter { amount: 4 })
+    );
+
+    probes.remove_listener(committed, trace_listener).unwrap();
+    assert_eq!(
+        probes
+            .emit(11, committed, ProbePayload::Unit)
+            .unwrap()
+            .listener_count(),
+        1
+    );
+
+    assert_eq!(
+        probes.snapshot(),
+        ProbeSnapshot::new(
+            vec![
+                ("cpu0".to_string(), "commit".to_string(), committed),
+                ("l1d".to_string(), "miss".to_string(), miss),
+            ],
+            vec![(
+                "commit_counter".to_string(),
+                committed,
+                ProbeListenerId::new(0)
+            )],
+            vec![
+                ProbeEvent::new(10, 0, committed, 2, ProbePayload::Counter { amount: 4 }),
+                ProbeEvent::new(11, 1, committed, 1, ProbePayload::Unit),
+            ],
+        )
+    );
+
+    assert_eq!(
+        probes.events()[0].payload(),
+        &ProbePayload::Counter { amount: 4 }
     );
 }
