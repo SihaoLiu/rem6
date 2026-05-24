@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 mod activity;
+mod memory_controller;
 mod qos;
 
 use activity::{collect_dram_bank_activity, collect_dram_port_activity};
@@ -1545,33 +1546,6 @@ impl DramMemoryController {
             .map_err(DramMemoryError::Memory)
     }
 
-    pub fn accept(
-        &mut self,
-        arrival_cycle: u64,
-        request: &MemoryRequest,
-    ) -> Result<DramMemoryOutcome, DramMemoryError> {
-        let target = self
-            .store
-            .decode_request(request)
-            .map_err(DramMemoryError::Memory)?;
-        self.preflight_storage(target, request)
-            .map_err(DramMemoryError::Memory)?;
-        let dram_access = self
-            .dram
-            .get_mut(&target)
-            .expect("DRAM target is inserted with memory target")
-            .schedule(arrival_cycle, request)
-            .map_err(|source| DramMemoryError::Dram { target, source })?;
-        let response = self
-            .store
-            .respond(request)
-            .map_err(DramMemoryError::Memory)?
-            .response()
-            .cloned();
-
-        Ok(DramMemoryOutcome::new(target, dram_access, response))
-    }
-
     pub fn line_data(
         &self,
         target: MemoryTargetId,
@@ -1759,31 +1733,5 @@ impl DramMemoryController {
             dram,
             profiles,
         })
-    }
-
-    fn preflight_storage(
-        &self,
-        target: MemoryTargetId,
-        request: &MemoryRequest,
-    ) -> Result<(), MemoryError> {
-        if request.line_span() != 1 {
-            return Err(MemoryError::CrossLineAccess {
-                request: request.id(),
-                start: request.range().start(),
-                size: request.size(),
-                line_size: request.line_layout().bytes(),
-            });
-        }
-
-        if matches!(
-            request.operation(),
-            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty
-        ) {
-            return Ok(());
-        }
-
-        self.store
-            .line_data(target, request.line_address())
-            .map(|_| ())
     }
 }

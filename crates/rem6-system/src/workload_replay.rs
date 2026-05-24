@@ -14,10 +14,14 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
 };
 use rem6_dram::{
-    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
-    DramMemoryWaitForMarker, DramTargetActivity, DramTiming,
+    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemoryOutcome,
+    DramMemorySnapshot, DramMemoryWaitForMarker, DramQosSchedulingPolicy, DramTargetActivity,
+    DramTiming,
 };
-use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualNetworkId};
+use rem6_fabric::{
+    FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosFixedPriorityPolicy, QosQueueArbiter,
+    QosRequestorId, VirtualNetworkId,
+};
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, WaitForGraph};
 use rem6_memory::{
@@ -32,8 +36,8 @@ use rem6_transport::{
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadError, WorkloadGpuDmaCopy,
     WorkloadHostActionSummary, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
-    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadQosPolicy, WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 mod cache_response;
@@ -42,7 +46,7 @@ mod summary;
 mod workload_replay_dma;
 
 use self::cache_response::{cached_memory_response, data_cache_agents, data_cache_response_result};
-use self::qos::{fixed_priority_policy, queue_arbiter};
+use self::qos::{dram_scheduling_policy, fixed_priority_policy, queue_arbiter};
 use self::summary::{parallel_execution_summary, WorkloadReplayActivityRefs};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
@@ -68,7 +72,77 @@ const PLANNED_HOST_EVENT_ID_BASE: u64 = 10_000;
 #[derive(Clone)]
 enum WorkloadMemoryBackend {
     Store(Arc<Mutex<PartitionedMemoryStore>>),
-    Dram(Arc<Mutex<DramMemoryController>>),
+    Dram(Arc<Mutex<WorkloadDramBackend>>),
+}
+
+#[derive(Clone, Debug)]
+struct WorkloadDramQosState {
+    priority_policy: QosFixedPriorityPolicy,
+    arbiter: QosQueueArbiter,
+    scheduling_policy: DramQosSchedulingPolicy,
+    next_order: u64,
+}
+
+impl WorkloadDramQosState {
+    fn new(policy: &WorkloadQosPolicy) -> Self {
+        Self {
+            priority_policy: fixed_priority_policy(policy),
+            arbiter: queue_arbiter(policy),
+            scheduling_policy: dram_scheduling_policy(policy),
+            next_order: 0,
+        }
+    }
+
+    fn accept(
+        &mut self,
+        controller: &mut DramMemoryController,
+        arrival_cycle: u64,
+        request: &MemoryRequest,
+    ) -> Result<DramMemoryOutcome, DramMemoryError> {
+        let requestor = QosRequestorId::new(request.id().agent().get());
+        let priority = self
+            .priority_policy
+            .priority_for(requestor, request.size().bytes());
+        let order = self.next_order;
+        self.next_order = self
+            .next_order
+            .checked_add(1)
+            .expect("workload DRAM QoS order does not overflow");
+        controller.accept_qos_with_policy(
+            arrival_cycle,
+            request,
+            priority,
+            order,
+            &mut self.arbiter,
+            self.scheduling_policy,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WorkloadDramBackend {
+    controller: DramMemoryController,
+    qos: Option<WorkloadDramQosState>,
+}
+
+impl WorkloadDramBackend {
+    fn new(controller: DramMemoryController, qos_policy: Option<&WorkloadQosPolicy>) -> Self {
+        Self {
+            controller,
+            qos: qos_policy.map(WorkloadDramQosState::new),
+        }
+    }
+
+    fn accept(
+        &mut self,
+        arrival_cycle: u64,
+        request: &MemoryRequest,
+    ) -> Result<DramMemoryOutcome, DramMemoryError> {
+        if let Some(qos) = self.qos.as_mut() {
+            return qos.accept(&mut self.controller, arrival_cycle, request);
+        }
+        self.controller.accept(arrival_cycle, request)
+    }
 }
 
 impl WorkloadMemoryBackend {
@@ -81,6 +155,7 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
+                .controller
                 .snapshot()
                 .store()
                 .clone(),
@@ -90,7 +165,12 @@ impl WorkloadMemoryBackend {
     fn dram_snapshot(&self) -> Option<DramMemorySnapshot> {
         match self {
             Self::Store(_) => None,
-            Self::Dram(dram) => Some(dram.lock().expect("workload replay DRAM lock").snapshot()),
+            Self::Dram(dram) => Some(
+                dram.lock()
+                    .expect("workload replay DRAM lock")
+                    .controller
+                    .snapshot(),
+            ),
         }
     }
 
@@ -100,6 +180,7 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
+                .controller
                 .target_activities(),
         }
     }
@@ -110,6 +191,7 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => Some(
                 dram.lock()
                     .expect("workload replay DRAM lock")
+                    .controller
                     .mark_wait_for(),
             ),
         }
@@ -124,6 +206,7 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
+                .controller
                 .wait_for_graph_since(&marker),
         }
     }
@@ -142,6 +225,7 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
+                .controller
                 .line_data(target, line)
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
@@ -162,6 +246,7 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
+                .controller
                 .insert_line(target, line, data)
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
@@ -1114,10 +1199,16 @@ impl RiscvWorkloadReplay {
     }
 
     fn load_memory_backend(&self) -> Result<WorkloadMemoryBackend, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
         let store = self.load_partitioned_memory_store()?;
         if self.uses_profiled_external_memory()? {
             let dram = self.load_dram_memory(store)?;
-            return Ok(WorkloadMemoryBackend::Dram(Arc::new(Mutex::new(dram))));
+            return Ok(WorkloadMemoryBackend::Dram(Arc::new(Mutex::new(
+                WorkloadDramBackend::new(dram, topology.qos_policy()),
+            ))));
         }
 
         Ok(WorkloadMemoryBackend::Store(Arc::new(Mutex::new(store))))
