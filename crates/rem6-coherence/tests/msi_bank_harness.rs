@@ -402,6 +402,72 @@ fn msi_bank_harness_parallel_cycle_accepts_independent_lines_in_stable_order() {
 }
 
 #[test]
+fn msi_bank_harness_parallel_cycle_records_mshr_qos_for_scheduled_misses() {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [agent(2), agent(1)],
+        MshrQueueConfig::new(4, 2, 0).unwrap(),
+    )
+    .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x44))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x33))
+        .unwrap();
+
+    let run = harness
+        .submit_parallel_cycle_with_qos(
+            23,
+            [
+                (agent(2), read(2, 24, 0x1018), MshrQosClass::new(70, 2)),
+                (agent(1), read(1, 14, 0x1004), MshrQosClass::new(50, 4)),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(run.accepted_count(), 2);
+    assert_eq!(run.scheduled_miss_count(), 2);
+    assert_eq!(run.accepted()[0].agent(), agent(1));
+    assert_eq!(run.accepted()[0].request(), request_id(1, 14));
+    assert_eq!(
+        run.accepted()[0].result().cache_mshr_effective_qos(),
+        Some(MshrQosClass::new(50, 4))
+    );
+    assert_eq!(run.accepted()[1].agent(), agent(2));
+    assert_eq!(run.accepted()[1].request(), request_id(2, 24));
+    assert_eq!(
+        run.accepted()[1].result().cache_mshr_effective_qos(),
+        Some(MshrQosClass::new(70, 2))
+    );
+    assert_eq!(
+        harness.cache_mshr_effective_qos(agent(1), Address::new(0x1000)),
+        Ok(None)
+    );
+    assert_eq!(
+        harness.cache_mshr_effective_qos(agent(2), Address::new(0x1010)),
+        Ok(None)
+    );
+
+    let snapshot = harness.snapshot();
+    let rebuilt = MsiBankDirectoryHarnessSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+    assert_eq!(rebuilt, snapshot);
+    let rebuilt_run = &rebuilt.parallel_cycle_runs()[0];
+    assert_eq!(
+        rebuilt_run.accepted()[0]
+            .result()
+            .cache_mshr_effective_qos(),
+        Some(MshrQosClass::new(50, 4))
+    );
+    assert_eq!(
+        rebuilt_run.accepted()[1]
+            .result()
+            .cache_mshr_effective_qos(),
+        Some(MshrQosClass::new(70, 2))
+    );
+}
+
+#[test]
 fn msi_bank_harness_parallel_cycle_plan_is_stable_and_side_effect_free() {
     let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(2), agent(1)]).unwrap();
     harness

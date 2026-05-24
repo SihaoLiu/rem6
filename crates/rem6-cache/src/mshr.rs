@@ -206,6 +206,17 @@ impl MshrTarget {
         }
     }
 
+    pub fn from_parts(
+        request: MemoryRequest,
+        ready_tick: u64,
+        order: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+        qos: Option<MshrQosClass>,
+    ) -> Self {
+        Self::new(request, ready_tick, order, source, alloc_on_fill, qos)
+    }
+
     pub const fn request(&self) -> &MemoryRequest {
         &self.request
     }
@@ -262,6 +273,26 @@ impl MshrEntry {
             in_service: false,
             pending_modified: false,
             targets: vec![target],
+        }
+    }
+
+    pub fn from_parts(
+        handle: MshrHandle,
+        line: Address,
+        ready_tick: u64,
+        order: u64,
+        in_service: bool,
+        pending_modified: bool,
+        targets: Vec<MshrTarget>,
+    ) -> Self {
+        Self {
+            handle,
+            line,
+            ready_tick,
+            order,
+            in_service,
+            pending_modified,
+            targets,
         }
     }
 
@@ -405,6 +436,38 @@ pub struct MshrQueueSnapshot {
     entries: Vec<MshrEntry>,
     next_handle: u64,
     next_order: u64,
+}
+
+impl MshrQueueSnapshot {
+    pub fn new(
+        config: MshrQueueConfig,
+        entries: Vec<MshrEntry>,
+        next_handle: u64,
+        next_order: u64,
+    ) -> Self {
+        Self {
+            config,
+            entries,
+            next_handle,
+            next_order,
+        }
+    }
+
+    pub const fn config(&self) -> &MshrQueueConfig {
+        &self.config
+    }
+
+    pub fn entries(&self) -> &[MshrEntry] {
+        &self.entries
+    }
+
+    pub const fn next_handle(&self) -> u64 {
+        self.next_handle
+    }
+
+    pub const fn next_order(&self) -> u64 {
+        self.next_order
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -614,12 +677,12 @@ impl MshrQueue {
     }
 
     pub fn snapshot(&self) -> MshrQueueSnapshot {
-        MshrQueueSnapshot {
-            config: self.config.clone(),
-            entries: self.entries.clone(),
-            next_handle: self.next_handle,
-            next_order: self.next_order,
-        }
+        MshrQueueSnapshot::new(
+            self.config.clone(),
+            self.entries.clone(),
+            self.next_handle,
+            self.next_order,
+        )
     }
 
     pub fn restore(&mut self, snapshot: &MshrQueueSnapshot) -> Result<(), MshrQueueError> {

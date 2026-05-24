@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use rem6_cache::{
-    MshrQosClass, MsiCacheBankSnapshot, MsiCacheControllerSnapshot, MsiPendingMissSnapshot,
+    MshrEntry, MshrHandle, MshrQosClass, MshrQueueConfig, MshrQueueSnapshot, MshrTarget,
+    MshrTargetSource, MsiCacheBankSnapshot, MsiCacheControllerSnapshot, MsiPendingMissSnapshot,
 };
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, DirectorySnoop,
@@ -17,7 +18,7 @@ use crate::{
     MsiBankDirectoryHarnessSnapshot, SubmitKind, SubmitResult,
 };
 
-const FORMAT_VERSION: u64 = 3;
+const FORMAT_VERSION: u64 = 4;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
@@ -141,6 +142,7 @@ fn write_cache_bank(payload: &mut Vec<u8>, snapshot: &MsiCacheBankSnapshot) {
     for line in snapshot.lines() {
         write_cache_controller(payload, line);
     }
+    write_optional_mshr_queue(payload, snapshot.mshr());
 }
 
 fn read_cache_bank(cursor: &mut PayloadCursor<'_>) -> Result<MsiCacheBankSnapshot, String> {
@@ -153,12 +155,21 @@ fn read_cache_bank(cursor: &mut PayloadCursor<'_>) -> Result<MsiCacheBankSnapsho
     for _ in 0..line_count {
         lines.push(read_cache_controller(cursor)?);
     }
-    Ok(MsiCacheBankSnapshot::new(
-        agent,
-        layout,
-        next_sequence,
-        lines,
-    ))
+    match read_optional_mshr_queue(cursor)? {
+        Some(mshr) => Ok(MsiCacheBankSnapshot::new_with_mshr(
+            agent,
+            layout,
+            next_sequence,
+            lines,
+            mshr,
+        )),
+        None => Ok(MsiCacheBankSnapshot::new(
+            agent,
+            layout,
+            next_sequence,
+            lines,
+        )),
+    }
 }
 
 fn write_cache_controller(payload: &mut Vec<u8>, snapshot: &MsiCacheControllerSnapshot) {
@@ -234,6 +245,111 @@ fn read_cache_controller(
         next_sequence,
         data,
         pending,
+    ))
+}
+
+fn write_optional_mshr_queue(payload: &mut Vec<u8>, snapshot: Option<&MshrQueueSnapshot>) {
+    let Some(snapshot) = snapshot else {
+        write_bool(payload, false);
+        return;
+    };
+    write_bool(payload, true);
+    write_u64(payload, snapshot.config().entries() as u64);
+    write_u64(payload, snapshot.config().targets_per_mshr() as u64);
+    write_u64(payload, snapshot.config().demand_reserve() as u64);
+    write_u64(payload, snapshot.next_handle());
+    write_u64(payload, snapshot.next_order());
+    write_u64(payload, snapshot.entries().len() as u64);
+    for entry in snapshot.entries() {
+        write_mshr_entry(payload, entry);
+    }
+}
+
+fn read_optional_mshr_queue(
+    cursor: &mut PayloadCursor<'_>,
+) -> Result<Option<MshrQueueSnapshot>, String> {
+    if !cursor.read_bool("MSI cache bank MSHR flag")? {
+        return Ok(None);
+    }
+    let entries = cursor.read_count("MSI cache bank MSHR entries")?;
+    let targets_per_mshr = cursor.read_count("MSI cache bank MSHR targets per entry")?;
+    let demand_reserve = cursor.read_count("MSI cache bank MSHR demand reserve")?;
+    let config = MshrQueueConfig::new(entries, targets_per_mshr, demand_reserve)
+        .map_err(|error| error.to_string())?;
+    let next_handle = cursor.read_u64("MSI cache bank MSHR next handle")?;
+    let next_order = cursor.read_u64("MSI cache bank MSHR next order")?;
+    let entry_count = cursor.read_count("MSI cache bank MSHR entry count")?;
+    let mut entries = Vec::with_capacity(entry_count);
+    for _ in 0..entry_count {
+        entries.push(read_mshr_entry(cursor)?);
+    }
+    Ok(Some(MshrQueueSnapshot::new(
+        config,
+        entries,
+        next_handle,
+        next_order,
+    )))
+}
+
+fn write_mshr_entry(payload: &mut Vec<u8>, entry: &MshrEntry) {
+    write_u64(payload, entry.handle().index());
+    write_u64(payload, entry.line().get());
+    write_u64(payload, entry.ready_tick());
+    write_u64(payload, entry.order());
+    write_bool(payload, entry.in_service());
+    write_bool(payload, entry.pending_modified());
+    write_u64(payload, entry.targets().len() as u64);
+    for target in entry.targets() {
+        write_mshr_target(payload, target);
+    }
+}
+
+fn read_mshr_entry(cursor: &mut PayloadCursor<'_>) -> Result<MshrEntry, String> {
+    let handle = MshrHandle::new(cursor.read_u64("MSI cache bank MSHR entry handle")?);
+    let line = Address::new(cursor.read_u64("MSI cache bank MSHR entry line")?);
+    let ready_tick = cursor.read_u64("MSI cache bank MSHR entry ready tick")?;
+    let order = cursor.read_u64("MSI cache bank MSHR entry order")?;
+    let in_service = cursor.read_bool("MSI cache bank MSHR entry in-service flag")?;
+    let pending_modified = cursor.read_bool("MSI cache bank MSHR entry pending-modified flag")?;
+    let target_count = cursor.read_count("MSI cache bank MSHR target count")?;
+    let mut targets = Vec::with_capacity(target_count);
+    for _ in 0..target_count {
+        targets.push(read_mshr_target(cursor)?);
+    }
+    Ok(MshrEntry::from_parts(
+        handle,
+        line,
+        ready_tick,
+        order,
+        in_service,
+        pending_modified,
+        targets,
+    ))
+}
+
+fn write_mshr_target(payload: &mut Vec<u8>, target: &MshrTarget) {
+    write_request(payload, target.request());
+    write_u64(payload, target.ready_tick());
+    write_u64(payload, target.order());
+    write_u8(payload, mshr_target_source_to_u8(target.source()));
+    write_bool(payload, target.alloc_on_fill());
+    write_optional_mshr_qos(payload, target.qos());
+}
+
+fn read_mshr_target(cursor: &mut PayloadCursor<'_>) -> Result<MshrTarget, String> {
+    let request = read_request(cursor)?;
+    let ready_tick = cursor.read_u64("MSI cache bank MSHR target ready tick")?;
+    let order = cursor.read_u64("MSI cache bank MSHR target order")?;
+    let source = u8_to_mshr_target_source(cursor.read_u8("MSI cache bank MSHR target source")?)?;
+    let alloc_on_fill = cursor.read_bool("MSI cache bank MSHR target alloc-on-fill flag")?;
+    let qos = read_optional_mshr_qos(cursor)?;
+    Ok(MshrTarget::from_parts(
+        request,
+        ready_tick,
+        order,
+        source,
+        alloc_on_fill,
+        qos,
     ))
 }
 
@@ -749,6 +865,23 @@ fn u8_to_submit_kind(value: u8) -> Result<SubmitKind, String> {
         1 => Ok(SubmitKind::ScheduledMiss),
         2 => Ok(SubmitKind::CoalescedMiss),
         _ => Err(format!("unknown MSI submit kind {value}")),
+    }
+}
+
+fn mshr_target_source_to_u8(source: MshrTargetSource) -> u8 {
+    match source {
+        MshrTargetSource::Demand => 0,
+        MshrTargetSource::Snoop => 1,
+        MshrTargetSource::Prefetch => 2,
+    }
+}
+
+fn u8_to_mshr_target_source(value: u8) -> Result<MshrTargetSource, String> {
+    match value {
+        0 => Ok(MshrTargetSource::Demand),
+        1 => Ok(MshrTargetSource::Snoop),
+        2 => Ok(MshrTargetSource::Prefetch),
+        _ => Err(format!("unknown MSI MSHR target source {value}")),
     }
 }
 

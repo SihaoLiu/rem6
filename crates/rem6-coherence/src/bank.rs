@@ -64,6 +64,7 @@ struct MsiBankCycleRequest {
     agent: AgentId,
     request: MemoryRequest,
     line_address: Address,
+    qos: Option<MshrQosClass>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -610,6 +611,15 @@ impl MsiBankDirectoryHarness {
         self.submit_cpu_request_at(0, agent, request)
     }
 
+    pub fn submit_cpu_request_with_qos(
+        &mut self,
+        agent: AgentId,
+        request: MemoryRequest,
+        qos: MshrQosClass,
+    ) -> Result<SubmitResult, HarnessError> {
+        self.submit_cpu_request_at_inner(0, agent, request, Some(qos))
+    }
+
     pub fn submit_coalesced_cpu_requests<I>(
         &mut self,
         tick: u64,
@@ -740,6 +750,18 @@ impl MsiBankDirectoryHarness {
         self.submit_parallel_cycle_plan(plan)
     }
 
+    pub fn submit_parallel_cycle_with_qos<I>(
+        &mut self,
+        tick: u64,
+        requests: I,
+    ) -> Result<MsiBankCycleRun, HarnessError>
+    where
+        I: IntoIterator<Item = (AgentId, MemoryRequest, MshrQosClass)>,
+    {
+        let plan = self.plan_parallel_cycle_with_qos(tick, requests)?;
+        self.submit_parallel_cycle_plan(plan)
+    }
+
     pub fn plan_parallel_cycle<I>(
         &self,
         tick: u64,
@@ -748,14 +770,43 @@ impl MsiBankDirectoryHarness {
     where
         I: IntoIterator<Item = (AgentId, MemoryRequest)>,
     {
-        let mut requests: Vec<_> = requests
+        let requests: Vec<_> = requests
             .into_iter()
             .map(|(agent, request)| MsiBankCycleRequest {
                 agent,
                 line_address: self.layout.line_address(request.line_address()),
                 request,
+                qos: None,
             })
             .collect();
+        self.plan_parallel_cycle_inner(tick, requests)
+    }
+
+    pub fn plan_parallel_cycle_with_qos<I>(
+        &self,
+        tick: u64,
+        requests: I,
+    ) -> Result<MsiBankCyclePlan, HarnessError>
+    where
+        I: IntoIterator<Item = (AgentId, MemoryRequest, MshrQosClass)>,
+    {
+        let requests = requests
+            .into_iter()
+            .map(|(agent, request, qos)| MsiBankCycleRequest {
+                agent,
+                line_address: self.layout.line_address(request.line_address()),
+                request,
+                qos: Some(qos),
+            })
+            .collect();
+        self.plan_parallel_cycle_inner(tick, requests)
+    }
+
+    fn plan_parallel_cycle_inner(
+        &self,
+        tick: u64,
+        mut requests: Vec<MsiBankCycleRequest>,
+    ) -> Result<MsiBankCyclePlan, HarnessError> {
         requests.sort_by_key(|entry| {
             (
                 entry.line_address.get(),
@@ -778,7 +829,8 @@ impl MsiBankDirectoryHarness {
         let mut accepted = Vec::with_capacity(plan.requests.len());
         for entry in plan.requests {
             let request_id = entry.request.id();
-            let result = next.submit_cpu_request_at(plan.tick, entry.agent, entry.request)?;
+            let result =
+                next.submit_cpu_request_at_inner(plan.tick, entry.agent, entry.request, entry.qos)?;
             accepted.push(MsiBankCycleAccepted::new(
                 entry.agent,
                 request_id,
@@ -819,14 +871,30 @@ impl MsiBankDirectoryHarness {
         agent: AgentId,
         request: MemoryRequest,
     ) -> Result<SubmitResult, HarnessError> {
-        let result = self
-            .cache_mut(agent)?
-            .accept_cpu_request(request)
-            .map_err(HarnessError::CacheBank)?;
+        self.submit_cpu_request_at_inner(tick, agent, request, None)
+    }
+
+    fn submit_cpu_request_at_inner(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        request: MemoryRequest,
+        qos: Option<MshrQosClass>,
+    ) -> Result<SubmitResult, HarnessError> {
+        let line_address = self.layout.line_address(request.line_address());
+        let result = match qos {
+            Some(qos) => self
+                .cache_mut(agent)?
+                .accept_cpu_request_with_qos(request, qos),
+            None => self.cache_mut(agent)?.accept_cpu_request(request),
+        }
+        .map_err(HarnessError::CacheBank)?;
         let cache_result = result.kind();
+        let effective_qos = self.cache(agent)?.mshr_effective_qos(line_address);
 
         if self.record_target_outcomes(tick, cache_result, result.target_outcomes()) > 0 {
-            return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
+            return Ok(SubmitResult::new(SubmitKind::ImmediateHit, cache_result)
+                .with_cache_mshr_effective_qos(effective_qos));
         }
 
         let downstream = result
@@ -846,7 +914,8 @@ impl MsiBankDirectoryHarness {
         self.record_target_outcomes(tick, fill.kind(), fill.target_outcomes());
 
         Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
-            .with_directory_decision(decision))
+            .with_directory_decision(decision)
+            .with_cache_mshr_effective_qos(effective_qos))
     }
 
     pub fn cache_state(
