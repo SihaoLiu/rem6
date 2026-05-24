@@ -22,6 +22,7 @@ mod prefetch;
 mod prefetch_ampm;
 mod prefetch_bop;
 mod prefetch_dcpt;
+mod prefetch_fdp;
 mod prefetch_multi;
 mod prefetch_sbooe;
 mod prefetch_signature_path;
@@ -70,6 +71,14 @@ pub use prefetch_dcpt::{
     DcptPrefetchAccess, DcptPrefetchCandidate, DcptPrefetchContextSnapshot,
     DcptPrefetchEntrySnapshot, DcptPrefetcher, DcptPrefetcherConfig, DcptPrefetcherError,
     DcptPrefetcherSnapshot,
+};
+pub use prefetch_fdp::{
+    FetchDirectedCacheLookup, FetchDirectedInsertSummary, FetchDirectedPrefetchIssue,
+    FetchDirectedPrefetchQueueEntrySnapshot, FetchDirectedPrefetcher,
+    FetchDirectedPrefetcherConfig, FetchDirectedPrefetcherError, FetchDirectedPrefetcherSnapshot,
+    FetchDirectedRemoveSummary, FetchDirectedStatsSnapshot, FetchDirectedTarget,
+    FetchDirectedTranslation, FetchDirectedTranslationEntrySnapshot,
+    FetchDirectedTranslationOutcome,
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,
