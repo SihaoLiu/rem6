@@ -472,12 +472,14 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_u32(&mut payload, geometry.bank_count());
         write_u64(&mut payload, geometry.row_size());
         write_u64(&mut payload, geometry.line_size());
+        write_optional_u32(&mut payload, geometry.bank_group_count());
         write_u64(&mut payload, timing.activate_latency());
         write_u64(&mut payload, timing.read_latency());
         write_u64(&mut payload, timing.write_latency());
         write_u64(&mut payload, timing.precharge_latency());
         write_u64(&mut payload, timing.bus_turnaround());
         write_u64(&mut payload, timing.burst_spacing());
+        write_optional_u64(&mut payload, timing.same_bank_group_burst_spacing());
         write_command_window(&mut payload, timing.command_window());
         write_profile(&mut payload, target.profile());
         write_nvm_media_state(
@@ -505,10 +507,32 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
             for window_start in port.command_window_starts() {
                 write_u64(&mut payload, *window_start);
             }
+            write_optional_u64(&mut payload, port.last_data_command_cycle());
+            write_optional_u32(&mut payload, port.last_bank_group());
         }
     }
 
     payload
+}
+
+fn write_optional_u64(payload: &mut Vec<u8>, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            write_u64(payload, 1);
+            write_u64(payload, value);
+        }
+        None => write_u64(payload, 0),
+    }
+}
+
+fn write_optional_u32(payload: &mut Vec<u8>, value: Option<u32>) {
+    match value {
+        Some(value) => {
+            write_u64(payload, 1);
+            write_u32(payload, value);
+        }
+        None => write_u64(payload, 0),
+    }
 }
 
 fn write_command_window(payload: &mut Vec<u8>, command_window: Option<DramCommandWindow>) {
@@ -684,6 +708,19 @@ fn decode_dram_memory(
                 target.get()
             ))
         })?;
+        let geometry = match read_optional_u32(&mut cursor, "DRAM bank group count")? {
+            Some(bank_group_count) => {
+                geometry
+                    .with_bank_groups(bank_group_count)
+                    .map_err(|error| {
+                        cursor.invalid(format!(
+                            "DRAM target {} has invalid bank group geometry: {error}",
+                            target.get()
+                        ))
+                    })?
+            }
+            None => geometry,
+        };
         let activate_latency = cursor.read_u64("DRAM activate latency")?;
         let read_latency = cursor.read_u64("DRAM read latency")?;
         let write_latency = cursor.read_u64("DRAM write latency")?;
@@ -704,6 +741,17 @@ fn decode_dram_memory(
                 target.get()
             ))
         })?;
+        let timing = match read_optional_u64(&mut cursor, "DRAM same-bank-group burst spacing")? {
+            Some(burst_spacing) => timing
+                .with_same_bank_group_burst_spacing(burst_spacing)
+                .map_err(|error| {
+                    cursor.invalid(format!(
+                        "DRAM target {} has invalid same-bank-group burst spacing: {error}",
+                        target.get()
+                    ))
+                })?,
+            None => timing,
+        };
         let timing = read_command_window(&mut cursor, target, timing)?;
         let line_layout = CacheLineLayout::new(line_size).map_err(|error| {
             cursor.invalid(format!(
@@ -757,10 +805,15 @@ fn decode_dram_memory(
             for _ in 0..command_window_count {
                 command_window_starts.push(cursor.read_u64("DRAM port command window start")?);
             }
-            ports.push(DramPortState::from_snapshot_with_command_windows(
+            let last_data_command_cycle =
+                read_optional_u64(&mut cursor, "DRAM port last data command cycle")?;
+            let last_bank_group = read_optional_u32(&mut cursor, "DRAM port last bank group")?;
+            ports.push(DramPortState::from_snapshot_with_port_history(
                 bus_available_cycle,
                 last_access_kind,
                 command_window_starts,
+                last_data_command_cycle,
+                last_bank_group,
             ));
         }
 
@@ -918,6 +971,28 @@ fn read_command_window(
             "DRAM target {} has invalid command window presence {value}",
             target.get()
         ))),
+    }
+}
+
+fn read_optional_u64(
+    cursor: &mut DramPayloadCursor<'_>,
+    context: &'static str,
+) -> Result<Option<u64>, DramMemoryCheckpointError> {
+    match cursor.read_u64(context)? {
+        0 => Ok(None),
+        1 => Ok(Some(cursor.read_u64(context)?)),
+        value => Err(cursor.invalid(format!("{context} has invalid presence flag {value}"))),
+    }
+}
+
+fn read_optional_u32(
+    cursor: &mut DramPayloadCursor<'_>,
+    context: &'static str,
+) -> Result<Option<u32>, DramMemoryCheckpointError> {
+    match cursor.read_u64(context)? {
+        0 => Ok(None),
+        1 => Ok(Some(cursor.read_u32(context)?)),
+        value => Err(cursor.invalid(format!("{context} has invalid presence flag {value}"))),
     }
 }
 

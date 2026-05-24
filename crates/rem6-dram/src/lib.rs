@@ -37,11 +37,21 @@ pub enum DramError {
         row_size: u64,
         line_size: u64,
     },
+    ZeroBankGroupCount,
+    BankGroupCountExceedsBankCount {
+        bank_count: u32,
+        bank_group_count: u32,
+    },
+    BankCountNotBankGroupMultiple {
+        bank_count: u32,
+        bank_group_count: u32,
+    },
     ZeroTimingLatency {
         field: DramTimingField,
     },
     ZeroCommandWindow,
     ZeroCommandWindowMaxCommands,
+    ZeroSameBankGroupBurstSpacing,
     ZeroProfileTopology {
         technology: DramMemoryTechnology,
         field: DramProfileField,
@@ -86,6 +96,21 @@ impl fmt::Display for DramError {
                 formatter,
                 "DRAM row size {row_size} is not a multiple of line size {line_size}"
             ),
+            Self::ZeroBankGroupCount => write!(formatter, "DRAM bank group count must be nonzero"),
+            Self::BankGroupCountExceedsBankCount {
+                bank_count,
+                bank_group_count,
+            } => write!(
+                formatter,
+                "DRAM bank group count {bank_group_count} exceeds bank count {bank_count}"
+            ),
+            Self::BankCountNotBankGroupMultiple {
+                bank_count,
+                bank_group_count,
+            } => write!(
+                formatter,
+                "DRAM bank count {bank_count} is not a multiple of bank group count {bank_group_count}"
+            ),
             Self::ZeroTimingLatency { field } => {
                 write!(formatter, "DRAM timing field {field:?} must be nonzero")
             }
@@ -96,6 +121,12 @@ impl fmt::Display for DramError {
                 write!(
                     formatter,
                     "DRAM maximum commands per command window must be nonzero"
+                )
+            }
+            Self::ZeroSameBankGroupBurstSpacing => {
+                write!(
+                    formatter,
+                    "DRAM same-bank-group burst spacing must be nonzero"
                 )
             }
             Self::ZeroProfileTopology { technology, field } => write!(
@@ -150,9 +181,13 @@ impl Error for DramError {
             | Self::ZeroRowSize
             | Self::ZeroLineSize
             | Self::RowSizeNotLineMultiple { .. }
+            | Self::ZeroBankGroupCount
+            | Self::BankGroupCountExceedsBankCount { .. }
+            | Self::BankCountNotBankGroupMultiple { .. }
             | Self::ZeroTimingLatency { .. }
             | Self::ZeroCommandWindow
             | Self::ZeroCommandWindowMaxCommands
+            | Self::ZeroSameBankGroupBurstSpacing
             | Self::ZeroProfileTopology { .. }
             | Self::ZeroNvmMediaTiming { .. }
             | Self::NvmMediaTimingOnVolatileProfile { .. }
@@ -613,6 +648,8 @@ pub struct DramPortState {
     bus_available_cycle: u64,
     last_access_kind: Option<DramAccessKind>,
     command_window_starts: Vec<u64>,
+    last_data_command_cycle: Option<u64>,
+    last_bank_group: Option<u32>,
 }
 
 impl DramPortState {
@@ -621,6 +658,8 @@ impl DramPortState {
             bus_available_cycle: 0,
             last_access_kind: None,
             command_window_starts: Vec::new(),
+            last_data_command_cycle: None,
+            last_bank_group: None,
         }
     }
 
@@ -634,13 +673,31 @@ impl DramPortState {
     pub fn from_snapshot_with_command_windows(
         bus_available_cycle: u64,
         last_access_kind: Option<DramAccessKind>,
+        command_window_starts: Vec<u64>,
+    ) -> Self {
+        Self::from_snapshot_with_port_history(
+            bus_available_cycle,
+            last_access_kind,
+            command_window_starts,
+            None,
+            None,
+        )
+    }
+
+    pub fn from_snapshot_with_port_history(
+        bus_available_cycle: u64,
+        last_access_kind: Option<DramAccessKind>,
         mut command_window_starts: Vec<u64>,
+        last_data_command_cycle: Option<u64>,
+        last_bank_group: Option<u32>,
     ) -> Self {
         command_window_starts.sort_unstable();
         Self {
             bus_available_cycle,
             last_access_kind,
             command_window_starts,
+            last_data_command_cycle,
+            last_bank_group,
         }
     }
 
@@ -656,15 +713,42 @@ impl DramPortState {
         &self.command_window_starts
     }
 
-    fn ready_cycle(&self, kind: DramAccessKind, timing: DramTiming) -> u64 {
-        if self
+    pub const fn last_data_command_cycle(&self) -> Option<u64> {
+        self.last_data_command_cycle
+    }
+
+    pub const fn last_bank_group(&self) -> Option<u32> {
+        self.last_bank_group
+    }
+
+    fn ready_cycle(
+        &self,
+        kind: DramAccessKind,
+        timing: DramTiming,
+        bank_group: Option<u32>,
+    ) -> u64 {
+        let direction_ready = if self
             .last_access_kind
             .is_some_and(|previous| previous != kind)
         {
             self.bus_available_cycle + timing.bus_turnaround()
         } else {
             self.bus_available_cycle
-        }
+        };
+        let same_group_ready = match (
+            bank_group,
+            self.last_bank_group,
+            self.last_data_command_cycle,
+            timing.same_bank_group_burst_spacing(),
+        ) {
+            (Some(bank_group), Some(last_bank_group), Some(command_cycle), Some(spacing))
+                if bank_group == last_bank_group =>
+            {
+                command_cycle + spacing
+            }
+            _ => 0,
+        };
+        direction_ready.max(same_group_ready)
     }
 
     fn reserve_command_window(&mut self, timing: DramTiming, mut command_cycle: u64) -> u64 {
@@ -690,9 +774,17 @@ impl DramPortState {
         }
     }
 
-    fn set_bus_state(&mut self, bus_available_cycle: u64, last_access_kind: DramAccessKind) {
+    fn set_bus_state(
+        &mut self,
+        bus_available_cycle: u64,
+        last_access_kind: DramAccessKind,
+        command_cycle: u64,
+        bank_group: Option<u32>,
+    ) {
         self.bus_available_cycle = bus_available_cycle;
         self.last_access_kind = Some(last_access_kind);
+        self.last_data_command_cycle = Some(command_cycle);
+        self.last_bank_group = bank_group;
     }
 }
 
@@ -911,7 +1003,7 @@ impl DramController {
             .decode_request(self.parallel_port_count(), request)?;
         let port_index = decoded.parallel_port as usize;
         let mut port = self.ports[port_index].clone();
-        let bus_ready_cycle = port.ready_cycle(kind, self.timing);
+        let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
         let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
         let bank = &mut self.banks[bank_index];
         let mut commands = Vec::new();
@@ -1044,7 +1136,12 @@ impl DramController {
         };
 
         bank.available_cycle = persistent_ready_cycle.unwrap_or(ready_cycle);
-        port.set_bus_state(command_cycle + self.timing.burst_spacing(), kind);
+        port.set_bus_state(
+            command_cycle + self.timing.burst_spacing(),
+            kind,
+            command_cycle,
+            decoded.bank_group,
+        );
         self.ports[port_index] = port;
         let pending_nvm_read_count =
             if kind == DramAccessKind::Read && self.nvm_media_timing.is_some() {

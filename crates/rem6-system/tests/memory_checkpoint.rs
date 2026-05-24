@@ -279,6 +279,69 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
 }
 
 #[test]
+fn dram_memory_checkpoint_preserves_bank_group_burst_history() {
+    let target = MemoryTargetId::new(70);
+    let geometry = DramGeometry::new(4, 256, 64)
+        .unwrap()
+        .with_bank_groups(2)
+        .unwrap();
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_burst_spacing(2)
+        .unwrap()
+        .with_same_bank_group_burst_spacing(6)
+        .unwrap();
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            geometry,
+            timing,
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0000), line_data(0x10))
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0080), line_data(0x20))
+        .unwrap();
+    let first = controller.accept(0, &read(0x0000, 8, 34)).unwrap();
+    assert_eq!(first.dram_access().command_cycle(), 3);
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram-bank-groups").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+    let captured_port = &captured.snapshot().targets()[0].controller().ports()[0];
+    assert_eq!(captured_port.last_data_command_cycle(), Some(3));
+    assert_eq!(captured_port.last_bank_group(), Some(0));
+
+    controller
+        .lock()
+        .unwrap()
+        .accept(0, &read(0x0080, 8, 35))
+        .unwrap();
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    let mut controller = controller.lock().unwrap();
+    let same_group = controller.accept(0, &read(0x0080, 8, 36)).unwrap();
+    assert_eq!(same_group.dram_access().bank(), 2);
+    assert_eq!(same_group.dram_access().command_cycle(), 9);
+    assert_eq!(same_group.ready_cycle(), 14);
+}
+
+#[test]
 fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     let target = MemoryTargetId::new(50);
     let media_timing = NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap();

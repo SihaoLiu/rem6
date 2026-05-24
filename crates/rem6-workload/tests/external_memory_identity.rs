@@ -20,15 +20,16 @@ fn boot_image() -> BootImage {
 }
 
 fn manifest_with_timing(timing: DramTiming) -> WorkloadManifest {
-    let profile = ExternalMemoryProfile::hbm(
-        MemoryTargetId::new(0),
-        layout(),
-        2,
-        2,
-        DramGeometry::new(4, 64, 16).unwrap(),
-        timing,
-    )
-    .unwrap();
+    manifest_with_geometry_and_timing(DramGeometry::new(4, 64, 16).unwrap(), timing)
+}
+
+fn manifest_with_geometry_and_timing(
+    geometry: DramGeometry,
+    timing: DramTiming,
+) -> WorkloadManifest {
+    let profile =
+        ExternalMemoryProfile::hbm(MemoryTargetId::new(0), layout(), 2, 2, geometry, timing)
+            .unwrap();
     let target = WorkloadMemoryTarget::new(
         0,
         16,
@@ -74,4 +75,21 @@ fn workload_manifest_identity_changes_with_external_memory_command_window() {
     );
 
     assert_ne!(base.identity(), windowed.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_external_memory_bank_groups() {
+    let base = manifest_with_timing(DramTiming::new(4, 8, 10, 3, 5).unwrap());
+    let bank_grouped = manifest_with_geometry_and_timing(
+        DramGeometry::new(4, 64, 16)
+            .unwrap()
+            .with_bank_groups(2)
+            .unwrap(),
+        DramTiming::new(4, 8, 10, 3, 5)
+            .unwrap()
+            .with_same_bank_group_burst_spacing(6)
+            .unwrap(),
+    );
+
+    assert_ne!(base.identity(), bank_grouped.identity());
 }

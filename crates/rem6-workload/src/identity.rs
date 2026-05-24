@@ -232,12 +232,26 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
     hash_u64(hash, u64::from(profile.geometry().bank_count()));
     hash_u64(hash, profile.geometry().row_size());
     hash_u64(hash, profile.geometry().line_size());
+    match profile.geometry().bank_group_count() {
+        Some(bank_group_count) => {
+            hash_str(hash, "geometry.bank_groups.some");
+            hash_u64(hash, u64::from(bank_group_count));
+        }
+        None => hash_str(hash, "geometry.bank_groups.none"),
+    }
     hash_u64(hash, profile.timing().activate_latency());
     hash_u64(hash, profile.timing().read_latency());
     hash_u64(hash, profile.timing().write_latency());
     hash_u64(hash, profile.timing().precharge_latency());
     hash_u64(hash, profile.timing().bus_turnaround());
     hash_u64(hash, profile.timing().burst_spacing());
+    match profile.timing().same_bank_group_burst_spacing() {
+        Some(burst_spacing) => {
+            hash_str(hash, "timing.same_bank_group_burst_spacing.some");
+            hash_u64(hash, burst_spacing);
+        }
+        None => hash_str(hash, "timing.same_bank_group_burst_spacing.none"),
+    }
     match profile.timing().command_window() {
         Some(command_window) => {
             hash_str(hash, "timing.command_window.some");

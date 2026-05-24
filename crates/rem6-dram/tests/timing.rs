@@ -263,6 +263,43 @@ fn dram_controller_enforces_command_window_across_row_commands() {
 }
 
 #[test]
+fn dram_controller_uses_same_bank_group_burst_spacing() {
+    let geometry = DramGeometry::new(4, 256, 64)
+        .unwrap()
+        .with_bank_groups(2)
+        .unwrap();
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_burst_spacing(2)
+        .unwrap()
+        .with_same_bank_group_burst_spacing(6)
+        .unwrap();
+    let mut controller = DramController::new(geometry, timing);
+    let marker = controller.mark_wait_for();
+
+    let first = controller.schedule(0, &read(0x0000, 8, 54)).unwrap();
+    let same_group = controller.schedule(0, &read(0x0080, 8, 55)).unwrap();
+    let different_group = controller.schedule(0, &read(0x0040, 8, 56)).unwrap();
+
+    assert_eq!(first.bank(), 0);
+    assert_eq!(first.command_cycle(), 3);
+    assert_eq!(same_group.bank(), 2);
+    assert_eq!(same_group.command_cycle(), 9);
+    assert_eq!(same_group.ready_cycle(), 14);
+    assert_eq!(different_group.bank(), 1);
+    assert_eq!(different_group.command_cycle(), 11);
+    assert_eq!(different_group.ready_cycle(), 16);
+
+    let request = WaitForNode::transaction("dram.agent.2.request.55").unwrap();
+    let bus = WaitForNode::resource("dram.port.0.bus").unwrap();
+    let graph = controller.wait_for_graph_since(marker).snapshot();
+
+    assert!(graph.contains_edge(&request, &bus, WaitForEdgeKind::Resource));
+    assert_eq!(graph.dependencies(&request)[0].first_observed_tick(), 3);
+    assert_eq!(graph.dependencies(&request)[0].last_observed_tick(), 8);
+}
+
+#[test]
 fn dram_controller_keeps_open_row_for_row_hits() {
     let mut controller = DramController::new(geometry(), timing());
     controller.schedule(0, &read(0x0000, 8, 1)).unwrap();
