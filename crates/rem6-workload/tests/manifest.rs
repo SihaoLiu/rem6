@@ -2,6 +2,7 @@ use rem6_boot::BootImage;
 use rem6_dram::{
     DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology,
 };
+use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
@@ -10,9 +11,11 @@ use rem6_workload::{
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadExecutionMode,
     WorkloadExecutionModeSwitch, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
     WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosPolicy,
+    WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority, WorkloadQosTurnaroundPolicyKind,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope,
+    WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -308,6 +311,105 @@ fn workload_memory_route_records_fabric_path_metadata() {
             .unwrap_err(),
         WorkloadError::ZeroFabricCreditDepth {
             link: "mesh.cpu.mem".to_string(),
+        },
+    );
+}
+
+#[test]
+fn workload_topology_records_qos_policy_and_requestor_intents() {
+    let policy = WorkloadQosPolicy::new(4, QosPriority::new(3))
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::LeastRecentlyGranted)
+        .with_turnaround_policy(WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection)
+        .with_priority_escalation()
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(1))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(0))
+        .unwrap();
+    let topology = riscv_topology().with_qos_policy(policy.clone());
+
+    assert_eq!(topology.qos_policy(), Some(&policy));
+    assert_eq!(policy.priority_levels(), 4);
+    assert_eq!(policy.default_priority(), QosPriority::new(3));
+    assert_eq!(
+        policy.queue_policy(),
+        WorkloadQosQueuePolicyKind::LeastRecentlyGranted,
+    );
+    assert_eq!(
+        policy.turnaround_policy(),
+        WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection,
+    );
+    assert!(policy.priority_escalation_enabled());
+    assert_eq!(
+        policy.requestor_priorities(),
+        &[
+            WorkloadQosRequestorPriority::new(QosRequestorId::new(7), QosPriority::new(0)),
+            WorkloadQosRequestorPriority::new(QosRequestorId::new(8), QosPriority::new(1)),
+        ]
+    );
+    assert_eq!(
+        policy.priority_for(QosRequestorId::new(7)),
+        QosPriority::new(0),
+    );
+    assert_eq!(
+        policy.priority_for(QosRequestorId::new(99)),
+        QosPriority::new(3),
+    );
+
+    let plain = WorkloadManifest::builder(id("qos-policy-identity"), boot_image())
+        .with_topology(riscv_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let with_qos = WorkloadManifest::builder(id("qos-policy-identity"), boot_image())
+        .with_topology(topology)
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&with_qos).unwrap();
+
+    assert_ne!(plain.identity(), with_qos.identity());
+    assert_eq!(plan.topology().unwrap().qos_policy(), Some(&policy));
+}
+
+#[test]
+fn workload_qos_policy_rejects_invalid_declarations() {
+    assert_eq!(
+        WorkloadQosPolicy::new(0, QosPriority::new(0)).unwrap_err(),
+        WorkloadError::ZeroQosPriorityLevels,
+    );
+    assert_eq!(
+        WorkloadQosPolicy::new(2, QosPriority::new(2)).unwrap_err(),
+        WorkloadError::QosPriorityOutOfRange {
+            priority: QosPriority::new(2),
+            priority_levels: 2,
+        },
+    );
+    let invalid_requestor = WorkloadQosPolicy::new(2, QosPriority::new(1))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(3))
+        .unwrap_err();
+    assert_eq!(
+        invalid_requestor,
+        WorkloadError::QosPriorityOutOfRange {
+            priority: QosPriority::new(3),
+            priority_levels: 2,
+        },
+    );
+    let duplicate = WorkloadQosPolicy::new(4, QosPriority::new(3))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(0))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(1))
+        .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateQosRequestorPriority {
+            requestor: QosRequestorId::new(7),
         },
     );
 }

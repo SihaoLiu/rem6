@@ -61,6 +61,7 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
     hash_u64(hash, u64::from(topology.host().partition()));
     hash_u64(hash, topology.host().latency());
     hash_u64(hash, u64::from(topology.host().source()));
+    hash_qos_policy(hash, topology.qos_policy());
     hash_u64(hash, topology.memory_targets().len() as u64);
     for target in topology.memory_targets() {
         hash_u64(hash, u64::from(target.target()));
@@ -173,6 +174,32 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, copy.source().get());
         hash_u64(hash, copy.destination().get());
         hash_u64(hash, copy.bytes());
+    }
+}
+
+fn hash_qos_policy(hash: &mut u64, policy: Option<&crate::WorkloadQosPolicy>) {
+    let Some(policy) = policy else {
+        hash_str(hash, "qos.policy.none");
+        return;
+    };
+
+    hash_str(hash, "qos.policy.fixed_priority.v1");
+    hash_u64(hash, u64::from(policy.priority_levels()));
+    hash_u64(hash, u64::from(policy.default_priority().get()));
+    hash_str(hash, policy.queue_policy().as_str());
+    hash_str(hash, policy.turnaround_policy().as_str());
+    hash_u64(
+        hash,
+        if policy.priority_escalation_enabled() {
+            1
+        } else {
+            0
+        },
+    );
+    hash_u64(hash, policy.requestor_priorities().len() as u64);
+    for requestor in policy.requestor_priorities() {
+        hash_u64(hash, u64::from(requestor.requestor().get()));
+        hash_u64(hash, u64::from(requestor.priority().get()));
     }
 }
 
