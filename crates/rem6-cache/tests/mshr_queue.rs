@@ -1,4 +1,4 @@
-use rem6_cache::{MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetSource};
+use rem6_cache::{MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetSource};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId};
 
 fn layout() -> CacheLineLayout {
@@ -127,6 +127,65 @@ fn mshr_queue_reserves_demand_entries_orders_ready_entries_and_restores_snapshot
     assert_eq!(
         queue.allocate_or_merge(request(4, 0x7000), 13, MshrTargetSource::Demand, true),
         Err(MshrQueueError::EntrySlotsFull { entries: 3 })
+    );
+}
+
+#[test]
+fn mshr_queue_orders_ready_entries_by_qos_and_promotes_merged_targets() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(3, 3, 0).unwrap());
+
+    let low = queue
+        .allocate_or_merge_with_qos(
+            request(0, 0x8000),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(30, 4),
+        )
+        .unwrap();
+    let high = queue
+        .allocate_or_merge_with_qos(
+            request(1, 0x9000),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(10, 1),
+        )
+        .unwrap();
+
+    assert_eq!(queue.ready_handles(10), vec![high.handle(), low.handle()]);
+    assert_eq!(
+        queue.entry(low.handle()).unwrap().effective_qos(),
+        Some(MshrQosClass::new(30, 4))
+    );
+
+    let promoted = queue
+        .allocate_or_merge_with_qos(
+            request(2, 0x8010),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(40, 0),
+        )
+        .unwrap();
+
+    assert_eq!(promoted.handle(), low.handle());
+    assert_eq!(
+        queue.entry(low.handle()).unwrap().effective_qos(),
+        Some(MshrQosClass::new(40, 0))
+    );
+    assert_eq!(queue.ready_handles(10), vec![low.handle(), high.handle()]);
+
+    let snapshot = queue.snapshot();
+    let mut restored = MshrQueue::new(MshrQueueConfig::new(3, 3, 0).unwrap());
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(
+        restored.entry(low.handle()).unwrap().effective_qos(),
+        Some(MshrQosClass::new(40, 0))
+    );
+    assert_eq!(
+        restored.ready_handles(10),
+        vec![low.handle(), high.handle()]
     );
 }
 

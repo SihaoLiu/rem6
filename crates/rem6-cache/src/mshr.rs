@@ -23,6 +23,29 @@ pub enum MshrTargetSource {
     Prefetch,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MshrQosClass {
+    requestor: u32,
+    priority: u8,
+}
+
+impl MshrQosClass {
+    pub const fn new(requestor: u32, priority: u8) -> Self {
+        Self {
+            requestor,
+            priority,
+        }
+    }
+
+    pub const fn requestor(self) -> u32 {
+        self.requestor
+    }
+
+    pub const fn priority(self) -> u8 {
+        self.priority
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MshrQueueConfig {
     entries: usize,
@@ -161,6 +184,7 @@ pub struct MshrTarget {
     order: u64,
     source: MshrTargetSource,
     alloc_on_fill: bool,
+    qos: Option<MshrQosClass>,
 }
 
 impl MshrTarget {
@@ -170,6 +194,7 @@ impl MshrTarget {
         order: u64,
         source: MshrTargetSource,
         alloc_on_fill: bool,
+        qos: Option<MshrQosClass>,
     ) -> Self {
         Self {
             request,
@@ -177,6 +202,7 @@ impl MshrTarget {
             order,
             source,
             alloc_on_fill,
+            qos,
         }
     }
 
@@ -199,6 +225,10 @@ impl MshrTarget {
     pub const fn alloc_on_fill(&self) -> bool {
         self.alloc_on_fill
     }
+
+    pub const fn qos(&self) -> Option<MshrQosClass> {
+        self.qos
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -220,9 +250,10 @@ impl MshrEntry {
         order: u64,
         source: MshrTargetSource,
         alloc_on_fill: bool,
+        qos: Option<MshrQosClass>,
     ) -> Self {
         let line = request.line_address();
-        let target = MshrTarget::new(request, ready_tick, order, source, alloc_on_fill);
+        let target = MshrTarget::new(request, ready_tick, order, source, alloc_on_fill, qos);
         Self {
             handle,
             line,
@@ -241,6 +272,7 @@ impl MshrEntry {
         order: u64,
         source: MshrTargetSource,
         alloc_on_fill: bool,
+        qos: Option<MshrQosClass>,
     ) {
         self.targets.push(MshrTarget::new(
             request,
@@ -248,6 +280,7 @@ impl MshrEntry {
             order,
             source,
             alloc_on_fill,
+            qos,
         ));
     }
 
@@ -277,6 +310,18 @@ impl MshrEntry {
 
     pub fn targets(&self) -> &[MshrTarget] {
         &self.targets
+    }
+
+    pub fn effective_qos(&self) -> Option<MshrQosClass> {
+        self.targets
+            .iter()
+            .filter_map(|target| {
+                target
+                    .qos()
+                    .map(|qos| (qos.priority(), target.order(), qos))
+            })
+            .min_by_key(|(priority, order, _)| (*priority, *order))
+            .map(|(_, _, qos)| qos)
     }
 
     pub fn target_count(&self) -> usize {
@@ -435,6 +480,28 @@ impl MshrQueue {
         source: MshrTargetSource,
         alloc_on_fill: bool,
     ) -> Result<MshrQueueUpdate, MshrQueueError> {
+        self.allocate_or_merge_inner(request, ready_tick, source, alloc_on_fill, None)
+    }
+
+    pub fn allocate_or_merge_with_qos(
+        &mut self,
+        request: MemoryRequest,
+        ready_tick: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+        qos: MshrQosClass,
+    ) -> Result<MshrQueueUpdate, MshrQueueError> {
+        self.allocate_or_merge_inner(request, ready_tick, source, alloc_on_fill, Some(qos))
+    }
+
+    fn allocate_or_merge_inner(
+        &mut self,
+        request: MemoryRequest,
+        ready_tick: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+        qos: Option<MshrQosClass>,
+    ) -> Result<MshrQueueUpdate, MshrQueueError> {
         let line = request.line_address();
         if let Some(index) = self.entries.iter().position(|entry| entry.line == line) {
             let allocated_count = self.entries.len();
@@ -448,7 +515,7 @@ impl MshrQueue {
             }
             let order = self.next_order();
             let entry = &mut self.entries[index];
-            entry.add_target(request, ready_tick, order, source, alloc_on_fill);
+            entry.add_target(request, ready_tick, order, source, alloc_on_fill, qos);
             return Ok(MshrQueueUpdate::new(entry, false, allocated_count));
         }
 
@@ -461,6 +528,7 @@ impl MshrQueue {
             self.next_order(),
             source,
             alloc_on_fill,
+            qos,
         );
         self.entries.push(entry);
         let allocated_count = self.entries.len();
@@ -474,7 +542,17 @@ impl MshrQueue {
             .iter()
             .filter(|entry| !entry.in_service && entry.ready_tick <= tick)
             .collect::<Vec<_>>();
-        entries.sort_by_key(|entry| (entry.ready_tick, entry.order, entry.handle));
+        entries.sort_by_key(|entry| {
+            (
+                entry
+                    .effective_qos()
+                    .map(MshrQosClass::priority)
+                    .unwrap_or(u8::MAX),
+                entry.ready_tick,
+                entry.order,
+                entry.handle,
+            )
+        });
         entries.into_iter().map(|entry| entry.handle).collect()
     }
 

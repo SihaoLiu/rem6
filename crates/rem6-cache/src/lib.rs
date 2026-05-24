@@ -36,8 +36,8 @@ pub use moesi::{
 };
 pub use moesi_bank::{MoesiCacheBank, MoesiCacheBankError, MoesiCacheBankSnapshot};
 pub use mshr::{
-    MshrCompletion, MshrEntry, MshrHandle, MshrQueue, MshrQueueConfig, MshrQueueError,
-    MshrQueueSnapshot, MshrQueueUpdate, MshrTarget, MshrTargetSource,
+    MshrCompletion, MshrEntry, MshrHandle, MshrQosClass, MshrQueue, MshrQueueConfig,
+    MshrQueueError, MshrQueueSnapshot, MshrQueueUpdate, MshrTarget, MshrTargetSource,
 };
 pub use prefetch::{
     PrefetchCandidate, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
