@@ -909,6 +909,59 @@ fn trace_frame_stream_parallel_ingestion_plan_decodes_workers_on_threads_in_glob
 }
 
 #[test]
+fn trace_frame_stream_parallel_ingestion_plan_reports_threaded_worker_decode_summary() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let frame_lengths = [
+        first.encode().len(),
+        large.encode().len(),
+        third.encode().len(),
+        fourth.encode().len(),
+    ];
+    let encoded = TraceFrameStream::new(vec![first, large, third, fourth])
+        .unwrap()
+        .encode();
+    let plan = TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 1, 2).unwrap();
+
+    let decoded = plan.decode_all_threaded_with_summary(&encoded).unwrap();
+
+    assert_eq!(decoded.total_records(), 4);
+    assert_eq!(decoded.total_frame_bytes(), frame_lengths.iter().sum());
+    assert_eq!(decoded.total_payload_bytes(), 1 + 512 + 2 + 3);
+    assert_eq!(
+        decoded
+            .records()
+            .iter()
+            .map(|record| record.record().index())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3],
+    );
+
+    let workers = decoded.worker_summaries();
+    assert_eq!(workers.len(), 2);
+    assert_eq!(workers[0].worker_id(), 0);
+    assert_eq!(workers[0].assignment_count(), 3);
+    assert_eq!(workers[0].record_count(), 3);
+    assert_eq!(
+        workers[0].frame_bytes(),
+        frame_lengths[0] + frame_lengths[2] + frame_lengths[3]
+    );
+    assert_eq!(workers[0].payload_bytes(), 1 + 2 + 3);
+
+    assert_eq!(workers[1].worker_id(), 1);
+    assert_eq!(workers[1].assignment_count(), 1);
+    assert_eq!(workers[1].record_count(), 1);
+    assert_eq!(workers[1].frame_bytes(), frame_lengths[1]);
+    assert_eq!(workers[1].payload_bytes(), 512);
+}
+
+#[test]
 fn trace_frame_stream_parallel_ingestion_plan_threaded_decode_rejects_unplanned_bytes() {
     let frame =
         TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();

@@ -13,6 +13,7 @@ pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
     TraceFrameStreamParallelIngestionPlan, TraceFrameStreamParallelReader, TraceFrameStreamRecord,
     TraceFrameStreamShard, TraceFrameStreamShardCursor, TraceFrameStreamShardPlan,
+    TraceFrameStreamThreadedDecode, TraceFrameStreamThreadedWorkerSummary,
     TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerCursor,
     TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan, TraceFrameStreamWorkerRecord,
 };

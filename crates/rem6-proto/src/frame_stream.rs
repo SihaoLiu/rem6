@@ -231,6 +231,21 @@ pub struct TraceFrameStreamParallelIngestionPlan {
     stream_fingerprint: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamThreadedDecode {
+    records: Vec<TraceFrameStreamWorkerRecord>,
+    worker_summaries: Vec<TraceFrameStreamThreadedWorkerSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamThreadedWorkerSummary {
+    worker_id: usize,
+    assignment_count: usize,
+    record_count: usize,
+    frame_bytes: usize,
+    payload_bytes: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct TraceFrameStreamWorkerCursor<'a> {
     bytes: &'a [u8],
@@ -472,6 +487,14 @@ impl TraceFrameStreamParallelIngestionPlan {
         &self,
         bytes: &[u8],
     ) -> Result<Vec<TraceFrameStreamWorkerRecord>, ProtoError> {
+        self.decode_all_threaded_with_summary(bytes)
+            .map(|decode| decode.records)
+    }
+
+    pub fn decode_all_threaded_with_summary(
+        &self,
+        bytes: &[u8],
+    ) -> Result<TraceFrameStreamThreadedDecode, ProtoError> {
         self.validate_stream_bytes(bytes)?;
 
         let worker_plan = &self.worker_plan;
@@ -493,6 +516,17 @@ impl TraceFrameStreamParallelIngestionPlan {
                 .collect::<Result<Vec<_>, ProtoError>>()
         })?;
 
+        let worker_summaries = worker_records
+            .iter()
+            .enumerate()
+            .map(|(worker_id, records)| {
+                TraceFrameStreamThreadedWorkerSummary::from_records(
+                    worker_id,
+                    worker_plan.assignments_for_worker(worker_id).count(),
+                    records,
+                )
+            })
+            .collect::<Vec<_>>();
         let mut merge_buffer = TraceFrameStreamWorkerMergeBuffer::new(worker_plan);
         let mut records = Vec::with_capacity(worker_plan.total_records());
         for worker_records in worker_records {
@@ -504,7 +538,10 @@ impl TraceFrameStreamParallelIngestionPlan {
         if !merge_buffer.is_complete() {
             return Err(ProtoError::TruncatedFrameStream);
         }
-        Ok(records)
+        Ok(TraceFrameStreamThreadedDecode::new(
+            records,
+            worker_summaries,
+        ))
     }
 
     fn validate_stream_bytes(&self, bytes: &[u8]) -> Result<(), ProtoError> {
@@ -515,6 +552,89 @@ impl TraceFrameStreamParallelIngestionPlan {
             });
         }
         Ok(())
+    }
+}
+
+impl TraceFrameStreamThreadedDecode {
+    fn new(
+        records: Vec<TraceFrameStreamWorkerRecord>,
+        worker_summaries: Vec<TraceFrameStreamThreadedWorkerSummary>,
+    ) -> Self {
+        Self {
+            records,
+            worker_summaries,
+        }
+    }
+
+    pub fn records(&self) -> &[TraceFrameStreamWorkerRecord] {
+        &self.records
+    }
+
+    pub fn worker_summaries(&self) -> &[TraceFrameStreamThreadedWorkerSummary] {
+        &self.worker_summaries
+    }
+
+    pub fn total_records(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn total_frame_bytes(&self) -> usize {
+        self.worker_summaries
+            .iter()
+            .map(TraceFrameStreamThreadedWorkerSummary::frame_bytes)
+            .sum()
+    }
+
+    pub fn total_payload_bytes(&self) -> usize {
+        self.worker_summaries
+            .iter()
+            .map(TraceFrameStreamThreadedWorkerSummary::payload_bytes)
+            .sum()
+    }
+}
+
+impl TraceFrameStreamThreadedWorkerSummary {
+    fn from_records(
+        worker_id: usize,
+        assignment_count: usize,
+        records: &[TraceFrameStreamWorkerRecord],
+    ) -> Self {
+        let frame_bytes = records
+            .iter()
+            .map(|record| record.record().frame_len())
+            .sum();
+        let payload_bytes = records
+            .iter()
+            .map(|record| record.record().frame().payload().len())
+            .sum();
+
+        Self {
+            worker_id,
+            assignment_count,
+            record_count: records.len(),
+            frame_bytes,
+            payload_bytes,
+        }
+    }
+
+    pub const fn worker_id(&self) -> usize {
+        self.worker_id
+    }
+
+    pub const fn assignment_count(&self) -> usize {
+        self.assignment_count
+    }
+
+    pub const fn record_count(&self) -> usize {
+        self.record_count
+    }
+
+    pub const fn frame_bytes(&self) -> usize {
+        self.frame_bytes
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
     }
 }
 
