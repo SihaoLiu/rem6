@@ -10,7 +10,7 @@ pub use activity::{
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
-pub use qos::DramQosRequest;
+pub use qos::{DramQosRequest, DramQosTurnaroundPolicy};
 
 use rem6_fabric::{QosError, QosQueueArbiter};
 use rem6_kernel::{WaitForEdgeKind, WaitForGraph, WaitForNode};
@@ -1206,11 +1206,26 @@ impl DramController {
     where
         I: IntoIterator<Item = DramQosRequest<'a>>,
     {
-        qos::order_requests(requests.into_iter().collect(), arbiter)
-            .map_err(|source| DramError::Qos { source })?
-            .into_iter()
-            .map(|request| self.schedule(arrival_cycle, request.request()))
-            .collect()
+        qos::schedule_qos_batch(
+            self,
+            arrival_cycle,
+            requests,
+            arbiter,
+            DramQosTurnaroundPolicy::RequestOrder,
+        )
+    }
+
+    pub fn schedule_qos_batch_with_turnaround_policy<'a, I>(
+        &mut self,
+        arrival_cycle: u64,
+        requests: I,
+        arbiter: &mut QosQueueArbiter,
+        turnaround: DramQosTurnaroundPolicy,
+    ) -> Result<Vec<DramAccess>, DramError>
+    where
+        I: IntoIterator<Item = DramQosRequest<'a>>,
+    {
+        qos::schedule_qos_batch(self, arrival_cycle, requests, arbiter, turnaround)
     }
 }
 

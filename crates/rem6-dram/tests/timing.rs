@@ -1,6 +1,6 @@
 use rem6_dram::{
     DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramQosRequest,
-    DramTiming,
+    DramQosTurnaroundPolicy, DramTiming,
 };
 use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
@@ -78,9 +78,45 @@ fn dram_controller_qos_batch_orders_same_arrival_before_timing() {
     assert_eq!(graph.dependencies(&low_request)[0].last_observed_tick(), 7);
 }
 
+#[test]
+fn dram_controller_qos_batch_can_prefer_current_bus_direction() {
+    let mut controller = DramController::new(geometry(), timing());
+    controller.schedule(0, &read(0x0000, 8, 40)).unwrap();
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let write_first = write_from(4, 0x0040, 41);
+    let read_second = read_from(5, 0x0100, 8, 42);
+
+    let accesses = controller
+        .schedule_qos_batch_with_turnaround_policy(
+            8,
+            [
+                DramQosRequest::new(&write_first, QosPriority::new(0), 0),
+                DramQosRequest::new(&read_second, QosPriority::new(0), 1),
+            ],
+            &mut arbiter,
+            DramQosTurnaroundPolicy::PreferCurrentDirection,
+        )
+        .unwrap();
+
+    assert_eq!(accesses.len(), 2);
+    assert_eq!(accesses[0].request(), read_second.id());
+    assert_eq!(accesses[0].kind(), DramAccessKind::Read);
+    assert!(accesses[0].row_hit());
+    assert_eq!(accesses[0].command_cycle(), 8);
+    assert_eq!(accesses[0].ready_cycle(), 13);
+    assert_eq!(accesses[1].request(), write_first.id());
+    assert_eq!(accesses[1].kind(), DramAccessKind::Write);
+    assert_eq!(accesses[1].command_cycle(), 12);
+    assert_eq!(accesses[1].ready_cycle(), 19);
+}
+
 fn write(address: u64, sequence: u64) -> MemoryRequest {
+    write_from(2, address, sequence)
+}
+
+fn write_from(agent: u32, address: u64, sequence: u64) -> MemoryRequest {
     MemoryRequest::write(
-        request_id(sequence),
+        request_id_from(agent, sequence),
         Address::new(address),
         AccessSize::new(4).unwrap(),
         vec![0xaa, 0xbb, 0xcc, 0xdd],
