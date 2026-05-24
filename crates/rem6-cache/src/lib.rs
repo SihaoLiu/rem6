@@ -20,6 +20,7 @@ mod moesi_bank;
 mod mshr;
 mod prefetch;
 mod prefetch_ampm;
+mod prefetch_dcpt;
 mod prefetch_multi;
 mod prefetch_throttle;
 mod replacement;
@@ -55,6 +56,11 @@ pub use prefetch_ampm::{
     AmpmAccessMapEntrySnapshot, AmpmAccessMapState, AmpmEpochConfig, AmpmEpochReport,
     AmpmEpochStats, AmpmPrefetchAccess, AmpmPrefetchCandidate, AmpmPrefetcher,
     AmpmPrefetcherConfig, AmpmPrefetcherError, AmpmPrefetcherSnapshot, AmpmRatio,
+};
+pub use prefetch_dcpt::{
+    DcptPrefetchAccess, DcptPrefetchCandidate, DcptPrefetchContextSnapshot,
+    DcptPrefetchEntrySnapshot, DcptPrefetcher, DcptPrefetcherConfig, DcptPrefetcherError,
+    DcptPrefetcherSnapshot,
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,

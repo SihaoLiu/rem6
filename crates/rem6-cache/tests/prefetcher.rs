@@ -1,9 +1,10 @@
 use rem6_cache::{
-    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig,
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
-    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
-    QueuedPrefetchThrottleError, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
-    StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, DcptPrefetchAccess,
+    DcptPrefetcher, DcptPrefetcherConfig, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
+    QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine, QueuedPrefetchThrottle,
+    QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError, QueuedPrefetcher,
+    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
+    TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -17,6 +18,90 @@ fn tagged_access(agent: u32, pc: u64, address: u64) -> TaggedPrefetchAccess {
 
 fn ampm_access(agent: u32, pc: u64, address: u64) -> AmpmPrefetchAccess {
     AmpmPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn dcpt_access(agent: u32, pc: u64, address: u64) -> DcptPrefetchAccess {
+    DcptPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+#[test]
+fn dcpt_prefetcher_matches_masked_delta_pairs_and_restores_state() {
+    let config = DcptPrefetcherConfig::new(6, 12, 4, 4, true).unwrap();
+    let mut prefetcher = DcptPrefetcher::new(config.clone());
+    let pc = 0x440;
+
+    for address in [0x1000, 0x1041, 0x10c3, 0x1112] {
+        assert!(prefetcher
+            .observe(dcpt_access(5, pc, address))
+            .unwrap()
+            .is_empty(),);
+        assert_eq!(prefetcher.last_candidates(), &[]);
+        assert_eq!(prefetcher.entry_count(AgentId::new(5)), 1);
+    }
+
+    let candidates = prefetcher
+        .observe(dcpt_access(5, pc, 0x11a0))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x11ef), Address::new(0x127d)]
+    );
+    assert_eq!(candidates[0].source_address(), Address::new(0x11a0));
+    assert_eq!(candidates[0].context(), AgentId::new(5));
+    assert_eq!(candidates[0].pc(), pc);
+    assert_eq!(candidates[0].delta(), 0x4f);
+    assert_eq!(candidates[0].stride(), 0x4f);
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(candidates[1].delta(), 0x8e);
+    assert_eq!(candidates[1].stride(), 0x8e);
+    assert_eq!(candidates[1].degree_index(), 2);
+    assert_eq!(prefetcher.context_count(), 1);
+    assert_eq!(prefetcher.entry_count(AgentId::new(6)), 0);
+    assert_eq!(prefetcher.last_candidates(), candidates.as_slice());
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = DcptPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let first_restored_candidates = restored
+        .observe(dcpt_access(5, pc, 0x11ef))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        first_restored_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x127d), Address::new(0x12cc)]
+    );
+    assert_eq!(first_restored_candidates[0].delta(), 0x8e);
+    assert_eq!(first_restored_candidates[1].delta(), 0x4f);
+
+    let restored_candidates = restored
+        .observe(dcpt_access(5, pc, 0x127d))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        restored_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x12cc),
+            Address::new(0x135a),
+            Address::new(0x13a9),
+            Address::new(0x1437)
+        ]
+    );
+    assert_eq!(restored_candidates[0].delta(), 0x4f);
+    assert_eq!(restored_candidates[1].delta(), 0x8e);
+    assert_eq!(restored_candidates[2].delta(), 0x4f);
+    assert_eq!(restored_candidates[3].delta(), 0x8e);
 }
 
 #[test]
