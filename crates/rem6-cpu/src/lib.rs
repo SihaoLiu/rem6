@@ -13,7 +13,7 @@ use rem6_kernel::{
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryOperation,
-    MemoryRequest, MemoryRequestId, ResponseStatus,
+    MemoryRequest, MemoryRequestId, ResponseStatus, TranslationRequestId,
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
 use rem6_transport::{
@@ -33,6 +33,7 @@ mod ltage_predictor;
 mod multiperspective_perceptron;
 mod riscv_activity;
 mod riscv_cluster;
+mod riscv_translation;
 mod statistical_corrector;
 mod tage_predictor;
 mod tage_sc_l_predictor;
@@ -836,21 +837,14 @@ impl RiscvCore {
     }
 
     pub fn has_pending_data_access(&self) -> bool {
-        !self
-            .state
-            .lock()
-            .expect("riscv core lock")
-            .outstanding_data
-            .is_empty()
+        let state = self.state.lock().expect("riscv core lock");
+        !state.outstanding_data.is_empty()
+            || !state.pending_data_translations.is_empty()
+            || !state.ready_translated_data.is_empty()
     }
 
     pub fn has_unissued_data_access(&self) -> bool {
-        let state = self.state.lock().expect("riscv core lock");
-        state.events.iter().any(|event| {
-            let fetch_request = event.fetch().request_id();
-            !state.issued_data_for_fetches.contains(&fetch_request)
-                && event.execution().memory_access().is_some()
-        })
+        self.next_unissued_data_access().is_some()
     }
 
     pub fn write_register(&self, register: Register, value: u64) {
@@ -1204,6 +1198,7 @@ impl RiscvCore {
             fetch_request,
             access,
             size,
+            physical_address: address,
             line_layout: Some(line_layout),
         }))
     }
@@ -1217,6 +1212,7 @@ impl RiscvCore {
             return Ok(None);
         };
         let size = memory_width_size(access_width(&access))?;
+        let address = Address::new(access_address(&access));
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         let request = mmio_request(request_id, &access, size)?;
         let route = match bus.route_for(&request) {
@@ -1239,6 +1235,7 @@ impl RiscvCore {
             fetch_request,
             access,
             size,
+            physical_address: address,
             line_layout: None,
         }))
     }
@@ -1248,6 +1245,16 @@ impl RiscvCore {
         state.events.iter().find_map(|event| {
             let fetch_request = event.fetch().request_id();
             if state.issued_data_for_fetches.contains(&fetch_request) {
+                return None;
+            }
+            if state
+                .pending_data_translations
+                .values()
+                .any(|pending| pending.fetch_request() == fetch_request)
+            {
+                return None;
+            }
+            if state.ready_translated_data.contains_key(&fetch_request) {
                 return None;
             }
             event
@@ -1343,8 +1350,12 @@ impl RiscvCore {
 struct RiscvCoreState {
     hart: RiscvHartState,
     data: Option<CpuDataConfig>,
+    data_translation: Option<CpuTranslationFrontend>,
     executed_fetches: BTreeSet<MemoryRequestId>,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
+    pending_data_translations:
+        BTreeMap<TranslationRequestId, riscv_translation::PendingDataTranslation>,
+    ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
     outstanding_data: BTreeMap<MemoryRequestId, IssuedDataAccess>,
     pending_trap: Option<RiscvTrap>,
     events: Vec<RiscvCpuExecutionEvent>,
@@ -1356,8 +1367,11 @@ impl RiscvCoreState {
         Self {
             hart: RiscvHartState::new(pc),
             data: None,
+            data_translation: None,
             executed_fetches: BTreeSet::new(),
             issued_data_for_fetches: BTreeSet::new(),
+            pending_data_translations: BTreeMap::new(),
+            ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
             pending_trap: None,
             events: Vec::new(),
@@ -1375,6 +1389,7 @@ struct OutstandingDataAccess {
     fetch_request: MemoryRequestId,
     access: MemoryAccessKind,
     size: AccessSize,
+    physical_address: Address,
     line_layout: Option<CacheLineLayout>,
 }
 
@@ -1391,16 +1406,16 @@ impl OutstandingDataAccess {
     fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
         let line_layout = self.line_layout.expect("memory data access line layout");
         match &self.access {
-            MemoryAccessKind::Load { address, .. } => MemoryRequest::read_shared(
+            MemoryAccessKind::Load { .. } => MemoryRequest::read_shared(
                 self.request_id,
-                Address::new(*address),
+                self.physical_address,
                 self.size,
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-            MemoryAccessKind::Store { address, value, .. } => MemoryRequest::write(
+            MemoryAccessKind::Store { value, .. } => MemoryRequest::write(
                 self.request_id,
-                Address::new(*address),
+                self.physical_address,
                 self.size,
                 store_bytes(*value, self.size),
                 ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
@@ -1422,6 +1437,7 @@ impl OutstandingDataAccess {
             fetch_request: self.fetch_request,
             access: self.access.clone(),
             size: self.size,
+            physical_address: self.physical_address,
         }
     }
 
@@ -1438,6 +1454,7 @@ struct IssuedDataAccess {
     fetch_request: MemoryRequestId,
     access: MemoryAccessKind,
     size: AccessSize,
+    physical_address: Address,
 }
 
 impl IssuedDataAccess {
@@ -1450,6 +1467,7 @@ impl IssuedDataAccess {
             self.fetch_request,
             self.access.clone(),
             self.size,
+            self.physical_address,
         )
     }
 }
@@ -1495,6 +1513,7 @@ pub struct RiscvDataAccessRecord {
     fetch_request: MemoryRequestId,
     access: MemoryAccessKind,
     size: AccessSize,
+    physical_address: Address,
 }
 
 impl RiscvDataAccessRecord {
@@ -1507,6 +1526,7 @@ impl RiscvDataAccessRecord {
         fetch_request: MemoryRequestId,
         access: MemoryAccessKind,
         size: AccessSize,
+        physical_address: Address,
     ) -> Self {
         Self {
             tick,
@@ -1516,6 +1536,7 @@ impl RiscvDataAccessRecord {
             fetch_request,
             access,
             size,
+            physical_address,
         }
     }
 
@@ -1559,6 +1580,10 @@ impl RiscvDataAccessRecord {
 
     pub fn size(&self) -> AccessSize {
         self.size
+    }
+
+    pub fn physical_address(&self) -> Address {
+        self.physical_address
     }
 
     pub fn operation(&self) -> MemoryOperation {
@@ -1635,6 +1660,10 @@ impl RiscvDataAccessEvent {
 
     pub fn size(&self) -> AccessSize {
         self.record.size()
+    }
+
+    pub fn physical_address(&self) -> Address {
+        self.record.physical_address()
     }
 
     pub fn operation(&self) -> MemoryOperation {

@@ -2,8 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
-    RiscvCpuError, RiscvDataAccessEventKind, RiscvDataAccessTarget,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
+    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind,
+    RiscvDataAccessTarget,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvTrap, RiscvTrapKind,
@@ -11,7 +12,8 @@ use rem6_isa_riscv::{
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId,
-    PartitionedMemoryStore,
+    PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
+    TranslationQueueConfig, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
@@ -85,6 +87,42 @@ fn data_core(fetch_route: MemoryRouteId, data_route: MemoryRouteId, entry: u64) 
         core(fetch_route, entry),
         CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, layout()),
     )
+}
+
+fn translated_data_core(
+    fetch_route: MemoryRouteId,
+    data_route: MemoryRouteId,
+    entry: u64,
+) -> RiscvCore {
+    translated_data_core_with_latency(fetch_route, data_route, entry, 0)
+}
+
+fn translated_data_core_with_latency(
+    fetch_route: MemoryRouteId,
+    data_route: MemoryRouteId,
+    entry: u64,
+    latency: u64,
+) -> RiscvCore {
+    RiscvCore::with_data_translation(
+        core(fetch_route, entry),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, latency).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    )
+}
+
+fn single_page_map(virtual_base: u64, physical_base: u64) -> TranslationPageMap {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map(
+        Address::new(virtual_base),
+        Address::new(physical_base),
+        1,
+        TranslationPagePermissions::read_write_execute(),
+    )
+    .unwrap();
+    map
 }
 
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
@@ -660,6 +698,148 @@ fn riscv_core_issues_load_access_and_updates_register_after_response() {
     assert_eq!(
         events[1].data(),
         Some(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..])
+    );
+}
+
+#[test]
+fn riscv_core_issues_translated_load_through_data_tlb() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+
+    let delivered_addresses = Arc::new(Mutex::new(Vec::new()));
+    let observed_addresses = delivered_addresses.clone();
+    core.issue_next_translated_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, _context| {
+            observed_addresses
+                .lock()
+                .unwrap()
+                .push(delivery.request().range().start());
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(5)), 0x0123_4567_89ab_cdef);
+    assert_eq!(
+        *delivered_addresses.lock().unwrap(),
+        vec![Address::new(0x9008)]
+    );
+    assert_eq!(
+        core.data_translation_tlb_stats().unwrap(),
+        TranslationTlbStats::new(0, 1, 0, 1, 0)
+    );
+    let events = core.data_access_events();
+    assert_eq!(
+        events[0].access(),
+        &MemoryAccessKind::Load {
+            rd: reg(5),
+            address: 0x4008,
+            width: MemoryWidth::Doubleword,
+            signed: true,
+        }
+    );
+    assert_eq!(events[0].physical_address(), Address::new(0x9008));
+    assert_eq!(events[1].physical_address(), Address::new(0x9008));
+}
+
+#[test]
+fn riscv_core_issues_ready_translated_data_after_translation_latency() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    assert!(core
+        .issue_next_translated_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| panic!("translation miss should not issue data memory"),
+        )
+        .unwrap()
+        .is_none());
+
+    scheduler
+        .schedule_after(core.partition(), 1, |_context| {})
+        .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    core.issue_next_translated_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, _context| {
+            assert_eq!(delivery.request().range().start(), Address::new(0x9008));
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(5)), 0xfedc_ba98_7654_3210);
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
     );
 }
 

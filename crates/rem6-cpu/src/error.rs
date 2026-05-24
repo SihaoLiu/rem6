@@ -3,11 +3,11 @@ use std::fmt;
 
 use rem6_isa_riscv::RiscvError;
 use rem6_kernel::{PartitionId, SchedulerError};
-use rem6_memory::{AccessSize, Address, AgentId, MemoryError, MemoryRequestId};
+use rem6_memory::{AccessSize, Address, AgentId, MemoryError, MemoryRequestId, TranslationFault};
 use rem6_mmio::MmioError;
 use rem6_transport::{MemoryRouteId, TransportEndpointId, TransportError};
 
-use crate::CpuId;
+use crate::{CpuId, CpuTranslationFrontendError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CpuError {
@@ -150,6 +150,9 @@ pub enum RiscvCpuError {
     MissingDataConfig {
         fetch: MemoryRequestId,
     },
+    MissingDataTranslationConfig {
+        fetch: MemoryRequestId,
+    },
     MissingFetchData {
         request: MemoryRequestId,
     },
@@ -180,6 +183,11 @@ pub enum RiscvCpuError {
         expected: PartitionId,
         actual: PartitionId,
     },
+    DataTranslation(CpuTranslationFrontendError),
+    DataTranslationFault {
+        fetch: MemoryRequestId,
+        fault: TranslationFault,
+    },
     Cpu(CpuError),
     Isa(RiscvError),
     Memory(MemoryError),
@@ -194,6 +202,12 @@ impl fmt::Display for RiscvCpuError {
             Self::MissingDataConfig { fetch } => write!(
                 formatter,
                 "fetch response {} from agent {} needs a data route for memory access",
+                fetch.sequence(),
+                fetch.agent().get()
+            ),
+            Self::MissingDataTranslationConfig { fetch } => write!(
+                formatter,
+                "fetch response {} from agent {} needs a data translation frontend",
                 fetch.sequence(),
                 fetch.agent().get()
             ),
@@ -256,6 +270,14 @@ impl fmt::Display for RiscvCpuError {
                 actual.index(),
                 expected.index()
             ),
+            Self::DataTranslation(error) => write!(formatter, "{error}"),
+            Self::DataTranslationFault { fetch, fault } => write!(
+                formatter,
+                "data translation for fetch response {} from agent {} faulted at {:#x}",
+                fetch.sequence(),
+                fetch.agent().get(),
+                fault.virtual_address().get()
+            ),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
@@ -270,6 +292,7 @@ impl Error for RiscvCpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Cpu(error) => Some(error),
+            Self::DataTranslation(error) => Some(error),
             Self::Isa(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Mmio(error) => Some(error),
