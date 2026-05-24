@@ -4,6 +4,13 @@ use std::fmt;
 
 use rem6_kernel::Tick;
 
+mod expression;
+
+pub use expression::{
+    PowerExpression, PowerExpressionInputs, PowerExpressionModel, PowerExpressionModelSnapshot,
+    PowerMetricId, PowerStateExpression,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PowerComponentId(u64);
 
@@ -856,6 +863,18 @@ pub enum PowerError {
         expected: PowerModelMode,
         actual: PowerModelMode,
     },
+    InvalidPowerExpressionInput,
+    InvalidClockPeriod,
+    MissingPowerMetric {
+        metric: PowerMetricId,
+    },
+    InvalidPowerExpressionResult,
+    DuplicatePowerStateExpressionModel {
+        state: PowerStateKind,
+    },
+    MissingPowerStateExpressionModel {
+        state: PowerStateKind,
+    },
 }
 
 impl fmt::Display for PowerError {
@@ -916,6 +935,36 @@ impl fmt::Display for PowerError {
                 formatter,
                 "power model snapshot mode {actual:?} does not match {expected:?}"
             ),
+            Self::InvalidPowerExpressionInput => {
+                write!(formatter, "power expression input is not valid")
+            }
+            Self::InvalidClockPeriod => {
+                write!(
+                    formatter,
+                    "power expression clock period must be finite and positive"
+                )
+            }
+            Self::MissingPowerMetric { metric } => {
+                write!(formatter, "missing power metric id {}", metric.get())
+            }
+            Self::InvalidPowerExpressionResult => {
+                write!(
+                    formatter,
+                    "power expression result is not a valid power value"
+                )
+            }
+            Self::DuplicatePowerStateExpressionModel { state } => {
+                write!(
+                    formatter,
+                    "duplicate power expression model for state {state:?}"
+                )
+            }
+            Self::MissingPowerStateExpressionModel { state } => {
+                write!(
+                    formatter,
+                    "missing power expression model for state {state:?}"
+                )
+            }
         }
     }
 }
