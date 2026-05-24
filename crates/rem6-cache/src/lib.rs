@@ -12,11 +12,13 @@ use rem6_protocol_msi::{MsiCacheLine, MsiError, MsiEvent, MsiLineId, MsiState, M
 use rem6_transport::TargetOutcome;
 
 mod bank;
+mod mesi_bank;
 mod moesi;
 mod mshr;
 mod replacement;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
+pub use mesi_bank::{MesiCacheBank, MesiCacheBankError, MesiCacheBankSnapshot};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MoesiPendingMissSnapshot,
@@ -807,6 +809,7 @@ pub struct MesiCacheControllerResult {
     transition: Option<MesiTransition>,
     downstream_request: Option<MemoryRequest>,
     target_outcome: Option<TargetOutcome>,
+    target_outcomes: Vec<TargetOutcome>,
 }
 
 impl MesiCacheControllerResult {
@@ -822,8 +825,15 @@ impl MesiCacheControllerResult {
             state,
             transition,
             downstream_request,
+            target_outcomes: target_outcome.iter().cloned().collect(),
             target_outcome,
         }
+    }
+
+    pub(crate) fn with_target_outcomes(mut self, target_outcomes: Vec<TargetOutcome>) -> Self {
+        self.target_outcome = target_outcomes.first().cloned();
+        self.target_outcomes = target_outcomes;
+        self
     }
 
     pub const fn kind(&self) -> MesiCacheControllerResultKind {
@@ -844,6 +854,10 @@ impl MesiCacheControllerResult {
 
     pub fn target_outcome(&self) -> Option<&TargetOutcome> {
         self.target_outcome.as_ref()
+    }
+
+    pub fn target_outcomes(&self) -> &[TargetOutcome] {
+        &self.target_outcomes
     }
 }
 
@@ -976,6 +990,14 @@ impl MesiCacheController {
 
     pub fn line(&self) -> MesiLineId {
         self.line.line()
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub(crate) fn set_next_sequence(&mut self, next_sequence: u64) {
+        self.next_sequence = next_sequence;
     }
 
     pub fn cached_data(&self) -> Option<&[u8]> {
