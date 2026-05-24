@@ -2,7 +2,8 @@ use rem6_boot::BootImage;
 use rem6_memory::{AccessSize, Address};
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadLinuxBootHandoff, WorkloadLinuxInitrd, WorkloadManifest,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResourcePayload,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -58,15 +59,14 @@ fn linux_handoff() -> WorkloadLinuxBootHandoff {
             WorkloadLinuxInitrd::new(
                 resource_id("initrd"),
                 Address::new(0x8800_0000),
-                AccessSize::new(0x2000).unwrap(),
+                AccessSize::new(8).unwrap(),
             )
             .unwrap(),
         )
 }
 
-#[test]
-fn workload_manifest_records_linux_boot_handoff_resources() {
-    let manifest = WorkloadManifest::builder(id("linux-handoff"), boot_image())
+fn linux_manifest() -> WorkloadManifest {
+    WorkloadManifest::builder(id("linux-handoff"), boot_image())
         .add_resource(kernel_resource())
         .unwrap()
         .add_resource(initrd_resource())
@@ -74,7 +74,12 @@ fn workload_manifest_records_linux_boot_handoff_resources() {
         .add_required_resource(resource_id("kernel"))
         .with_linux_boot_handoff(linux_handoff())
         .build()
-        .unwrap();
+        .unwrap()
+}
+
+#[test]
+fn workload_manifest_records_linux_boot_handoff_resources() {
+    let manifest = linux_manifest();
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let handoff = manifest.linux_boot_handoff().unwrap();
     let initrd = handoff.initrd().unwrap();
@@ -83,7 +88,7 @@ fn workload_manifest_records_linux_boot_handoff_resources() {
     assert_eq!(handoff.bootargs(), Some("console=ttyS0 root=/dev/vda"));
     assert_eq!(initrd.resource(), &resource_id("initrd"));
     assert_eq!(initrd.start(), Address::new(0x8800_0000));
-    assert_eq!(initrd.end(), Address::new(0x8800_2000));
+    assert_eq!(initrd.end(), Address::new(0x8800_0008));
     assert_eq!(
         manifest.required_resources(),
         &[resource_id("initrd"), resource_id("kernel")]
@@ -94,6 +99,130 @@ fn workload_manifest_records_linux_boot_handoff_resources() {
         .any(|resource| resource.id() == &resource_id("initrd")
             && resource.kind() == WorkloadResourceKind::Initrd));
     assert_eq!(plan.linux_boot_handoff(), Some(handoff));
+}
+
+#[test]
+fn workload_resolved_resources_validate_linux_initrd_payload() {
+    let manifest = linux_manifest();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13, 0x00])
+                .unwrap(),
+            WorkloadResourcePayload::new(
+                resource_id("initrd"),
+                "sha256:initrd",
+                vec![0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7],
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    let handoff = manifest.linux_boot_handoff().unwrap();
+
+    assert_eq!(
+        resources.payload_data(&resource_id("initrd")).unwrap(),
+        &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]
+    );
+    assert_eq!(
+        resources.linux_initrd_data(handoff).unwrap(),
+        &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]
+    );
+}
+
+#[test]
+fn workload_resolved_resources_reject_bad_required_payloads() {
+    let manifest = linux_manifest();
+
+    let missing_initrd = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(
+        missing_initrd,
+        WorkloadError::MissingResourcePayload {
+            resource: resource_id("initrd"),
+        }
+    );
+
+    let wrong_digest = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:other", vec![0; 8])
+                .unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(
+        wrong_digest,
+        WorkloadError::ResourcePayloadDigestMismatch {
+            resource: resource_id("initrd"),
+            expected: "sha256:initrd".to_string(),
+            actual: "sha256:other".to_string(),
+        }
+    );
+
+    let wrong_size = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 7])
+                .unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(
+        wrong_size,
+        WorkloadError::ResourcePayloadSizeMismatch {
+            resource: resource_id("initrd"),
+            expected_bytes: 8,
+            actual_bytes: 7,
+        }
+    );
+
+    let unexpected = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 8])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("extra"), "sha256:extra", vec![0xee]).unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(
+        unexpected,
+        WorkloadError::UnexpectedResourcePayload {
+            resource: resource_id("extra"),
+        }
+    );
+
+    let duplicate = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 8])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![1; 8])
+                .unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateResourcePayload {
+            resource: resource_id("initrd"),
+        }
+    );
 }
 
 #[test]

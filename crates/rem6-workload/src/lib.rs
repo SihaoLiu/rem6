@@ -11,6 +11,7 @@ mod error;
 mod heterogeneous;
 mod identity;
 mod qos;
+mod resource_payload;
 mod result;
 mod topology;
 
@@ -24,6 +25,7 @@ pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
     WorkloadQosTurnaroundPolicyKind,
 };
+pub use resource_payload::{WorkloadResolvedResources, WorkloadResourcePayload};
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
@@ -1049,6 +1051,25 @@ pub enum WorkloadError {
     },
     MissingRequiredResource {
         resource: WorkloadResourceId,
+    },
+    DuplicateResourcePayload {
+        resource: WorkloadResourceId,
+    },
+    MissingResourcePayload {
+        resource: WorkloadResourceId,
+    },
+    UnexpectedResourcePayload {
+        resource: WorkloadResourceId,
+    },
+    ResourcePayloadDigestMismatch {
+        resource: WorkloadResourceId,
+        expected: String,
+        actual: String,
+    },
+    ResourcePayloadSizeMismatch {
+        resource: WorkloadResourceId,
+        expected_bytes: usize,
+        actual_bytes: usize,
     },
     ResourceKindMismatch {
         resource: WorkloadResourceId,

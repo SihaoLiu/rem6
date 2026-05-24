@@ -34,6 +34,39 @@ impl fmt::Display for WorkloadError {
                 "required resource {} is not defined",
                 resource.as_str()
             ),
+            Self::DuplicateResourcePayload { resource } => write!(
+                formatter,
+                "payload for resource {} is already defined",
+                resource.as_str()
+            ),
+            Self::MissingResourcePayload { resource } => write!(
+                formatter,
+                "required resource {} has no resolved payload",
+                resource.as_str()
+            ),
+            Self::UnexpectedResourcePayload { resource } => write!(
+                formatter,
+                "resource payload {} is not required by the workload",
+                resource.as_str()
+            ),
+            Self::ResourcePayloadDigestMismatch {
+                resource,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "resource payload {} has digest {actual}, expected {expected}",
+                resource.as_str()
+            ),
+            Self::ResourcePayloadSizeMismatch {
+                resource,
+                expected_bytes,
+                actual_bytes,
+            } => write!(
+                formatter,
+                "resource payload {} has {actual_bytes} bytes, expected {expected_bytes}",
+                resource.as_str()
+            ),
             Self::ResourceKindMismatch {
                 resource,
                 expected,
