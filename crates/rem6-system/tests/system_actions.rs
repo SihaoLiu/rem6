@@ -27,8 +27,8 @@ use rem6_system::{
     TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 use rem6_timer::{
-    ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, ProgrammableTimer,
-    TimerArm, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
+    ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, ClintTimebase,
+    ProgrammableTimer, TimerArm, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 use rem6_uart::{
@@ -178,7 +178,7 @@ fn clint_device(base: Address, target_partition: PartitionId) -> ClintMmioDevice
         Arc::clone(&controller),
     );
 
-    ClintMmioDevice::new(
+    ClintMmioDevice::with_timebase(
         base,
         [ClintHartConfig::new(
             0,
@@ -187,6 +187,7 @@ fn clint_device(base: Address, target_partition: PartitionId) -> ClintMmioDevice
             timer_port,
             InterruptSourceId::new(91),
         )],
+        ClintTimebase::rtc_driven(),
     )
     .unwrap()
 }
@@ -899,12 +900,14 @@ fn system_action_executor_refreshes_and_restores_live_clint_checkpoint() {
     let source = GuestSourceId::new(18);
     let component = CheckpointComponentId::new("clint0").unwrap();
     let clint = clint_device(Address::new(0x200_0000), PartitionId::new(0));
-    let captured = ClintSnapshot::new(
+    let captured = ClintSnapshot::with_mtime(
         Address::new(0x200_0000),
+        7,
         vec![ClintHartSnapshot::new(0, 1, 44, 2, true)],
     );
-    let empty = ClintSnapshot::new(
+    let empty = ClintSnapshot::with_mtime(
         Address::new(0x200_0000),
+        0,
         vec![ClintHartSnapshot::new(0, 0, u64::MAX, 0, false)],
     );
     clint.restore(&captured).unwrap();
@@ -938,7 +941,7 @@ fn system_action_executor_refreshes_and_restores_live_clint_checkpoint() {
             .chunk(&component, "clint")
             .unwrap()
             .len()
-            >= 48
+            >= 56
     );
     clint.restore(&empty).unwrap();
     assert_ne!(clint.snapshot(), captured);

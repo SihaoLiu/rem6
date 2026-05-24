@@ -206,6 +206,7 @@ impl Error for ClintCheckpointError {
 fn encode_clint(snapshot: &ClintSnapshot) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u64(&mut payload, snapshot.base().get());
+    write_u64(&mut payload, snapshot.mtime());
     write_u64(&mut payload, snapshot.harts().len() as u64);
     for hart in snapshot.harts() {
         write_u32(&mut payload, hart.hart());
@@ -223,6 +224,7 @@ fn decode_clint(
 ) -> Result<ClintSnapshot, ClintCheckpointError> {
     let mut cursor = PayloadCursor::new(component.clone(), payload);
     let base = Address::new(cursor.read_u64("CLINT base")?);
+    let mtime = cursor.read_u64("CLINT mtime")?;
     let hart_count = cursor.read_count("CLINT hart count")?;
     let mut harts = Vec::with_capacity(hart_count);
     for _ in 0..hart_count {
@@ -235,7 +237,7 @@ fn decode_clint(
         ));
     }
     cursor.finish()?;
-    Ok(ClintSnapshot::new(base, harts))
+    Ok(ClintSnapshot::with_mtime(base, mtime, harts))
 }
 
 fn write_u64(payload: &mut Vec<u8>, value: u64) {

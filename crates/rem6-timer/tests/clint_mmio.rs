@@ -8,9 +8,9 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioRequest, MmioRequestId, MmioResponse};
 use rem6_timer::{
-    ClintHartConfig, ClintMmioDevice, ClintResetPolicy, CLINT_MSIP_BASE_OFFSET,
-    CLINT_MSIP_REGISTER_BYTES, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
-    CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
+    ClintHartConfig, ClintMmioDevice, ClintResetPolicy, ClintTimebase, RiscvRtcSource, TimerError,
+    CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MTIMECMP_BASE_OFFSET,
+    CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
 };
 
 fn le32(value: u32) -> Vec<u8> {
@@ -382,6 +382,197 @@ fn clint_parallel_mtimecmp_write_schedules_timer_interrupt() {
             InterruptEventKind::Assert,
         )]
     );
+}
+
+#[test]
+fn clint_rtc_timebase_advances_mtime_and_posts_timer_on_pulses() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(86);
+    let timer_line = InterruptLineId::new(87);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(56);
+    let timer_source = InterruptSourceId::new(57);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::with_timebase(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+        ClintTimebase::rtc_driven(),
+    )
+    .unwrap();
+    let rtc = RiscvRtcSource::new(device.clone(), clint_partition, 3).unwrap();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let observed_completions = Arc::clone(&completions);
+    let captured = Arc::new(Mutex::new(None));
+    let captured_writer = Arc::clone(&captured);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 0, move |context| {
+            rtc.schedule_pulses(context, 3).unwrap();
+        })
+        .unwrap();
+
+    let write_device = device.clone();
+    scheduler
+        .schedule_at(clint_partition, 1, move |context| {
+            write_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(17),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(2),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let read_device = device.clone();
+    scheduler
+        .schedule_at(clint_partition, 10, move |context| {
+            let response = read_device
+                .respond(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(18),
+                        Address::new(0x200_0000 + CLINT_MTIME_OFFSET),
+                        AccessSize::new(CLINT_MTIME_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            completions.lock().unwrap().push(response);
+            *captured_writer.lock().unwrap() = Some(read_device.snapshot());
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        observed_completions.lock().unwrap().as_slice(),
+        &[MmioResponse::completed(
+            MmioRequestId::new(18),
+            Some(le64(3)),
+        )]
+    );
+    assert_eq!(captured.lock().unwrap().clone().unwrap().mtime(), 3);
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            8,
+            timer_line,
+            target,
+            cpu,
+            timer_source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
+fn clint_parallel_rtc_timebase_advances_mtime_and_posts_timer_on_pulses() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(88);
+    let timer_line = InterruptLineId::new(89);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(58);
+    let timer_source = InterruptSourceId::new(59);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::with_timebase(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+        ClintTimebase::rtc_driven(),
+    )
+    .unwrap();
+    let rtc = RiscvRtcSource::new(device.clone(), clint_partition, 3).unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(cpu, 0, move |context| {
+            rtc.schedule_pulses_parallel(context, 3).unwrap();
+        })
+        .unwrap();
+
+    scheduler
+        .schedule_parallel_at(clint_partition, 1, move |context| {
+            device
+                .respond_parallel(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(19),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(2),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            8,
+            timer_line,
+            target,
+            cpu,
+            timer_source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
+fn clint_rtc_source_rejects_scheduler_tick_timebase() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(90);
+    let timer_line = InterruptLineId::new(91);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(60);
+    let timer_source = InterruptSourceId::new(61);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::new(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+    )
+    .unwrap();
+
+    let error = RiscvRtcSource::new(device, clint_partition, 3).unwrap_err();
+
+    assert_eq!(error, TimerError::ClintRtcRequiresRtcTimebase);
 }
 
 #[test]

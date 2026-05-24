@@ -158,7 +158,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/dev/amdgpu`, `src/dev/hsa` | `rem6-gpu`, future GPU ISA and runtime modules | planned | Full GPU system support needs richer queues, address spaces, interrupts, and ISA-visible state. |
 | NPU-style accelerators, not a single gem5 subtree | `rem6-accelerator` | partial | rem6 already models accelerator engines, command lanes, DMA, summaries, and checkpoints. |
 | `src/dev/pci`, `src/dev/virtio`, `src/dev/storage`, `src/dev/net` | future device crates | planned | PCI, block, network, and virtio devices remain required for full-system breadth. |
-| `src/dev/serial`, `src/dev/riscv`, `src/dev/lupio`, `src/dev/i2c` | `rem6-uart`, `rem6-mmio`, `rem6-interrupt`, `rem6-timer`, future device crates | partial | UART, timer, MMIO, interrupts, and an initial RISC-V CLINT model exist. The CLINT path keeps gem5's `msip`, `mtimecmp`, and read-only `mtime` MMIO layout while replacing direct `System::threads` interrupt mutation with typed interrupt ports and scheduler events, including parallel scheduling. CLINT register and timer-assertion state can be captured and restored through typed snapshots and a system checkpoint bank, platform declarations now attach CLINT MMIO plus host checkpoints automatically, and reset is explicit through `ClintResetPolicy`: `msip` is cleared, asserted software and timer lines are typed deasserted, stale timer events are invalidated, and `mtimecmp` is either preserved or reset to a declared value. rem6 does not reset a hidden CLINT time register because `mtime` is scheduler time rather than mutable device-local time. Platform declarations can now emit typed RISC-V DTS source nodes for CPUs, CPU local interrupt controllers, a `soc` simple bus, CLINT `interrupts-extended`, a generic external interrupt controller, and UART interrupt-parent wiring without Python object recursion. Binary DTB emission, RTC input modeling, and other platform devices remain open. |
+| `src/dev/serial`, `src/dev/riscv`, `src/dev/lupio`, `src/dev/i2c` | `rem6-uart`, `rem6-mmio`, `rem6-interrupt`, `rem6-timer`, future device crates | partial | UART, timer, MMIO, interrupts, and an initial RISC-V CLINT model exist. The CLINT path keeps gem5's `msip`, `mtimecmp`, and read-only `mtime` MMIO layout while replacing direct `System::threads` interrupt mutation with typed interrupt ports and scheduler events, including parallel scheduling. CLINT register, timer-assertion, and RTC-driven `mtime` state can be captured and restored through typed snapshots and a system checkpoint bank, platform declarations now attach CLINT MMIO plus host checkpoints automatically, and reset is explicit through `ClintResetPolicy`: `msip` is cleared, asserted software and timer lines are typed deasserted, stale timer events are invalidated, `mtimecmp` is either preserved or reset to a declared value, and RTC-backed `mtime` resets as explicit device state. The default CLINT timebase remains scheduler ticks for compatibility, while `ClintTimebase::RtcDriven` plus `RiscvRtcSource` models gem5's RTC pulse into CLINT `mtime` without hiding the dependency in global time. Platform declarations can now emit typed RISC-V DTS source nodes for CPUs, CPU local interrupt controllers, a `soc` simple bus, CLINT `interrupts-extended`, a generic external interrupt controller, and UART interrupt-parent wiring without Python object recursion. Binary DTB emission, richer wall-clock/BCD RTC behavior, and other platform devices remain open. |
 | platform-specific device trees under `src/dev/arm`, `src/dev/x86`, `src/dev/mips`, `src/dev/sparc` | future platform crates | planned | These should arrive with the corresponding ISA and platform support. |
 
 ### Simulation Kernel, Checkpointing, and Host Control
@@ -238,13 +238,16 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 - Timer/MMIO tests cover typed RISC-V CLINT `msip` software interrupts,
   `mtimecmp` timer interrupt scheduling, future-deadline timer deassertion,
   read-only `mtime` from scheduler ticks, the same `mtimecmp` path under the
-  parallel scheduler, and CLINT snapshot/restore of per-hart `msip` and
-  `mtimecmp` state. CLINT reset tests cover `msip` clearing, `mtimecmp` reset
-  policy, timer-assertion clearing, serial and parallel typed interrupt
-  deassertion, and stale timer-event invalidation through generation changes.
+  parallel scheduler, RTC-driven `mtime` advancement from typed serial and
+  parallel RTC pulse sources, MTIP delivery on `mtimecmp` reach, and CLINT
+  snapshot/restore of per-hart `msip`, `mtimecmp`, timer assertion, and
+  RTC-backed `mtime` state. CLINT reset tests cover `msip` clearing,
+  `mtimecmp` reset policy, timer-assertion clearing, serial and parallel typed
+  interrupt deassertion, and stale timer-event invalidation through generation
+  changes.
 - System action tests cover CLINT checkpoint-bank capture and restore through
-  host checkpoint manifests for per-hart `msip`, `mtimecmp`, and timer
-  assertion state.
+  host checkpoint manifests for per-hart `msip`, `mtimecmp`, timer assertion,
+  and RTC-backed `mtime` state.
 - Platform and topology tests cover declared CLINT hart interrupt routes, CLINT
   MMIO bus routing, declared CLINT reset policy plumbing, and automatic host
   checkpoint-bank attachment for platform CLINT devices.

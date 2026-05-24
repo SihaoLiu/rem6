@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{InterruptLinePort, InterruptSourceId};
-use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
+use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext, Tick};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
@@ -50,6 +50,51 @@ impl ClintResetPolicy {
 
     pub const fn mtimecmp_reset_value(self) -> Option<u64> {
         self.mtimecmp_reset_value
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ClintTimebase {
+    #[default]
+    SchedulerTicks,
+    RtcDriven,
+}
+
+impl ClintTimebase {
+    pub const fn scheduler_ticks() -> Self {
+        Self::SchedulerTicks
+    }
+
+    pub const fn rtc_driven() -> Self {
+        Self::RtcDriven
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ClintTimeState {
+    mtime: u64,
+}
+
+impl ClintTimeState {
+    const fn new() -> Self {
+        Self { mtime: 0 }
+    }
+
+    fn mtime(&self) -> u64 {
+        self.mtime
+    }
+
+    fn tick(&mut self) -> u64 {
+        self.mtime += 1;
+        self.mtime
+    }
+
+    fn reset(&mut self) {
+        self.mtime = 0;
+    }
+
+    fn set_mtime(&mut self, mtime: u64) {
+        self.mtime = mtime;
     }
 }
 
@@ -175,6 +220,15 @@ impl ClintHartRuntime {
     fn mark_timer_asserted(&self, generation: u64) -> bool {
         let mut state = self.state.lock().expect("CLINT hart state lock");
         if state.timer_generation != generation || state.timer_asserted {
+            return false;
+        }
+        state.timer_asserted = true;
+        true
+    }
+
+    fn mark_timer_asserted_if_due(&self, mtime: u64) -> bool {
+        let mut state = self.state.lock().expect("CLINT hart state lock");
+        if mtime < state.mtimecmp || state.timer_asserted {
             return false;
         }
         state.timer_asserted = true;
@@ -404,16 +458,29 @@ impl ClintHartSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClintSnapshot {
     base: Address,
+    mtime: u64,
     harts: Vec<ClintHartSnapshot>,
 }
 
 impl ClintSnapshot {
     pub fn new(base: Address, harts: Vec<ClintHartSnapshot>) -> Self {
-        Self { base, harts }
+        Self {
+            base,
+            mtime: 0,
+            harts,
+        }
+    }
+
+    pub fn with_mtime(base: Address, mtime: u64, harts: Vec<ClintHartSnapshot>) -> Self {
+        Self { base, mtime, harts }
     }
 
     pub const fn base(&self) -> Address {
         self.base
+    }
+
+    pub const fn mtime(&self) -> u64 {
+        self.mtime
     }
 
     pub fn harts(&self) -> &[ClintHartSnapshot] {
@@ -422,10 +489,106 @@ impl ClintSnapshot {
 }
 
 #[derive(Clone, Debug)]
+pub struct RiscvRtcSource {
+    clint: ClintMmioDevice,
+    clint_partition: PartitionId,
+    period: Tick,
+}
+
+impl RiscvRtcSource {
+    pub fn new(
+        clint: ClintMmioDevice,
+        clint_partition: PartitionId,
+        period: Tick,
+    ) -> Result<Self, TimerError> {
+        if period == 0 {
+            return Err(TimerError::ZeroRtcPeriod);
+        }
+        if clint.timebase() != ClintTimebase::RtcDriven {
+            return Err(TimerError::ClintRtcRequiresRtcTimebase);
+        }
+
+        Ok(Self {
+            clint,
+            clint_partition,
+            period,
+        })
+    }
+
+    pub const fn clint_partition(&self) -> PartitionId {
+        self.clint_partition
+    }
+
+    pub const fn period(&self) -> Tick {
+        self.period
+    }
+
+    pub fn schedule_pulses(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        pulses: u64,
+    ) -> Result<(), TimerError> {
+        if pulses == 0 {
+            return Ok(());
+        }
+
+        let source = self.clone();
+        context
+            .schedule_remote_after(self.clint_partition, self.period, move |context| {
+                source
+                    .deliver_pulse(context, pulses)
+                    .expect("validated RISC-V RTC pulse");
+            })
+            .map(|_| ())
+            .map_err(TimerError::Scheduler)
+    }
+
+    pub fn schedule_pulses_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        pulses: u64,
+    ) -> Result<(), TimerError> {
+        if pulses == 0 {
+            return Ok(());
+        }
+
+        let source = self.clone();
+        context
+            .schedule_remote_after(self.clint_partition, self.period, move |context| {
+                source
+                    .deliver_pulse_parallel(context, pulses)
+                    .expect("validated RISC-V RTC pulse");
+            })
+            .map(|_| ())
+            .map_err(TimerError::Scheduler)
+    }
+
+    fn deliver_pulse(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        remaining: u64,
+    ) -> Result<(), TimerError> {
+        self.clint.rtc_tick(context)?;
+        self.schedule_pulses(context, remaining.saturating_sub(1))
+    }
+
+    fn deliver_pulse_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        remaining: u64,
+    ) -> Result<(), TimerError> {
+        self.clint.rtc_tick_parallel(context)?;
+        self.schedule_pulses_parallel(context, remaining.saturating_sub(1))
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ClintMmioDevice {
     base: Address,
     harts: Arc<BTreeMap<u32, ClintHartRuntime>>,
     reset_policy: ClintResetPolicy,
+    timebase: ClintTimebase,
+    time_state: Arc<Mutex<ClintTimeState>>,
 }
 
 impl ClintMmioDevice {
@@ -436,10 +599,43 @@ impl ClintMmioDevice {
         Self::with_reset_policy(base, harts, ClintResetPolicy::preserve_mtimecmp())
     }
 
+    pub fn with_timebase<I>(
+        base: Address,
+        harts: I,
+        timebase: ClintTimebase,
+    ) -> Result<Self, TimerError>
+    where
+        I: IntoIterator<Item = ClintHartConfig>,
+    {
+        Self::with_reset_policy_and_timebase(
+            base,
+            harts,
+            ClintResetPolicy::preserve_mtimecmp(),
+            timebase,
+        )
+    }
+
     pub fn with_reset_policy<I>(
         base: Address,
         harts: I,
         reset_policy: ClintResetPolicy,
+    ) -> Result<Self, TimerError>
+    where
+        I: IntoIterator<Item = ClintHartConfig>,
+    {
+        Self::with_reset_policy_and_timebase(
+            base,
+            harts,
+            reset_policy,
+            ClintTimebase::scheduler_ticks(),
+        )
+    }
+
+    pub fn with_reset_policy_and_timebase<I>(
+        base: Address,
+        harts: I,
+        reset_policy: ClintResetPolicy,
+        timebase: ClintTimebase,
     ) -> Result<Self, TimerError>
     where
         I: IntoIterator<Item = ClintHartConfig>,
@@ -459,6 +655,8 @@ impl ClintMmioDevice {
             base,
             harts: Arc::new(runtimes),
             reset_policy,
+            timebase,
+            time_state: Arc::new(Mutex::new(ClintTimeState::new())),
         })
     }
 
@@ -474,9 +672,14 @@ impl ClintMmioDevice {
         self.reset_policy
     }
 
+    pub const fn timebase(&self) -> ClintTimebase {
+        self.timebase
+    }
+
     pub fn snapshot(&self) -> ClintSnapshot {
-        ClintSnapshot::new(
+        ClintSnapshot::with_mtime(
             self.base,
+            self.snapshot_mtime(),
             self.harts
                 .iter()
                 .map(|(hart, runtime)| runtime.snapshot(*hart))
@@ -506,10 +709,15 @@ impl ClintMmioDevice {
                 .expect("validated CLINT hart snapshot")
                 .restore(hart);
         }
+        self.time_state
+            .lock()
+            .expect("CLINT time state lock")
+            .set_mtime(snapshot.mtime());
         Ok(())
     }
 
     pub fn reset(&self, context: &mut SchedulerContext<'_>) -> Result<(), TimerError> {
+        self.reset_time();
         for (hart, runtime) in self.harts.iter() {
             let reset = runtime.reset(*hart, self.reset_policy);
             self.signal_reset_deassertions(context, runtime, reset)?;
@@ -521,11 +729,43 @@ impl ClintMmioDevice {
         &self,
         context: &mut ParallelSchedulerContext<'_>,
     ) -> Result<(), TimerError> {
+        self.reset_time();
         for (hart, runtime) in self.harts.iter() {
             let reset = runtime.reset(*hart, self.reset_policy);
             self.signal_reset_deassertions_parallel(context, runtime, reset)?;
         }
         Ok(())
+    }
+
+    pub fn rtc_tick(&self, context: &mut SchedulerContext<'_>) -> Result<u64, TimerError> {
+        let mtime = self.increment_rtc_mtime()?;
+        for (hart, runtime) in self.harts.iter() {
+            if runtime.mark_timer_asserted_if_due(mtime) {
+                runtime
+                    .config
+                    .timer_interrupt
+                    .assert(context, runtime.config.timer_source)
+                    .map_err(|error| TimerError::ClintRtcSignal { hart: *hart, error })?;
+            }
+        }
+        Ok(mtime)
+    }
+
+    pub fn rtc_tick_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+    ) -> Result<u64, TimerError> {
+        let mtime = self.increment_rtc_mtime()?;
+        for (hart, runtime) in self.harts.iter() {
+            if runtime.mark_timer_asserted_if_due(mtime) {
+                runtime
+                    .config
+                    .timer_interrupt
+                    .assert_parallel(context, runtime.config.timer_source)
+                    .map_err(|error| TimerError::ClintRtcSignal { hart: *hart, error })?;
+            }
+        }
+        Ok(mtime)
     }
 
     pub fn respond(
@@ -574,7 +814,7 @@ impl ClintMmioDevice {
             return match request.operation() {
                 MmioOperation::Read => Ok(MmioResponse::completed(
                     request.id(),
-                    Some(le64(context.now())),
+                    Some(le64(self.current_mtime(context.now()))),
                 )),
                 MmioOperation::Write => Err(MmioError::AccessDenied {
                     request: request.id(),
@@ -635,7 +875,7 @@ impl ClintMmioDevice {
             return match request.operation() {
                 MmioOperation::Read => Ok(MmioResponse::completed(
                     request.id(),
-                    Some(le64(context.now())),
+                    Some(le64(self.current_mtime(context.now()))),
                 )),
                 MmioOperation::Write => Err(MmioError::AccessDenied {
                     request: request.id(),
@@ -648,6 +888,49 @@ impl ClintMmioDevice {
         Err(MmioError::UnmappedAddress {
             address: request.range().start(),
         })
+    }
+
+    fn current_mtime(&self, scheduler_now: Tick) -> u64 {
+        match self.timebase {
+            ClintTimebase::SchedulerTicks => scheduler_now,
+            ClintTimebase::RtcDriven => self
+                .time_state
+                .lock()
+                .expect("CLINT time state lock")
+                .mtime(),
+        }
+    }
+
+    fn snapshot_mtime(&self) -> u64 {
+        match self.timebase {
+            ClintTimebase::SchedulerTicks => 0,
+            ClintTimebase::RtcDriven => self
+                .time_state
+                .lock()
+                .expect("CLINT time state lock")
+                .mtime(),
+        }
+    }
+
+    fn reset_time(&self) {
+        if self.timebase == ClintTimebase::RtcDriven {
+            self.time_state
+                .lock()
+                .expect("CLINT time state lock")
+                .reset();
+        }
+    }
+
+    fn increment_rtc_mtime(&self) -> Result<u64, TimerError> {
+        if self.timebase != ClintTimebase::RtcDriven {
+            return Err(TimerError::ClintRtcRequiresRtcTimebase);
+        }
+
+        Ok(self
+            .time_state
+            .lock()
+            .expect("CLINT time state lock")
+            .tick())
     }
 
     fn hart_ids(&self) -> Vec<u32> {
@@ -861,7 +1144,8 @@ impl ClintMmioDevice {
     ) -> Result<(), MmioError> {
         let deadline = clint_u64_write_value(request, runtime.mtimecmp(), register_offset)?;
         let program = runtime.replace_mtimecmp(deadline);
-        if deadline <= context.now() {
+        let current_mtime = self.current_mtime(context.now());
+        if deadline <= current_mtime {
             runtime.mark_timer_asserted(program.generation());
             return runtime
                 .config
@@ -883,6 +1167,9 @@ impl ClintMmioDevice {
                     request: request.id(),
                     message: error.to_string(),
                 })?;
+        }
+        if self.timebase == ClintTimebase::RtcDriven {
+            return Ok(());
         }
         let delay = deadline - context.now();
         let runtime = runtime.clone();
@@ -913,7 +1200,8 @@ impl ClintMmioDevice {
     ) -> Result<(), MmioError> {
         let deadline = clint_u64_write_value(request, runtime.mtimecmp(), register_offset)?;
         let program = runtime.replace_mtimecmp(deadline);
-        if deadline <= context.now() {
+        let current_mtime = self.current_mtime(context.now());
+        if deadline <= current_mtime {
             runtime.mark_timer_asserted(program.generation());
             return runtime
                 .config
@@ -935,6 +1223,9 @@ impl ClintMmioDevice {
                     request: request.id(),
                     message: error.to_string(),
                 })?;
+        }
+        if self.timebase == ClintTimebase::RtcDriven {
+            return Ok(());
         }
         let delay = deadline - context.now();
         let runtime = runtime.clone();

@@ -1235,7 +1235,7 @@ fn topology_host_controller_checkpoints_attached_clint() {
             .chunk(&component, "clint")
             .unwrap()
             .len()
-            >= 48
+            >= 56
     );
 
     clint.restore(&empty).unwrap();

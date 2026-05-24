@@ -13,9 +13,9 @@ mod clint;
 
 pub use self::clint::{
     ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintResetPolicy, ClintSnapshot,
-    CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE,
-    CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE,
-    CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
+    ClintTimebase, RiscvRtcSource, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
+    CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
+    CLINT_MTIMECMP_STRIDE, CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
 };
 
 pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;
@@ -591,6 +591,8 @@ pub enum TimerError {
     DuplicateClintHart {
         hart: u32,
     },
+    ZeroRtcPeriod,
+    ClintRtcRequiresRtcTimebase,
     ClintSnapshotBaseMismatch {
         expected: Address,
         actual: Address,
@@ -600,6 +602,10 @@ pub enum TimerError {
         actual: Vec<u32>,
     },
     ClintResetSignal {
+        hart: u32,
+        error: InterruptError,
+    },
+    ClintRtcSignal {
         hart: u32,
         error: InterruptError,
     },
@@ -625,6 +631,10 @@ impl fmt::Display for TimerError {
             Self::DuplicateClintHart { hart } => {
                 write!(formatter, "duplicate CLINT hart {hart}")
             }
+            Self::ZeroRtcPeriod => write!(formatter, "RISC-V RTC period must be positive"),
+            Self::ClintRtcRequiresRtcTimebase => {
+                write!(formatter, "RISC-V RTC pulses require an RTC-driven CLINT timebase")
+            }
             Self::ClintSnapshotBaseMismatch { expected, actual } => write!(
                 formatter,
                 "CLINT snapshot base mismatch: expected {:#x}, got {:#x}",
@@ -637,6 +647,9 @@ impl fmt::Display for TimerError {
             ),
             Self::ClintResetSignal { hart, error } => {
                 write!(formatter, "CLINT hart {hart} reset signal failed: {error}")
+            }
+            Self::ClintRtcSignal { hart, error } => {
+                write!(formatter, "CLINT hart {hart} RTC signal failed: {error}")
             }
             Self::DeadlineInPast { now, deadline } => {
                 write!(
@@ -670,7 +683,9 @@ impl fmt::Display for TimerError {
 impl Error for TimerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::ClintResetSignal { error, .. } => Some(error),
+            Self::ClintResetSignal { error, .. } | Self::ClintRtcSignal { error, .. } => {
+                Some(error)
+            }
             Self::Scheduler(error) => Some(error),
             Self::Interrupt(error) => Some(error),
             _ => None,
