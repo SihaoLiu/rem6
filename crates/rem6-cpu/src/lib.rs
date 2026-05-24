@@ -115,9 +115,10 @@ pub use tournament_predictor::{
     TournamentTrainingUpdate,
 };
 pub use translation::{
-    CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest, CpuTranslationFaultRecord,
-    CpuTranslationFrontend, CpuTranslationFrontendError, CpuTranslationFrontendSnapshot,
-    CpuTranslationOutcome, CpuTranslationRequest,
+    CpuSegmentedTranslationOutcome, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
+    CpuTranslatedMemorySegment, CpuTranslationFaultRecord, CpuTranslationFrontend,
+    CpuTranslationFrontendError, CpuTranslationFrontendSnapshot, CpuTranslationOutcome,
+    CpuTranslationRequest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

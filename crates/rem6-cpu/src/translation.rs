@@ -7,8 +7,8 @@ use rem6_memory::{
     MemoryRequest, MemoryRequestId, TranslationAccessKind, TranslationAddressSpaceId,
     TranslationCompletion, TranslationError, TranslationFault, TranslationPageMap,
     TranslationQueue, TranslationQueueConfig, TranslationQueueSnapshot, TranslationRequest,
-    TranslationRequestId, TranslationResolution, TranslationTlb, TranslationTlbConfig,
-    TranslationTlbSnapshot,
+    TranslationRequestId, TranslationResolution, TranslationSegment,
+    TranslationSegmentedResolution, TranslationTlb, TranslationTlbConfig, TranslationTlbSnapshot,
 };
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
@@ -322,6 +322,132 @@ impl CpuTranslatedMemoryRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CpuTranslatedMemorySegment {
+    translation_id: TranslationRequestId,
+    memory_request_id: MemoryRequestId,
+    route: MemoryRouteId,
+    endpoint: TransportEndpointId,
+    virtual_address: Address,
+    physical_address: Address,
+    size: AccessSize,
+    operation: CpuTranslatedMemoryOperation,
+    write_data: Option<Vec<u8>>,
+    byte_mask: Option<ByteMask>,
+}
+
+impl CpuTranslatedMemorySegment {
+    fn new(
+        request: &CpuTranslationRequest,
+        segment: &TranslationSegment,
+    ) -> Result<Self, CpuTranslationFrontendError> {
+        let range = segment_slice_range(request, segment.virtual_start(), segment.size())?;
+        let write_data = request
+            .write_data
+            .as_ref()
+            .map(|data| data[range.clone()].to_vec());
+        let byte_mask = request
+            .byte_mask
+            .as_ref()
+            .map(|mask| ByteMask::from_bits(mask.bits()[range].to_vec()))
+            .transpose()
+            .map_err(CpuTranslationFrontendError::Memory)?;
+
+        Ok(Self {
+            translation_id: request.translation_id(),
+            memory_request_id: request.memory_request_id(),
+            route: request.route(),
+            endpoint: request.endpoint().clone(),
+            virtual_address: segment.virtual_start(),
+            physical_address: segment.physical_start(),
+            size: segment.size(),
+            operation: request.operation(),
+            write_data,
+            byte_mask,
+        })
+    }
+
+    pub const fn translation_id(&self) -> TranslationRequestId {
+        self.translation_id
+    }
+
+    pub const fn memory_request_id(&self) -> MemoryRequestId {
+        self.memory_request_id
+    }
+
+    pub const fn route(&self) -> MemoryRouteId {
+        self.route
+    }
+
+    pub const fn endpoint(&self) -> &TransportEndpointId {
+        &self.endpoint
+    }
+
+    pub const fn virtual_address(&self) -> Address {
+        self.virtual_address
+    }
+
+    pub const fn physical_address(&self) -> Address {
+        self.physical_address
+    }
+
+    pub const fn size(&self) -> AccessSize {
+        self.size
+    }
+
+    pub const fn operation(&self) -> CpuTranslatedMemoryOperation {
+        self.operation
+    }
+
+    pub fn write_data(&self) -> Option<&[u8]> {
+        self.write_data.as_deref()
+    }
+
+    pub const fn byte_mask(&self) -> Option<&ByteMask> {
+        self.byte_mask.as_ref()
+    }
+
+    pub fn memory_request_with_id(
+        &self,
+        request_id: MemoryRequestId,
+        line_layout: CacheLineLayout,
+    ) -> Result<MemoryRequest, CpuTranslationFrontendError> {
+        match self.operation {
+            CpuTranslatedMemoryOperation::InstructionFetch => MemoryRequest::instruction_fetch(
+                request_id,
+                self.physical_address,
+                self.size,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::Read => MemoryRequest::read_shared(
+                request_id,
+                self.physical_address,
+                self.size,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::Write => MemoryRequest::write(
+                request_id,
+                self.physical_address,
+                self.size,
+                self.write_data
+                    .clone()
+                    .ok_or(CpuTranslationFrontendError::MissingWriteData {
+                        request: self.memory_request_id,
+                    })?,
+                self.byte_mask
+                    .clone()
+                    .ok_or(CpuTranslationFrontendError::MissingByteMask {
+                        request: self.memory_request_id,
+                    })?,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CpuTranslationFaultRecord {
     translation_id: TranslationRequestId,
     memory_request_id: MemoryRequestId,
@@ -393,6 +519,12 @@ impl CpuTranslationFaultRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CpuTranslationOutcome {
     Mapped(CpuTranslatedMemoryRequest),
+    Fault(CpuTranslationFaultRecord),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CpuSegmentedTranslationOutcome {
+    Mapped(Vec<CpuTranslatedMemorySegment>),
     Fault(CpuTranslationFaultRecord),
 }
 
@@ -634,6 +766,29 @@ impl CpuTranslationFrontend {
         Ok(outcomes)
     }
 
+    pub fn complete_ready_segmented_with_page_map(
+        &mut self,
+        tick: u64,
+        page_map: &TranslationPageMap,
+    ) -> Result<Vec<CpuSegmentedTranslationOutcome>, CpuTranslationFrontendError> {
+        let ready = self.queue.ready_request_ids(tick);
+        let mut outcomes = Vec::with_capacity(ready.len());
+        for request_id in ready {
+            let pending = self
+                .pending
+                .get(&request_id)
+                .expect("translation queue ready request has matching CPU metadata")
+                .clone();
+            let translation = pending
+                .translation_request()
+                .map_err(CpuTranslationFrontendError::Translation)?;
+            let resolution = page_map.translate_segments(&translation);
+            outcomes.push(self.complete_segmented(request_id, resolution)?);
+        }
+
+        Ok(outcomes)
+    }
+
     pub fn snapshot(&self) -> CpuTranslationFrontendSnapshot {
         let queue = self.queue.snapshot();
         let pending = self
@@ -649,11 +804,31 @@ impl CpuTranslationFrontend {
     }
 
     fn complete_translation(&mut self, completion: TranslationCompletion) -> CpuTranslationOutcome {
-        let request = self
-            .pending
-            .remove(&completion.request().id())
-            .expect("translation queue completion has matching CPU metadata");
+        let request = self.take_completed_request(&completion);
         Self::outcome_from_resolution(request, completion.resolution().clone())
+    }
+
+    fn complete_segmented(
+        &mut self,
+        request_id: TranslationRequestId,
+        resolution: TranslationSegmentedResolution,
+    ) -> Result<CpuSegmentedTranslationOutcome, CpuTranslationFrontendError> {
+        let queue_resolution = segmented_queue_resolution(&resolution);
+        let completion = self
+            .queue
+            .complete(request_id, queue_resolution)
+            .map_err(CpuTranslationFrontendError::Translation)?;
+        let request = self.take_completed_request(&completion);
+        Self::segmented_outcome_from_resolution(request, resolution)
+    }
+
+    fn take_completed_request(
+        &mut self,
+        completion: &TranslationCompletion,
+    ) -> CpuTranslationRequest {
+        self.pending
+            .remove(&completion.request().id())
+            .expect("translation queue completion has matching CPU metadata")
     }
 
     fn outcome_from_resolution(
@@ -678,6 +853,68 @@ impl CpuTranslationFrontend {
             }
         }
     }
+
+    fn segmented_outcome_from_resolution(
+        request: CpuTranslationRequest,
+        resolution: TranslationSegmentedResolution,
+    ) -> Result<CpuSegmentedTranslationOutcome, CpuTranslationFrontendError> {
+        match resolution {
+            TranslationSegmentedResolution::Mapped(segments) => segments
+                .iter()
+                .map(|segment| CpuTranslatedMemorySegment::new(&request, segment))
+                .collect::<Result<Vec<_>, _>>()
+                .map(CpuSegmentedTranslationOutcome::Mapped),
+            TranslationSegmentedResolution::Fault(fault) => Ok(
+                CpuSegmentedTranslationOutcome::Fault(CpuTranslationFaultRecord::new(
+                    request.translation_id(),
+                    request.memory_request_id(),
+                    request.route(),
+                    request.endpoint().clone(),
+                    request.virtual_address(),
+                    request.size(),
+                    request.operation(),
+                    fault,
+                )),
+            ),
+        }
+    }
+}
+
+fn segmented_queue_resolution(
+    resolution: &TranslationSegmentedResolution,
+) -> TranslationResolution {
+    match resolution {
+        TranslationSegmentedResolution::Mapped(segments) => TranslationResolution::mapped(
+            segments
+                .first()
+                .expect("mapped segmented translation has at least one segment")
+                .physical_start(),
+        ),
+        TranslationSegmentedResolution::Fault(fault) => TranslationResolution::fault(fault.clone()),
+    }
+}
+
+fn segment_slice_range(
+    request: &CpuTranslationRequest,
+    virtual_start: Address,
+    size: AccessSize,
+) -> Result<std::ops::Range<usize>, CpuTranslationFrontendError> {
+    let offset = virtual_start
+        .get()
+        .checked_sub(request.virtual_address().get())
+        .expect("translation segment starts within CPU request");
+    let start = usize::try_from(offset).map_err(|_| {
+        CpuTranslationFrontendError::Memory(MemoryError::AccessSizeTooLarge {
+            size: request.size(),
+        })
+    })?;
+    let bytes = usize::try_from(size.bytes()).map_err(|_| {
+        CpuTranslationFrontendError::Memory(MemoryError::AccessSizeTooLarge { size })
+    })?;
+    let end = start
+        .checked_add(bytes)
+        .expect("translation segment end fits host usize");
+    Ok(start..end)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

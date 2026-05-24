@@ -1,6 +1,7 @@
 use rem6_cpu::{
-    CpuTranslatedMemoryOperation, CpuTranslationFaultRecord, CpuTranslationFrontend,
-    CpuTranslationFrontendError, CpuTranslationOutcome, CpuTranslationRequest,
+    CpuSegmentedTranslationOutcome, CpuTranslatedMemoryOperation, CpuTranslationFaultRecord,
+    CpuTranslationFrontend, CpuTranslationFrontendError, CpuTranslationOutcome,
+    CpuTranslationRequest,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequestId,
@@ -37,6 +38,30 @@ fn single_page_map(virtual_base: Address, physical_base: Address) -> Translation
         physical_base,
         1,
         TranslationPagePermissions::read_write_execute(),
+    )
+    .unwrap();
+    map
+}
+
+fn two_page_map(
+    virtual_base: Address,
+    first_physical_base: Address,
+    second_physical_base: Address,
+    second_permissions: TranslationPagePermissions,
+) -> TranslationPageMap {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map(
+        virtual_base,
+        first_physical_base,
+        1,
+        TranslationPagePermissions::read_write_execute(),
+    )
+    .unwrap();
+    map.map(
+        Address::new(virtual_base.get() + 4096),
+        second_physical_base,
+        1,
+        second_permissions,
     )
     .unwrap();
     map
@@ -361,4 +386,143 @@ fn cpu_translation_frontend_keeps_tlb_address_spaces_separate_and_snapshots() {
         mapped_two.physical_address(),
         Address::new(0x0000_0000_d000_00a0)
     );
+}
+
+#[test]
+fn cpu_translation_frontend_maps_cross_page_translation_into_segments() {
+    let virtual_base = Address::new(0xffff_0000_e000_0000);
+    let map = two_page_map(
+        virtual_base,
+        Address::new(0x0000_0000_1000_0000),
+        Address::new(0x0000_0000_2000_0000),
+        TranslationPagePermissions::read_write(),
+    );
+    let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 2).unwrap());
+    let store = CpuTranslationRequest::store(
+        translation_id(10),
+        memory_id(19),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0xff8),
+        AccessSize::new(16).unwrap(),
+        (0u8..16).collect(),
+        ByteMask::from_bits(vec![
+            true, false, true, false, true, false, true, false, false, true, false, true, false,
+            true, false, true,
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    frontend.enqueue(30, store).unwrap();
+
+    assert!(frontend
+        .complete_ready_segmented_with_page_map(31, &map)
+        .unwrap()
+        .is_empty());
+    let outcomes = frontend
+        .complete_ready_segmented_with_page_map(32, &map)
+        .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    let CpuSegmentedTranslationOutcome::Mapped(segments) = &outcomes[0] else {
+        panic!("cross-page store should map into segments");
+    };
+    assert_eq!(segments.len(), 2);
+
+    assert_eq!(segments[0].translation_id(), translation_id(10));
+    assert_eq!(segments[0].memory_request_id(), memory_id(19));
+    assert_eq!(
+        segments[0].virtual_address(),
+        Address::new(virtual_base.get() + 0xff8)
+    );
+    assert_eq!(
+        segments[0].physical_address(),
+        Address::new(0x0000_0000_1000_0ff8)
+    );
+    assert_eq!(segments[0].size(), AccessSize::new(8).unwrap());
+    assert_eq!(
+        segments[0].write_data(),
+        Some(&[0, 1, 2, 3, 4, 5, 6, 7][..])
+    );
+    assert_eq!(
+        segments[0].byte_mask().unwrap().bits(),
+        &[true, false, true, false, true, false, true, false]
+    );
+
+    assert_eq!(
+        segments[1].virtual_address(),
+        Address::new(virtual_base.get() + 0x1000)
+    );
+    assert_eq!(
+        segments[1].physical_address(),
+        Address::new(0x0000_0000_2000_0000)
+    );
+    assert_eq!(segments[1].size(), AccessSize::new(8).unwrap());
+    assert_eq!(
+        segments[1].write_data(),
+        Some(&[8, 9, 10, 11, 12, 13, 14, 15][..])
+    );
+    assert_eq!(
+        segments[1].byte_mask().unwrap().bits(),
+        &[false, true, false, true, false, true, false, true]
+    );
+
+    let first_request = segments[0]
+        .memory_request_with_id(memory_id(101), layout())
+        .unwrap();
+    assert_eq!(first_request.id(), memory_id(101));
+    assert_eq!(first_request.operation(), MemoryOperation::Write);
+    assert_eq!(
+        first_request.range().start(),
+        Address::new(0x0000_0000_1000_0ff8)
+    );
+    assert_eq!(first_request.size(), AccessSize::new(8).unwrap());
+    assert_eq!(first_request.data(), Some(&[0, 1, 2, 3, 4, 5, 6, 7][..]));
+    assert!(frontend.is_empty());
+}
+
+#[test]
+fn cpu_translation_frontend_faults_first_failed_cross_page_segment() {
+    let virtual_base = Address::new(0xffff_0000_f000_0000);
+    let map = two_page_map(
+        virtual_base,
+        Address::new(0x0000_0000_3000_0000),
+        Address::new(0x0000_0000_4000_0000),
+        TranslationPagePermissions::read_only(),
+    );
+    let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 1).unwrap());
+    let store = CpuTranslationRequest::store(
+        translation_id(11),
+        memory_id(20),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0xff8),
+        AccessSize::new(16).unwrap(),
+        vec![0xaa; 16],
+        ByteMask::full(AccessSize::new(16).unwrap()).unwrap(),
+    )
+    .unwrap();
+    frontend.enqueue(40, store).unwrap();
+
+    let outcomes = frontend
+        .complete_ready_segmented_with_page_map(41, &map)
+        .unwrap();
+    assert_eq!(
+        outcomes,
+        vec![CpuSegmentedTranslationOutcome::Fault(
+            CpuTranslationFaultRecord::new(
+                translation_id(11),
+                memory_id(20),
+                route(),
+                endpoint(),
+                Address::new(virtual_base.get() + 0xff8),
+                AccessSize::new(16).unwrap(),
+                CpuTranslatedMemoryOperation::Write,
+                TranslationFault::new(
+                    Address::new(virtual_base.get() + 0x1000),
+                    TranslationFaultKind::PermissionFault,
+                ),
+            )
+        )]
+    );
+    assert!(frontend.is_empty());
 }
