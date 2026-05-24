@@ -173,6 +173,82 @@ impl TranslationResolution {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationSegment {
+    virtual_range: AddressRange,
+    physical_start: Address,
+}
+
+impl TranslationSegment {
+    pub fn new(
+        virtual_start: Address,
+        size: AccessSize,
+        physical_start: Address,
+    ) -> Result<Self, TranslationError> {
+        let virtual_range = AddressRange::new(virtual_start, size).map_err(|_| {
+            TranslationError::AddressOverflow {
+                start: virtual_start,
+                size,
+            }
+        })?;
+        AddressRange::new(physical_start, size).map_err(|_| TranslationError::AddressOverflow {
+            start: physical_start,
+            size,
+        })?;
+
+        Ok(Self {
+            virtual_range,
+            physical_start,
+        })
+    }
+
+    pub const fn virtual_start(&self) -> Address {
+        self.virtual_range.start()
+    }
+
+    pub const fn virtual_range(&self) -> AddressRange {
+        self.virtual_range
+    }
+
+    pub const fn size(&self) -> AccessSize {
+        self.virtual_range.size()
+    }
+
+    pub const fn physical_start(&self) -> Address {
+        self.physical_start
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TranslationSegmentedResolution {
+    Mapped(Vec<TranslationSegment>),
+    Fault(TranslationFault),
+}
+
+impl TranslationSegmentedResolution {
+    pub fn mapped(segments: Vec<TranslationSegment>) -> Self {
+        Self::Mapped(segments)
+    }
+
+    pub const fn fault(fault: TranslationFault) -> Self {
+        Self::Fault(fault)
+    }
+
+    pub fn segments(&self) -> Option<&[TranslationSegment]> {
+        match self {
+            Self::Mapped(segments) => Some(segments),
+            Self::Fault(_) => None,
+        }
+    }
+
+    pub const fn fault_ref(&self) -> Option<&TranslationFault> {
+        match self {
+            Self::Mapped(_) => None,
+            Self::Fault(fault) => Some(fault),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TranslationCompletion {
     request: TranslationRequest,
     resolution: TranslationResolution,
@@ -904,11 +980,7 @@ impl TranslationPageMap {
     }
 
     pub fn translate(&self, request: &TranslationRequest) -> TranslationResolution {
-        let Some(mapping) = self
-            .mappings
-            .iter()
-            .find(|mapping| mapping.virtual_range().contains_range(request.range()))
-        else {
+        let Some(mapping) = self.mapping_for_range(request.range()) else {
             return TranslationResolution::fault(TranslationFault::new(
                 request.virtual_address(),
                 TranslationFaultKind::PageFault,
@@ -924,7 +996,60 @@ impl TranslationPageMap {
         TranslationResolution::mapped(mapping.physical_address(request.virtual_address()))
     }
 
+    pub fn translate_segments(
+        &self,
+        request: &TranslationRequest,
+    ) -> TranslationSegmentedResolution {
+        let mut segments = Vec::new();
+        let mut cursor = request.range().start().get();
+        let end = request.range().end().get();
+
+        while cursor < end {
+            let virtual_start = Address::new(cursor);
+            let page_start = self.page_size.page_address(virtual_start).get();
+            let page_end = page_start
+                .checked_add(self.page_size.bytes())
+                .unwrap_or(end);
+            let segment_end = end.min(page_end);
+            let segment_size =
+                AccessSize::new(segment_end - cursor).expect("translation segment size is nonzero");
+            let segment_range = AddressRange::new(virtual_start, segment_size)
+                .expect("translation segment is within request range");
+
+            let Some(mapping) = self.mapping_for_range(segment_range) else {
+                return TranslationSegmentedResolution::fault(TranslationFault::new(
+                    virtual_start,
+                    TranslationFaultKind::PageFault,
+                ));
+            };
+            if !mapping.permissions().allows(request.access()) {
+                return TranslationSegmentedResolution::fault(TranslationFault::new(
+                    virtual_start,
+                    TranslationFaultKind::PermissionFault,
+                ));
+            }
+
+            segments.push(
+                TranslationSegment::new(
+                    virtual_start,
+                    segment_size,
+                    mapping.physical_address(virtual_start),
+                )
+                .expect("translation segment physical range is within mapping"),
+            );
+            cursor = segment_end;
+        }
+
+        TranslationSegmentedResolution::mapped(segments)
+    }
+
     pub fn snapshot(&self) -> TranslationPageMapSnapshot {
         TranslationPageMapSnapshot::new(self.page_size, self.mappings.clone())
+    }
+
+    fn mapping_for_range(&self, range: AddressRange) -> Option<&TranslationPageMapping> {
+        self.mappings
+            .iter()
+            .find(|mapping| mapping.virtual_range().contains_range(range))
     }
 }

@@ -10,7 +10,8 @@ pub use translation::{
     TranslationFaultKind, TranslationPageMap, TranslationPageMapSnapshot, TranslationPageMapping,
     TranslationPagePermissions, TranslationPageSize, TranslationQueue, TranslationQueueConfig,
     TranslationQueueEntrySnapshot, TranslationQueueSnapshot, TranslationRequest,
-    TranslationRequestId, TranslationResolution,
+    TranslationRequestId, TranslationResolution, TranslationSegment,
+    TranslationSegmentedResolution,
 };
 pub use translation_tlb::{
     TranslationAddressSpaceId, TranslationTlb, TranslationTlbConfig, TranslationTlbEntrySnapshot,

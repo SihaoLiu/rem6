@@ -2,7 +2,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationError, TranslationFault,
     TranslationFaultKind, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
     TranslationQueue, TranslationQueueConfig, TranslationRequest, TranslationRequestId,
-    TranslationResolution,
+    TranslationResolution, TranslationSegment, TranslationSegmentedResolution,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -195,5 +195,93 @@ fn page_translation_map_rejects_bad_shapes_overlaps_and_restores_snapshot() {
     assert_eq!(
         restored.translate(&request(7, 0x1808, 8, TranslationAccessKind::Load)),
         TranslationResolution::mapped(Address::new(0x8808))
+    );
+}
+
+#[test]
+fn page_translation_map_splits_cross_page_translation_into_explicit_segments() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x4000),
+        Address::new(0x9000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    map.map(
+        Address::new(0x5000),
+        Address::new(0xb000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+
+    let crossing = request(8, 0x4ff8, 16, TranslationAccessKind::Load);
+    assert_eq!(
+        map.translate_segments(&crossing),
+        TranslationSegmentedResolution::mapped(vec![
+            TranslationSegment::new(
+                Address::new(0x4ff8),
+                AccessSize::new(8).unwrap(),
+                Address::new(0x9ff8),
+            )
+            .unwrap(),
+            TranslationSegment::new(
+                Address::new(0x5000),
+                AccessSize::new(8).unwrap(),
+                Address::new(0xb000),
+            )
+            .unwrap(),
+        ])
+    );
+
+    let single_page = request(9, 0x4080, 8, TranslationAccessKind::Store);
+    assert_eq!(
+        map.translate_segments(&single_page),
+        TranslationSegmentedResolution::mapped(vec![TranslationSegment::new(
+            Address::new(0x4080),
+            AccessSize::new(8).unwrap(),
+            Address::new(0x9080),
+        )
+        .unwrap()])
+    );
+}
+
+#[test]
+fn page_translation_map_reports_first_failed_cross_page_segment() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x8000),
+        Address::new(0x18000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    map.map(
+        Address::new(0x9000),
+        Address::new(0x1a000),
+        1,
+        TranslationPagePermissions::read_only(),
+    )
+    .unwrap();
+
+    let permission_fault = request(10, 0x8ff0, 32, TranslationAccessKind::Store);
+    assert_eq!(
+        map.translate_segments(&permission_fault),
+        TranslationSegmentedResolution::fault(TranslationFault::new(
+            Address::new(0x9000),
+            TranslationFaultKind::PermissionFault,
+        ))
+    );
+
+    let page_fault = request(11, 0x9ff0, 32, TranslationAccessKind::Load);
+    assert_eq!(
+        map.translate_segments(&page_fault),
+        TranslationSegmentedResolution::fault(TranslationFault::new(
+            Address::new(0xa000),
+            TranslationFaultKind::PageFault,
+        ))
     );
 }
