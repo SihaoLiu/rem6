@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{ProtoError, TraceFrame, TraceFrameKind};
+use crate::{ProtoError, TraceFrame, TraceFrameKind, FNV_OFFSET, FNV_PRIME};
 
 const FRAME_STREAM_MAGIC: &[u8; 4] = b"RM6S";
 const FRAME_STREAM_VERSION: u16 = 1;
@@ -222,6 +222,15 @@ pub struct TraceFrameStreamParallelReader<'a> {
     decoded_records: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamParallelIngestionPlan {
+    index: TraceFrameStreamIndex,
+    shard_plan: TraceFrameStreamShardPlan,
+    worker_plan: TraceFrameStreamWorkerPlan,
+    stream_len: usize,
+    stream_fingerprint: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct TraceFrameStreamWorkerCursor<'a> {
     bytes: &'a [u8],
@@ -389,6 +398,84 @@ impl TraceFrameStreamWorkerMergeBuffer {
 
     pub fn is_complete(&self) -> bool {
         self.next_index == self.records.len()
+    }
+}
+
+impl TraceFrameStreamParallelIngestionPlan {
+    pub fn by_frame_bytes(
+        bytes: &[u8],
+        max_frame_bytes: usize,
+        worker_count: usize,
+    ) -> Result<Self, ProtoError> {
+        let index = TraceFrameStreamIndex::from_bytes(bytes)?;
+        let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, max_frame_bytes)?;
+        let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, worker_count)?;
+
+        Ok(Self {
+            index,
+            shard_plan,
+            worker_plan,
+            stream_len: bytes.len(),
+            stream_fingerprint: stream_fingerprint(bytes),
+        })
+    }
+
+    pub fn index(&self) -> &TraceFrameStreamIndex {
+        &self.index
+    }
+
+    pub fn shard_plan(&self) -> &TraceFrameStreamShardPlan {
+        &self.shard_plan
+    }
+
+    pub fn worker_plan(&self) -> &TraceFrameStreamWorkerPlan {
+        &self.worker_plan
+    }
+
+    pub fn total_records(&self) -> usize {
+        self.index.len()
+    }
+
+    pub const fn total_frame_bytes(&self) -> usize {
+        self.index.total_frame_bytes()
+    }
+
+    pub const fn total_payload_bytes(&self) -> usize {
+        self.index.total_payload_bytes()
+    }
+
+    pub fn shard_count(&self) -> usize {
+        self.shard_plan.len()
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_plan.worker_count()
+    }
+
+    pub fn reader<'a>(
+        &self,
+        bytes: &'a [u8],
+    ) -> Result<TraceFrameStreamParallelReader<'a>, ProtoError> {
+        self.validate_stream_bytes(bytes)?;
+        TraceFrameStreamParallelReader::new(bytes, self.worker_plan.clone())
+    }
+
+    pub fn drain_all_round_robin(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Vec<TraceFrameStreamWorkerRecord>, ProtoError> {
+        let mut reader = self.reader(bytes)?;
+        reader.drain_all_round_robin()
+    }
+
+    fn validate_stream_bytes(&self, bytes: &[u8]) -> Result<(), ProtoError> {
+        if bytes.len() != self.stream_len || stream_fingerprint(bytes) != self.stream_fingerprint {
+            return Err(ProtoError::FrameStreamIngestionPlanStreamMismatch {
+                expected_len: self.stream_len,
+                actual_len: bytes.len(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1025,4 +1112,13 @@ fn read_varint32(bytes: &[u8], offset: usize) -> Result<(u32, usize), ProtoError
         shift += 7;
     }
     Err(ProtoError::InvalidFrameStreamLength)
+}
+
+fn stream_fingerprint(bytes: &[u8]) -> u64 {
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }

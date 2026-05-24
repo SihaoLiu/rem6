@@ -11,10 +11,10 @@ mod frame_stream;
 pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
-    TraceFrameStreamParallelReader, TraceFrameStreamRecord, TraceFrameStreamShard,
-    TraceFrameStreamShardCursor, TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment,
-    TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan,
-    TraceFrameStreamWorkerRecord,
+    TraceFrameStreamParallelIngestionPlan, TraceFrameStreamParallelReader, TraceFrameStreamRecord,
+    TraceFrameStreamShard, TraceFrameStreamShardCursor, TraceFrameStreamShardPlan,
+    TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerCursor,
+    TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan, TraceFrameStreamWorkerRecord,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -851,6 +851,10 @@ pub enum ProtoError {
         index: usize,
         total_records: usize,
     },
+    FrameStreamIngestionPlanStreamMismatch {
+        expected_len: usize,
+        actual_len: usize,
+    },
     InvalidFrameStreamMagic,
     UnsupportedFrameStreamVersion {
         version: u16,
@@ -1001,6 +1005,15 @@ impl fmt::Display for ProtoError {
                 write!(
                     formatter,
                     "trace frame stream worker record {index} is outside total record count {total_records}"
+                )
+            }
+            Self::FrameStreamIngestionPlanStreamMismatch {
+                expected_len,
+                actual_len,
+            } => {
+                write!(
+                    formatter,
+                    "trace frame stream has {actual_len} bytes, expected planned stream with {expected_len} bytes"
                 )
             }
             Self::InvalidFrameStreamMagic => {

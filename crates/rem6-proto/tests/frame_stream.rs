@@ -3,9 +3,10 @@ use rem6_proto::{
     DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader,
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
-    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamParallelReader,
-    TraceFrameStreamShardCursor, TraceFrameStreamShardPlan, TraceFrameStreamWorkerCursor,
-    TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan, TraceHeader, TraceSourceId,
+    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamParallelIngestionPlan,
+    TraceFrameStreamParallelReader, TraceFrameStreamShardCursor, TraceFrameStreamShardPlan,
+    TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan,
+    TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -743,6 +744,128 @@ fn trace_frame_stream_parallel_reader_drains_all_round_robin_and_rejects_unknown
     assert!(reader.is_complete());
     assert_eq!(reader.pending_records(), 0);
     assert_eq!(reader.decoded_records(), 4);
+}
+
+#[test]
+fn trace_frame_stream_parallel_ingestion_plan_builds_index_shards_workers_and_reader() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let frame_lengths = [
+        first.encode().len(),
+        large.encode().len(),
+        third.encode().len(),
+        fourth.encode().len(),
+    ];
+    let encoded = TraceFrameStream::new(vec![first, large, third, fourth])
+        .unwrap()
+        .encode();
+
+    let plan = TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 1, 2).unwrap();
+
+    assert_eq!(plan.total_records(), 4);
+    assert_eq!(plan.total_frame_bytes(), frame_lengths.iter().sum());
+    assert_eq!(plan.total_payload_bytes(), 1 + 512 + 2 + 3);
+    assert_eq!(plan.worker_count(), 2);
+    assert_eq!(plan.shard_count(), 4);
+    assert_eq!(plan.index().len(), 4);
+    assert_eq!(plan.shard_plan().len(), 4);
+    assert_eq!(plan.worker_plan().assignments().len(), 4);
+    assert_eq!(
+        plan.worker_plan().worker_frame_bytes(),
+        &[
+            frame_lengths[0] + frame_lengths[2] + frame_lengths[3],
+            frame_lengths[1]
+        ]
+    );
+
+    let mut reader = plan.reader(&encoded).unwrap();
+    assert!(reader.poll_worker(1).unwrap().is_empty());
+    let ready = reader.poll_worker(0).unwrap();
+    assert_eq!(
+        ready
+            .iter()
+            .map(|record| record.record().index())
+            .collect::<Vec<_>>(),
+        vec![0, 1],
+    );
+
+    let records = plan.drain_all_round_robin(&encoded).unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.record().index())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3],
+    );
+}
+
+#[test]
+fn trace_frame_stream_parallel_ingestion_plan_propagates_budget_worker_and_stream_errors() {
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+
+    assert_eq!(
+        TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 0, 1).unwrap_err(),
+        ProtoError::ZeroFrameStreamShardBudget,
+    );
+    assert_eq!(
+        TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 1, 0).unwrap_err(),
+        ProtoError::ZeroFrameStreamWorkerCount,
+    );
+
+    let mut bad_magic = encoded.clone();
+    bad_magic[0] = b'X';
+    assert_eq!(
+        TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&bad_magic, 1, 1).unwrap_err(),
+        ProtoError::InvalidFrameStreamMagic,
+    );
+
+    let truncated = &encoded[..6];
+    assert_eq!(
+        TraceFrameStreamParallelIngestionPlan::by_frame_bytes(truncated, 1, 1).unwrap_err(),
+        ProtoError::EmptyFrameStream,
+    );
+}
+
+#[test]
+fn trace_frame_stream_parallel_ingestion_plan_rejects_reader_bytes_from_different_stream() {
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+    let plan = TraceFrameStreamParallelIngestionPlan::by_frame_bytes(&encoded, 1, 1).unwrap();
+
+    let mut same_len_different_stream = encoded.clone();
+    let last = same_len_different_stream.len() - 1;
+    same_len_different_stream[last] ^= 0xff;
+    assert_eq!(
+        plan.reader(&same_len_different_stream).unwrap_err(),
+        ProtoError::FrameStreamIngestionPlanStreamMismatch {
+            expected_len: encoded.len(),
+            actual_len: same_len_different_stream.len(),
+        },
+    );
+
+    let other = TraceFrameStream::new(vec![TraceFrame::from_proto_trace(
+        &instruction_trace("cpu1.proto", 20),
+        vec![4],
+    )
+    .unwrap()])
+    .unwrap()
+    .encode();
+    assert_eq!(
+        plan.drain_all_round_robin(&other).unwrap_err(),
+        ProtoError::FrameStreamIngestionPlanStreamMismatch {
+            expected_len: encoded.len(),
+            actual_len: other.len(),
+        },
+    );
 }
 
 #[test]
