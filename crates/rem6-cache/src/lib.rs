@@ -13,12 +13,17 @@ use rem6_transport::TargetOutcome;
 
 mod bank;
 mod moesi;
+mod mshr;
 mod replacement;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MoesiPendingMissSnapshot,
+};
+pub use mshr::{
+    MshrCompletion, MshrEntry, MshrHandle, MshrQueue, MshrQueueConfig, MshrQueueError,
+    MshrQueueSnapshot, MshrQueueUpdate, MshrTarget, MshrTargetSource,
 };
 pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,

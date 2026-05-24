@@ -1,0 +1,561 @@
+use std::error::Error;
+use std::fmt;
+
+use rem6_memory::{Address, MemoryRequest};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MshrHandle(u64);
+
+impl MshrHandle {
+    pub const fn new(index: u64) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MshrTargetSource {
+    Demand,
+    Snoop,
+    Prefetch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrQueueConfig {
+    entries: usize,
+    targets_per_mshr: usize,
+    demand_reserve: usize,
+}
+
+impl MshrQueueConfig {
+    pub fn new(
+        entries: usize,
+        targets_per_mshr: usize,
+        demand_reserve: usize,
+    ) -> Result<Self, MshrQueueError> {
+        if entries == 0 {
+            return Err(MshrQueueError::ZeroEntries);
+        }
+        if targets_per_mshr == 0 {
+            return Err(MshrQueueError::ZeroTargetsPerMshr);
+        }
+        if demand_reserve >= entries {
+            return Err(MshrQueueError::DemandReserveExceedsEntries {
+                demand_reserve,
+                entries,
+            });
+        }
+        Ok(Self {
+            entries,
+            targets_per_mshr,
+            demand_reserve,
+        })
+    }
+
+    pub const fn entries(&self) -> usize {
+        self.entries
+    }
+
+    pub const fn targets_per_mshr(&self) -> usize {
+        self.targets_per_mshr
+    }
+
+    pub const fn demand_reserve(&self) -> usize {
+        self.demand_reserve
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MshrQueueError {
+    ZeroEntries,
+    ZeroTargetsPerMshr,
+    DemandReserveExceedsEntries {
+        demand_reserve: usize,
+        entries: usize,
+    },
+    EntrySlotsFull {
+        entries: usize,
+    },
+    TargetSlotsFull {
+        handle: MshrHandle,
+        line: Address,
+        targets_per_mshr: usize,
+    },
+    PrefetchReserveBlocked {
+        allocated: usize,
+        entries: usize,
+        demand_reserve: usize,
+    },
+    UnknownEntry {
+        handle: MshrHandle,
+    },
+    EntryAlreadyInService {
+        handle: MshrHandle,
+    },
+    EntryNotInService {
+        handle: MshrHandle,
+    },
+    SnapshotConfigMismatch {
+        expected: MshrQueueConfig,
+        actual: MshrQueueConfig,
+    },
+}
+
+impl fmt::Display for MshrQueueError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroEntries => write!(formatter, "MSHR queue has no entries"),
+            Self::ZeroTargetsPerMshr => write!(formatter, "MSHR queue entries have no targets"),
+            Self::DemandReserveExceedsEntries {
+                demand_reserve,
+                entries,
+            } => write!(
+                formatter,
+                "MSHR demand reserve {demand_reserve} leaves no entry in a {entries}-entry queue"
+            ),
+            Self::EntrySlotsFull { entries } => {
+                write!(formatter, "MSHR queue has all {entries} entries allocated")
+            }
+            Self::TargetSlotsFull {
+                handle,
+                line,
+                targets_per_mshr,
+            } => write!(
+                formatter,
+                "MSHR {:?} for line {:#x} already has {targets_per_mshr} targets",
+                handle,
+                line.get()
+            ),
+            Self::PrefetchReserveBlocked {
+                allocated,
+                entries,
+                demand_reserve,
+            } => write!(
+                formatter,
+                "MSHR prefetch blocked with {allocated}/{entries} entries allocated and {demand_reserve} reserved for demand"
+            ),
+            Self::UnknownEntry { handle } => write!(formatter, "unknown MSHR entry {handle:?}"),
+            Self::EntryAlreadyInService { handle } => {
+                write!(formatter, "MSHR entry {handle:?} is already in service")
+            }
+            Self::EntryNotInService { handle } => {
+                write!(formatter, "MSHR entry {handle:?} is not in service")
+            }
+            Self::SnapshotConfigMismatch { expected, actual } => write!(
+                formatter,
+                "MSHR snapshot config {actual:?} does not match queue config {expected:?}"
+            ),
+        }
+    }
+}
+
+impl Error for MshrQueueError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrTarget {
+    request: MemoryRequest,
+    ready_tick: u64,
+    order: u64,
+    source: MshrTargetSource,
+    alloc_on_fill: bool,
+}
+
+impl MshrTarget {
+    fn new(
+        request: MemoryRequest,
+        ready_tick: u64,
+        order: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+    ) -> Self {
+        Self {
+            request,
+            ready_tick,
+            order,
+            source,
+            alloc_on_fill,
+        }
+    }
+
+    pub const fn request(&self) -> &MemoryRequest {
+        &self.request
+    }
+
+    pub const fn ready_tick(&self) -> u64 {
+        self.ready_tick
+    }
+
+    pub const fn order(&self) -> u64 {
+        self.order
+    }
+
+    pub const fn source(&self) -> MshrTargetSource {
+        self.source
+    }
+
+    pub const fn alloc_on_fill(&self) -> bool {
+        self.alloc_on_fill
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrEntry {
+    handle: MshrHandle,
+    line: Address,
+    ready_tick: u64,
+    order: u64,
+    in_service: bool,
+    pending_modified: bool,
+    targets: Vec<MshrTarget>,
+}
+
+impl MshrEntry {
+    fn new(
+        handle: MshrHandle,
+        request: MemoryRequest,
+        ready_tick: u64,
+        order: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+    ) -> Self {
+        let line = request.line_address();
+        let target = MshrTarget::new(request, ready_tick, order, source, alloc_on_fill);
+        Self {
+            handle,
+            line,
+            ready_tick,
+            order,
+            in_service: false,
+            pending_modified: false,
+            targets: vec![target],
+        }
+    }
+
+    fn add_target(
+        &mut self,
+        request: MemoryRequest,
+        ready_tick: u64,
+        order: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+    ) {
+        self.targets.push(MshrTarget::new(
+            request,
+            ready_tick,
+            order,
+            source,
+            alloc_on_fill,
+        ));
+    }
+
+    pub const fn handle(&self) -> MshrHandle {
+        self.handle
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn ready_tick(&self) -> u64 {
+        self.ready_tick
+    }
+
+    pub const fn order(&self) -> u64 {
+        self.order
+    }
+
+    pub const fn in_service(&self) -> bool {
+        self.in_service
+    }
+
+    pub const fn pending_modified(&self) -> bool {
+        self.pending_modified
+    }
+
+    pub fn targets(&self) -> &[MshrTarget] {
+        &self.targets
+    }
+
+    pub fn target_count(&self) -> usize {
+        self.targets.len()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrQueueUpdate {
+    handle: MshrHandle,
+    line: Address,
+    allocated_new_entry: bool,
+    target_count: usize,
+    allocated_count: usize,
+}
+
+impl MshrQueueUpdate {
+    fn new(entry: &MshrEntry, allocated_new_entry: bool, allocated_count: usize) -> Self {
+        Self {
+            handle: entry.handle,
+            line: entry.line,
+            allocated_new_entry,
+            target_count: entry.target_count(),
+            allocated_count,
+        }
+    }
+
+    pub const fn handle(&self) -> MshrHandle {
+        self.handle
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn allocated_new_entry(&self) -> bool {
+        self.allocated_new_entry
+    }
+
+    pub const fn target_count(&self) -> usize {
+        self.target_count
+    }
+
+    pub const fn allocated_count(&self) -> usize {
+        self.allocated_count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrCompletion {
+    handle: MshrHandle,
+    line: Address,
+    targets: Vec<MshrTarget>,
+}
+
+impl MshrCompletion {
+    fn new(entry: MshrEntry) -> Self {
+        Self {
+            handle: entry.handle,
+            line: entry.line,
+            targets: entry.targets,
+        }
+    }
+
+    pub const fn handle(&self) -> MshrHandle {
+        self.handle
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub fn targets(&self) -> &[MshrTarget] {
+        &self.targets
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrQueueSnapshot {
+    config: MshrQueueConfig,
+    entries: Vec<MshrEntry>,
+    next_handle: u64,
+    next_order: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MshrQueue {
+    config: MshrQueueConfig,
+    entries: Vec<MshrEntry>,
+    next_handle: u64,
+    next_order: u64,
+}
+
+impl MshrQueue {
+    pub fn new(config: MshrQueueConfig) -> Self {
+        Self {
+            config,
+            entries: Vec::new(),
+            next_handle: 0,
+            next_order: 0,
+        }
+    }
+
+    pub const fn config(&self) -> &MshrQueueConfig {
+        &self.config
+    }
+
+    pub fn allocated_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn in_service_count(&self) -> usize {
+        self.entries.iter().filter(|entry| entry.in_service).count()
+    }
+
+    pub fn can_accept_prefetch(&self) -> bool {
+        self.entries.len()
+            < self
+                .config
+                .entries
+                .saturating_sub(self.config.demand_reserve + 1)
+    }
+
+    pub fn entry(&self, handle: MshrHandle) -> Result<&MshrEntry, MshrQueueError> {
+        self.entries
+            .iter()
+            .find(|entry| entry.handle == handle)
+            .ok_or(MshrQueueError::UnknownEntry { handle })
+    }
+
+    pub fn find_line(&self, line: Address) -> Option<&MshrEntry> {
+        self.entries.iter().find(|entry| entry.line == line)
+    }
+
+    pub fn allocate_or_merge(
+        &mut self,
+        request: MemoryRequest,
+        ready_tick: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+    ) -> Result<MshrQueueUpdate, MshrQueueError> {
+        let line = request.line_address();
+        if let Some(index) = self.entries.iter().position(|entry| entry.line == line) {
+            let allocated_count = self.entries.len();
+            let entry = &mut self.entries[index];
+            if entry.target_count() >= self.config.targets_per_mshr {
+                return Err(MshrQueueError::TargetSlotsFull {
+                    handle: entry.handle,
+                    line,
+                    targets_per_mshr: self.config.targets_per_mshr,
+                });
+            }
+            let order = self.next_order();
+            let entry = &mut self.entries[index];
+            entry.add_target(request, ready_tick, order, source, alloc_on_fill);
+            return Ok(MshrQueueUpdate::new(entry, false, allocated_count));
+        }
+
+        if source == MshrTargetSource::Prefetch && !self.can_accept_prefetch() {
+            return Err(MshrQueueError::PrefetchReserveBlocked {
+                allocated: self.entries.len(),
+                entries: self.config.entries,
+                demand_reserve: self.config.demand_reserve,
+            });
+        }
+        if self.entries.len() >= self.config.entries {
+            return Err(MshrQueueError::EntrySlotsFull {
+                entries: self.config.entries,
+            });
+        }
+
+        let entry = MshrEntry::new(
+            self.next_handle(),
+            request,
+            ready_tick,
+            self.next_order(),
+            source,
+            alloc_on_fill,
+        );
+        self.entries.push(entry);
+        let allocated_count = self.entries.len();
+        let entry = self.entries.last().expect("entry was just pushed");
+        Ok(MshrQueueUpdate::new(entry, true, allocated_count))
+    }
+
+    pub fn ready_handles(&self, tick: u64) -> Vec<MshrHandle> {
+        let mut entries = self
+            .entries
+            .iter()
+            .filter(|entry| !entry.in_service && entry.ready_tick <= tick)
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| (entry.ready_tick, entry.order, entry.handle));
+        entries.into_iter().map(|entry| entry.handle).collect()
+    }
+
+    pub fn mark_in_service(
+        &mut self,
+        handle: MshrHandle,
+        pending_modified: bool,
+    ) -> Result<MshrQueueUpdate, MshrQueueError> {
+        let allocated_count = self.entries.len();
+        let entry = self.entry_mut(handle)?;
+        if entry.in_service {
+            return Err(MshrQueueError::EntryAlreadyInService { handle });
+        }
+        entry.in_service = true;
+        entry.pending_modified = pending_modified;
+        Ok(MshrQueueUpdate::new(entry, false, allocated_count))
+    }
+
+    pub fn mark_pending(&mut self, handle: MshrHandle) -> Result<MshrQueueUpdate, MshrQueueError> {
+        let allocated_count = self.entries.len();
+        let entry = self.entry_mut(handle)?;
+        if !entry.in_service {
+            return Err(MshrQueueError::EntryNotInService { handle });
+        }
+        entry.in_service = false;
+        entry.pending_modified = false;
+        Ok(MshrQueueUpdate::new(entry, false, allocated_count))
+    }
+
+    pub fn delay_until(
+        &mut self,
+        handle: MshrHandle,
+        ready_tick: u64,
+    ) -> Result<MshrQueueUpdate, MshrQueueError> {
+        let allocated_count = self.entries.len();
+        let entry = self.entry_mut(handle)?;
+        entry.ready_tick = ready_tick;
+        Ok(MshrQueueUpdate::new(entry, false, allocated_count))
+    }
+
+    pub fn complete(&mut self, handle: MshrHandle) -> Result<MshrCompletion, MshrQueueError> {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.handle == handle)
+            .ok_or(MshrQueueError::UnknownEntry { handle })?;
+        Ok(MshrCompletion::new(self.entries.remove(index)))
+    }
+
+    pub fn snapshot(&self) -> MshrQueueSnapshot {
+        MshrQueueSnapshot {
+            config: self.config.clone(),
+            entries: self.entries.clone(),
+            next_handle: self.next_handle,
+            next_order: self.next_order,
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &MshrQueueSnapshot) -> Result<(), MshrQueueError> {
+        if self.config != snapshot.config {
+            return Err(MshrQueueError::SnapshotConfigMismatch {
+                expected: self.config.clone(),
+                actual: snapshot.config.clone(),
+            });
+        }
+        self.entries.clone_from(&snapshot.entries);
+        self.next_handle = snapshot.next_handle;
+        self.next_order = snapshot.next_order;
+        Ok(())
+    }
+
+    fn entry_mut(&mut self, handle: MshrHandle) -> Result<&mut MshrEntry, MshrQueueError> {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.handle == handle)
+            .ok_or(MshrQueueError::UnknownEntry { handle })
+    }
+
+    fn next_handle(&mut self) -> MshrHandle {
+        let handle = MshrHandle::new(self.next_handle);
+        self.next_handle = self.next_handle.saturating_add(1);
+        handle
+    }
+
+    fn next_order(&mut self) -> u64 {
+        let order = self.next_order;
+        self.next_order = self.next_order.saturating_add(1);
+        order
+    }
+}
