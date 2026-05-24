@@ -48,6 +48,7 @@ dependencies = [
  "rem6-fabric",
  "rem6-kernel",
  "rem6-memory",
+ "rem6-protocol-chi",
  "rem6-protocol-mesi",
  "rem6-protocol-moesi",
  "rem6-protocol-msi",

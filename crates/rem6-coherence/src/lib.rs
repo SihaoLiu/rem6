@@ -29,6 +29,7 @@ use rem6_transport::{
 mod backing;
 mod bank;
 mod bank_snapshot_codec;
+mod chi;
 mod deferred;
 mod directory_snapshot;
 mod mesi;
@@ -49,6 +50,10 @@ pub use backing::LineBackingStore;
 pub use bank::{
     MsiBankBackingLineSnapshot, MsiBankCycleAccepted, MsiBankCycleEntry, MsiBankCycleHistory,
     MsiBankCyclePlan, MsiBankCycleRun, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
+};
+pub use chi::{
+    ChiCpuResponseRecord, ChiDirectoryLineHarness, ChiDirectoryLineHarnessSnapshot,
+    ChiHarnessError, ChiSubmitResult,
 };
 pub use directory_snapshot::DirectoryLineHarnessSnapshot;
 pub use mesi::{
