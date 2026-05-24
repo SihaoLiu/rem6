@@ -164,6 +164,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-protocol-chi"
+version = "0.1.0"
+dependencies = [
+ "rem6-memory",
+]
+
+[[package]]
 name = "rem6-protocol-mesi"
 version = "0.1.0"
 dependencies = [
