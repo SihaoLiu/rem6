@@ -12,7 +12,7 @@ pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
     TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan,
+    TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerPlan,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -832,6 +832,7 @@ pub enum ProtoError {
     FrameChecksumMismatch,
     EmptyFrameStream,
     ZeroFrameStreamShardBudget,
+    ZeroFrameStreamWorkerCount,
     InvalidFrameStreamMagic,
     UnsupportedFrameStreamVersion {
         version: u16,
@@ -942,6 +943,12 @@ impl fmt::Display for ProtoError {
                 write!(
                     formatter,
                     "trace frame stream shard budget must be positive"
+                )
+            }
+            Self::ZeroFrameStreamWorkerCount => {
+                write!(
+                    formatter,
+                    "trace frame stream worker count must be positive"
                 )
             }
             Self::InvalidFrameStreamMagic => {

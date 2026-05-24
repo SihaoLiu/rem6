@@ -125,6 +125,144 @@ pub struct TraceFrameStreamShardPlan {
     total_frame_bytes: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamWorkerAssignment {
+    merge_order: usize,
+    worker_id: usize,
+    shard_index: usize,
+    record_start: usize,
+    record_end: usize,
+    byte_start: usize,
+    byte_end: usize,
+    frame_bytes: usize,
+    payload_bytes: usize,
+}
+
+impl TraceFrameStreamWorkerAssignment {
+    pub const fn merge_order(&self) -> usize {
+        self.merge_order
+    }
+
+    pub const fn worker_id(&self) -> usize {
+        self.worker_id
+    }
+
+    pub const fn shard_index(&self) -> usize {
+        self.shard_index
+    }
+
+    pub fn record_range(&self) -> Range<usize> {
+        self.record_start..self.record_end
+    }
+
+    pub fn byte_range(&self) -> Range<usize> {
+        self.byte_start..self.byte_end
+    }
+
+    pub fn frame_count(&self) -> usize {
+        self.record_end - self.record_start
+    }
+
+    pub const fn frame_bytes(&self) -> usize {
+        self.frame_bytes
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamWorkerPlan {
+    worker_count: usize,
+    assignments: Vec<TraceFrameStreamWorkerAssignment>,
+    worker_frame_bytes: Vec<usize>,
+    total_records: usize,
+    total_frame_bytes: usize,
+}
+
+impl TraceFrameStreamWorkerPlan {
+    pub fn by_frame_bytes(
+        shard_plan: &TraceFrameStreamShardPlan,
+        worker_count: usize,
+    ) -> Result<Self, ProtoError> {
+        if worker_count == 0 {
+            return Err(ProtoError::ZeroFrameStreamWorkerCount);
+        }
+
+        let mut assignments = Vec::with_capacity(shard_plan.len());
+        let mut worker_frame_bytes = vec![0usize; worker_count];
+
+        for (merge_order, shard) in shard_plan.shards().iter().enumerate() {
+            let worker_id = worker_frame_bytes
+                .iter()
+                .enumerate()
+                .min_by_key(|(worker_id, frame_bytes)| (**frame_bytes, *worker_id))
+                .map(|(worker_id, _)| worker_id)
+                .expect("worker count is checked above");
+            assignments.push(TraceFrameStreamWorkerAssignment {
+                merge_order,
+                worker_id,
+                shard_index: shard.index(),
+                record_start: shard.record_start,
+                record_end: shard.record_end,
+                byte_start: shard.byte_start,
+                byte_end: shard.byte_end,
+                frame_bytes: shard.frame_bytes(),
+                payload_bytes: shard.payload_bytes(),
+            });
+            worker_frame_bytes[worker_id] = worker_frame_bytes[worker_id]
+                .checked_add(shard.frame_bytes())
+                .ok_or(ProtoError::InvalidFrameStreamLength)?;
+        }
+
+        Ok(Self {
+            worker_count,
+            assignments,
+            worker_frame_bytes,
+            total_records: shard_plan.total_records(),
+            total_frame_bytes: shard_plan.total_frame_bytes(),
+        })
+    }
+
+    pub fn assignments(&self) -> &[TraceFrameStreamWorkerAssignment] {
+        &self.assignments
+    }
+
+    pub fn assignments_for_worker(
+        &self,
+        worker_id: usize,
+    ) -> impl Iterator<Item = &TraceFrameStreamWorkerAssignment> {
+        self.assignments
+            .iter()
+            .filter(move |assignment| assignment.worker_id() == worker_id)
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub fn len(&self) -> usize {
+        self.assignments.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.assignments.is_empty()
+    }
+
+    pub fn worker_frame_bytes(&self) -> &[usize] {
+        &self.worker_frame_bytes
+    }
+
+    pub const fn total_records(&self) -> usize {
+        self.total_records
+    }
+
+    pub const fn total_frame_bytes(&self) -> usize {
+        self.total_frame_bytes
+    }
+}
+
 impl TraceFrameStreamShardPlan {
     pub fn by_frame_bytes(
         index: &TraceFrameStreamIndex,

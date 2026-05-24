@@ -4,7 +4,7 @@ use rem6_proto::{
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
     TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan, TraceHeader, TraceSourceId,
+    TraceFrameStreamShardPlan, TraceFrameStreamWorkerPlan, TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -327,6 +327,90 @@ fn trace_frame_stream_shard_plan_keeps_oversized_frames_intact_and_rejects_zero_
     assert_eq!(plan.shards()[0].record_range(), 0..1);
     assert_eq!(plan.shards()[0].frame_bytes(), first.encode().len());
     assert_eq!(plan.shards()[1].record_range(), 1..2);
+}
+
+#[test]
+fn trace_frame_stream_worker_plan_assigns_shards_by_stable_load_and_keeps_merge_order() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let frame_lengths = [
+        first.encode().len(),
+        large.encode().len(),
+        third.encode().len(),
+        fourth.encode().len(),
+    ];
+    let encoded = TraceFrameStream::new(vec![first, large, third, fourth])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+
+    assert_eq!(worker_plan.worker_count(), 2);
+    assert_eq!(worker_plan.len(), shard_plan.len());
+    assert_eq!(worker_plan.total_records(), shard_plan.total_records());
+    assert_eq!(
+        worker_plan.total_frame_bytes(),
+        shard_plan.total_frame_bytes()
+    );
+    assert_eq!(
+        worker_plan.worker_frame_bytes(),
+        &[
+            frame_lengths[0] + frame_lengths[2] + frame_lengths[3],
+            frame_lengths[1]
+        ]
+    );
+
+    let assignments = worker_plan.assignments();
+    assert_eq!(assignments.len(), 4);
+    assert_eq!(assignments[0].worker_id(), 0);
+    assert_eq!(assignments[1].worker_id(), 1);
+    assert_eq!(assignments[2].worker_id(), 0);
+    assert_eq!(assignments[3].worker_id(), 0);
+
+    for (expected_order, assignment) in assignments.iter().enumerate() {
+        let shard = &shard_plan.shards()[expected_order];
+        assert_eq!(assignment.merge_order(), expected_order);
+        assert_eq!(assignment.shard_index(), shard.index());
+        assert_eq!(assignment.record_range(), shard.record_range());
+        assert_eq!(assignment.byte_range(), shard.byte_range());
+        assert_eq!(assignment.frame_count(), shard.frame_count());
+        assert_eq!(assignment.frame_bytes(), shard.frame_bytes());
+        assert_eq!(assignment.payload_bytes(), shard.payload_bytes());
+    }
+
+    let worker_zero_orders = worker_plan
+        .assignments_for_worker(0)
+        .map(|assignment| assignment.merge_order())
+        .collect::<Vec<_>>();
+    assert_eq!(worker_zero_orders, vec![0, 2, 3]);
+
+    let worker_one_orders = worker_plan
+        .assignments_for_worker(1)
+        .map(|assignment| assignment.merge_order())
+        .collect::<Vec<_>>();
+    assert_eq!(worker_one_orders, vec![1]);
+}
+
+#[test]
+fn trace_frame_stream_worker_plan_rejects_zero_workers() {
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+
+    assert_eq!(
+        TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 0).unwrap_err(),
+        ProtoError::ZeroFrameStreamWorkerCount,
+    );
 }
 
 #[test]
