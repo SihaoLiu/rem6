@@ -6,9 +6,9 @@ use rem6_cache::{
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
     QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
     SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
-    SignaturePathPrefetcherConfigOptions, SignaturePathRatio, StridePrefetchAccess,
-    StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher,
-    TaggedPrefetcherConfig,
+    SignaturePathPrefetcherConfigOptions, SignaturePathRatio, SmsPrefetchAccess, SmsPrefetcher,
+    SmsPrefetcherConfig, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
+    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -38,6 +38,10 @@ fn sbooe_access(agent: u32, pc: u64, address: u64) -> SbooePrefetchAccess {
 
 fn signature_path_access(agent: u32, pc: u64, address: u64) -> SignaturePathPrefetchAccess {
     SignaturePathPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn sms_access(agent: u32, pc: u64, address: u64) -> SmsPrefetchAccess {
+    SmsPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
 }
 
 #[test]
@@ -353,6 +357,112 @@ fn signature_path_prefetcher_replaces_low_confidence_stride_entries() {
     let snapshot = prefetcher.snapshot();
     assert_eq!(snapshot.pattern_entries().len(), 1);
     assert_eq!(snapshot.signature_entries().len(), 2);
+}
+
+#[test]
+fn sms_prefetcher_commits_region_pattern_on_eviction_and_restores_state() {
+    let config = SmsPrefetcherConfig::new(64, 4096, 4, 8).unwrap();
+    let mut prefetcher = SmsPrefetcher::new(config.clone());
+
+    assert!(prefetcher
+        .observe(sms_access(9, 0xe00, 0x1000))
+        .unwrap()
+        .is_empty());
+    assert_eq!(prefetcher.filter_entry_count(), 1);
+    assert_eq!(prefetcher.active_entry_count(), 0);
+
+    assert!(prefetcher
+        .observe(sms_access(9, 0xe04, 0x1040))
+        .unwrap()
+        .is_empty());
+    assert_eq!(prefetcher.filter_entry_count(), 0);
+    assert_eq!(prefetcher.active_entry_count(), 1);
+    assert_eq!(prefetcher.active_offsets(0x1000), vec![0, 64]);
+
+    assert!(prefetcher
+        .observe(sms_access(9, 0xe08, 0x1080))
+        .unwrap()
+        .is_empty());
+    assert_eq!(prefetcher.active_offsets(0x1000), vec![0, 64, 128]);
+
+    prefetcher.observe_evict(Address::new(0x10c0));
+    assert_eq!(prefetcher.active_entry_count(), 0);
+    assert_eq!(prefetcher.pattern_entry_count(), 1);
+    assert_eq!(prefetcher.pattern_offsets(0xe00, 0), vec![0, 64, 128]);
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = SmsPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let candidates = restored
+        .observe(sms_access(9, 0xe00, 0x2000))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x2000),
+            Address::new(0x2040),
+            Address::new(0x2080)
+        ]
+    );
+    assert_eq!(candidates[0].source_address(), Address::new(0x2000));
+    assert_eq!(candidates[0].context(), AgentId::new(9));
+    assert_eq!(candidates[0].pc(), 0xe00);
+    assert_eq!(candidates[0].region_base(), Address::new(0x2000));
+    assert_eq!(candidates[0].pattern_pc(), 0xe00);
+    assert_eq!(candidates[0].trigger_offset(), 0);
+    assert_eq!(candidates[0].pattern_offset(), 0);
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(candidates[1].pattern_offset(), 64);
+    assert_eq!(candidates[2].pattern_offset(), 128);
+    assert_eq!(restored.last_candidates(), candidates.as_slice());
+}
+
+#[test]
+fn sms_prefetcher_applies_filter_fifo_and_pattern_lru_capacity() {
+    let config = SmsPrefetcherConfig::new(64, 4096, 1, 1).unwrap();
+    let mut prefetcher = SmsPrefetcher::new(config);
+
+    prefetcher.observe(sms_access(10, 0xe20, 0x7000)).unwrap();
+    prefetcher.observe(sms_access(10, 0xe24, 0x8000)).unwrap();
+    assert_eq!(prefetcher.filter_entry_count(), 1);
+    assert_eq!(prefetcher.filter_trigger(0x7000), None);
+    assert_eq!(prefetcher.filter_trigger(0x8000), Some((0xe24, 0)));
+
+    for address in [0x3000, 0x3040] {
+        prefetcher.observe(sms_access(10, 0xe30, address)).unwrap();
+    }
+    prefetcher.observe_evict(Address::new(0x3000));
+    assert_eq!(prefetcher.pattern_offsets(0xe30, 0), vec![0, 64]);
+
+    for address in [0x4000, 0x4080] {
+        prefetcher.observe(sms_access(10, 0xe40, address)).unwrap();
+    }
+    prefetcher.observe_evict(Address::new(0x4000));
+    assert_eq!(prefetcher.pattern_entry_count(), 1);
+    assert_eq!(prefetcher.pattern_offsets(0xe30, 0), Vec::<u64>::new());
+    assert_eq!(prefetcher.pattern_offsets(0xe40, 0), vec![0, 128]);
+
+    assert!(prefetcher
+        .observe(sms_access(10, 0xe30, 0x5000))
+        .unwrap()
+        .is_empty());
+    let candidates = prefetcher
+        .observe(sms_access(10, 0xe40, 0x6000))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x6000), Address::new(0x6080)]
+    );
 }
 
 #[test]

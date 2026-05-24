@@ -25,6 +25,7 @@ mod prefetch_dcpt;
 mod prefetch_multi;
 mod prefetch_sbooe;
 mod prefetch_signature_path;
+mod prefetch_sms;
 mod prefetch_throttle;
 mod replacement;
 
@@ -83,6 +84,11 @@ pub use prefetch_signature_path::{
     SignaturePathPrefetcherConfig, SignaturePathPrefetcherConfigOptions,
     SignaturePathPrefetcherError, SignaturePathPrefetcherSnapshot, SignaturePathRatio,
     SignaturePathSignatureEntrySnapshot,
+};
+pub use prefetch_sms::{
+    SmsActiveEntrySnapshot, SmsFilterEntrySnapshot, SmsPatternEntrySnapshot, SmsPrefetchAccess,
+    SmsPrefetchCandidate, SmsPrefetcher, SmsPrefetcherConfig, SmsPrefetcherError,
+    SmsPrefetcherSnapshot,
 };
 pub use prefetch_throttle::{
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
