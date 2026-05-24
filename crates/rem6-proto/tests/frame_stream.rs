@@ -3,8 +3,8 @@ use rem6_proto::{
     DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader,
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
-    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardPlan, TraceHeader,
-    TraceSourceId,
+    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardCursor,
+    TraceFrameStreamShardPlan, TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -327,6 +327,89 @@ fn trace_frame_stream_shard_plan_keeps_oversized_frames_intact_and_rejects_zero_
     assert_eq!(plan.shards()[0].record_range(), 0..1);
     assert_eq!(plan.shards()[0].frame_bytes(), first.encode().len());
     assert_eq!(plan.shards()[1].record_range(), 1..2);
+}
+
+#[test]
+fn trace_frame_stream_shard_cursor_reads_only_its_shard_with_global_indexes() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let dependency = TraceFrame::from_dependency_trace(&dependency_trace(), vec![8, 9]).unwrap();
+    let second =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![4, 5, 6, 7])
+            .unwrap();
+    let first_len = first.encode().len();
+    let dependency_len = dependency.encode().len();
+    let encoded = TraceFrameStream::new(vec![first.clone(), dependency.clone(), second.clone()])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let plan =
+        TraceFrameStreamShardPlan::by_frame_bytes(&index, first_len + dependency_len).unwrap();
+    let shards = plan.shards();
+
+    let mut second_cursor = TraceFrameStreamShardCursor::new(&encoded, &shards[1]).unwrap();
+    assert_eq!(second_cursor.shard_index(), 1);
+    assert_eq!(second_cursor.next_index(), 2);
+    assert_eq!(second_cursor.byte_position(), shards[1].byte_range().start);
+    let second_record = second_cursor.next_frame().unwrap().unwrap();
+    assert_eq!(second_record.index(), 2);
+    assert_eq!(second_record.frame(), &second);
+    assert!(second_cursor.is_finished());
+    assert!(second_cursor.next_frame().unwrap().is_none());
+
+    let mut first_cursor = TraceFrameStreamShardCursor::new(&encoded, &shards[0]).unwrap();
+    assert_eq!(first_cursor.shard_index(), 0);
+    assert_eq!(first_cursor.next_index(), 0);
+    let first_record = first_cursor.next_frame().unwrap().unwrap();
+    assert_eq!(first_record.index(), 0);
+    assert_eq!(first_record.frame(), &first);
+    let dependency_record = first_cursor.next_frame().unwrap().unwrap();
+    assert_eq!(dependency_record.index(), 1);
+    assert_eq!(dependency_record.frame(), &dependency);
+    assert!(first_cursor.is_finished());
+
+    first_cursor.reset();
+    assert_eq!(first_cursor.next_index(), 0);
+    assert_eq!(first_cursor.byte_position(), shards[0].byte_range().start);
+}
+
+#[test]
+fn trace_frame_stream_shard_cursor_isolates_corruption_to_the_owning_shard() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let dependency = TraceFrame::from_dependency_trace(&dependency_trace(), vec![8, 9]).unwrap();
+    let second =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![4, 5, 6, 7])
+            .unwrap();
+    let first_len = first.encode().len();
+    let dependency_len = dependency.encode().len();
+    let encoded = TraceFrameStream::new(vec![first.clone(), dependency.clone(), second])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let plan =
+        TraceFrameStreamShardPlan::by_frame_bytes(&index, first_len + dependency_len).unwrap();
+    let shards = plan.shards();
+
+    let mut corrupt = encoded;
+    let corrupt_byte = shards[1].byte_range().end - 1;
+    corrupt[corrupt_byte] ^= 0xff;
+
+    let mut first_cursor = TraceFrameStreamShardCursor::new(&corrupt, &shards[0]).unwrap();
+    assert_eq!(first_cursor.next_frame().unwrap().unwrap().frame(), &first);
+    assert_eq!(
+        first_cursor.next_frame().unwrap().unwrap().frame(),
+        &dependency
+    );
+    assert!(first_cursor.next_frame().unwrap().is_none());
+
+    let mut second_cursor = TraceFrameStreamShardCursor::new(&corrupt, &shards[1]).unwrap();
+    assert_eq!(
+        second_cursor.next_frame().unwrap_err(),
+        ProtoError::FrameChecksumMismatch,
+    );
+    assert_eq!(second_cursor.byte_position(), shards[1].byte_range().start);
+    assert_eq!(second_cursor.next_index(), 2);
 }
 
 #[test]

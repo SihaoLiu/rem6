@@ -11,7 +11,8 @@ mod frame_stream;
 pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
-    TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardPlan,
+    TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardCursor,
+    TraceFrameStreamShardPlan,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

@@ -301,6 +301,18 @@ pub struct TraceFrameStreamCursor<'a> {
     index: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct TraceFrameStreamShardCursor<'a> {
+    bytes: &'a [u8],
+    shard_index: usize,
+    start: usize,
+    cursor: usize,
+    end: usize,
+    start_index: usize,
+    index: usize,
+    end_index: usize,
+}
+
 impl TraceFrameStream {
     pub fn new(frames: Vec<TraceFrame>) -> Result<Self, ProtoError> {
         if frames.is_empty() {
@@ -384,6 +396,80 @@ impl<'a> TraceFrameStreamCursor<'a> {
             .checked_add(frame_len)
             .ok_or(ProtoError::TruncatedFrameStream)?;
         if frame_end > self.bytes.len() {
+            return Err(ProtoError::TruncatedFrameStream);
+        }
+        let frame = TraceFrame::decode(&self.bytes[frame_offset..frame_end])?;
+        let record = TraceFrameStreamRecord {
+            index: self.index,
+            length_offset,
+            frame_offset,
+            frame_len,
+            frame,
+        };
+        self.cursor = frame_end;
+        self.index += 1;
+        Ok(Some(record))
+    }
+}
+
+impl<'a> TraceFrameStreamShardCursor<'a> {
+    pub fn new(bytes: &'a [u8], shard: &TraceFrameStreamShard) -> Result<Self, ProtoError> {
+        validate_stream_header(bytes)?;
+        if shard.byte_start < STREAM_HEADER_BYTES
+            || shard.byte_start >= shard.byte_end
+            || shard.byte_end > bytes.len()
+        {
+            return Err(ProtoError::TruncatedFrameStream);
+        }
+        Ok(Self {
+            bytes,
+            shard_index: shard.index(),
+            start: shard.byte_start,
+            cursor: shard.byte_start,
+            end: shard.byte_end,
+            start_index: shard.record_start,
+            index: shard.record_start,
+            end_index: shard.record_end,
+        })
+    }
+
+    pub const fn shard_index(&self) -> usize {
+        self.shard_index
+    }
+
+    pub const fn byte_position(&self) -> usize {
+        self.cursor
+    }
+
+    pub const fn next_index(&self) -> usize {
+        self.index
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.cursor == self.end
+    }
+
+    pub fn reset(&mut self) {
+        self.cursor = self.start;
+        self.index = self.start_index;
+    }
+
+    pub fn next_frame(&mut self) -> Result<Option<TraceFrameStreamRecord>, ProtoError> {
+        if self.is_finished() {
+            return Ok(None);
+        }
+
+        let length_offset = self.cursor;
+        let (frame_len, frame_offset) = read_varint32(self.bytes, length_offset)?;
+        let frame_len =
+            usize::try_from(frame_len).map_err(|_| ProtoError::InvalidFrameStreamLength)?;
+        if frame_len == 0 {
+            return Err(ProtoError::InvalidFrameStreamLength);
+        }
+        let frame_end = frame_offset
+            .checked_add(frame_len)
+            .ok_or(ProtoError::TruncatedFrameStream)?;
+        if frame_end > self.end || self.index >= self.end_index {
             return Err(ProtoError::TruncatedFrameStream);
         }
         let frame = TraceFrame::decode(&self.bytes[frame_offset..frame_end])?;
