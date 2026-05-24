@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use rem6_cache::{CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MsiCacheBank};
 use rem6_coherence::{
@@ -6,11 +7,17 @@ use rem6_coherence::{
     SubmitKind,
 };
 use rem6_directory::{DirectoryDataSource, DirectoryLineState};
+use rem6_fabric::{QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosQueuePolicyKind};
+use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     ResponseStatus,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
+use rem6_transport::{
+    MemoryRoute, MemoryRouteHop, MemoryTrace, MemoryTransport, TargetBatchOutcome, TargetOutcome,
+    TransportEndpointId,
+};
 
 fn agent(value: u32) -> AgentId {
     AgentId::new(value)
@@ -57,6 +64,10 @@ fn write(agent_id: u32, sequence: u64, address: u64, data: Vec<u8>) -> MemoryReq
 
 fn line_data(byte: u8) -> Vec<u8> {
     vec![byte; layout().bytes() as usize]
+}
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
 }
 
 fn backing_line_addresses(snapshot: &MsiBankDirectoryHarnessSnapshot) -> Vec<u64> {
@@ -573,6 +584,129 @@ fn msi_bank_harness_parallel_cycle_records_mshr_qos_for_scheduled_misses() {
     assert_eq!(history.accepted_by_effective_mshr_qos_requestor(70), 1);
     assert_eq!(history.mshr_qos_parallel_cycle_count(), 1);
     assert_eq!(history.best_mshr_qos_priority(), Some(2));
+}
+
+#[test]
+fn msi_bank_harness_exports_mshr_qos_to_transport_miss_batch() {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [agent(2), agent(1)],
+        MshrQueueConfig::new(4, 2, 0).unwrap(),
+    )
+    .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1010), line_data(0x44))
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x33))
+        .unwrap();
+    let plan = harness
+        .plan_parallel_cycle_with_qos(
+            31,
+            [
+                (agent(2), read(2, 24, 0x1018), MshrQosClass::new(80, 0)),
+                (agent(1), read(1, 14, 0x1004), MshrQosClass::new(90, 5)),
+            ],
+        )
+        .unwrap();
+
+    let transport_run = harness
+        .submit_parallel_cycle_plan_for_transport_misses(plan)
+        .unwrap();
+
+    assert_eq!(transport_run.cycle_run().scheduled_miss_count(), 2);
+    assert_eq!(transport_run.downstream_requests().len(), 2);
+    assert_eq!(
+        transport_run
+            .downstream_requests()
+            .iter()
+            .map(|request| (
+                request.agent(),
+                request.line_address(),
+                request.transport_qos_class().unwrap().requestor().get(),
+                request.transport_qos_class().unwrap().priority().get(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (agent(1), Address::new(0x1000), 90, 5),
+            (agent(2), Address::new(0x1010), 80, 0),
+        ]
+    );
+
+    let delivery_log = Arc::new(Mutex::new(Vec::new()));
+    let batch_log = Arc::clone(&delivery_log);
+    let mut transport = MemoryTransport::with_qos_policy(
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+        QosFixedPriorityPolicy::new(8, QosPriority::new(7)).unwrap(),
+    )
+    .with_direct_target_batch_responder(move |deliveries, _context| {
+        let mut outcomes = Vec::with_capacity(deliveries.len());
+        let mut batch = Vec::with_capacity(deliveries.len());
+        for delivery in deliveries {
+            batch.push((
+                delivery.tick(),
+                delivery.request().id().agent(),
+                delivery.request().line_address(),
+            ));
+            outcomes.push(TargetBatchOutcome::new(
+                delivery.request().id(),
+                TargetOutcome::NoResponse,
+            ));
+        }
+        batch_log.lock().unwrap().push(batch);
+        Some(outcomes)
+    });
+    let route_agent_1 = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("cache1"),
+                PartitionId::new(0),
+                [MemoryRouteHop::new(endpoint("memory"), PartitionId::new(2), 2, 2).unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_agent_2 = transport
+        .add_route(
+            MemoryRoute::new_path(
+                endpoint("cache2"),
+                PartitionId::new(1),
+                [MemoryRouteHop::new(endpoint("memory"), PartitionId::new(2), 2, 2).unwrap()],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let transactions = transport_run
+        .into_downstream_requests()
+        .into_iter()
+        .map(|request| {
+            let route = match request.agent() {
+                agent_id if agent_id == agent(1) => route_agent_1,
+                agent_id if agent_id == agent(2) => route_agent_2,
+                _ => unreachable!("test only uses two cache agents"),
+            };
+            request.into_parallel_transaction(
+                route,
+                MemoryTrace::new(),
+                |_delivery, _context| TargetOutcome::NoResponse,
+                |_| panic!("request-only miss transaction must not deliver a response"),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    transport
+        .submit_parallel_batch(&mut scheduler, transactions)
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        *delivery_log.lock().unwrap(),
+        vec![vec![
+            (2, agent(2), Address::new(0x1010)),
+            (2, agent(1), Address::new(0x1000)),
+        ]]
+    );
 }
 
 #[test]

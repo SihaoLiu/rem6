@@ -7,11 +7,15 @@ use rem6_cache::{
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, MsiDirectory,
 };
+use rem6_kernel::ParallelSchedulerContext;
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
-use rem6_transport::TargetOutcome;
+use rem6_transport::{
+    MemoryRouteId, MemoryTrace, ParallelMemoryTransaction, RequestDelivery, ResponseDelivery,
+    TargetOutcome, TransportQosClass,
+};
 
 use crate::{
     push_response_records_from_outcomes, CpuResponseRecord, HarnessError, SubmitKind, SubmitResult,
@@ -191,6 +195,101 @@ pub struct MsiBankCycleRun {
     tick: u64,
     accepted: Vec<MsiBankCycleAccepted>,
     response_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankDownstreamTransportRequest {
+    agent: AgentId,
+    line_address: Address,
+    request: MemoryRequest,
+    qos: Option<MshrQosClass>,
+}
+
+impl MsiBankDownstreamTransportRequest {
+    pub fn new(
+        agent: AgentId,
+        line_address: Address,
+        request: MemoryRequest,
+        qos: Option<MshrQosClass>,
+    ) -> Self {
+        Self {
+            agent,
+            line_address,
+            request,
+            qos,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+
+    pub const fn request(&self) -> &MemoryRequest {
+        &self.request
+    }
+
+    pub const fn mshr_qos(&self) -> Option<MshrQosClass> {
+        self.qos
+    }
+
+    pub fn transport_qos_class(&self) -> Option<TransportQosClass> {
+        self.qos.map(MshrQosClass::transport_qos_class)
+    }
+
+    pub fn into_parallel_transaction<F, G>(
+        self,
+        route: MemoryRouteId,
+        trace: MemoryTrace,
+        responder: F,
+        response_sink: G,
+    ) -> ParallelMemoryTransaction
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        G: FnOnce(ResponseDelivery) + Send + 'static,
+    {
+        let transaction =
+            ParallelMemoryTransaction::new(route, self.request, trace, responder, response_sink);
+        match self.qos {
+            Some(qos) => transaction.with_qos_class(qos.transport_qos_class()),
+            None => transaction,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiBankTransportCycleRun {
+    cycle_run: MsiBankCycleRun,
+    downstream_requests: Vec<MsiBankDownstreamTransportRequest>,
+}
+
+impl MsiBankTransportCycleRun {
+    pub fn new(
+        cycle_run: MsiBankCycleRun,
+        downstream_requests: Vec<MsiBankDownstreamTransportRequest>,
+    ) -> Self {
+        Self {
+            cycle_run,
+            downstream_requests,
+        }
+    }
+
+    pub const fn cycle_run(&self) -> &MsiBankCycleRun {
+        &self.cycle_run
+    }
+
+    pub fn downstream_requests(&self) -> &[MsiBankDownstreamTransportRequest] {
+        &self.downstream_requests
+    }
+
+    pub fn into_downstream_requests(self) -> Vec<MsiBankDownstreamTransportRequest> {
+        self.downstream_requests
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -981,6 +1080,42 @@ impl MsiBankDirectoryHarness {
         Ok(run)
     }
 
+    pub fn submit_parallel_cycle_plan_for_transport_misses(
+        &mut self,
+        plan: MsiBankCyclePlan,
+    ) -> Result<MsiBankTransportCycleRun, HarnessError> {
+        self.validate_parallel_cycle_requests(&plan.requests)?;
+        let mut next = self.clone();
+        let response_count_before = next.cpu_responses.len();
+        let mut accepted = Vec::with_capacity(plan.requests.len());
+        let mut downstream_requests = Vec::new();
+        for entry in plan.requests {
+            let request_id = entry.request.id();
+            let (result, downstream) = next.submit_cpu_request_at_inner_for_transport_miss(
+                plan.tick,
+                entry.agent,
+                entry.request,
+                entry.qos,
+            )?;
+            accepted.push(MsiBankCycleAccepted::new(
+                entry.agent,
+                request_id,
+                entry.line_address,
+                result,
+            ));
+            if let Some(downstream) = downstream {
+                downstream_requests.push(downstream);
+            }
+        }
+        let response_count = next.cpu_responses.len() - response_count_before;
+        let run = MsiBankCycleRun::new(plan.tick, accepted, response_count);
+        if !run.is_empty() {
+            next.parallel_cycle_runs.push(run.clone());
+        }
+        *self = next;
+        Ok(MsiBankTransportCycleRun::new(run, downstream_requests))
+    }
+
     fn validate_parallel_cycle_requests(
         &self,
         requests: &[MsiBankCycleRequest],
@@ -1050,6 +1185,45 @@ impl MsiBankDirectoryHarness {
         Ok(SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
             .with_directory_decision(decision)
             .with_cache_mshr_effective_qos(effective_qos))
+    }
+
+    fn submit_cpu_request_at_inner_for_transport_miss(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        request: MemoryRequest,
+        qos: Option<MshrQosClass>,
+    ) -> Result<(SubmitResult, Option<MsiBankDownstreamTransportRequest>), HarnessError> {
+        let line_address = self.layout.line_address(request.line_address());
+        let result = match qos {
+            Some(qos) => self
+                .cache_mut(agent)?
+                .accept_cpu_request_with_qos(request, qos),
+            None => self.cache_mut(agent)?.accept_cpu_request(request),
+        }
+        .map_err(HarnessError::CacheBank)?;
+        let cache_result = result.kind();
+        let effective_qos = self.cache(agent)?.mshr_effective_qos(line_address);
+
+        if self.record_target_outcomes(tick, cache_result, result.target_outcomes()) > 0 {
+            return Ok((
+                SubmitResult::new(SubmitKind::ImmediateHit, cache_result)
+                    .with_cache_mshr_effective_qos(effective_qos),
+                None,
+            ));
+        }
+
+        let downstream = result
+            .downstream_request()
+            .cloned()
+            .ok_or(HarnessError::Cache(CacheControllerError::NoPendingMiss))?;
+        let transport_request =
+            MsiBankDownstreamTransportRequest::new(agent, line_address, downstream, effective_qos);
+        Ok((
+            SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
+                .with_cache_mshr_effective_qos(effective_qos),
+            Some(transport_request),
+        ))
     }
 
     pub fn cache_state(
