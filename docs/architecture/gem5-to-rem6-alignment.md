@@ -93,7 +93,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| `src/mem/cache` | `rem6-cache`, `rem6-coherence`, protocol crates | partial | MSI, MESI, and MOESI state machines exist with harnesses. LRU, FIFO, MRU, LFU, BRRIP, BIP, SHIP, SecondChance, and TreePLRU replacement policies have typed per-set state, victim decisions, invalidation, reset, touch, access-signature training, and snapshot restore. MSHR queues have typed entry allocation, target coalescing, prefetch reserve, ready/service state, and snapshot restore. MSI cache banks can attach typed MSHRs, coalesce same-line read misses without extra downstream traffic, replay all coalesced targets on fill, restore coalesced targets from snapshots, and fan coalesced fills out through the MSI bank directory harness and MSI transport/deferred/snoop response collectors as multiple CPU response records. MESI cache banks can attach typed MSHRs, coalesce same-line read misses, and fan coalesced fills out as multiple target outcomes. MOESI bank integration, prefetchers, and CHI-like behavior remain open. |
+| `src/mem/cache` | `rem6-cache`, `rem6-coherence`, protocol crates | partial | MSI, MESI, and MOESI state machines exist with harnesses. LRU, FIFO, MRU, LFU, BRRIP, BIP, SHIP, SecondChance, and TreePLRU replacement policies have typed per-set state, victim decisions, invalidation, reset, touch, access-signature training, and snapshot restore. MSHR queues have typed entry allocation, target coalescing, prefetch reserve, ready/service state, and snapshot restore. MSI cache banks can attach typed MSHRs, coalesce same-line read misses without extra downstream traffic, replay all coalesced targets on fill, restore coalesced targets from snapshots, and fan coalesced fills out through the MSI bank directory harness and MSI transport/deferred/snoop response collectors as multiple CPU response records. MESI and MOESI cache banks can attach typed MSHRs, coalesce same-line read misses, and fan coalesced fills out as multiple target outcomes. Prefetchers, QoS, richer cache tags, and CHI-like behavior remain open. |
 | `src/mem/ruby` | `rem6-coherence`, `rem6-directory`, `rem6-fabric` | partial | rem6 keeps detailed coherence and NoC behavior without a second memory-stack vocabulary. |
 | `src/mem/slicc` | protocol crates and typed transition records | partial | rem6 should preserve protocol expressiveness while avoiding generated controllers that hide transient behavior. |
 | `src/mem/protocol` | `rem6-protocol-msi`, `rem6-protocol-mesi`, `rem6-protocol-moesi`, future CHI-like crate | partial | MSI, MESI, MOESI exist. CHI-like behavior is required for the completion bar. |
@@ -171,7 +171,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 - Add in-order pipeline, out-of-order pipeline, checker, richer branch
   predictors, and host-assisted execution models with checkpointable state.
 - Complete CHI-like coherence coverage and richer cache internals such as
-  MESI/MOESI controller-integrated MSHRs, prefetchers, and QoS.
+  prefetchers, QoS, sector/compressed tags, and cache write queues.
 - Broaden device coverage to PCI, virtio, storage, network, richer GPU runtime,
   and platform-specific devices.
 - Add optional adapters for SystemC, TLM, SST, DRAM simulators, power models,
