@@ -1,5 +1,6 @@
 use rem6_cache::{
-    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, DcptPrefetchAccess,
+    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, BopPrefetchAccess,
+    BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions, DcptPrefetchAccess,
     DcptPrefetcher, DcptPrefetcherConfig, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
     QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine, QueuedPrefetchThrottle,
     QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError, QueuedPrefetcher,
@@ -22,6 +23,85 @@ fn ampm_access(agent: u32, pc: u64, address: u64) -> AmpmPrefetchAccess {
 
 fn dcpt_access(agent: u32, pc: u64, address: u64) -> DcptPrefetchAccess {
     DcptPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn bop_access(agent: u32, pc: u64, address: u64) -> BopPrefetchAccess {
+    BopPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+#[test]
+fn bop_prefetcher_learns_best_offset_and_restores_rr_state() {
+    let config = BopPrefetcherConfig::new(BopPrefetcherConfigOptions {
+        line_size: 64,
+        score_max: 1,
+        round_max: 8,
+        bad_score: 0,
+        rr_entries: 8,
+        tag_bits: 12,
+        offset_list_size: 1,
+        negative_offsets: false,
+        degree: 2,
+    })
+    .unwrap();
+    let mut prefetcher = BopPrefetcher::new(config.clone());
+
+    assert_eq!(prefetcher.offsets(), &[1]);
+    assert_eq!(prefetcher.best_offset(), 1);
+    assert!(!prefetcher.issue_prefetch_requests());
+    assert!(prefetcher
+        .observe(bop_access(4, 0x900, 0x1000))
+        .unwrap()
+        .is_empty());
+
+    let candidates = prefetcher
+        .observe(bop_access(4, 0x904, 0x1040))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x1080), Address::new(0x10c0)]
+    );
+    assert_eq!(candidates[0].source_address(), Address::new(0x1040));
+    assert_eq!(candidates[0].context(), AgentId::new(4));
+    assert_eq!(candidates[0].pc(), 0x904);
+    assert_eq!(candidates[0].offset(), 1);
+    assert_eq!(candidates[0].stride(), 64);
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(candidates[1].offset(), 1);
+    assert_eq!(candidates[1].stride(), 64);
+    assert_eq!(candidates[1].degree_index(), 2);
+    assert!(prefetcher.issue_prefetch_requests());
+    assert_eq!(prefetcher.best_offset(), 1);
+    assert_eq!(prefetcher.best_score(), 0);
+    assert_eq!(prefetcher.round(), 0);
+    assert_eq!(prefetcher.last_candidates(), candidates.as_slice());
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = BopPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert!(restored.issue_prefetch_requests());
+
+    let restored_candidates = restored
+        .observe(bop_access(4, 0x908, 0x1080))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        restored_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x10c0), Address::new(0x1100)]
+    );
+    assert_eq!(
+        restored_candidates[0].source_address(),
+        Address::new(0x1080)
+    );
+    assert_eq!(restored_candidates[0].offset(), 1);
+    assert_eq!(restored_candidates[1].degree_index(), 2);
 }
 
 #[test]
