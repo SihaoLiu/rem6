@@ -13,11 +13,17 @@ use rem6_transport::TargetOutcome;
 
 mod bank;
 mod moesi;
+mod replacement;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MoesiPendingMissSnapshot,
+};
+pub use replacement::{
+    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
+    ReplacementDecision, ReplacementEntry, ReplacementSet, ReplacementSetSnapshot,
+    ReplacementUpdate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
