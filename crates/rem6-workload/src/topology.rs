@@ -683,25 +683,37 @@ impl WorkloadTopology {
         {
             return Err(WorkloadError::DuplicateRiscvCore { cpu: core.cpu() });
         }
-        if !self
+        let fetch_route = self
             .memory_routes
             .iter()
-            .any(|route| route.id() == core.fetch_route())
-        {
-            return Err(WorkloadError::MissingCoreFetchRoute {
+            .find(|route| route.id() == core.fetch_route())
+            .ok_or_else(|| WorkloadError::MissingCoreFetchRoute {
                 cpu: core.cpu(),
                 route: core.fetch_route().clone(),
+            })?;
+        if fetch_route.source_partition() != core.partition() {
+            return Err(WorkloadError::CoreFetchRouteSourceMismatch {
+                cpu: core.cpu(),
+                route: core.fetch_route().clone(),
+                expected: core.partition(),
+                actual: fetch_route.source_partition(),
             });
         }
         if let Some(route) = core.data_route() {
-            if !self
+            let data_route = self
                 .memory_routes
                 .iter()
-                .any(|existing| existing.id() == route)
-            {
-                return Err(WorkloadError::MissingCoreDataRoute {
+                .find(|existing| existing.id() == route)
+                .ok_or_else(|| WorkloadError::MissingCoreDataRoute {
                     cpu: core.cpu(),
                     route: route.clone(),
+                })?;
+            if data_route.source_partition() != core.partition() {
+                return Err(WorkloadError::CoreDataRouteSourceMismatch {
+                    cpu: core.cpu(),
+                    route: route.clone(),
+                    expected: core.partition(),
+                    actual: data_route.source_partition(),
                 });
             }
         }

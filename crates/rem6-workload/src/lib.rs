@@ -1159,9 +1159,21 @@ pub enum WorkloadError {
         cpu: u32,
         route: WorkloadRouteId,
     },
+    CoreFetchRouteSourceMismatch {
+        cpu: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
     MissingCoreDataRoute {
         cpu: u32,
         route: WorkloadRouteId,
+    },
+    CoreDataRouteSourceMismatch {
+        cpu: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
     },
     ZeroGpuComputeUnits {
         device: u32,
