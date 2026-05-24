@@ -139,6 +139,7 @@ pub use replacement::{
     ReplacementUpdate,
 };
 pub use write_queue::{
+    CacheCleanReplacementPolicy, CacheReplacementVictim, CacheReplacementVictimState,
     CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntry, CacheWriteQueueEntryKind,
     CacheWriteQueueError, CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot,
     CacheWriteQueueUpdate,

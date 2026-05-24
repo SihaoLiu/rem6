@@ -2,7 +2,12 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use rem6_memory::{AccessSize, Address, AddressRange, MemoryError, MemoryOperation, MemoryRequest};
+use rem6_memory::{
+    AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryOperation,
+    MemoryRequest, MemoryRequestId,
+};
+
+use crate::replacement::ReplacementDecision;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CacheWriteQueueHandle(u64);
@@ -23,6 +28,12 @@ pub enum CacheWriteQueueEntryKind {
     WritebackDirty,
     CleanEvict,
     UncacheableWrite,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheCleanReplacementPolicy {
+    CleanEvict,
+    WritebackClean,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,6 +114,10 @@ pub enum CacheWriteQueueError {
         next_handle: u64,
         handle: CacheWriteQueueHandle,
     },
+    ReplacementVictimWayMismatch {
+        decision_way: usize,
+        victim_way: usize,
+    },
     Memory(MemoryError),
 }
 
@@ -163,6 +178,13 @@ impl fmt::Display for CacheWriteQueueError {
                 formatter,
                 "cache write queue snapshot next handle {next_handle} is not after {handle:?}"
             ),
+            Self::ReplacementVictimWayMismatch {
+                decision_way,
+                victim_way,
+            } => write!(
+                formatter,
+                "cache write queue replacement decision selected way {decision_way} but victim line came from way {victim_way}"
+            ),
             Self::Memory(error) => write!(formatter, "{error}"),
         }
     }
@@ -180,6 +202,108 @@ impl Error for CacheWriteQueueError {
 impl From<MemoryError> for CacheWriteQueueError {
     fn from(error: MemoryError) -> Self {
         Self::Memory(error)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CacheReplacementVictimState {
+    Invalid,
+    Clean { data: Vec<u8> },
+    Dirty { data: Vec<u8> },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CacheReplacementVictim {
+    way: usize,
+    line: Address,
+    line_layout: CacheLineLayout,
+    secure: bool,
+    state: CacheReplacementVictimState,
+}
+
+impl CacheReplacementVictim {
+    pub fn invalid(way: usize, line: Address, line_layout: CacheLineLayout, secure: bool) -> Self {
+        Self {
+            way,
+            line: line_layout.line_address(line),
+            line_layout,
+            secure,
+            state: CacheReplacementVictimState::Invalid,
+        }
+    }
+
+    pub fn clean(
+        way: usize,
+        line: Address,
+        data: Vec<u8>,
+        line_layout: CacheLineLayout,
+        secure: bool,
+    ) -> Self {
+        Self {
+            way,
+            line: line_layout.line_address(line),
+            line_layout,
+            secure,
+            state: CacheReplacementVictimState::Clean { data },
+        }
+    }
+
+    pub fn dirty(
+        way: usize,
+        line: Address,
+        data: Vec<u8>,
+        line_layout: CacheLineLayout,
+        secure: bool,
+    ) -> Self {
+        Self {
+            way,
+            line: line_layout.line_address(line),
+            line_layout,
+            secure,
+            state: CacheReplacementVictimState::Dirty { data },
+        }
+    }
+
+    pub const fn way(&self) -> usize {
+        self.way
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn line_layout(&self) -> CacheLineLayout {
+        self.line_layout
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+
+    pub const fn state(&self) -> &CacheReplacementVictimState {
+        &self.state
+    }
+
+    fn into_writeback_request(
+        self,
+        request_id: MemoryRequestId,
+        clean_policy: CacheCleanReplacementPolicy,
+    ) -> Result<Option<MemoryRequest>, CacheWriteQueueError> {
+        let request = match self.state {
+            CacheReplacementVictimState::Invalid => return Ok(None),
+            CacheReplacementVictimState::Clean { data } => match clean_policy {
+                CacheCleanReplacementPolicy::CleanEvict => {
+                    MemoryRequest::clean_evict(request_id, self.line, self.line_layout)?
+                }
+                CacheCleanReplacementPolicy::WritebackClean => {
+                    MemoryRequest::writeback_clean(request_id, self.line, data, self.line_layout)?
+                }
+            },
+            CacheReplacementVictimState::Dirty { data } => {
+                MemoryRequest::writeback_dirty(request_id, self.line, data, self.line_layout)?
+            }
+        };
+        Ok(Some(request))
     }
 }
 
@@ -498,6 +622,29 @@ impl CacheWriteQueue {
         ready_tick: u64,
     ) -> Result<CacheWriteQueueUpdate, CacheWriteQueueError> {
         self.enqueue_inner(request, secure, ready_tick, true, true)
+    }
+
+    pub fn enqueue_replacement_writeback(
+        &mut self,
+        decision: &ReplacementDecision,
+        victim: CacheReplacementVictim,
+        request_id: MemoryRequestId,
+        ready_tick: u64,
+        clean_policy: CacheCleanReplacementPolicy,
+    ) -> Result<Option<CacheWriteQueueUpdate>, CacheWriteQueueError> {
+        if victim.way() != decision.way() {
+            return Err(CacheWriteQueueError::ReplacementVictimWayMismatch {
+                decision_way: decision.way(),
+                victim_way: victim.way(),
+            });
+        }
+
+        let secure = victim.secure();
+        let Some(request) = victim.into_writeback_request(request_id, clean_policy)? else {
+            return Ok(None);
+        };
+        self.enqueue_writeback(request, secure, ready_tick)
+            .map(Some)
     }
 
     fn enqueue_inner(
