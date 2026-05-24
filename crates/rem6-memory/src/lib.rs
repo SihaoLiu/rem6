@@ -6,8 +6,10 @@ mod translation;
 
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
-    TranslationFaultKind, TranslationQueue, TranslationQueueConfig, TranslationQueueEntrySnapshot,
-    TranslationQueueSnapshot, TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationFaultKind, TranslationPageMap, TranslationPageMapSnapshot, TranslationPageMapping,
+    TranslationPagePermissions, TranslationPageSize, TranslationQueue, TranslationQueueConfig,
+    TranslationQueueEntrySnapshot, TranslationQueueSnapshot, TranslationRequest,
+    TranslationRequestId, TranslationResolution,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

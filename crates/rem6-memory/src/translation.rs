@@ -463,12 +463,48 @@ impl TranslationQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TranslationError {
     ZeroCapacity,
-    QueueFull { capacity: usize },
-    DuplicateRequest { request: TranslationRequestId },
-    UnknownRequest { request: TranslationRequestId },
-    AddressOverflow { start: Address, size: AccessSize },
-    TickOverflow { issue_tick: u64, latency: u64 },
+    QueueFull {
+        capacity: usize,
+    },
+    DuplicateRequest {
+        request: TranslationRequestId,
+    },
+    UnknownRequest {
+        request: TranslationRequestId,
+    },
+    AddressOverflow {
+        start: Address,
+        size: AccessSize,
+    },
+    TickOverflow {
+        issue_tick: u64,
+        latency: u64,
+    },
     QueueOrderOverflow,
+    ZeroPageSize,
+    NonPowerOfTwoPageSize {
+        bytes: u64,
+    },
+    ZeroPageCount,
+    UnalignedVirtualPage {
+        address: Address,
+        page_size: TranslationPageSize,
+    },
+    UnalignedPhysicalPage {
+        address: Address,
+        page_size: TranslationPageSize,
+    },
+    PageRangeOverflow {
+        start: Address,
+        page_size: TranslationPageSize,
+        page_count: u64,
+    },
+    OverlappingTranslationMapping {
+        existing_start: Address,
+        existing_size: AccessSize,
+        requested_start: Address,
+        requested_size: AccessSize,
+    },
 }
 
 impl fmt::Display for TranslationError {
@@ -512,8 +548,360 @@ impl fmt::Display for TranslationError {
                     "translation queue stable order counter overflowed"
                 )
             }
+            Self::ZeroPageSize => write!(formatter, "translation page size must be nonzero"),
+            Self::NonPowerOfTwoPageSize { bytes } => {
+                write!(
+                    formatter,
+                    "translation page size {bytes} is not a power of two"
+                )
+            }
+            Self::ZeroPageCount => {
+                write!(formatter, "translation mapping page count must be nonzero")
+            }
+            Self::UnalignedVirtualPage { address, page_size } => write!(
+                formatter,
+                "virtual page address {:#x} is not aligned to translation page size {}",
+                address.get(),
+                page_size.bytes()
+            ),
+            Self::UnalignedPhysicalPage { address, page_size } => write!(
+                formatter,
+                "physical page address {:#x} is not aligned to translation page size {}",
+                address.get(),
+                page_size.bytes()
+            ),
+            Self::PageRangeOverflow {
+                start,
+                page_size,
+                page_count,
+            } => write!(
+                formatter,
+                "translation page range at {:#x} overflows for {} pages of {} bytes",
+                start.get(),
+                page_count,
+                page_size.bytes()
+            ),
+            Self::OverlappingTranslationMapping {
+                existing_start,
+                existing_size,
+                requested_start,
+                requested_size,
+            } => write!(
+                formatter,
+                "translation mapping {:#x}+{} overlaps existing mapping {:#x}+{}",
+                requested_start.get(),
+                requested_size.bytes(),
+                existing_start.get(),
+                existing_size.bytes()
+            ),
         }
     }
 }
 
 impl Error for TranslationError {}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TranslationPageSize {
+    bytes: u64,
+}
+
+impl TranslationPageSize {
+    pub fn new(bytes: u64) -> Result<Self, TranslationError> {
+        if bytes == 0 {
+            return Err(TranslationError::ZeroPageSize);
+        }
+        if !bytes.is_power_of_two() {
+            return Err(TranslationError::NonPowerOfTwoPageSize { bytes });
+        }
+
+        Ok(Self { bytes })
+    }
+
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+
+    pub fn page_address(self, address: Address) -> Address {
+        Address::new(address.get() & !(self.bytes - 1))
+    }
+
+    pub fn page_offset(self, address: Address) -> u64 {
+        address.get() - self.page_address(address).get()
+    }
+
+    pub fn is_aligned(self, address: Address) -> bool {
+        self.page_offset(address) == 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TranslationPagePermissions {
+    read: bool,
+    write: bool,
+    execute: bool,
+}
+
+impl TranslationPagePermissions {
+    pub const fn new(read: bool, write: bool, execute: bool) -> Self {
+        Self {
+            read,
+            write,
+            execute,
+        }
+    }
+
+    pub const fn read_only() -> Self {
+        Self::new(true, false, false)
+    }
+
+    pub const fn read_write() -> Self {
+        Self::new(true, true, false)
+    }
+
+    pub const fn read_execute() -> Self {
+        Self::new(true, false, true)
+    }
+
+    pub const fn read_write_execute() -> Self {
+        Self::new(true, true, true)
+    }
+
+    pub const fn read(self) -> bool {
+        self.read
+    }
+
+    pub const fn write(self) -> bool {
+        self.write
+    }
+
+    pub const fn execute(self) -> bool {
+        self.execute
+    }
+
+    pub const fn allows(self, access: TranslationAccessKind) -> bool {
+        match access {
+            TranslationAccessKind::InstructionFetch => self.execute,
+            TranslationAccessKind::Load | TranslationAccessKind::Prefetch => self.read,
+            TranslationAccessKind::Store | TranslationAccessKind::Atomic => self.write,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationPageMapping {
+    virtual_range: AddressRange,
+    physical_start: Address,
+    page_count: u64,
+    permissions: TranslationPagePermissions,
+}
+
+impl TranslationPageMapping {
+    fn new(
+        page_size: TranslationPageSize,
+        virtual_start: Address,
+        physical_start: Address,
+        page_count: u64,
+        permissions: TranslationPagePermissions,
+    ) -> Result<Self, TranslationError> {
+        if page_count == 0 {
+            return Err(TranslationError::ZeroPageCount);
+        }
+        if !page_size.is_aligned(virtual_start) {
+            return Err(TranslationError::UnalignedVirtualPage {
+                address: virtual_start,
+                page_size,
+            });
+        }
+        if !page_size.is_aligned(physical_start) {
+            return Err(TranslationError::UnalignedPhysicalPage {
+                address: physical_start,
+                page_size,
+            });
+        }
+
+        let byte_count = page_size.bytes().checked_mul(page_count).ok_or(
+            TranslationError::PageRangeOverflow {
+                start: virtual_start,
+                page_size,
+                page_count,
+            },
+        )?;
+        let size = AccessSize::new(byte_count).map_err(|_| TranslationError::ZeroPageCount)?;
+        let virtual_range = AddressRange::new(virtual_start, size).map_err(|_| {
+            TranslationError::PageRangeOverflow {
+                start: virtual_start,
+                page_size,
+                page_count,
+            }
+        })?;
+        AddressRange::new(physical_start, size).map_err(|_| {
+            TranslationError::PageRangeOverflow {
+                start: physical_start,
+                page_size,
+                page_count,
+            }
+        })?;
+
+        Ok(Self {
+            virtual_range,
+            physical_start,
+            page_count,
+            permissions,
+        })
+    }
+
+    pub const fn virtual_start(&self) -> Address {
+        self.virtual_range.start()
+    }
+
+    pub const fn physical_start(&self) -> Address {
+        self.physical_start
+    }
+
+    pub const fn virtual_range(&self) -> AddressRange {
+        self.virtual_range
+    }
+
+    pub const fn page_count(&self) -> u64 {
+        self.page_count
+    }
+
+    pub const fn permissions(&self) -> TranslationPagePermissions {
+        self.permissions
+    }
+
+    fn physical_address(&self, virtual_address: Address) -> Address {
+        Address::new(
+            self.physical_start.get() + (virtual_address.get() - self.virtual_start().get()),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationPageMapSnapshot {
+    page_size: TranslationPageSize,
+    mappings: Vec<TranslationPageMapping>,
+}
+
+impl TranslationPageMapSnapshot {
+    pub fn new(page_size: TranslationPageSize, mappings: Vec<TranslationPageMapping>) -> Self {
+        Self {
+            page_size,
+            mappings,
+        }
+    }
+
+    pub const fn page_size(&self) -> TranslationPageSize {
+        self.page_size
+    }
+
+    pub fn mappings(&self) -> &[TranslationPageMapping] {
+        &self.mappings
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationPageMap {
+    page_size: TranslationPageSize,
+    mappings: Vec<TranslationPageMapping>,
+}
+
+impl TranslationPageMap {
+    pub fn new(page_size: TranslationPageSize) -> Self {
+        Self {
+            page_size,
+            mappings: Vec::new(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: &TranslationPageMapSnapshot) -> Result<Self, TranslationError> {
+        let mut map = Self::new(snapshot.page_size());
+        for mapping in snapshot.mappings() {
+            map.map(
+                mapping.virtual_start(),
+                mapping.physical_start(),
+                mapping.page_count(),
+                mapping.permissions(),
+            )?;
+        }
+        Ok(map)
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &TranslationPageMapSnapshot,
+    ) -> Result<(), TranslationError> {
+        *self = Self::from_snapshot(snapshot)?;
+        Ok(())
+    }
+
+    pub const fn page_size(&self) -> TranslationPageSize {
+        self.page_size
+    }
+
+    pub fn mapping_count(&self) -> usize {
+        self.mappings.len()
+    }
+
+    pub fn mappings(&self) -> &[TranslationPageMapping] {
+        &self.mappings
+    }
+
+    pub fn map(
+        &mut self,
+        virtual_start: Address,
+        physical_start: Address,
+        page_count: u64,
+        permissions: TranslationPagePermissions,
+    ) -> Result<(), TranslationError> {
+        let mapping = TranslationPageMapping::new(
+            self.page_size,
+            virtual_start,
+            physical_start,
+            page_count,
+            permissions,
+        )?;
+        if let Some(existing) = self
+            .mappings
+            .iter()
+            .find(|existing| existing.virtual_range().overlaps(mapping.virtual_range()))
+        {
+            return Err(TranslationError::OverlappingTranslationMapping {
+                existing_start: existing.virtual_start(),
+                existing_size: existing.virtual_range().size(),
+                requested_start: mapping.virtual_start(),
+                requested_size: mapping.virtual_range().size(),
+            });
+        }
+
+        self.mappings.push(mapping);
+        self.mappings
+            .sort_by_key(|mapping| (mapping.virtual_start(), mapping.virtual_range().end()));
+        Ok(())
+    }
+
+    pub fn translate(&self, request: &TranslationRequest) -> TranslationResolution {
+        let Some(mapping) = self
+            .mappings
+            .iter()
+            .find(|mapping| mapping.virtual_range().contains_range(request.range()))
+        else {
+            return TranslationResolution::fault(TranslationFault::new(
+                request.virtual_address(),
+                TranslationFaultKind::PageFault,
+            ));
+        };
+        if !mapping.permissions().allows(request.access()) {
+            return TranslationResolution::fault(TranslationFault::new(
+                request.virtual_address(),
+                TranslationFaultKind::PermissionFault,
+            ));
+        }
+
+        TranslationResolution::mapped(mapping.physical_address(request.virtual_address()))
+    }
+
+    pub fn snapshot(&self) -> TranslationPageMapSnapshot {
+        TranslationPageMapSnapshot::new(self.page_size, self.mappings.clone())
+    }
+}
