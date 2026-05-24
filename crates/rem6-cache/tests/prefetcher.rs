@@ -1,8 +1,9 @@
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
-    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
-    QueuedPrefetchThrottleError, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
-    StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, QueuedPrefetchConfig,
+    QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
+    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
+    QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
+    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -12,6 +13,64 @@ fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
 
 fn tagged_access(agent: u32, pc: u64, address: u64) -> TaggedPrefetchAccess {
     TaggedPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn ampm_access(agent: u32, pc: u64, address: u64) -> AmpmPrefetchAccess {
+    AmpmPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+#[test]
+fn ampm_prefetcher_matches_cross_zone_access_map_patterns_and_restores_state() {
+    let config = AmpmPrefetcherConfig::new(64, 256, 2, 8).unwrap();
+    let mut prefetcher = AmpmPrefetcher::new(config.clone());
+
+    assert!(prefetcher
+        .observe(ampm_access(3, 0x700, 0x10c0))
+        .unwrap()
+        .is_empty());
+    let candidates = prefetcher
+        .observe(ampm_access(3, 0x704, 0x1100))
+        .unwrap()
+        .to_vec();
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x1140)]
+    );
+    assert_eq!(candidates[0].source_address(), Address::new(0x1100));
+    assert_eq!(candidates[0].context(), AgentId::new(3));
+    assert_eq!(candidates[0].pc(), 0x704);
+    assert_eq!(candidates[0].stride(), 64);
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(prefetcher.last_candidates(), candidates.as_slice());
+    assert_eq!(prefetcher.zone_count(), 4);
+    assert_eq!(prefetcher.issued_prefetch_count(), 1);
+    assert_eq!(prefetcher.useful_prefetch_count(), 0);
+    assert_eq!(prefetcher.raw_cache_miss_count(), 2);
+    assert_eq!(prefetcher.raw_cache_hit_count(), 0);
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = AmpmPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let restored_candidates = restored
+        .observe(ampm_access(3, 0x708, 0x1140))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        restored_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x1180)]
+    );
+    assert_eq!(restored.issued_prefetch_count(), 2);
+    assert_eq!(restored.useful_prefetch_count(), 1);
+    assert_eq!(restored.raw_cache_miss_count(), 3);
 }
 
 #[test]

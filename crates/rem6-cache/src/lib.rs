@@ -19,6 +19,7 @@ mod moesi;
 mod moesi_bank;
 mod mshr;
 mod prefetch;
+mod prefetch_ampm;
 mod prefetch_multi;
 mod prefetch_throttle;
 mod replacement;
@@ -49,6 +50,10 @@ pub use prefetch::{
     StridePrefetcherConfig, StridePrefetcherError, StridePrefetcherSnapshot, TaggedPrefetchAccess,
     TaggedPrefetchCandidate, TaggedPrefetcher, TaggedPrefetcherConfig, TaggedPrefetcherError,
     TaggedPrefetcherSnapshot,
+};
+pub use prefetch_ampm::{
+    AmpmAccessMapEntrySnapshot, AmpmAccessMapState, AmpmPrefetchAccess, AmpmPrefetchCandidate,
+    AmpmPrefetcher, AmpmPrefetcherConfig, AmpmPrefetcherError, AmpmPrefetcherSnapshot,
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,
