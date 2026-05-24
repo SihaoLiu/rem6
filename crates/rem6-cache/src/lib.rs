@@ -59,8 +59,9 @@ pub use prefetch_ampm::{
     AmpmPrefetcherConfig, AmpmPrefetcherError, AmpmPrefetcherSnapshot, AmpmRatio,
 };
 pub use prefetch_bop::{
-    BopPrefetchAccess, BopPrefetchCandidate, BopPrefetcher, BopPrefetcherConfig,
-    BopPrefetcherConfigOptions, BopPrefetcherError, BopPrefetcherSnapshot,
+    BopDelayQueueConfig, BopDelayQueueEntrySnapshot, BopPrefetchAccess, BopPrefetchCandidate,
+    BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions, BopPrefetcherError,
+    BopPrefetcherSnapshot,
 };
 pub use prefetch_dcpt::{
     DcptPrefetchAccess, DcptPrefetchCandidate, DcptPrefetchContextSnapshot,

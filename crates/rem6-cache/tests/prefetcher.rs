@@ -1,11 +1,11 @@
 use rem6_cache::{
-    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, BopPrefetchAccess,
-    BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions, DcptPrefetchAccess,
-    DcptPrefetcher, DcptPrefetcherConfig, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
-    QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine, QueuedPrefetchThrottle,
-    QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError, QueuedPrefetcher,
-    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
-    TaggedPrefetcher, TaggedPrefetcherConfig,
+    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, BopDelayQueueConfig,
+    BopPrefetchAccess, BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions,
+    DcptPrefetchAccess, DcptPrefetcher, DcptPrefetcherConfig, QueuedPrefetchConfig,
+    QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
+    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
+    QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
+    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -41,6 +41,7 @@ fn bop_prefetcher_learns_best_offset_and_restores_rr_state() {
         offset_list_size: 1,
         negative_offsets: false,
         degree: 2,
+        delay_queue: None,
     })
     .unwrap();
     let mut prefetcher = BopPrefetcher::new(config.clone());
@@ -102,6 +103,59 @@ fn bop_prefetcher_learns_best_offset_and_restores_rr_state() {
     );
     assert_eq!(restored_candidates[0].offset(), 1);
     assert_eq!(restored_candidates[1].degree_index(), 2);
+}
+
+#[test]
+fn bop_prefetcher_delays_rr_training_and_restores_delay_queue() {
+    let config = BopPrefetcherConfig::new(BopPrefetcherConfigOptions {
+        line_size: 64,
+        score_max: 1,
+        round_max: 8,
+        bad_score: 0,
+        rr_entries: 8,
+        tag_bits: 12,
+        offset_list_size: 1,
+        negative_offsets: false,
+        degree: 1,
+        delay_queue: Some(BopDelayQueueConfig::new(2, 3).unwrap()),
+    })
+    .unwrap();
+    let mut prefetcher = BopPrefetcher::new(config.clone());
+
+    assert!(prefetcher
+        .observe_at(0, bop_access(4, 0xa00, 0x1000))
+        .unwrap()
+        .is_empty());
+    assert_eq!(prefetcher.delay_queue_len(), 1);
+    assert_eq!(prefetcher.next_delay_ready_tick(), Some(3));
+
+    assert!(prefetcher
+        .observe_at(1, bop_access(4, 0xa04, 0x1040))
+        .unwrap()
+        .is_empty());
+    assert!(!prefetcher.issue_prefetch_requests());
+    assert_eq!(prefetcher.delay_queue_len(), 2);
+
+    let snapshot = prefetcher.snapshot();
+    assert_eq!(snapshot.delay_queue().len(), 2);
+    let mut restored = BopPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let candidates = restored
+        .observe_at(3, bop_access(4, 0xa08, 0x1040))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x1080)]
+    );
+    assert!(restored.issue_prefetch_requests());
+    assert_eq!(restored.delay_queue_len(), 2);
+    assert_eq!(restored.next_delay_ready_tick(), Some(4));
 }
 
 #[test]

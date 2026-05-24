@@ -1,9 +1,39 @@
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
 use crate::prefetch::PrefetchCandidate;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BopDelayQueueConfig {
+    entries: usize,
+    delay_ticks: u64,
+}
+
+impl BopDelayQueueConfig {
+    pub const fn new(entries: usize, delay_ticks: u64) -> Result<Self, BopPrefetcherError> {
+        if entries == 0 {
+            return Err(BopPrefetcherError::ZeroDelayQueueEntries);
+        }
+        if delay_ticks == 0 {
+            return Err(BopPrefetcherError::ZeroDelayQueueTicks);
+        }
+        Ok(Self {
+            entries,
+            delay_ticks,
+        })
+    }
+
+    pub const fn entries(&self) -> usize {
+        self.entries
+    }
+
+    pub const fn delay_ticks(&self) -> u64 {
+        self.delay_ticks
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BopPrefetcherConfigOptions {
@@ -16,6 +46,7 @@ pub struct BopPrefetcherConfigOptions {
     pub offset_list_size: usize,
     pub negative_offsets: bool,
     pub degree: u32,
+    pub delay_queue: Option<BopDelayQueueConfig>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,6 +60,7 @@ pub struct BopPrefetcherConfig {
     offset_list_size: usize,
     negative_offsets: bool,
     degree: u32,
+    delay_queue: Option<BopDelayQueueConfig>,
 }
 
 impl BopPrefetcherConfig {
@@ -43,6 +75,7 @@ impl BopPrefetcherConfig {
             offset_list_size,
             negative_offsets,
             degree,
+            delay_queue,
         } = options;
 
         if line_size == 0 {
@@ -86,6 +119,7 @@ impl BopPrefetcherConfig {
             offset_list_size,
             negative_offsets,
             degree,
+            delay_queue,
         })
     }
 
@@ -124,6 +158,10 @@ impl BopPrefetcherConfig {
     pub const fn degree(&self) -> u32 {
         self.degree
     }
+
+    pub const fn delay_queue(&self) -> Option<BopDelayQueueConfig> {
+        self.delay_queue
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,6 +172,8 @@ pub enum BopPrefetcherError {
     ZeroRrEntries,
     ZeroOffsetListSize,
     ZeroDegree,
+    ZeroDelayQueueEntries,
+    ZeroDelayQueueTicks,
     LineSizeNotPowerOfTwo {
         line_size: u64,
     },
@@ -160,6 +200,10 @@ pub enum BopPrefetcherError {
         scores: usize,
         expected: usize,
     },
+    SnapshotDelayQueueShapeMismatch {
+        entries: usize,
+        max_entries: usize,
+    },
 }
 
 impl fmt::Display for BopPrefetcherError {
@@ -171,6 +215,8 @@ impl fmt::Display for BopPrefetcherError {
             Self::ZeroRrEntries => write!(formatter, "BOP RR table has no entries"),
             Self::ZeroOffsetListSize => write!(formatter, "BOP offset list is empty"),
             Self::ZeroDegree => write!(formatter, "BOP degree is zero"),
+            Self::ZeroDelayQueueEntries => write!(formatter, "BOP delay queue has no entries"),
+            Self::ZeroDelayQueueTicks => write!(formatter, "BOP delay queue has zero delay ticks"),
             Self::LineSizeNotPowerOfTwo { line_size } => {
                 write!(formatter, "BOP line size {line_size} is not a power of two")
             }
@@ -204,6 +250,13 @@ impl fmt::Display for BopPrefetcherError {
             } => write!(
                 formatter,
                 "BOP snapshot has {offsets} offsets and {scores} scores instead of {expected}"
+            ),
+            Self::SnapshotDelayQueueShapeMismatch {
+                entries,
+                max_entries,
+            } => write!(
+                formatter,
+                "BOP snapshot delay queue has {entries} entries but accepts at most {max_entries}"
             ),
         }
     }
@@ -341,6 +394,29 @@ impl PrefetchCandidate for BopPrefetchCandidate {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BopDelayQueueEntrySnapshot {
+    address: Address,
+    ready_tick: u64,
+}
+
+impl BopDelayQueueEntrySnapshot {
+    const fn new(address: Address, ready_tick: u64) -> Self {
+        Self {
+            address,
+            ready_tick,
+        }
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn ready_tick(&self) -> u64 {
+        self.ready_tick
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BopPrefetcherSnapshot {
     config: BopPrefetcherConfig,
@@ -354,6 +430,7 @@ pub struct BopPrefetcherSnapshot {
     phase_best_offset: i16,
     best_score: u32,
     round: u32,
+    delay_queue: Vec<BopDelayQueueEntrySnapshot>,
     last_candidates: Vec<BopPrefetchCandidate>,
 }
 
@@ -402,6 +479,10 @@ impl BopPrefetcherSnapshot {
         self.round
     }
 
+    pub fn delay_queue(&self) -> &[BopDelayQueueEntrySnapshot] {
+        &self.delay_queue
+    }
+
     pub fn last_candidates(&self) -> &[BopPrefetchCandidate] {
         &self.last_candidates
     }
@@ -420,6 +501,7 @@ pub struct BopPrefetcher {
     phase_best_offset: i16,
     best_score: u32,
     round: u32,
+    delay_queue: VecDeque<BopDelayQueueEntrySnapshot>,
     last_candidates: Vec<BopPrefetchCandidate>,
 }
 
@@ -438,6 +520,7 @@ impl BopPrefetcher {
             phase_best_offset: 0,
             best_score: 0,
             round: 0,
+            delay_queue: VecDeque::new(),
             last_candidates: Vec::new(),
         }
     }
@@ -478,13 +561,34 @@ impl BopPrefetcher {
         &self.last_candidates
     }
 
+    pub fn delay_queue_len(&self) -> usize {
+        self.delay_queue.len()
+    }
+
+    pub fn next_delay_ready_tick(&self) -> Option<u64> {
+        self.delay_queue.front().map(|entry| entry.ready_tick())
+    }
+
     pub fn observe(
         &mut self,
         access: BopPrefetchAccess,
     ) -> Result<&[BopPrefetchCandidate], BopPrefetcherError> {
+        self.observe_at(0, access)
+    }
+
+    pub fn observe_at(
+        &mut self,
+        tick: u64,
+        access: BopPrefetchAccess,
+    ) -> Result<&[BopPrefetchCandidate], BopPrefetcherError> {
         self.last_candidates.clear();
-        let tag = self.tag(access.address());
-        self.insert_rr_left(access.address(), tag);
+        self.process_delay_queue(tick);
+        if self.config.delay_queue().is_some() {
+            self.insert_into_delay_queue(access.address(), tick);
+        } else {
+            let tag = self.tag(access.address());
+            self.insert_rr_left(access.address(), tag);
+        }
         self.learn_best_offset(access.address());
 
         if self.issue_prefetch_requests {
@@ -515,6 +619,7 @@ impl BopPrefetcher {
             phase_best_offset: self.phase_best_offset,
             best_score: self.best_score,
             round: self.round,
+            delay_queue: self.delay_queue.iter().copied().collect(),
             last_candidates: self.last_candidates.clone(),
         }
     }
@@ -544,6 +649,17 @@ impl BopPrefetcher {
                 expected: self.config.offset_list_size(),
             });
         }
+        let max_delay_entries = self
+            .config
+            .delay_queue()
+            .map(|delay_queue| delay_queue.entries())
+            .unwrap_or(0);
+        if snapshot.delay_queue().len() > max_delay_entries {
+            return Err(BopPrefetcherError::SnapshotDelayQueueShapeMismatch {
+                entries: snapshot.delay_queue().len(),
+                max_entries: max_delay_entries,
+            });
+        }
 
         self.rr_left = snapshot.rr_left().to_vec();
         self.rr_right = snapshot.rr_right().to_vec();
@@ -555,8 +671,36 @@ impl BopPrefetcher {
         self.phase_best_offset = snapshot.phase_best_offset();
         self.best_score = snapshot.best_score();
         self.round = snapshot.round();
+        self.delay_queue = snapshot.delay_queue().iter().copied().collect();
         self.last_candidates = snapshot.last_candidates().to_vec();
         Ok(())
+    }
+
+    fn process_delay_queue(&mut self, tick: u64) {
+        while self
+            .delay_queue
+            .front()
+            .is_some_and(|entry| entry.ready_tick() <= tick)
+        {
+            let Some(entry) = self.delay_queue.pop_front() else {
+                break;
+            };
+            let tag = self.tag(entry.address());
+            self.insert_rr_left(entry.address(), tag);
+        }
+    }
+
+    fn insert_into_delay_queue(&mut self, address: Address, tick: u64) {
+        let Some(delay_queue) = self.config.delay_queue() else {
+            return;
+        };
+        if self.delay_queue.len() == delay_queue.entries() {
+            return;
+        }
+        self.delay_queue.push_back(BopDelayQueueEntrySnapshot::new(
+            address,
+            tick.saturating_add(delay_queue.delay_ticks()),
+        ));
     }
 
     fn learn_best_offset(&mut self, address: Address) {
