@@ -30,18 +30,19 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId, TransportError,
 };
 use rem6_workload::{
-    HostEventIntent, WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadError,
-    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadHostEvent, WorkloadMemoryRoute,
-    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResult,
-    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadTopology,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadError, WorkloadGpuDmaCopy,
+    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
+    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 mod cache_response;
+mod summary;
 mod workload_replay_dma;
 
 use self::cache_response::{cached_memory_response, data_cache_agents, data_cache_response_result};
-use self::workload_replay_dma::{run_accelerator_dma_copies, WorkloadAcceleratorDmaActivity};
+use self::summary::{parallel_execution_summary, WorkloadReplayActivityRefs};
+use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, accelerator_wait_for_graph_since, accelerator_wait_for_markers,
     build_accelerator_devices, build_gpu_devices, gpu_snapshots, gpu_wait_for_graph_since,
@@ -180,13 +181,6 @@ impl WorkloadGpuDmaActivity {
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
-}
-
-struct WorkloadReplayActivityRefs<'a> {
-    gpu: &'a WorkloadGpuActivity,
-    gpu_dma: &'a WorkloadGpuDmaActivity,
-    accelerator: &'a WorkloadAcceleratorActivity,
-    accelerator_dma: &'a WorkloadAcceleratorDmaActivity,
 }
 
 enum WorkloadDataCacheHarness {
@@ -1270,150 +1264,6 @@ impl RiscvWorkloadReplay {
                 .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
             host_action_outcomes,
         ))
-    }
-}
-
-fn parallel_execution_summary(
-    run: &RiscvSystemRun,
-    topology: &WorkloadTopology,
-    activities: WorkloadReplayActivityRefs<'_>,
-) -> WorkloadParallelExecutionSummary {
-    let scheduler = run.parallel_scheduler_profile();
-    let fabric = run.fabric_profile();
-    let dram = run.dram_profile();
-    let cpu_activities = run.cpu_activities();
-    let riscv_fetch_issue_count = cpu_activities
-        .values()
-        .map(|activity| activity.fetch_issue_count())
-        .sum();
-    let riscv_committed_instruction_count = cpu_activities
-        .values()
-        .map(|activity| activity.instruction_execution_count())
-        .sum();
-    let riscv_data_access_issue_count = cpu_activities
-        .values()
-        .map(|activity| activity.data_access_issue_count())
-        .sum();
-    let riscv_scheduled_trap_count = cpu_activities
-        .values()
-        .map(|activity| activity.scheduled_trap_count())
-        .sum();
-    WorkloadParallelExecutionSummary::default()
-        .with_scheduler_counts(
-            scheduler.epoch_count(),
-            scheduler.empty_epoch_count(),
-            scheduler.dispatch_count(),
-            scheduler.batch_count(),
-        )
-        .with_scheduler_partitions(
-            run.active_parallel_scheduler_partition_count(),
-            run.max_parallel_scheduler_workers(),
-        )
-        .with_riscv_core_counts(
-            topology.riscv_cores().len(),
-            cpu_activities.len(),
-            riscv_fetch_issue_count,
-            riscv_committed_instruction_count,
-            riscv_data_access_issue_count,
-            riscv_scheduled_trap_count,
-        )
-        .with_data_cache_parallel_counts(
-            run.data_cache_run_count(),
-            run.data_cache_parallel_scheduler_epoch_count(),
-            run.data_cache_parallel_scheduler_dispatch_count(),
-            run.data_cache_parallel_scheduler_batch_count(),
-            run.data_cache_parallel_scheduler_max_workers(),
-        )
-        .with_data_cache_run_attribution(
-            run.attributed_data_cache_parallel_run_count(),
-            run.unattributed_data_cache_parallel_run_count(),
-        )
-        .with_data_cache_protocol_counts(run.data_cache_protocol_counts().into_iter().map(
-            |(protocol, run_count)| {
-                WorkloadDataCacheProtocolCount::new(
-                    workload_data_cache_protocol(protocol),
-                    run_count,
-                )
-            },
-        ))
-        .with_data_cache_diagnostics(
-            run.data_cache_wait_for_edge_count(),
-            run.data_cache_deadlock_diagnostic_count(),
-        )
-        .with_fabric_activity(
-            fabric.active_lane_count(),
-            fabric.transfer_count(),
-            fabric.byte_count(),
-            fabric.occupied_ticks(),
-            fabric.queue_delay_ticks(),
-            fabric.max_queue_delay_ticks(),
-            fabric.contended_lane_count(),
-        )
-        .with_dram_activity(
-            dram.active_target_count(),
-            dram.active_port_count(),
-            dram.active_bank_count(),
-            dram.access_count(),
-            dram.read_count(),
-            dram.write_count(),
-            dram.row_hit_count(),
-            dram.row_miss_count(),
-            dram.command_count(),
-            dram.turnaround_count(),
-            dram.total_ready_latency_cycles(),
-            dram.max_ready_latency_cycles(),
-        )
-        .with_resource_diagnostics(
-            run.fabric_wait_for_edge_count(),
-            run.fabric_deadlock_diagnostic_count(),
-            run.dram_wait_for_edge_count(),
-            run.dram_deadlock_diagnostic_count(),
-        )
-        .with_gpu_compute_counts(
-            activities.gpu.kernel_launch_count,
-            activities.gpu.trace_event_count,
-            activities.gpu.workgroup_completion_count,
-            activities.gpu.active_device_count,
-        )
-        .with_gpu_compute_diagnostics(
-            activities.gpu.wait_for_edge_count,
-            activities.gpu.deadlock_diagnostic_count,
-        )
-        .with_gpu_dma_counts(
-            activities.gpu_dma.copy_count,
-            activities.gpu_dma.completion_count,
-            activities.gpu_dma.active_device_count,
-        )
-        .with_gpu_dma_diagnostics(
-            activities.gpu_dma.wait_for_edge_count,
-            activities.gpu_dma.deadlock_diagnostic_count,
-        )
-        .with_accelerator_compute_counts(
-            activities.accelerator.command_count,
-            activities.accelerator.trace_event_count,
-            activities.accelerator.completion_count,
-            activities.accelerator.active_device_count,
-        )
-        .with_accelerator_compute_diagnostics(
-            activities.accelerator.wait_for_edge_count,
-            activities.accelerator.deadlock_diagnostic_count,
-        )
-        .with_accelerator_dma_counts(
-            activities.accelerator_dma.copy_count,
-            activities.accelerator_dma.completion_count,
-            activities.accelerator_dma.active_device_count,
-        )
-        .with_accelerator_dma_diagnostics(
-            activities.accelerator_dma.wait_for_edge_count,
-            activities.accelerator_dma.deadlock_diagnostic_count,
-        )
-}
-
-fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
-    match protocol {
-        RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
-        RiscvDataCacheProtocol::Mesi => WorkloadDataCacheProtocol::Mesi,
-        RiscvDataCacheProtocol::Moesi => WorkloadDataCacheProtocol::Moesi,
     }
 }
 

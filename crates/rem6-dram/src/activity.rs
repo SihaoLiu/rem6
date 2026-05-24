@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
@@ -140,6 +140,13 @@ impl DramBankActivity {
             .unwrap_or(0)
     }
 
+    pub fn qos_priorities(&self) -> Vec<QosPriority> {
+        let mut priorities = BTreeSet::new();
+        priorities.extend(self.qos_priority_access_counts.keys().copied());
+        priorities.extend(self.qos_priority_byte_counts.keys().copied());
+        priorities.into_iter().collect()
+    }
+
     pub fn qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
         self.qos_requestor_access_counts
             .get(&requestor)
@@ -152,6 +159,13 @@ impl DramBankActivity {
             .get(&requestor)
             .copied()
             .unwrap_or(0)
+    }
+
+    pub fn qos_requestors(&self) -> Vec<QosRequestorId> {
+        let mut requestors = BTreeSet::new();
+        requestors.extend(self.qos_requestor_access_counts.keys().copied());
+        requestors.extend(self.qos_requestor_byte_counts.keys().copied());
+        requestors.into_iter().collect()
     }
 }
 
@@ -381,6 +395,13 @@ impl DramActivityProfile {
             .unwrap_or(0)
     }
 
+    pub fn qos_priorities(&self) -> Vec<QosPriority> {
+        let mut priorities = BTreeSet::new();
+        priorities.extend(self.qos_priority_access_counts.keys().copied());
+        priorities.extend(self.qos_priority_byte_counts.keys().copied());
+        priorities.into_iter().collect()
+    }
+
     pub fn qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
         self.qos_requestor_access_counts
             .get(&requestor)
@@ -393,6 +414,13 @@ impl DramActivityProfile {
             .get(&requestor)
             .copied()
             .unwrap_or(0)
+    }
+
+    pub fn qos_requestors(&self) -> Vec<QosRequestorId> {
+        let mut requestors = BTreeSet::new();
+        requestors.extend(self.qos_requestor_access_counts.keys().copied());
+        requestors.extend(self.qos_requestor_byte_counts.keys().copied());
+        requestors.into_iter().collect()
     }
 }
 
@@ -532,12 +560,20 @@ impl DramMemoryActivityProfile {
         self.profile.qos_priority_byte_count(priority)
     }
 
+    pub fn qos_priorities(&self) -> Vec<QosPriority> {
+        self.profile.qos_priorities()
+    }
+
     pub fn qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
         self.profile.qos_requestor_access_count(requestor)
     }
 
     pub fn qos_requestor_byte_count(&self, requestor: QosRequestorId) -> u64 {
         self.profile.qos_requestor_byte_count(requestor)
+    }
+
+    pub fn qos_requestors(&self) -> Vec<QosRequestorId> {
+        self.profile.qos_requestors()
     }
 }
 

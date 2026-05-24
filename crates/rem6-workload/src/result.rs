@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use rem6_fabric::{QosPriority, QosRequestorId};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
     Msi,
@@ -41,6 +43,72 @@ impl WorkloadDataCacheProtocolCount {
 
     pub const fn is_empty(&self) -> bool {
         self.run_count == 0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadDramQosPrioritySummary {
+    priority: QosPriority,
+    access_count: usize,
+    byte_count: u64,
+}
+
+impl WorkloadDramQosPrioritySummary {
+    pub const fn new(priority: QosPriority, access_count: usize, byte_count: u64) -> Self {
+        Self {
+            priority,
+            access_count,
+            byte_count,
+        }
+    }
+
+    pub const fn priority(&self) -> QosPriority {
+        self.priority
+    }
+
+    pub const fn access_count(&self) -> usize {
+        self.access_count
+    }
+
+    pub const fn byte_count(&self) -> u64 {
+        self.byte_count
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.access_count == 0 && self.byte_count == 0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadDramQosRequestorSummary {
+    requestor: QosRequestorId,
+    access_count: usize,
+    byte_count: u64,
+}
+
+impl WorkloadDramQosRequestorSummary {
+    pub const fn new(requestor: QosRequestorId, access_count: usize, byte_count: u64) -> Self {
+        Self {
+            requestor,
+            access_count,
+            byte_count,
+        }
+    }
+
+    pub const fn requestor(&self) -> QosRequestorId {
+        self.requestor
+    }
+
+    pub const fn access_count(&self) -> usize {
+        self.access_count
+    }
+
+    pub const fn byte_count(&self) -> u64 {
+        self.byte_count
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.access_count == 0 && self.byte_count == 0
     }
 }
 
@@ -89,6 +157,11 @@ pub struct WorkloadParallelExecutionSummary {
     dram_turnaround_count: usize,
     dram_total_ready_latency_cycles: u64,
     dram_max_ready_latency_cycles: u64,
+    dram_qos_access_count: usize,
+    dram_qos_byte_count: u64,
+    dram_qos_escalated_access_count: usize,
+    dram_qos_priority_summaries: Vec<WorkloadDramQosPrioritySummary>,
+    dram_qos_requestor_summaries: Vec<WorkloadDramQosRequestorSummary>,
     dram_wait_for_edge_count: usize,
     dram_deadlock_diagnostic_count: usize,
     gpu_kernel_launch_count: usize,
@@ -260,6 +333,22 @@ impl WorkloadParallelExecutionSummary {
         self.dram_turnaround_count = turnaround_count;
         self.dram_total_ready_latency_cycles = total_ready_latency_cycles;
         self.dram_max_ready_latency_cycles = max_ready_latency_cycles;
+        self
+    }
+
+    pub fn with_dram_qos_activity(
+        mut self,
+        access_count: usize,
+        byte_count: u64,
+        escalated_access_count: usize,
+        priority_summaries: impl IntoIterator<Item = WorkloadDramQosPrioritySummary>,
+        requestor_summaries: impl IntoIterator<Item = WorkloadDramQosRequestorSummary>,
+    ) -> Self {
+        self.dram_qos_access_count = access_count;
+        self.dram_qos_byte_count = byte_count;
+        self.dram_qos_escalated_access_count = escalated_access_count;
+        self.dram_qos_priority_summaries = collect_priority_summaries(priority_summaries);
+        self.dram_qos_requestor_summaries = collect_requestor_summaries(requestor_summaries);
         self
     }
 
@@ -620,6 +709,64 @@ impl WorkloadParallelExecutionSummary {
         self.dram_access_count != 0
     }
 
+    pub const fn dram_qos_access_count(&self) -> usize {
+        self.dram_qos_access_count
+    }
+
+    pub const fn dram_qos_byte_count(&self) -> u64 {
+        self.dram_qos_byte_count
+    }
+
+    pub const fn dram_qos_escalated_access_count(&self) -> usize {
+        self.dram_qos_escalated_access_count
+    }
+
+    pub fn dram_qos_priority_summaries(&self) -> &[WorkloadDramQosPrioritySummary] {
+        &self.dram_qos_priority_summaries
+    }
+
+    pub fn dram_qos_requestor_summaries(&self) -> &[WorkloadDramQosRequestorSummary] {
+        &self.dram_qos_requestor_summaries
+    }
+
+    pub fn dram_qos_priority_access_count(&self, priority: QosPriority) -> usize {
+        self.dram_qos_priority_summaries
+            .iter()
+            .find(|summary| summary.priority() == priority)
+            .map(WorkloadDramQosPrioritySummary::access_count)
+            .unwrap_or(0)
+    }
+
+    pub fn dram_qos_priority_byte_count(&self, priority: QosPriority) -> u64 {
+        self.dram_qos_priority_summaries
+            .iter()
+            .find(|summary| summary.priority() == priority)
+            .map(WorkloadDramQosPrioritySummary::byte_count)
+            .unwrap_or(0)
+    }
+
+    pub fn dram_qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
+        self.dram_qos_requestor_summaries
+            .iter()
+            .find(|summary| summary.requestor() == requestor)
+            .map(WorkloadDramQosRequestorSummary::access_count)
+            .unwrap_or(0)
+    }
+
+    pub fn dram_qos_requestor_byte_count(&self, requestor: QosRequestorId) -> u64 {
+        self.dram_qos_requestor_summaries
+            .iter()
+            .find(|summary| summary.requestor() == requestor)
+            .map(WorkloadDramQosRequestorSummary::byte_count)
+            .unwrap_or(0)
+    }
+
+    pub const fn has_dram_qos_activity(&self) -> bool {
+        self.dram_qos_access_count != 0
+            || self.dram_qos_byte_count != 0
+            || self.dram_qos_escalated_access_count != 0
+    }
+
     pub const fn has_dram_row_misses(&self) -> bool {
         self.dram_row_miss_count != 0
     }
@@ -851,4 +998,44 @@ impl WorkloadParallelExecutionSummary {
             || self.data_cache_parallel_scheduler_dispatch_count != 0
             || self.data_cache_parallel_scheduler_max_workers != 0
     }
+}
+
+fn collect_priority_summaries(
+    summaries: impl IntoIterator<Item = WorkloadDramQosPrioritySummary>,
+) -> Vec<WorkloadDramQosPrioritySummary> {
+    let mut by_priority = BTreeMap::<QosPriority, (usize, u64)>::new();
+    for summary in summaries {
+        if summary.is_empty() {
+            continue;
+        }
+        let entry = by_priority.entry(summary.priority()).or_default();
+        entry.0 += summary.access_count();
+        entry.1 += summary.byte_count();
+    }
+    by_priority
+        .into_iter()
+        .map(|(priority, (access_count, byte_count))| {
+            WorkloadDramQosPrioritySummary::new(priority, access_count, byte_count)
+        })
+        .collect()
+}
+
+fn collect_requestor_summaries(
+    summaries: impl IntoIterator<Item = WorkloadDramQosRequestorSummary>,
+) -> Vec<WorkloadDramQosRequestorSummary> {
+    let mut by_requestor = BTreeMap::<QosRequestorId, (usize, u64)>::new();
+    for summary in summaries {
+        if summary.is_empty() {
+            continue;
+        }
+        let entry = by_requestor.entry(summary.requestor()).or_default();
+        entry.0 += summary.access_count();
+        entry.1 += summary.byte_count();
+    }
+    by_requestor
+        .into_iter()
+        .map(|(requestor, (access_count, byte_count))| {
+            WorkloadDramQosRequestorSummary::new(requestor, access_count, byte_count)
+        })
+        .collect()
 }

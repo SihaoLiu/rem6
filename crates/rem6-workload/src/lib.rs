@@ -17,7 +17,8 @@ pub use heterogeneous::{
 };
 use identity::manifest_identity;
 pub use result::{
-    WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadParallelExecutionSummary,
+    WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
+    WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
