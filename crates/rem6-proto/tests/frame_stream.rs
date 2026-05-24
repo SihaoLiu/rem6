@@ -3,7 +3,7 @@ use rem6_proto::{
     DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader,
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
-    TraceFrameStreamCursor, TraceHeader, TraceSourceId,
+    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -170,6 +170,84 @@ fn trace_frame_stream_cursor_rejects_bad_input_without_advancing() {
     );
     assert_eq!(corrupt_cursor.byte_position(), header_len);
     assert_eq!(corrupt_cursor.next_index(), 0);
+}
+
+#[test]
+fn trace_frame_stream_index_exposes_stable_record_metadata_for_partitioned_ingestion() {
+    let first_trace = instruction_trace("cpu0.proto", 10);
+    let second_trace = instruction_trace("cpu1.proto", 20);
+    let dependency_trace = dependency_trace();
+    let first = TraceFrame::from_proto_trace(&first_trace, vec![1, 2, 3]).unwrap();
+    let dependency = TraceFrame::from_dependency_trace(&dependency_trace, vec![8, 9]).unwrap();
+    let second = TraceFrame::from_proto_trace(&second_trace, vec![4, 5, 6, 7]).unwrap();
+    let first_len = first.encode().len();
+    let dependency_len = dependency.encode().len();
+    let second_len = second.encode().len();
+    let encoded = TraceFrameStream::new(vec![first.clone(), dependency.clone(), second.clone()])
+        .unwrap()
+        .encode();
+
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+
+    assert_eq!(index.len(), 3);
+    assert!(!index.is_empty());
+    assert_eq!(
+        index.total_frame_bytes(),
+        first_len + dependency_len + second_len
+    );
+    assert_eq!(index.total_payload_bytes(), 3 + 2 + 4);
+    assert_eq!(index.count_kind(TraceFrameKind::InstructionPacketTrace), 2);
+    assert_eq!(index.count_kind(TraceFrameKind::DependencyTrace), 1);
+
+    let records = index.records();
+    assert_eq!(records[0].index(), 0);
+    assert_eq!(records[0].kind(), TraceFrameKind::InstructionPacketTrace);
+    assert_eq!(records[0].identity(), first_trace.identity().as_str());
+    assert_eq!(records[0].length_offset(), 6);
+    assert_eq!(records[0].frame_len(), first_len);
+    assert_eq!(records[0].payload_len(), 3);
+    assert_eq!(
+        records[0].byte_range(),
+        records[0].frame_offset()..records[0].frame_offset() + first_len
+    );
+
+    assert_eq!(records[1].kind(), TraceFrameKind::DependencyTrace);
+    assert_eq!(records[1].identity(), dependency_trace.identity().as_str());
+    assert_eq!(records[1].payload_len(), 2);
+
+    let instruction_identities = index
+        .records_for_kind(TraceFrameKind::InstructionPacketTrace)
+        .map(|record| record.identity())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        instruction_identities,
+        vec![
+            first_trace.identity().as_str(),
+            second_trace.identity().as_str()
+        ]
+    );
+}
+
+#[test]
+fn trace_frame_stream_index_rejects_corrupt_streams() {
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+
+    let mut bad_magic = encoded.clone();
+    bad_magic[0] = b'X';
+    assert_eq!(
+        TraceFrameStreamIndex::from_bytes(&bad_magic).unwrap_err(),
+        ProtoError::InvalidFrameStreamMagic,
+    );
+
+    let mut corrupt_frame = encoded;
+    let last = corrupt_frame.len() - 1;
+    corrupt_frame[last] ^= 0xff;
+    assert_eq!(
+        TraceFrameStreamIndex::from_bytes(&corrupt_frame).unwrap_err(),
+        ProtoError::FrameChecksumMismatch,
+    );
 }
 
 #[test]

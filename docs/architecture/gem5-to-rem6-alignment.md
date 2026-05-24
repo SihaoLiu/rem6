@@ -92,7 +92,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats`, `rem6-power` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, typed probe events, typed power domains, and checkpoints exist. |
 | `src/systemc` | 3911 | future `rem6-systemc` or adapter crate | external-adapter | Preserve interoperability only through an adapter boundary. Core rem6 timing must not depend on SystemC. |
 | `src/sst` | 6 | future SST adapter crate | external-adapter | Preserve co-simulation value behind a typed boundary that cannot bypass rem6 partition ownership. |
-| `src/proto` | 9 | `rem6-proto`, future adapters | partial | Protobuf-like exchange must produce typed rem6 data before entering simulation. rem6-proto has typed instruction, packet, and O3 dependency trace records, validation, canonical maps, window-checked dependencies, stable identity, checked binary frame envelopes, length-delimited frame streams with stream magic, version, varint32 record lengths, embedded-frame validation, and a resettable cursor that exposes record indexes and byte offsets for streaming or partitioned ingestion; concrete protobuf and gzip adapters remain open. |
+| `src/proto` | 9 | `rem6-proto`, future adapters | partial | Protobuf-like exchange must produce typed rem6 data before entering simulation. rem6-proto has typed instruction, packet, and O3 dependency trace records, validation, canonical maps, window-checked dependencies, stable identity, checked binary frame envelopes, length-delimited frame streams with stream magic, version, varint32 record lengths, embedded-frame validation, a resettable cursor that exposes record indexes and byte offsets, and a validated stream index with kind counts, payload byte totals, identities, and byte ranges for streaming or partitioned ingestion; concrete protobuf and gzip adapters remain open. |
 | `src/learning_gem5`, `src/doc`, `src/doxygen`, `src/test_objects` | 39 | docs and tests | partial | Keep useful examples as audit input, but rem6 acceptance is through Rust tests and architecture docs. |
 
 ## Configuration and Experiment Surface
@@ -238,7 +238,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   round-trip, empty stream rejection, stream magic and version validation,
   zero-length and overlong varint32 length validation, corrupt embedded-frame
   rejection, cursor byte-offset reporting, cursor reset, cursor EOF behavior,
-  and cursor non-advancement after corrupt input.
+  cursor non-advancement after corrupt input, validated stream-index metadata,
+  kind filtering, payload byte totals, and index rejection of corrupt streams.
 - Power tests cover typed power state domains, leader/follower matching,
   residency accounting, transition counters, invalid transition rejection, and
   snapshot restore. Power-model tests cover residency-weighted dynamic/static

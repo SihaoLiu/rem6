@@ -1,4 +1,6 @@
-use crate::{ProtoError, TraceFrame};
+use std::ops::Range;
+
+use crate::{ProtoError, TraceFrame, TraceFrameKind};
 
 const FRAME_STREAM_MAGIC: &[u8; 4] = b"RM6S";
 const FRAME_STREAM_VERSION: u16 = 1;
@@ -16,6 +18,127 @@ pub struct TraceFrameStreamRecord {
     frame_offset: usize,
     frame_len: usize,
     frame: TraceFrame,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamIndexRecord {
+    index: usize,
+    kind: TraceFrameKind,
+    identity: String,
+    length_offset: usize,
+    frame_offset: usize,
+    frame_len: usize,
+    payload_len: usize,
+}
+
+impl TraceFrameStreamIndexRecord {
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    pub const fn kind(&self) -> TraceFrameKind {
+        self.kind
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub const fn length_offset(&self) -> usize {
+        self.length_offset
+    }
+
+    pub const fn frame_offset(&self) -> usize {
+        self.frame_offset
+    }
+
+    pub const fn frame_len(&self) -> usize {
+        self.frame_len
+    }
+
+    pub const fn payload_len(&self) -> usize {
+        self.payload_len
+    }
+
+    pub fn byte_range(&self) -> Range<usize> {
+        self.frame_offset..self.frame_offset + self.frame_len
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamIndex {
+    records: Vec<TraceFrameStreamIndexRecord>,
+    total_frame_bytes: usize,
+    total_payload_bytes: usize,
+}
+
+impl TraceFrameStreamIndex {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtoError> {
+        let mut cursor = TraceFrameStreamCursor::new(bytes)?;
+        let mut records = Vec::new();
+        let mut total_frame_bytes = 0usize;
+        let mut total_payload_bytes = 0usize;
+
+        while let Some(record) = cursor.next_frame()? {
+            let frame = record.frame();
+            let frame_len = record.frame_len();
+            let payload_len = frame.payload().len();
+            total_frame_bytes = total_frame_bytes
+                .checked_add(frame_len)
+                .ok_or(ProtoError::InvalidFrameStreamLength)?;
+            total_payload_bytes = total_payload_bytes
+                .checked_add(payload_len)
+                .ok_or(ProtoError::InvalidFrameStreamLength)?;
+            records.push(TraceFrameStreamIndexRecord {
+                index: record.index(),
+                kind: frame.kind(),
+                identity: frame.identity().to_string(),
+                length_offset: record.length_offset(),
+                frame_offset: record.frame_offset(),
+                frame_len,
+                payload_len,
+            });
+        }
+
+        Ok(Self {
+            records,
+            total_frame_bytes,
+            total_payload_bytes,
+        })
+    }
+
+    pub fn records(&self) -> &[TraceFrameStreamIndexRecord] {
+        &self.records
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub const fn total_frame_bytes(&self) -> usize {
+        self.total_frame_bytes
+    }
+
+    pub const fn total_payload_bytes(&self) -> usize {
+        self.total_payload_bytes
+    }
+
+    pub fn count_kind(&self, kind: TraceFrameKind) -> usize {
+        self.records_for_kind(kind).count()
+    }
+
+    pub fn records_for_kind(
+        &self,
+        kind: TraceFrameKind,
+    ) -> impl Iterator<Item = &TraceFrameStreamIndexRecord> {
+        self.records
+            .iter()
+            .filter(move |record| record.kind() == kind)
+    }
 }
 
 impl TraceFrameStreamRecord {
