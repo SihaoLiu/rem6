@@ -1237,6 +1237,12 @@ pub enum WorkloadError {
         expected: u32,
         actual: u32,
     },
+    GpuDmaRouteEndpointMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
     ZeroAcceleratorLanes {
         engine: u32,
     },
@@ -1291,6 +1297,12 @@ pub enum WorkloadError {
         route: WorkloadRouteId,
         expected: u32,
         actual: u32,
+    },
+    AcceleratorDmaRouteEndpointMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
     },
     ZeroQosPriorityLevels,
     QosPriorityOutOfRange {

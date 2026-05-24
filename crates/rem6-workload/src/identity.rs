@@ -166,6 +166,7 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, u64::from(device.compute_units()));
         hash_u64(hash, u64::from(device.wave_slots_per_compute_unit()));
         hash_str(hash, device.command_endpoint());
+        hash_str(hash, device.dma_endpoint());
         hash_str(hash, device.command_route().as_str());
     }
     hash_u64(hash, topology.gpu_kernel_launches().len() as u64);
@@ -194,6 +195,7 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, u64::from(device.partition()));
         hash_u64(hash, u64::from(device.lanes()));
         hash_str(hash, device.command_endpoint());
+        hash_str(hash, device.dma_endpoint());
         hash_str(hash, device.command_route().as_str());
     }
     hash_u64(hash, topology.accelerator_commands().len() as u64);

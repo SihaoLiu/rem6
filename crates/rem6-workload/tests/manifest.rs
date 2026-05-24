@@ -601,7 +601,16 @@ fn workload_topology_records_gpu_devices_and_kernel_launches() {
         )
         .unwrap()
         .add_gpu_device(
-            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+            WorkloadGpuDevice::new(
+                12,
+                3,
+                2,
+                1,
+                "gpu0.control",
+                "gpu0.dma",
+                route_id("gpu0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_gpu_kernel_launch(WorkloadGpuKernelLaunch::new(12, 90, 3, 5).unwrap())
@@ -617,6 +626,7 @@ fn workload_topology_records_gpu_devices_and_kernel_launches() {
         &route_id("gpu0.command")
     );
     assert_eq!(topology.gpu_devices()[0].command_endpoint(), "gpu0.control");
+    assert_eq!(topology.gpu_devices()[0].dma_endpoint(), "gpu0.dma");
     assert_eq!(topology.gpu_kernel_launches().len(), 1);
     assert_eq!(topology.gpu_kernel_launches()[0].device(), 12);
     assert_eq!(topology.gpu_kernel_launches()[0].kernel(), 90);
@@ -646,7 +656,16 @@ fn workload_topology_records_gpu_dma_copies() {
         )
         .unwrap()
         .add_gpu_device(
-            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+            WorkloadGpuDevice::new(
+                12,
+                3,
+                2,
+                1,
+                "gpu0.control",
+                "gpu0.dma",
+                route_id("gpu0.command"),
+            )
+            .unwrap(),
         )
         .unwrap()
         .add_gpu_dma_copy(
@@ -698,7 +717,16 @@ fn workload_topology_rejects_invalid_gpu_dma_copies() {
         )
         .unwrap()
         .add_gpu_device(
-            WorkloadGpuDevice::new(12, 3, 2, 1, "gpu0.control", route_id("gpu0.command")).unwrap(),
+            WorkloadGpuDevice::new(
+                12,
+                3,
+                2,
+                1,
+                "gpu0.control",
+                "gpu0.dma",
+                route_id("gpu0.command"),
+            )
+            .unwrap(),
         )
         .unwrap();
 
@@ -767,6 +795,7 @@ fn workload_topology_records_accelerator_devices_and_commands() {
                 3,
                 2,
                 "accelerator0.control",
+                "accelerator0.dma",
                 route_id("accelerator0.command"),
             )
             .unwrap(),
@@ -794,6 +823,10 @@ fn workload_topology_records_accelerator_devices_and_commands() {
     assert_eq!(
         topology.accelerator_devices()[0].command_endpoint(),
         "accelerator0.control"
+    );
+    assert_eq!(
+        topology.accelerator_devices()[0].dma_endpoint(),
+        "accelerator0.dma"
     );
     assert_eq!(topology.accelerator_commands().len(), 1);
     assert_eq!(topology.accelerator_commands()[0].engine(), 22);
@@ -841,6 +874,7 @@ fn workload_topology_records_accelerator_dma_copies() {
                 3,
                 2,
                 "accelerator0.control",
+                "accelerator0.dma",
                 route_id("accelerator0.command"),
             )
             .unwrap(),
@@ -932,6 +966,7 @@ fn workload_topology_rejects_invalid_accelerator_dma_copies() {
                 3,
                 2,
                 "accelerator0.control",
+                "accelerator0.dma",
                 route_id("accelerator0.command"),
             )
             .unwrap(),

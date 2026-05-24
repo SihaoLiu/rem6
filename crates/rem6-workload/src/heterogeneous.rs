@@ -10,6 +10,7 @@ pub struct WorkloadGpuDevice {
     compute_units: u32,
     wave_slots_per_compute_unit: u32,
     command_endpoint: String,
+    dma_endpoint: String,
     command_route: WorkloadRouteId,
 }
 
@@ -20,16 +21,18 @@ impl WorkloadGpuDevice {
         compute_units: u32,
         wave_slots_per_compute_unit: u32,
         command_endpoint: impl Into<String>,
+        dma_endpoint: impl Into<String>,
         command_route: WorkloadRouteId,
     ) -> Result<Self, WorkloadError> {
         let command_endpoint = command_endpoint.into();
+        let dma_endpoint = dma_endpoint.into();
         if compute_units == 0 {
             return Err(WorkloadError::ZeroGpuComputeUnits { device });
         }
         if wave_slots_per_compute_unit == 0 {
             return Err(WorkloadError::ZeroGpuWaveSlots { device });
         }
-        if command_endpoint.is_empty() {
+        if command_endpoint.is_empty() || dma_endpoint.is_empty() {
             return Err(WorkloadError::EmptyEndpoint);
         }
 
@@ -39,6 +42,7 @@ impl WorkloadGpuDevice {
             compute_units,
             wave_slots_per_compute_unit,
             command_endpoint,
+            dma_endpoint,
             command_route,
         })
     }
@@ -65,6 +69,10 @@ impl WorkloadGpuDevice {
 
     pub fn command_endpoint(&self) -> &str {
         &self.command_endpoint
+    }
+
+    pub fn dma_endpoint(&self) -> &str {
+        &self.dma_endpoint
     }
 }
 
@@ -251,6 +259,7 @@ pub struct WorkloadAcceleratorDevice {
     partition: u32,
     lanes: u32,
     command_endpoint: String,
+    dma_endpoint: String,
     command_route: WorkloadRouteId,
 }
 
@@ -260,13 +269,15 @@ impl WorkloadAcceleratorDevice {
         partition: u32,
         lanes: u32,
         command_endpoint: impl Into<String>,
+        dma_endpoint: impl Into<String>,
         command_route: WorkloadRouteId,
     ) -> Result<Self, WorkloadError> {
         let command_endpoint = command_endpoint.into();
+        let dma_endpoint = dma_endpoint.into();
         if lanes == 0 {
             return Err(WorkloadError::ZeroAcceleratorLanes { engine });
         }
-        if command_endpoint.is_empty() {
+        if command_endpoint.is_empty() || dma_endpoint.is_empty() {
             return Err(WorkloadError::EmptyEndpoint);
         }
 
@@ -275,6 +286,7 @@ impl WorkloadAcceleratorDevice {
             partition,
             lanes,
             command_endpoint,
+            dma_endpoint,
             command_route,
         })
     }
@@ -297,6 +309,10 @@ impl WorkloadAcceleratorDevice {
 
     pub fn command_endpoint(&self) -> &str {
         &self.command_endpoint
+    }
+
+    pub fn dma_endpoint(&self) -> &str {
+        &self.dma_endpoint
     }
 }
 

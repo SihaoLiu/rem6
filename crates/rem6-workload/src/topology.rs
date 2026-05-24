@@ -827,6 +827,14 @@ impl WorkloadTopology {
                 actual: route.source_partition(),
             });
         }
+        if route.source_endpoint() != device.dma_endpoint() {
+            return Err(WorkloadError::GpuDmaRouteEndpointMismatch {
+                device: copy.device(),
+                route: copy.route().clone(),
+                expected: device.dma_endpoint().to_string(),
+                actual: route.source_endpoint().to_string(),
+            });
+        }
 
         self.gpu_dma_copies.push(copy);
         self.gpu_dma_copies
@@ -924,6 +932,14 @@ impl WorkloadTopology {
                 route: copy.route().clone(),
                 expected: device.partition(),
                 actual: route.source_partition(),
+            });
+        }
+        if route.source_endpoint() != device.dma_endpoint() {
+            return Err(WorkloadError::AcceleratorDmaRouteEndpointMismatch {
+                engine: copy.engine(),
+                route: copy.route().clone(),
+                expected: device.dma_endpoint().to_string(),
+                actual: route.source_endpoint().to_string(),
             });
         }
 

@@ -275,6 +275,16 @@ impl fmt::Display for WorkloadError {
                 "GPU DMA route {} for device {device} starts on partition {actual}, expected {expected}",
                 route.as_str()
             ),
+            Self::GpuDmaRouteEndpointMismatch {
+                device,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "GPU DMA route {} for device {device} starts on endpoint {actual}, expected {expected}",
+                route.as_str()
+            ),
             Self::ZeroAcceleratorLanes { engine } => {
                 write!(
                     formatter,
@@ -345,6 +355,16 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "accelerator engine {engine} DMA route {} starts on partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::AcceleratorDmaRouteEndpointMismatch {
+                engine,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "accelerator engine {engine} DMA route {} starts on endpoint {actual}, expected {expected}",
                 route.as_str()
             ),
             Self::ZeroQosPriorityLevels => {
