@@ -28,6 +28,7 @@ rem6-uart = { path = "../rem6-uart" }
 rem6-workload = { path = "../rem6-workload" }
 
 [dev-dependencies]
+rem6-protocol-chi = { path = "../rem6-protocol-chi" }
 rem6-protocol-mesi = { path = "../rem6-protocol-mesi" }
 rem6-protocol-moesi = { path = "../rem6-protocol-moesi" }
 rem6-protocol-msi = { path = "../rem6-protocol-msi" }

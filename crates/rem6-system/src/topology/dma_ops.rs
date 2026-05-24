@@ -12,8 +12,9 @@ use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, RecordedConservati
 use rem6_transport::{MemoryTrace, ParallelMemoryTransaction};
 
 use super::coherence_data::{
-    merge_mesi_data_cache_activity, merge_moesi_data_cache_activity, merge_msi_data_cache_activity,
-    RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
+    merge_chi_data_cache_activity, merge_mesi_data_cache_activity, merge_moesi_data_cache_activity,
+    merge_msi_data_cache_activity, RiscvTopologyChiDataCache, RiscvTopologyMesiDataCache,
+    RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
 };
 use super::{
     dram_activities_since, dram_wait_for_since, mark_dram_activity, mark_dram_wait_for,
@@ -156,6 +157,10 @@ impl RiscvTopologySystem {
         let moesi_data_run_start = moesi_data_cache
             .as_ref()
             .map(RiscvTopologyMoesiDataCache::mark_runs);
+        let chi_data_cache = self.chi_data_cache.clone();
+        let chi_data_run_start = chi_data_cache
+            .as_ref()
+            .map(RiscvTopologyChiDataCache::mark_runs);
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
@@ -179,6 +184,7 @@ impl RiscvTopologySystem {
                     let read_msi_data_cache = msi_data_cache.clone();
                     let read_mesi_data_cache = mesi_data_cache.clone();
                     let read_moesi_data_cache = moesi_data_cache.clone();
+                    let read_chi_data_cache = chi_data_cache.clone();
                     let prepared = accelerator.prepare_dma_copy_read(
                         issued_at,
                         copy,
@@ -190,6 +196,7 @@ impl RiscvTopologySystem {
                                 read_msi_data_cache.as_ref(),
                                 read_mesi_data_cache.as_ref(),
                                 read_moesi_data_cache.as_ref(),
+                                read_chi_data_cache.as_ref(),
                                 &delivery,
                             )
                         },
@@ -210,6 +217,7 @@ impl RiscvTopologySystem {
                     let read_msi_data_cache = msi_data_cache.clone();
                     let read_mesi_data_cache = mesi_data_cache.clone();
                     let read_moesi_data_cache = moesi_data_cache.clone();
+                    let read_chi_data_cache = chi_data_cache.clone();
                     let prepared = gpu.prepare_dma_copy_read(
                         issued_at,
                         copy,
@@ -221,6 +229,7 @@ impl RiscvTopologySystem {
                                 read_msi_data_cache.as_ref(),
                                 read_mesi_data_cache.as_ref(),
                                 read_moesi_data_cache.as_ref(),
+                                read_chi_data_cache.as_ref(),
                                 &delivery,
                             )
                         },
@@ -272,6 +281,12 @@ impl RiscvTopologySystem {
             dram_activity,
             moesi_data_cache.as_ref(),
             moesi_data_run_start,
+        );
+        let (fabric_activity, dram_activity) = merge_chi_data_cache_activity(
+            fabric_activity,
+            dram_activity,
+            chi_data_cache.as_ref(),
+            chi_data_run_start,
         );
 
         Ok(RiscvTopologyDmaStageRunSummary::new(
@@ -347,6 +362,10 @@ impl RiscvTopologySystem {
         let moesi_data_run_start = moesi_data_cache
             .as_ref()
             .map(RiscvTopologyMoesiDataCache::mark_runs);
+        let chi_data_cache = self.chi_data_cache.clone();
+        let chi_data_run_start = chi_data_cache
+            .as_ref()
+            .map(RiscvTopologyChiDataCache::mark_runs);
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
@@ -371,6 +390,7 @@ impl RiscvTopologySystem {
                     let write_msi_data_cache = msi_data_cache.clone();
                     let write_mesi_data_cache = mesi_data_cache.clone();
                     let write_moesi_data_cache = moesi_data_cache.clone();
+                    let write_chi_data_cache = chi_data_cache.clone();
                     let Some(prepared) = accelerator
                         .prepare_next_dma_write(
                             issued_at,
@@ -382,6 +402,7 @@ impl RiscvTopologySystem {
                                     write_msi_data_cache.as_ref(),
                                     write_mesi_data_cache.as_ref(),
                                     write_moesi_data_cache.as_ref(),
+                                    write_chi_data_cache.as_ref(),
                                     &delivery,
                                 )
                             },
@@ -409,6 +430,7 @@ impl RiscvTopologySystem {
                     let write_msi_data_cache = msi_data_cache.clone();
                     let write_mesi_data_cache = mesi_data_cache.clone();
                     let write_moesi_data_cache = moesi_data_cache.clone();
+                    let write_chi_data_cache = chi_data_cache.clone();
                     let Some(prepared) = gpu
                         .prepare_next_dma_write(
                             issued_at,
@@ -420,6 +442,7 @@ impl RiscvTopologySystem {
                                     write_msi_data_cache.as_ref(),
                                     write_mesi_data_cache.as_ref(),
                                     write_moesi_data_cache.as_ref(),
+                                    write_chi_data_cache.as_ref(),
                                     &delivery,
                                 )
                             },
@@ -484,6 +507,12 @@ impl RiscvTopologySystem {
             dram_activity,
             moesi_data_cache.as_ref(),
             moesi_data_run_start,
+        );
+        let (fabric_activity, dram_activity) = merge_chi_data_cache_activity(
+            fabric_activity,
+            dram_activity,
+            chi_data_cache.as_ref(),
+            chi_data_run_start,
         );
 
         Ok(RiscvTopologyDmaStageRunSummary::new(

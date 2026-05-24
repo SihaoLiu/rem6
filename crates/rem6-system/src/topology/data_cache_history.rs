@@ -20,7 +20,7 @@ impl RiscvTopologySystem {
     }
 
     pub fn chi_data_cache_run_history(&self) -> ParallelCoherenceRunHistory {
-        ParallelCoherenceRunHistory::default()
+        ParallelCoherenceRunHistory::from_runs(&self.chi_data_cache_runs())
     }
 
     pub fn data_cache_parallel_run_history(&self) -> ParallelCoherenceRunHistory {

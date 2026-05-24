@@ -26,7 +26,8 @@ use rem6_accelerator::{
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_coherence::{
-    HarnessError, MesiHarnessError, MoesiHarnessError, ParallelCoherenceRunSummary,
+    ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError,
+    ParallelCoherenceRunSummary, PartitionedChiDirectoryLineHarness,
     PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
     PartitionedMoesiDirectoryLineHarness,
 };
@@ -62,10 +63,11 @@ use crate::{
 };
 
 use coherence_data::{
+    chi_data_cache_run_records_since, merge_chi_data_cache_activity,
     merge_mesi_data_cache_activity, merge_moesi_data_cache_activity, merge_msi_data_cache_activity,
     mesi_data_cache_run_records_since, moesi_data_cache_run_records_since,
-    msi_data_cache_run_records_since, topology_data_cache_response, RiscvTopologyMesiDataCache,
-    RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
+    msi_data_cache_run_records_since, topology_data_cache_response, RiscvTopologyChiDataCache,
+    RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
 };
 
 pub struct RiscvTopologySystem {
@@ -80,6 +82,7 @@ pub struct RiscvTopologySystem {
     msi_data_cache: Option<RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<RiscvTopologyMoesiDataCache>,
+    chi_data_cache: Option<RiscvTopologyChiDataCache>,
     host: Option<RiscvTopologyHost>,
 }
 
@@ -530,6 +533,7 @@ impl RiscvTopologySystem {
             msi_data_cache: None,
             mesi_data_cache: None,
             moesi_data_cache: None,
+            chi_data_cache: None,
             host: None,
         })
     }
@@ -701,6 +705,14 @@ impl RiscvTopologySystem {
         Ok(self)
     }
 
+    pub fn with_chi_data_cache(
+        mut self,
+        harness: PartitionedChiDirectoryLineHarness,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        self.chi_data_cache = Some(RiscvTopologyChiDataCache::new(harness));
+        Ok(self)
+    }
+
     pub const fn topology(&self) -> &Topology {
         &self.topology
     }
@@ -824,6 +836,19 @@ impl RiscvTopologySystem {
             .unwrap_or_default()
     }
 
+    pub fn chi_data_cache(&self) -> Option<Arc<Mutex<PartitionedChiDirectoryLineHarness>>> {
+        self.chi_data_cache
+            .as_ref()
+            .map(RiscvTopologyChiDataCache::harness)
+    }
+
+    pub fn chi_data_cache_runs(&self) -> Vec<ParallelCoherenceRunSummary> {
+        self.chi_data_cache
+            .as_ref()
+            .map(RiscvTopologyChiDataCache::runs)
+            .unwrap_or_default()
+    }
+
     pub fn host_controller(&self) -> Option<Arc<Mutex<SystemHostController>>> {
         self.host.as_ref().map(|host| Arc::clone(&host.controller))
     }
@@ -925,6 +950,10 @@ impl RiscvTopologySystem {
         let moesi_data_run_start = moesi_data_cache
             .as_ref()
             .map(RiscvTopologyMoesiDataCache::mark_runs);
+        let chi_data_cache = self.chi_data_cache.clone();
+        let chi_data_run_start = chi_data_cache
+            .as_ref()
+            .map(RiscvTopologyChiDataCache::mark_runs);
 
         let fetch_memory = memory.clone();
         let fetch_error = Arc::clone(&memory_error);
@@ -941,12 +970,14 @@ impl RiscvTopologySystem {
         let data_msi_cache = msi_data_cache.clone();
         let data_mesi_cache = mesi_data_cache.clone();
         let data_moesi_cache = moesi_data_cache.clone();
+        let data_chi_cache = chi_data_cache.clone();
         let data_responder = move |_cpu| {
             let memory = data_memory.clone();
             let memory_error = Arc::clone(&data_error);
             let msi_data_cache = data_msi_cache.clone();
             let mesi_data_cache = data_mesi_cache.clone();
             let moesi_data_cache = data_moesi_cache.clone();
+            let chi_data_cache = data_chi_cache.clone();
             move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
                 topology_cached_memory_response(
                     &memory,
@@ -954,6 +985,7 @@ impl RiscvTopologySystem {
                     msi_data_cache.as_ref(),
                     mesi_data_cache.as_ref(),
                     moesi_data_cache.as_ref(),
+                    chi_data_cache.as_ref(),
                     &delivery,
                 )
             }
@@ -1026,6 +1058,12 @@ impl RiscvTopologySystem {
             moesi_data_cache.as_ref(),
             moesi_data_run_start,
         );
+        let (fabric_activity, dram_activity) = merge_chi_data_cache_activity(
+            fabric_activity,
+            dram_activity,
+            chi_data_cache.as_ref(),
+            chi_data_run_start,
+        );
         let mut data_cache_run_records =
             msi_data_cache_run_records_since(msi_data_cache.as_ref(), msi_data_run_start);
         data_cache_run_records.extend(mesi_data_cache_run_records_since(
@@ -1035,6 +1073,10 @@ impl RiscvTopologySystem {
         data_cache_run_records.extend(moesi_data_cache_run_records_since(
             moesi_data_cache.as_ref(),
             moesi_data_run_start,
+        ));
+        data_cache_run_records.extend(chi_data_cache_run_records_since(
+            chi_data_cache.as_ref(),
+            chi_data_run_start,
         ));
 
         Ok(run
@@ -1082,11 +1124,13 @@ pub enum RiscvTopologySystemError {
     MissingMsiDataResponse { request: MemoryRequestId },
     MissingMesiDataResponse { request: MemoryRequestId },
     MissingMoesiDataResponse { request: MemoryRequestId },
+    MissingChiDataResponse { request: MemoryRequestId },
     Accelerator(AcceleratorError),
     Gpu(GpuError),
     MsiDataCache(HarnessError),
     MesiDataCache(MesiHarnessError),
     MoesiDataCache(MoesiHarnessError),
+    ChiDataCache(ChiHarnessError),
     Transport(TransportError),
     Memory(MemoryError),
     Dram(DramMemoryError),
@@ -1154,11 +1198,18 @@ impl fmt::Display for RiscvTopologySystemError {
                 request.sequence(),
                 request.agent().get()
             ),
+            Self::MissingChiDataResponse { request } => write!(
+                formatter,
+                "CHI data cache produced no response for request {} from agent {}",
+                request.sequence(),
+                request.agent().get()
+            ),
             Self::Accelerator(error) => write!(formatter, "{error}"),
             Self::Gpu(error) => write!(formatter, "{error}"),
             Self::MsiDataCache(error) => write!(formatter, "{error}"),
             Self::MesiDataCache(error) => write!(formatter, "{error}"),
             Self::MoesiDataCache(error) => write!(formatter, "{error}"),
+            Self::ChiDataCache(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
@@ -1186,11 +1237,13 @@ impl Error for RiscvTopologySystemError {
             Self::MissingMsiDataResponse { .. } => None,
             Self::MissingMesiDataResponse { .. } => None,
             Self::MissingMoesiDataResponse { .. } => None,
+            Self::MissingChiDataResponse { .. } => None,
             Self::Accelerator(error) => Some(error),
             Self::Gpu(error) => Some(error),
             Self::MsiDataCache(error) => Some(error),
             Self::MesiDataCache(error) => Some(error),
             Self::MoesiDataCache(error) => Some(error),
+            Self::ChiDataCache(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
@@ -1254,12 +1307,14 @@ fn topology_cached_memory_response(
     msi_data_cache: Option<&RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<&RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<&RiscvTopologyMoesiDataCache>,
+    chi_data_cache: Option<&RiscvTopologyChiDataCache>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
     topology_data_cache_response(
         msi_data_cache,
         mesi_data_cache,
         moesi_data_cache,
+        chi_data_cache,
         memory_error,
         delivery,
     )

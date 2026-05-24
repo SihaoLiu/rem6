@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_coherence::{
-    CpuResponseRecord, MesiCpuResponseRecord, MoesiCpuResponseRecord, ParallelCoherenceRunSummary,
+    ChiCpuResponseRecord, CpuResponseRecord, MesiCpuResponseRecord, MoesiCpuResponseRecord,
+    ParallelCoherenceRunSummary, PartitionedChiDirectoryLineHarness,
     PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
     PartitionedMoesiDirectoryLineHarness,
 };
@@ -163,6 +164,54 @@ impl RiscvTopologyMoesiDataCache {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct RiscvTopologyChiDataCache {
+    harness: Arc<Mutex<PartitionedChiDirectoryLineHarness>>,
+    runs: Arc<Mutex<Vec<ParallelCoherenceRunSummary>>>,
+}
+
+impl RiscvTopologyChiDataCache {
+    pub(super) fn new(harness: PartitionedChiDirectoryLineHarness) -> Self {
+        Self {
+            harness: Arc::new(Mutex::new(harness)),
+            runs: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub(super) fn harness(&self) -> Arc<Mutex<PartitionedChiDirectoryLineHarness>> {
+        Arc::clone(&self.harness)
+    }
+
+    pub(super) fn runs(&self) -> Vec<ParallelCoherenceRunSummary> {
+        self.runs.lock().expect("CHI data cache run lock").clone()
+    }
+
+    pub(super) fn mark_runs(&self) -> usize {
+        self.runs.lock().expect("CHI data cache run lock").len()
+    }
+
+    pub(super) fn line_address(&self) -> Address {
+        self.harness
+            .lock()
+            .expect("CHI data cache lock")
+            .line()
+            .address()
+    }
+
+    fn runs_since(&self, marker: usize) -> Vec<ParallelCoherenceRunSummary> {
+        self.runs
+            .lock()
+            .expect("CHI data cache run lock")
+            .get(marker..)
+            .unwrap_or_default()
+            .to_vec()
+    }
+
+    fn record_run(&self, run: ParallelCoherenceRunSummary) {
+        self.runs.lock().expect("CHI data cache run lock").push(run);
+    }
+}
+
 pub(super) fn topology_msi_data_response(
     cache: &RiscvTopologyMsiDataCache,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
@@ -253,11 +302,16 @@ pub(super) fn topology_data_cache_response(
     msi_data_cache: Option<&RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<&RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<&RiscvTopologyMoesiDataCache>,
+    chi_data_cache: Option<&RiscvTopologyChiDataCache>,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> Option<TargetOutcome> {
     let line_address = delivery.request().line_address();
-    if let Some(cache) = moesi_data_cache.filter(|cache| cache.line_address() == line_address) {
+    if let Some(cache) = chi_data_cache.filter(|cache| cache.line_address() == line_address) {
+        Some(topology_chi_data_response(cache, memory_error, delivery))
+    } else if let Some(cache) =
+        moesi_data_cache.filter(|cache| cache.line_address() == line_address)
+    {
         Some(topology_moesi_data_response(cache, memory_error, delivery))
     } else if let Some(cache) = mesi_data_cache.filter(|cache| cache.line_address() == line_address)
     {
@@ -267,6 +321,49 @@ pub(super) fn topology_data_cache_response(
             .filter(|cache| cache.line_address() == line_address)
             .map(|cache| topology_msi_data_response(cache, memory_error, delivery))
     }
+}
+
+pub(super) fn topology_chi_data_response(
+    cache: &RiscvTopologyChiDataCache,
+    memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
+    delivery: &RequestDelivery,
+) -> TargetOutcome {
+    match topology_chi_data_response_result(cache, delivery) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            record_coherence_error(memory_error, error);
+            TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+        }
+    }
+}
+
+fn topology_chi_data_response_result(
+    cache: &RiscvTopologyChiDataCache,
+    delivery: &RequestDelivery,
+) -> Result<TargetOutcome, RiscvTopologySystemError> {
+    let mut harness = cache.harness.lock().expect("CHI data cache lock");
+    let start_tick = harness.now();
+    let responses_before = harness.cpu_responses().len();
+    harness
+        .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
+        .map_err(RiscvTopologySystemError::ChiDataCache)?;
+    let run = harness
+        .run_until_idle_parallel_recorded()
+        .map_err(RiscvTopologySystemError::ChiDataCache)?;
+    let response_record = harness
+        .cpu_responses()
+        .get(responses_before..)
+        .unwrap_or_default()
+        .iter()
+        .find(|record| record.request() == delivery.request().id())
+        .cloned()
+        .ok_or(RiscvTopologySystemError::MissingChiDataResponse {
+            request: delivery.request().id(),
+        })?;
+    drop(harness);
+    cache.record_run(run);
+
+    data_cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)
 }
 
 pub(super) fn topology_moesi_data_response(
@@ -347,6 +444,20 @@ impl DataCacheCpuResponseRecord for MesiCpuResponseRecord {
 }
 
 impl DataCacheCpuResponseRecord for MoesiCpuResponseRecord {
+    fn status(&self) -> ResponseStatus {
+        self.status()
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        self.data()
+    }
+
+    fn tick(&self) -> u64 {
+        self.tick()
+    }
+}
+
+impl DataCacheCpuResponseRecord for ChiCpuResponseRecord {
     fn status(&self) -> ResponseStatus {
         self.status()
     }
@@ -487,6 +598,38 @@ pub(super) fn moesi_data_cache_run_records_since(
         return Vec::new();
     };
     data_cache_run_records_since(RiscvDataCacheProtocol::Moesi, cache.runs_since(marker))
+}
+
+pub(super) fn merge_chi_data_cache_activity(
+    mut fabric_activity: Vec<rem6_fabric::FabricLaneActivity>,
+    mut dram_activity: Vec<DramTargetActivity>,
+    cache: Option<&RiscvTopologyChiDataCache>,
+    marker: Option<usize>,
+) -> (
+    Vec<rem6_fabric::FabricLaneActivity>,
+    Vec<DramTargetActivity>,
+) {
+    let (Some(cache), Some(marker)) = (cache, marker) else {
+        return (fabric_activity, dram_activity);
+    };
+
+    merge_data_cache_run_activity(
+        &mut fabric_activity,
+        &mut dram_activity,
+        cache.runs_since(marker),
+    );
+
+    (fabric_activity, dram_activity)
+}
+
+pub(super) fn chi_data_cache_run_records_since(
+    cache: Option<&RiscvTopologyChiDataCache>,
+    marker: Option<usize>,
+) -> Vec<RiscvDataCacheRunRecord> {
+    let (Some(cache), Some(marker)) = (cache, marker) else {
+        return Vec::new();
+    };
+    data_cache_run_records_since(RiscvDataCacheProtocol::Chi, cache.runs_since(marker))
 }
 
 fn merge_data_cache_run_activity(
