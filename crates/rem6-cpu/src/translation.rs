@@ -4,9 +4,11 @@ use std::fmt;
 
 use rem6_memory::{
     AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
-    MemoryRequest, MemoryRequestId, TranslationAccessKind, TranslationCompletion, TranslationError,
-    TranslationFault, TranslationQueue, TranslationQueueConfig, TranslationQueueSnapshot,
-    TranslationRequest, TranslationRequestId, TranslationResolution,
+    MemoryRequest, MemoryRequestId, TranslationAccessKind, TranslationAddressSpaceId,
+    TranslationCompletion, TranslationError, TranslationFault, TranslationPageMap,
+    TranslationQueue, TranslationQueueConfig, TranslationQueueSnapshot, TranslationRequest,
+    TranslationRequestId, TranslationResolution, TranslationTlb, TranslationTlbConfig,
+    TranslationTlbSnapshot,
 };
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
@@ -37,6 +39,7 @@ impl CpuTranslatedMemoryOperation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CpuTranslationRequest {
+    address_space: TranslationAddressSpaceId,
     translation_id: TranslationRequestId,
     memory_request_id: MemoryRequestId,
     route: MemoryRouteId,
@@ -172,6 +175,7 @@ impl CpuTranslationRequest {
         }
 
         Ok(Self {
+            address_space: TranslationAddressSpaceId::global(),
             translation_id,
             memory_request_id,
             route,
@@ -182,6 +186,15 @@ impl CpuTranslationRequest {
             write_data,
             byte_mask,
         })
+    }
+
+    pub const fn address_space(&self) -> TranslationAddressSpaceId {
+        self.address_space
+    }
+
+    pub fn in_address_space(mut self, address_space: TranslationAddressSpaceId) -> Self {
+        self.address_space = address_space;
+        self
     }
 
     pub const fn translation_id(&self) -> TranslationRequestId {
@@ -387,11 +400,28 @@ pub enum CpuTranslationOutcome {
 pub struct CpuTranslationFrontendSnapshot {
     queue: TranslationQueueSnapshot,
     pending: Vec<CpuTranslationRequest>,
+    tlb: Option<TranslationTlbSnapshot>,
 }
 
 impl CpuTranslationFrontendSnapshot {
     pub fn new(queue: TranslationQueueSnapshot, pending: Vec<CpuTranslationRequest>) -> Self {
-        Self { queue, pending }
+        Self {
+            queue,
+            pending,
+            tlb: None,
+        }
+    }
+
+    pub fn new_with_tlb(
+        queue: TranslationQueueSnapshot,
+        pending: Vec<CpuTranslationRequest>,
+        tlb: TranslationTlbSnapshot,
+    ) -> Self {
+        Self {
+            queue,
+            pending,
+            tlb: Some(tlb),
+        }
     }
 
     pub const fn queue(&self) -> &TranslationQueueSnapshot {
@@ -401,12 +431,17 @@ impl CpuTranslationFrontendSnapshot {
     pub fn pending(&self) -> &[CpuTranslationRequest] {
         &self.pending
     }
+
+    pub const fn tlb(&self) -> Option<&TranslationTlbSnapshot> {
+        self.tlb.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CpuTranslationFrontend {
     queue: TranslationQueue,
     pending: BTreeMap<TranslationRequestId, CpuTranslationRequest>,
+    tlb: Option<TranslationTlb>,
 }
 
 impl CpuTranslationFrontend {
@@ -414,6 +449,15 @@ impl CpuTranslationFrontend {
         Self {
             queue: TranslationQueue::new(config),
             pending: BTreeMap::new(),
+            tlb: None,
+        }
+    }
+
+    pub fn with_tlb(config: TranslationQueueConfig, tlb_config: TranslationTlbConfig) -> Self {
+        Self {
+            queue: TranslationQueue::new(config),
+            pending: BTreeMap::new(),
+            tlb: Some(TranslationTlb::new(tlb_config)),
         }
     }
 
@@ -442,8 +486,17 @@ impl CpuTranslationFrontend {
         if let Some(request) = pending_ids.difference(&queue_ids).next() {
             return Err(CpuTranslationFrontendError::SnapshotOrphanPending { request: *request });
         }
+        let tlb = snapshot
+            .tlb()
+            .map(TranslationTlb::from_snapshot)
+            .transpose()
+            .map_err(CpuTranslationFrontendError::Translation)?;
 
-        Ok(Self { queue, pending })
+        Ok(Self {
+            queue,
+            pending,
+            tlb,
+        })
     }
 
     pub fn restore(
@@ -462,6 +515,14 @@ impl CpuTranslationFrontend {
         self.pending.is_empty()
     }
 
+    pub const fn tlb(&self) -> Option<&TranslationTlb> {
+        self.tlb.as_ref()
+    }
+
+    pub fn tlb_mut(&mut self) -> Option<&mut TranslationTlb> {
+        self.tlb.as_mut()
+    }
+
     pub fn enqueue(
         &mut self,
         issue_tick: u64,
@@ -470,6 +531,39 @@ impl CpuTranslationFrontend {
         let translation = request
             .translation_request()
             .map_err(CpuTranslationFrontendError::Translation)?;
+        self.enqueue_translation(issue_tick, request, translation)
+    }
+
+    pub fn enqueue_or_translate_cached(
+        &mut self,
+        issue_tick: u64,
+        request: CpuTranslationRequest,
+    ) -> Result<Option<CpuTranslationOutcome>, CpuTranslationFrontendError> {
+        let translation = request
+            .translation_request()
+            .map_err(CpuTranslationFrontendError::Translation)?;
+        if let Some(tlb) = &mut self.tlb {
+            let cached = tlb
+                .lookup_cached_in_address_space(request.address_space(), &translation)
+                .map_err(CpuTranslationFrontendError::Translation)?;
+            if let Some(lookup) = cached {
+                return Ok(Some(Self::outcome_from_resolution(
+                    request,
+                    lookup.resolution().clone(),
+                )));
+            }
+        }
+
+        self.enqueue_translation(issue_tick, request, translation)?;
+        Ok(None)
+    }
+
+    fn enqueue_translation(
+        &mut self,
+        issue_tick: u64,
+        request: CpuTranslationRequest,
+        translation: TranslationRequest,
+    ) -> Result<(), CpuTranslationFrontendError> {
         self.queue
             .enqueue(issue_tick, translation)
             .map_err(CpuTranslationFrontendError::Translation)?;
@@ -508,14 +602,50 @@ impl CpuTranslationFrontend {
             .collect()
     }
 
+    pub fn complete_ready_with_tlb_page_map(
+        &mut self,
+        tick: u64,
+        page_map: &TranslationPageMap,
+    ) -> Result<Vec<CpuTranslationOutcome>, CpuTranslationFrontendError> {
+        let ready = self.queue.ready_request_ids(tick);
+        let mut outcomes = Vec::with_capacity(ready.len());
+        for request_id in ready {
+            let pending = self
+                .pending
+                .get(&request_id)
+                .expect("translation queue ready request has matching CPU metadata")
+                .clone();
+            let translation = pending
+                .translation_request()
+                .map_err(CpuTranslationFrontendError::Translation)?;
+            let resolution = if let Some(tlb) = &mut self.tlb {
+                tlb.fill_from_page_map_in_address_space(
+                    pending.address_space(),
+                    &translation,
+                    page_map,
+                )
+                .map_err(CpuTranslationFrontendError::Translation)?
+            } else {
+                page_map.translate(&translation)
+            };
+            outcomes.push(self.complete(request_id, resolution)?);
+        }
+
+        Ok(outcomes)
+    }
+
     pub fn snapshot(&self) -> CpuTranslationFrontendSnapshot {
-        CpuTranslationFrontendSnapshot::new(
-            self.queue.snapshot(),
-            self.pending
-                .values()
-                .cloned()
-                .collect::<Vec<CpuTranslationRequest>>(),
-        )
+        let queue = self.queue.snapshot();
+        let pending = self
+            .pending
+            .values()
+            .cloned()
+            .collect::<Vec<CpuTranslationRequest>>();
+        if let Some(tlb) = &self.tlb {
+            CpuTranslationFrontendSnapshot::new_with_tlb(queue, pending, tlb.snapshot())
+        } else {
+            CpuTranslationFrontendSnapshot::new(queue, pending)
+        }
     }
 
     fn complete_translation(&mut self, completion: TranslationCompletion) -> CpuTranslationOutcome {
@@ -523,9 +653,16 @@ impl CpuTranslationFrontend {
             .pending
             .remove(&completion.request().id())
             .expect("translation queue completion has matching CPU metadata");
-        match completion.resolution() {
+        Self::outcome_from_resolution(request, completion.resolution().clone())
+    }
+
+    fn outcome_from_resolution(
+        request: CpuTranslationRequest,
+        resolution: TranslationResolution,
+    ) -> CpuTranslationOutcome {
+        match resolution {
             TranslationResolution::Mapped(physical_address) => CpuTranslationOutcome::Mapped(
-                CpuTranslatedMemoryRequest::new(request, *physical_address),
+                CpuTranslatedMemoryRequest::new(request, physical_address),
             ),
             TranslationResolution::Fault(fault) => {
                 CpuTranslationOutcome::Fault(CpuTranslationFaultRecord::new(
@@ -536,7 +673,7 @@ impl CpuTranslationFrontend {
                     request.virtual_address(),
                     request.size(),
                     request.operation(),
-                    fault.clone(),
+                    fault,
                 ))
             }
         }

@@ -478,32 +478,77 @@ impl TranslationTlb {
         self.translate_in_address_space(TranslationAddressSpaceId::global(), request, page_map)
     }
 
+    pub fn lookup_cached(
+        &mut self,
+        request: &TranslationRequest,
+    ) -> Result<Option<TranslationTlbLookup>, TranslationError> {
+        self.lookup_cached_in_address_space(TranslationAddressSpaceId::global(), request)
+    }
+
+    pub fn lookup_cached_in_address_space(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        request: &TranslationRequest,
+    ) -> Result<Option<TranslationTlbLookup>, TranslationError> {
+        let Some(key) = self.lookup_key(address_space, request.range())? else {
+            self.stats.record_miss();
+            return Ok(None);
+        };
+
+        self.stats.record_hit();
+        let last_used = self.next_lru()?;
+        let entry = self
+            .entries
+            .get_mut(&key)
+            .expect("TLB lookup returned a missing entry");
+        entry.last_used = last_used;
+
+        let resolution = entry.resolve(request);
+        if resolution.fault_ref().is_some() {
+            self.stats.record_fault();
+        }
+        Ok(Some(TranslationTlbLookup::new(
+            TranslationTlbLookupKind::Hit,
+            resolution,
+        )))
+    }
+
     pub fn translate_in_address_space(
         &mut self,
         address_space: TranslationAddressSpaceId,
         request: &TranslationRequest,
         page_map: &TranslationPageMap,
     ) -> Result<TranslationTlbLookup, TranslationError> {
-        if let Some(key) = self.lookup_key(address_space, request.range())? {
-            self.stats.record_hit();
-            let last_used = self.next_lru()?;
-            let entry = self
-                .entries
-                .get_mut(&key)
-                .expect("TLB lookup returned a missing entry");
-            entry.last_used = last_used;
-
-            let resolution = entry.resolve(request);
-            if resolution.fault_ref().is_some() {
-                self.stats.record_fault();
-            }
-            return Ok(TranslationTlbLookup::new(
-                TranslationTlbLookupKind::Hit,
-                resolution,
-            ));
+        if let Some(lookup) = self.lookup_cached_in_address_space(address_space, request)? {
+            return Ok(lookup);
         }
 
-        self.stats.record_miss();
+        let resolution =
+            self.fill_from_page_map_in_address_space(address_space, request, page_map)?;
+        Ok(TranslationTlbLookup::new(
+            TranslationTlbLookupKind::Miss,
+            resolution,
+        ))
+    }
+
+    pub fn fill_from_page_map(
+        &mut self,
+        request: &TranslationRequest,
+        page_map: &TranslationPageMap,
+    ) -> Result<TranslationResolution, TranslationError> {
+        self.fill_from_page_map_in_address_space(
+            TranslationAddressSpaceId::global(),
+            request,
+            page_map,
+        )
+    }
+
+    pub fn fill_from_page_map_in_address_space(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        request: &TranslationRequest,
+        page_map: &TranslationPageMap,
+    ) -> Result<TranslationResolution, TranslationError> {
         let resolution = page_map.translate(request);
         match resolution {
             TranslationResolution::Mapped(physical_address) => {
@@ -520,17 +565,11 @@ impl TranslationTlb {
                         page_map.page_size(),
                     )?;
                 }
-                Ok(TranslationTlbLookup::new(
-                    TranslationTlbLookupKind::Miss,
-                    TranslationResolution::Mapped(physical_address),
-                ))
+                Ok(TranslationResolution::Mapped(physical_address))
             }
             TranslationResolution::Fault(fault) => {
                 self.stats.record_fault();
-                Ok(TranslationTlbLookup::new(
-                    TranslationTlbLookupKind::Miss,
-                    TranslationResolution::Fault(fault),
-                ))
+                Ok(TranslationResolution::Fault(fault))
             }
         }
     }

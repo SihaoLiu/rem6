@@ -4,8 +4,9 @@ use rem6_cpu::{
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequestId,
-    TranslationError, TranslationFault, TranslationFaultKind, TranslationQueueConfig,
-    TranslationRequestId, TranslationResolution,
+    TranslationAddressSpaceId, TranslationError, TranslationFault, TranslationFaultKind,
+    TranslationPageMap, TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig,
+    TranslationRequestId, TranslationResolution, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
@@ -27,6 +28,18 @@ fn translation_id(sequence: u64) -> TranslationRequestId {
 
 fn memory_id(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(7), sequence)
+}
+
+fn single_page_map(virtual_base: Address, physical_base: Address) -> TranslationPageMap {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map(
+        virtual_base,
+        physical_base,
+        1,
+        TranslationPagePermissions::read_write_execute(),
+    )
+    .unwrap();
+    map
 }
 
 #[test]
@@ -147,4 +160,205 @@ fn cpu_translation_frontend_restores_snapshot_and_records_faults() {
         )]
     );
     assert!(restored.is_empty());
+}
+
+#[test]
+fn cpu_translation_frontend_uses_tlb_hits_without_queueing_and_fills_on_miss_completion() {
+    let virtual_base = Address::new(0xffff_0000_b000_0000);
+    let map = single_page_map(virtual_base, Address::new(0x0000_0000_b000_0000));
+    let mut frontend = CpuTranslationFrontend::with_tlb(
+        TranslationQueueConfig::new(4, 3).unwrap(),
+        TranslationTlbConfig::new(4).unwrap(),
+    );
+
+    let first = CpuTranslationRequest::load(
+        translation_id(4),
+        memory_id(13),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x20),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        frontend.enqueue_or_translate_cached(10, first).unwrap(),
+        None
+    );
+    assert_eq!(frontend.pending_count(), 1);
+    assert_eq!(
+        frontend.tlb().unwrap().stats(),
+        TranslationTlbStats::new(0, 1, 0, 0, 0)
+    );
+    assert!(frontend
+        .complete_ready_with_tlb_page_map(12, &map)
+        .unwrap()
+        .is_empty());
+
+    let completed = frontend.complete_ready_with_tlb_page_map(13, &map).unwrap();
+    assert_eq!(completed.len(), 1);
+    let CpuTranslationOutcome::Mapped(first_mapped) = &completed[0] else {
+        panic!("first load should map after page walk");
+    };
+    assert_eq!(
+        first_mapped.physical_address(),
+        Address::new(0x0000_0000_b000_0020)
+    );
+    assert_eq!(frontend.pending_count(), 0);
+    assert_eq!(
+        frontend.tlb().unwrap().stats(),
+        TranslationTlbStats::new(0, 1, 0, 1, 0)
+    );
+
+    let second = CpuTranslationRequest::load(
+        translation_id(5),
+        memory_id(14),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x80),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+    let immediate = frontend
+        .enqueue_or_translate_cached(14, second)
+        .unwrap()
+        .expect("second same-page load should hit the TLB");
+    let CpuTranslationOutcome::Mapped(second_mapped) = immediate else {
+        panic!("TLB hit should map");
+    };
+    assert_eq!(
+        second_mapped.physical_address(),
+        Address::new(0x0000_0000_b000_0080)
+    );
+    assert!(frontend.pending_request_ids().is_empty());
+    assert_eq!(
+        frontend.tlb().unwrap().stats(),
+        TranslationTlbStats::new(1, 1, 0, 1, 0)
+    );
+}
+
+#[test]
+fn cpu_translation_frontend_keeps_tlb_address_spaces_separate_and_snapshots() {
+    let virtual_base = Address::new(0xffff_0000_c000_0000);
+    let asid_one = TranslationAddressSpaceId::new(11);
+    let asid_two = TranslationAddressSpaceId::new(12);
+    let map_one = single_page_map(virtual_base, Address::new(0x0000_0000_c000_0000));
+    let map_two = single_page_map(virtual_base, Address::new(0x0000_0000_d000_0000));
+    let mut frontend = CpuTranslationFrontend::with_tlb(
+        TranslationQueueConfig::new(4, 1).unwrap(),
+        TranslationTlbConfig::new(4).unwrap(),
+    );
+
+    let request_one = CpuTranslationRequest::load(
+        translation_id(6),
+        memory_id(15),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x10),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid_one);
+    assert_eq!(
+        frontend
+            .enqueue_or_translate_cached(20, request_one)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        frontend
+            .complete_ready_with_tlb_page_map(21, &map_one)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let request_two = CpuTranslationRequest::load(
+        translation_id(7),
+        memory_id(16),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x10),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid_two);
+    assert_eq!(
+        frontend
+            .enqueue_or_translate_cached(22, request_two)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        frontend
+            .complete_ready_with_tlb_page_map(23, &map_two)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let snapshot = frontend.snapshot();
+    let mut restored = CpuTranslationFrontend::new(TranslationQueueConfig::new(1, 0).unwrap());
+    restored.restore(&snapshot).unwrap();
+    assert!(restored
+        .tlb()
+        .unwrap()
+        .contains_entry(asid_one, virtual_base));
+    assert!(restored
+        .tlb()
+        .unwrap()
+        .contains_entry(asid_two, virtual_base));
+
+    let hit_one = CpuTranslationRequest::load(
+        translation_id(8),
+        memory_id(17),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x90),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid_one);
+    let CpuTranslationOutcome::Mapped(mapped_one) = restored
+        .enqueue_or_translate_cached(24, hit_one)
+        .unwrap()
+        .expect("restored ASID one entry should hit")
+    else {
+        panic!("ASID one hit should map");
+    };
+    assert_eq!(
+        mapped_one.physical_address(),
+        Address::new(0x0000_0000_c000_0090)
+    );
+
+    restored.tlb_mut().unwrap().flush_address_space(asid_one);
+    assert!(!restored
+        .tlb()
+        .unwrap()
+        .contains_entry(asid_one, virtual_base));
+    assert!(restored
+        .tlb()
+        .unwrap()
+        .contains_entry(asid_two, virtual_base));
+
+    let hit_two = CpuTranslationRequest::load(
+        translation_id(9),
+        memory_id(18),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0xa0),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid_two);
+    let CpuTranslationOutcome::Mapped(mapped_two) = restored
+        .enqueue_or_translate_cached(25, hit_two)
+        .unwrap()
+        .expect("ASID two entry should survive ASID one flush")
+    else {
+        panic!("ASID two hit should map");
+    };
+    assert_eq!(
+        mapped_two.physical_address(),
+        Address::new(0x0000_0000_d000_00a0)
+    );
 }
