@@ -183,8 +183,41 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some(issue) =
-            self.prepare_next_translated_data_access(scheduler.now(), transport, page_map)?
+        let Some((issue, transaction)) = self.prepare_translated_data_parallel_transaction(
+            scheduler.now(),
+            transport,
+            trace,
+            page_map,
+            responder,
+        )?
+        else {
+            return Ok(None);
+        };
+        let event = transport
+            .submit_parallel_batch(scheduler, [transaction])
+            .map_err(RiscvCpuError::Transport)?
+            .into_iter()
+            .next()
+            .expect("single translated data transaction returns one event");
+
+        self.record_data_issue(issue);
+        Ok(Some(event))
+    }
+
+    pub(crate) fn prepare_translated_data_parallel_transaction<F>(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        trace: MemoryTrace,
+        page_map: &TranslationPageMap,
+        responder: F,
+    ) -> Result<Option<(OutstandingDataAccess, ParallelMemoryTransaction)>, RiscvCpuError>
+    where
+        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let Some(issue) = self.prepare_next_translated_data_access(tick, transport, page_map)?
         else {
             return Ok(None);
         };
@@ -197,15 +230,8 @@ impl RiscvCore {
             responder,
             move |delivery| core.record_data_response(delivery),
         );
-        let event = transport
-            .submit_parallel_batch(scheduler, [transaction])
-            .map_err(RiscvCpuError::Transport)?
-            .into_iter()
-            .next()
-            .expect("single translated data transaction returns one event");
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+        Ok(Some((issue, transaction)))
     }
 
     fn prepare_next_translated_data_access(
