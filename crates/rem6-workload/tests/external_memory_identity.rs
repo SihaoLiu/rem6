@@ -1,0 +1,64 @@
+use rem6_boot::BootImage;
+use rem6_dram::{DramGeometry, DramTiming, ExternalMemoryProfile};
+use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
+use rem6_workload::{
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryTarget, WorkloadTopology,
+};
+
+fn id(value: &str) -> WorkloadId {
+    WorkloadId::new(value).unwrap()
+}
+
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
+}
+
+fn boot_image() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), vec![0x13, 0x05, 0x00, 0x00])
+        .unwrap()
+}
+
+fn manifest_with_timing(timing: DramTiming) -> WorkloadManifest {
+    let profile = ExternalMemoryProfile::hbm(
+        MemoryTargetId::new(0),
+        layout(),
+        2,
+        2,
+        DramGeometry::new(4, 64, 16).unwrap(),
+        timing,
+    )
+    .unwrap();
+    let target = WorkloadMemoryTarget::new(
+        0,
+        16,
+        rem6_memory::AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    )
+    .unwrap()
+    .with_external_memory_profile(profile)
+    .unwrap();
+
+    WorkloadManifest::builder(id("profiled-burst-spacing"), boot_image())
+        .with_topology(
+            WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+                .unwrap()
+                .add_memory_target(target)
+                .unwrap(),
+        )
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_external_memory_burst_spacing() {
+    let base = manifest_with_timing(DramTiming::new(4, 8, 10, 3, 5).unwrap());
+    let spaced = manifest_with_timing(
+        DramTiming::new(4, 8, 10, 3, 5)
+            .unwrap()
+            .with_burst_spacing(2)
+            .unwrap(),
+    );
+
+    assert_ne!(base.identity(), spaced.identity());
+}

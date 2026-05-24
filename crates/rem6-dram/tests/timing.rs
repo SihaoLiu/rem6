@@ -203,6 +203,35 @@ fn dram_controller_schedules_closed_row_read_with_activate_latency() {
 }
 
 #[test]
+fn dram_controller_enforces_burst_spacing_across_banks() {
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_burst_spacing(2)
+        .unwrap();
+    let mut controller = DramController::new(geometry(), timing);
+    let marker = controller.mark_wait_for();
+
+    let first = controller.schedule(0, &read(0x0000, 8, 50)).unwrap();
+    let second = controller.schedule(0, &read(0x0040, 8, 51)).unwrap();
+
+    assert_eq!(first.bank(), 0);
+    assert_eq!(first.command_cycle(), 3);
+    assert_eq!(first.ready_cycle(), 8);
+    assert_eq!(second.bank(), 1);
+    assert_eq!(second.command_cycle(), 5);
+    assert_eq!(second.ready_cycle(), 10);
+
+    let request = WaitForNode::transaction("dram.agent.2.request.51").unwrap();
+    let bus = WaitForNode::resource("dram.port.0.bus").unwrap();
+    let graph = controller.wait_for_graph_since(marker).snapshot();
+
+    assert_eq!(graph.edge_count(), 1);
+    assert_eq!(graph.first_observed_tick(), Some(3));
+    assert_eq!(graph.last_observed_tick(), Some(4));
+    assert!(graph.contains_edge(&request, &bus, WaitForEdgeKind::Resource));
+}
+
+#[test]
 fn dram_controller_keeps_open_row_for_row_hits() {
     let mut controller = DramController::new(geometry(), timing());
     controller.schedule(0, &read(0x0000, 8, 1)).unwrap();

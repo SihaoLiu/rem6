@@ -477,6 +477,7 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_u64(&mut payload, timing.write_latency());
         write_u64(&mut payload, timing.precharge_latency());
         write_u64(&mut payload, timing.bus_turnaround());
+        write_u64(&mut payload, timing.burst_spacing());
         write_profile(&mut payload, target.profile());
         write_nvm_media_state(
             &mut payload,
@@ -667,13 +668,20 @@ fn decode_dram_memory(
                 target.get()
             ))
         })?;
+        let activate_latency = cursor.read_u64("DRAM activate latency")?;
+        let read_latency = cursor.read_u64("DRAM read latency")?;
+        let write_latency = cursor.read_u64("DRAM write latency")?;
+        let precharge_latency = cursor.read_u64("DRAM precharge latency")?;
+        let bus_turnaround = cursor.read_u64("DRAM bus turnaround")?;
+        let burst_spacing = cursor.read_u64("DRAM burst spacing")?;
         let timing = DramTiming::new(
-            cursor.read_u64("DRAM activate latency")?,
-            cursor.read_u64("DRAM read latency")?,
-            cursor.read_u64("DRAM write latency")?,
-            cursor.read_u64("DRAM precharge latency")?,
-            cursor.read_u64("DRAM bus turnaround")?,
+            activate_latency,
+            read_latency,
+            write_latency,
+            precharge_latency,
+            bus_turnaround,
         )
+        .and_then(|timing| timing.with_burst_spacing(burst_spacing))
         .map_err(|error| {
             cursor.invalid(format!(
                 "DRAM target {} has invalid timing: {error}",

@@ -27,7 +27,10 @@ fn dram_geometry() -> DramGeometry {
 }
 
 fn dram_timing() -> DramTiming {
-    DramTiming::new(3, 5, 7, 2, 4).unwrap()
+    DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_burst_spacing(2)
+        .unwrap()
 }
 
 fn fast_dram_timing() -> DramTiming {
@@ -210,6 +213,13 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
         captured,
         DramMemoryCheckpointRecord::new(component.clone(), controller.lock().unwrap().snapshot())
     );
+    assert_eq!(
+        captured.snapshot().targets()[0]
+            .controller()
+            .timing()
+            .burst_spacing(),
+        2
+    );
     assert!(registry.chunk(&component, "dram").unwrap().len() > 192);
 
     {
@@ -227,6 +237,13 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
     let restored = port.restore_from(&registry).unwrap();
 
     assert_eq!(restored, captured);
+    assert_eq!(
+        restored.snapshot().targets()[0]
+            .controller()
+            .timing()
+            .burst_spacing(),
+        2
+    );
     let mut controller = controller.lock().unwrap();
     assert_eq!(controller.snapshot(), captured.snapshot().clone());
     assert_eq!(

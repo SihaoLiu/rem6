@@ -237,6 +237,7 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
     hash_u64(hash, profile.timing().write_latency());
     hash_u64(hash, profile.timing().precharge_latency());
     hash_u64(hash, profile.timing().bus_turnaround());
+    hash_u64(hash, profile.timing().burst_spacing());
     match profile.technology() {
         DramMemoryTechnology::Ddr => hash_str(hash, "ddr"),
         DramMemoryTechnology::Hbm => hash_str(hash, "hbm"),
