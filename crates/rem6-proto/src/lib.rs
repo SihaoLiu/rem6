@@ -5,6 +5,10 @@ use std::fmt;
 use rem6_kernel::Tick;
 use rem6_memory::Address;
 
+mod frame;
+
+pub use frame::{TraceFrame, TraceFrameKind};
+
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -805,6 +809,21 @@ pub enum ProtoError {
     DuplicateDependencyRecord {
         sequence: u64,
     },
+    EmptyFrameIdentity,
+    FrameIdentityTooLong {
+        bytes: usize,
+    },
+    InvalidFrameIdentity,
+    EmptyFramePayload,
+    InvalidFrameMagic,
+    UnsupportedFrameVersion {
+        version: u16,
+    },
+    UnknownFrameKind {
+        kind: u8,
+    },
+    TruncatedFrame,
+    FrameChecksumMismatch,
 }
 
 impl fmt::Display for ProtoError {
@@ -888,6 +907,22 @@ impl fmt::Display for ProtoError {
                     "dependency record sequence {sequence} is duplicated"
                 )
             }
+            Self::EmptyFrameIdentity => write!(formatter, "trace frame identity must not be empty"),
+            Self::FrameIdentityTooLong { bytes } => write!(
+                formatter,
+                "trace frame identity has {bytes} bytes, exceeding frame limit"
+            ),
+            Self::InvalidFrameIdentity => write!(formatter, "trace frame identity is not utf-8"),
+            Self::EmptyFramePayload => write!(formatter, "trace frame payload must not be empty"),
+            Self::InvalidFrameMagic => write!(formatter, "trace frame magic is invalid"),
+            Self::UnsupportedFrameVersion { version } => {
+                write!(formatter, "trace frame version {version} is not supported")
+            }
+            Self::UnknownFrameKind { kind } => {
+                write!(formatter, "trace frame kind {kind} is unknown")
+            }
+            Self::TruncatedFrame => write!(formatter, "trace frame is truncated"),
+            Self::FrameChecksumMismatch => write!(formatter, "trace frame checksum does not match"),
         }
     }
 }
