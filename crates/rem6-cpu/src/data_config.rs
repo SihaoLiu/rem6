@@ -34,9 +34,13 @@ impl CpuDataConfig {
         range: AddressRange,
         line_layout: CacheLineLayout,
     ) -> Self {
+        self.add_line_layout_range(range, line_layout);
+        self
+    }
+
+    pub fn add_line_layout_range(&mut self, range: AddressRange, line_layout: CacheLineLayout) {
         self.address_line_layouts
             .push(CpuDataLineLayoutRange { range, line_layout });
-        self
     }
 
     pub fn endpoint(&self) -> &TransportEndpointId {

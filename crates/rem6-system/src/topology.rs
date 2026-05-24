@@ -798,12 +798,33 @@ impl RiscvTopologySystem {
             }
         }
 
+        self.attach_dram_line_layouts_to_cores(&config)?;
         self.memory = Some(RiscvTopologyMemoryBackend::Dram {
             component: config.checkpoint_component().clone(),
             memory: Arc::new(Mutex::new(controller)),
         });
         self.attach_memory_checkpoint_to_host()?;
         Ok(self)
+    }
+
+    fn attach_dram_line_layouts_to_cores(
+        &self,
+        config: &RiscvTopologyDramConfig,
+    ) -> Result<(), RiscvTopologySystemError> {
+        let core_ids = self.cluster.core_ids();
+        for target in &config.targets {
+            for region in target.regions() {
+                let range = AddressRange::new(region.start(), region.size())
+                    .map_err(RiscvTopologySystemError::Memory)?;
+                for cpu in &core_ids {
+                    self.cluster
+                        .core(*cpu)
+                        .expect("cluster core id")
+                        .add_memory_line_layout_range(range, target.line_layout());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn install_riscv_device_tree_handoff(

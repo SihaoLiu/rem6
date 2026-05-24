@@ -12,8 +12,8 @@ use rem6_kernel::{
     SchedulerContext, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
-    MemoryRequestId, ResponseStatus,
+    AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryOperation,
+    MemoryRequest, MemoryRequestId, ResponseStatus,
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRoute};
 use rem6_transport::{
@@ -231,6 +231,14 @@ impl CpuCore {
 
     fn set_pc(&self, pc: Address) {
         self.state.lock().expect("cpu core lock").pc = pc;
+    }
+
+    pub fn add_fetch_line_layout_range(&self, range: AddressRange, line_layout: CacheLineLayout) {
+        self.state
+            .lock()
+            .expect("cpu core lock")
+            .fetch
+            .add_line_layout_range(range, line_layout);
     }
 
     fn advance_sequence_past(&self, request: MemoryRequestId) {
@@ -853,6 +861,13 @@ impl RiscvCore {
             .hart
             .set_pc(pc.get());
         self.core.set_pc(pc);
+    }
+
+    pub fn add_memory_line_layout_range(&self, range: AddressRange, line_layout: CacheLineLayout) {
+        self.core.add_fetch_line_layout_range(range, line_layout);
+        if let Some(data) = &mut self.state.lock().expect("riscv core lock").data {
+            data.add_line_layout_range(range, line_layout);
+        }
     }
 
     pub fn execution_events(&self) -> Vec<RiscvCpuExecutionEvent> {
