@@ -7,6 +7,7 @@ impl fmt::Display for WorkloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Boot(error) => write!(formatter, "{error}"),
+            Self::Memory(error) => write!(formatter, "{error}"),
             Self::EmptyWorkloadId => write!(formatter, "workload id must not be empty"),
             Self::EmptyResourceId => write!(formatter, "resource id must not be empty"),
             Self::EmptyRouteId => write!(formatter, "route id must not be empty"),
@@ -32,6 +33,17 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "required resource {} is not defined",
                 resource.as_str()
+            ),
+            Self::ResourceKindMismatch {
+                resource,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "resource {} has kind {}, expected {}",
+                resource.as_str(),
+                actual.as_str(),
+                expected.as_str()
             ),
             Self::ZeroHostLatency => write!(formatter, "host latency must be positive"),
             Self::ZeroLineBytes { target } => {
@@ -327,6 +339,7 @@ impl Error for WorkloadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Boot(error) => Some(error),
+            Self::Memory(error) => Some(error),
             _ => None,
         }
     }

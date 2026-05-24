@@ -2,50 +2,81 @@ use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopol
 
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadHostEvent, WorkloadId,
-    WorkloadManifestIdentity, WorkloadResource, WorkloadResourceId, WorkloadTopology,
+    WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadResource, WorkloadResourceId,
+    WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-pub(crate) fn manifest_identity(
-    id: &WorkloadId,
-    boot: &WorkloadBootImage,
-    topology: Option<&WorkloadTopology>,
-    resources: &[WorkloadResource],
-    required_resources: &[WorkloadResourceId],
-    host_events: &[WorkloadHostEvent],
-    checkpoint_lineage: Option<&CheckpointLineage>,
-) -> WorkloadManifestIdentity {
+pub(crate) struct ManifestIdentityInput<'a> {
+    pub(crate) id: &'a WorkloadId,
+    pub(crate) boot: &'a WorkloadBootImage,
+    pub(crate) linux_boot_handoff: Option<&'a WorkloadLinuxBootHandoff>,
+    pub(crate) topology: Option<&'a WorkloadTopology>,
+    pub(crate) resources: &'a [WorkloadResource],
+    pub(crate) required_resources: &'a [WorkloadResourceId],
+    pub(crate) host_events: &'a [WorkloadHostEvent],
+    pub(crate) checkpoint_lineage: Option<&'a CheckpointLineage>,
+}
+
+pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadManifestIdentity {
     let mut hash = FNV_OFFSET;
     hash_str(&mut hash, "rem6.workload.manifest.v1");
-    hash_str(&mut hash, id.as_str());
-    hash_u64(&mut hash, boot.entry().get());
-    hash_u64(&mut hash, boot.segments().len() as u64);
-    for segment in boot.segments() {
+    hash_str(&mut hash, input.id.as_str());
+    hash_u64(&mut hash, input.boot.entry().get());
+    hash_u64(&mut hash, input.boot.segments().len() as u64);
+    for segment in input.boot.segments() {
         hash_u64(&mut hash, segment.range().start().get());
         hash_u64(&mut hash, segment.range().size().bytes());
         hash_bytes(&mut hash, segment.data());
     }
-    hash_topology(&mut hash, topology);
-    hash_u64(&mut hash, resources.len() as u64);
-    for resource in resources {
+    hash_linux_boot_handoff(&mut hash, input.linux_boot_handoff);
+    hash_topology(&mut hash, input.topology);
+    hash_u64(&mut hash, input.resources.len() as u64);
+    for resource in input.resources {
         hash_str(&mut hash, resource.id().as_str());
         hash_u64(&mut hash, resource.kind() as u64);
         hash_str(&mut hash, resource.digest());
         hash_str(&mut hash, resource.locator());
     }
-    hash_u64(&mut hash, required_resources.len() as u64);
-    for resource in required_resources {
+    hash_u64(&mut hash, input.required_resources.len() as u64);
+    for resource in input.required_resources {
         hash_str(&mut hash, resource.as_str());
     }
-    hash_u64(&mut hash, host_events.len() as u64);
-    for event in host_events {
+    hash_u64(&mut hash, input.host_events.len() as u64);
+    for event in input.host_events {
         hash_u64(&mut hash, event.tick());
         hash_host_event(&mut hash, event.intent());
     }
-    hash_checkpoint_lineage(&mut hash, checkpoint_lineage);
+    hash_checkpoint_lineage(&mut hash, input.checkpoint_lineage);
     WorkloadManifestIdentity::new(hash)
+}
+
+fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHandoff>) {
+    let Some(handoff) = handoff else {
+        hash_str(hash, "linux.boot_handoff.none");
+        return;
+    };
+
+    hash_str(hash, "linux.boot_handoff.v1");
+    hash_u64(hash, handoff.dtb_addr().get());
+    match handoff.bootargs() {
+        Some(bootargs) => {
+            hash_str(hash, "bootargs.some");
+            hash_str(hash, bootargs);
+        }
+        None => hash_str(hash, "bootargs.none"),
+    }
+    match handoff.initrd() {
+        Some(initrd) => {
+            hash_str(hash, "initrd.some");
+            hash_str(hash, initrd.resource().as_str());
+            hash_u64(hash, initrd.start().get());
+            hash_u64(hash, initrd.size().bytes());
+        }
+        None => hash_str(hash, "initrd.none"),
+    }
 }
 
 fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {

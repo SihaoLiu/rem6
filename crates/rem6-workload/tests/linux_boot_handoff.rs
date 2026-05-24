@@ -1,0 +1,183 @@
+use rem6_boot::BootImage;
+use rem6_memory::{AccessSize, Address};
+use rem6_workload::{
+    WorkloadError, WorkloadId, WorkloadLinuxBootHandoff, WorkloadLinuxInitrd, WorkloadManifest,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+};
+
+fn id(value: &str) -> WorkloadId {
+    WorkloadId::new(value).unwrap()
+}
+
+fn resource_id(value: &str) -> WorkloadResourceId {
+    WorkloadResourceId::new(value).unwrap()
+}
+
+fn boot_image() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), vec![0x13, 0x05, 0x00, 0x00])
+        .unwrap()
+        .add_segment(Address::new(0x8010), vec![0x73, 0x00, 0x00, 0x00])
+        .unwrap()
+}
+
+fn kernel_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("kernel"),
+        WorkloadResourceKind::Kernel,
+        "sha256:kernel",
+        "resources/kernel.elf",
+    )
+    .unwrap()
+}
+
+fn disk_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("disk"),
+        WorkloadResourceKind::DiskImage,
+        "sha256:disk",
+        "resources/rootfs.img",
+    )
+    .unwrap()
+}
+
+fn initrd_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("initrd"),
+        WorkloadResourceKind::Initrd,
+        "sha256:initrd",
+        "resources/initrd.cpio",
+    )
+    .unwrap()
+}
+
+fn linux_handoff() -> WorkloadLinuxBootHandoff {
+    WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
+        .with_bootargs("console=ttyS0 root=/dev/vda")
+        .with_initrd(
+            WorkloadLinuxInitrd::new(
+                resource_id("initrd"),
+                Address::new(0x8800_0000),
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+}
+
+#[test]
+fn workload_manifest_records_linux_boot_handoff_resources() {
+    let manifest = WorkloadManifest::builder(id("linux-handoff"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_linux_boot_handoff(linux_handoff())
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let handoff = manifest.linux_boot_handoff().unwrap();
+    let initrd = handoff.initrd().unwrap();
+
+    assert_eq!(handoff.dtb_addr(), Address::new(0x87e0_0000));
+    assert_eq!(handoff.bootargs(), Some("console=ttyS0 root=/dev/vda"));
+    assert_eq!(initrd.resource(), &resource_id("initrd"));
+    assert_eq!(initrd.start(), Address::new(0x8800_0000));
+    assert_eq!(initrd.end(), Address::new(0x8800_2000));
+    assert_eq!(
+        manifest.required_resources(),
+        &[resource_id("initrd"), resource_id("kernel")]
+    );
+    assert!(plan
+        .required_resources()
+        .iter()
+        .any(|resource| resource.id() == &resource_id("initrd")
+            && resource.kind() == WorkloadResourceKind::Initrd));
+    assert_eq!(plan.linux_boot_handoff(), Some(handoff));
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_linux_boot_handoff() {
+    let plain = WorkloadManifest::builder(id("linux-handoff-identity"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let with_handoff = WorkloadManifest::builder(id("linux-handoff-identity"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_linux_boot_handoff(linux_handoff())
+        .build()
+        .unwrap();
+    let different_bootargs = WorkloadManifest::builder(id("linux-handoff-identity"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_linux_boot_handoff(
+            WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
+                .with_bootargs("console=ttyS1 root=/dev/vda")
+                .with_initrd(
+                    WorkloadLinuxInitrd::new(
+                        resource_id("initrd"),
+                        Address::new(0x8800_0000),
+                        AccessSize::new(0x2000).unwrap(),
+                    )
+                    .unwrap(),
+                ),
+        )
+        .build()
+        .unwrap();
+
+    assert_ne!(plain.identity(), with_handoff.identity());
+    assert_ne!(with_handoff.identity(), different_bootargs.identity());
+}
+
+#[test]
+fn workload_linux_boot_handoff_rejects_missing_or_wrong_initrd_resource() {
+    let missing = WorkloadManifest::builder(id("missing-initrd"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .with_linux_boot_handoff(linux_handoff())
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        missing,
+        WorkloadError::MissingRequiredResource {
+            resource: resource_id("initrd"),
+        }
+    );
+
+    let wrong_kind = WorkloadManifest::builder(id("wrong-initrd-kind"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(disk_resource())
+        .unwrap()
+        .with_linux_boot_handoff(
+            WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000)).with_initrd(
+                WorkloadLinuxInitrd::new(
+                    resource_id("disk"),
+                    Address::new(0x8800_0000),
+                    AccessSize::new(0x2000).unwrap(),
+                )
+                .unwrap(),
+            ),
+        )
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        wrong_kind,
+        WorkloadError::ResourceKindMismatch {
+            resource: resource_id("disk"),
+            expected: WorkloadResourceKind::Initrd,
+            actual: WorkloadResourceKind::DiskImage,
+        }
+    );
+}

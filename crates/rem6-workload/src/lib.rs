@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_boot::{BootError, BootImage};
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::Tick;
-use rem6_memory::{Address, AddressRange};
+use rem6_memory::{Address, AddressRange, MemoryError};
 use rem6_stats::StatSnapshot;
 
+mod boot_handoff;
 mod error;
 mod heterogeneous;
 mod identity;
@@ -13,11 +14,12 @@ mod qos;
 mod result;
 mod topology;
 
+pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
 };
-use identity::manifest_identity;
+use identity::{manifest_identity, ManifestIdentityInput};
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
     WorkloadQosTurnaroundPolicyKind,
@@ -74,6 +76,21 @@ pub enum WorkloadResourceKind {
     DeviceTree,
     Input,
     Output,
+    Initrd,
+}
+
+impl WorkloadResourceKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Kernel => "kernel",
+            Self::DiskImage => "disk-image",
+            Self::Firmware => "firmware",
+            Self::DeviceTree => "device-tree",
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Initrd => "initrd",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -443,6 +460,7 @@ impl WorkloadManifestIdentity {
 pub struct WorkloadManifest {
     id: WorkloadId,
     boot: WorkloadBootImage,
+    linux_boot_handoff: Option<WorkloadLinuxBootHandoff>,
     topology: Option<WorkloadTopology>,
     resources: Vec<WorkloadResource>,
     required_resources: Vec<WorkloadResourceId>,
@@ -462,6 +480,10 @@ impl WorkloadManifest {
 
     pub const fn boot(&self) -> &WorkloadBootImage {
         &self.boot
+    }
+
+    pub fn linux_boot_handoff(&self) -> Option<&WorkloadLinuxBootHandoff> {
+        self.linux_boot_handoff.as_ref()
     }
 
     pub fn topology(&self) -> Option<&WorkloadTopology> {
@@ -514,6 +536,7 @@ impl WorkloadManifest {
 pub struct WorkloadManifestBuilder {
     id: WorkloadId,
     boot: WorkloadBootImage,
+    linux_boot_handoff: Option<WorkloadLinuxBootHandoff>,
     topology: Option<WorkloadTopology>,
     resources: BTreeMap<WorkloadResourceId, WorkloadResource>,
     required_resources: BTreeSet<WorkloadResourceId>,
@@ -526,6 +549,7 @@ impl WorkloadManifestBuilder {
         Self {
             id,
             boot,
+            linux_boot_handoff: None,
             topology: None,
             resources: BTreeMap::new(),
             required_resources: BTreeSet::new(),
@@ -558,12 +582,25 @@ impl WorkloadManifestBuilder {
         self
     }
 
+    pub fn with_linux_boot_handoff(mut self, handoff: WorkloadLinuxBootHandoff) -> Self {
+        self.linux_boot_handoff = Some(handoff);
+        self
+    }
+
     pub fn with_checkpoint_lineage(mut self, lineage: CheckpointLineage) -> Self {
         self.checkpoint_lineage = Some(lineage);
         self
     }
 
     pub fn build(mut self) -> Result<WorkloadManifest, WorkloadError> {
+        if let Some(initrd) = self
+            .linux_boot_handoff
+            .as_ref()
+            .and_then(WorkloadLinuxBootHandoff::initrd)
+        {
+            self.required_resources.insert(initrd.resource().clone());
+        }
+
         for resource in &self.required_resources {
             if !self.resources.contains_key(resource) {
                 return Err(WorkloadError::MissingRequiredResource {
@@ -571,23 +608,42 @@ impl WorkloadManifestBuilder {
                 });
             }
         }
+        if let Some(initrd) = self
+            .linux_boot_handoff
+            .as_ref()
+            .and_then(WorkloadLinuxBootHandoff::initrd)
+        {
+            let resource = self
+                .resources
+                .get(initrd.resource())
+                .expect("required resource was checked above");
+            if resource.kind() != WorkloadResourceKind::Initrd {
+                return Err(WorkloadError::ResourceKindMismatch {
+                    resource: resource.id().clone(),
+                    expected: WorkloadResourceKind::Initrd,
+                    actual: resource.kind(),
+                });
+            }
+        }
 
         self.host_events.sort_by_key(host_event_sort_key);
         let resources = self.resources.into_values().collect::<Vec<_>>();
         let required_resources = self.required_resources.into_iter().collect::<Vec<_>>();
-        let identity = manifest_identity(
-            &self.id,
-            &self.boot,
-            self.topology.as_ref(),
-            &resources,
-            &required_resources,
-            &self.host_events,
-            self.checkpoint_lineage.as_ref(),
-        );
+        let identity = manifest_identity(ManifestIdentityInput {
+            id: &self.id,
+            boot: &self.boot,
+            linux_boot_handoff: self.linux_boot_handoff.as_ref(),
+            topology: self.topology.as_ref(),
+            resources: &resources,
+            required_resources: &required_resources,
+            host_events: &self.host_events,
+            checkpoint_lineage: self.checkpoint_lineage.as_ref(),
+        });
 
         Ok(WorkloadManifest {
             id: self.id,
             boot: self.boot,
+            linux_boot_handoff: self.linux_boot_handoff,
             topology: self.topology,
             resources,
             required_resources,
@@ -602,6 +658,7 @@ impl WorkloadManifestBuilder {
 pub struct WorkloadReplayPlan {
     manifest_identity: WorkloadManifestIdentity,
     boot: WorkloadBootImage,
+    linux_boot_handoff: Option<WorkloadLinuxBootHandoff>,
     topology: Option<WorkloadTopology>,
     required_resources: Vec<WorkloadResource>,
     host_events: Vec<WorkloadHostEvent>,
@@ -618,6 +675,7 @@ impl WorkloadReplayPlan {
         Ok(Self {
             manifest_identity: manifest.identity(),
             boot: manifest.boot().clone(),
+            linux_boot_handoff: manifest.linux_boot_handoff().cloned(),
             topology: manifest.topology().cloned(),
             required_resources: manifest.required_resource_details()?,
             planned_checkpoint_labels: planned_checkpoint_labels(&host_events),
@@ -639,6 +697,10 @@ impl WorkloadReplayPlan {
 
     pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
         self.boot.to_boot_image()
+    }
+
+    pub fn linux_boot_handoff(&self) -> Option<&WorkloadLinuxBootHandoff> {
+        self.linux_boot_handoff.as_ref()
     }
 
     pub fn topology(&self) -> Option<&WorkloadTopology> {
@@ -971,6 +1033,7 @@ impl WorkloadResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
     Boot(BootError),
+    Memory(MemoryError),
     EmptyWorkloadId,
     EmptyResourceId,
     EmptyRouteId,
@@ -986,6 +1049,11 @@ pub enum WorkloadError {
     },
     MissingRequiredResource {
         resource: WorkloadResourceId,
+    },
+    ResourceKindMismatch {
+        resource: WorkloadResourceId,
+        expected: WorkloadResourceKind,
+        actual: WorkloadResourceKind,
     },
     ZeroHostLatency,
     ZeroLineBytes {
