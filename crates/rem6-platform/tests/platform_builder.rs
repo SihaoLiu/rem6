@@ -6,10 +6,15 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_platform::{
-    PlatformBuilder, PlatformError, PlatformInterruptControllerConfig, PlatformTimerConfig,
-    PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
+    PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
+    PlatformInterruptControllerConfig, PlatformTimerConfig, PlatformTopologyError,
+    PlatformTopologyRoute, PlatformUartConfig,
 };
-use rem6_timer::{TimerArm, TimerExpiry, TimerId, TIMER_MMIO_DEADLINE_OFFSET};
+use rem6_timer::{
+    ClintId, TimerArm, TimerExpiry, TimerId, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
+    CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
+    CLINT_MTIMECMP_STRIDE, TIMER_MMIO_DEADLINE_OFFSET,
+};
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder, TopologyError,
@@ -21,6 +26,10 @@ fn full_mask(bytes: u64) -> ByteMask {
 }
 
 fn le64(value: u64) -> Vec<u8> {
+    value.to_le_bytes().to_vec()
+}
+
+fn le32(value: u32) -> Vec<u8> {
     value.to_le_bytes().to_vec()
 }
 
@@ -230,6 +239,120 @@ fn platform_builder_wires_timer_uart_interrupts_and_mmio_bus() {
                 timer_line,
                 InterruptTargetId::new(0),
                 cpu,
+                timer_source,
+                InterruptEventKind::Assert,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn platform_builder_wires_clint_hart_interrupts_and_mmio_bus() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let clint_partition = PartitionId::new(2);
+    let clint_id = ClintId::new(0);
+    let software_line = InterruptLineId::new(30);
+    let timer_line = InterruptLineId::new(31);
+    let software_source = InterruptSourceId::new(40);
+    let timer_source = InterruptSourceId::new(41);
+
+    let platform = PlatformBuilder::new(3)
+        .add_clint(PlatformClintConfig {
+            id: clint_id,
+            base: Address::new(0x200_0000),
+            size: AccessSize::new(0x1_0000).unwrap(),
+            route: MmioRoute::new(cpu0, clint_partition, 2, 1).unwrap(),
+            harts: vec![PlatformClintHartConfig {
+                hart: 1,
+                target_partition: cpu1,
+                interrupt_target: InterruptTargetId::new(0),
+                software_interrupt_line: software_line,
+                software_interrupt_source: software_source,
+                timer_interrupt_line: timer_line,
+                timer_interrupt_source: timer_source,
+                interrupt_latency: 2,
+            }],
+        })
+        .build()
+        .unwrap();
+
+    let clint = platform.clint(clint_id).unwrap().clone();
+    let controller = platform.interrupt_controller();
+    let bus = platform.mmio_bus().clone();
+    let completions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu0, 1, move |context| {
+            let msip_completed = std::sync::Arc::clone(&completed);
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(20),
+                    Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET + CLINT_MSIP_STRIDE),
+                    le32(1),
+                    full_mask(CLINT_MSIP_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| msip_completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(21),
+                    Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET + CLINT_MTIMECMP_STRIDE),
+                    le64(7),
+                    full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+    let snapshot = clint.snapshot();
+
+    assert_eq!(summary.final_tick(), 9);
+    assert_eq!(snapshot.harts()[0].hart(), 1);
+    assert_eq!(snapshot.harts()[0].msip(), 1);
+    assert_eq!(snapshot.harts()[0].mtimecmp(), 7);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                MmioRoute::new(cpu0, clint_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(MmioRequestId::new(20), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                MmioRoute::new(cpu0, clint_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(MmioRequestId::new(21), None)),
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                5,
+                software_line,
+                InterruptTargetId::new(0),
+                cpu1,
+                software_source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                9,
+                timer_line,
+                InterruptTargetId::new(0),
+                cpu1,
                 timer_source,
                 InterruptEventKind::Assert,
             ),

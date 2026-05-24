@@ -10,7 +10,10 @@ use rem6_interrupt::{
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 use rem6_mmio::{MmioBus, MmioError, MmioRoute};
-use rem6_timer::{ProgrammableTimer, TimerId, TimerMmioDevice};
+use rem6_timer::{
+    ClintHartConfig, ClintId, ClintMmioDevice, ProgrammableTimer, TimerError, TimerId,
+    TimerMmioDevice,
+};
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{UartId, UartMmioDevice};
 
@@ -36,6 +39,27 @@ pub struct PlatformUartConfig {
     pub interrupt_target: InterruptTargetId,
     pub interrupt_source: InterruptSourceId,
     pub interrupt_latency: Tick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformClintHartConfig {
+    pub hart: u32,
+    pub target_partition: PartitionId,
+    pub interrupt_target: InterruptTargetId,
+    pub software_interrupt_line: InterruptLineId,
+    pub software_interrupt_source: InterruptSourceId,
+    pub timer_interrupt_line: InterruptLineId,
+    pub timer_interrupt_source: InterruptSourceId,
+    pub interrupt_latency: Tick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformClintConfig {
+    pub id: ClintId,
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub harts: Vec<PlatformClintHartConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +113,7 @@ impl PlatformTopologyRoute {
 pub struct PlatformBuilder {
     partition_count: u32,
     interrupt_controllers: Vec<PlatformInterruptControllerConfig>,
+    clints: Vec<PlatformClintConfig>,
     timers: Vec<PlatformTimerConfig>,
     uarts: Vec<PlatformUartConfig>,
 }
@@ -98,6 +123,7 @@ impl PlatformBuilder {
         Self {
             partition_count,
             interrupt_controllers: Vec::new(),
+            clints: Vec::new(),
             timers: Vec::new(),
             uarts: Vec::new(),
         }
@@ -117,6 +143,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_clint(mut self, config: PlatformClintConfig) -> Self {
+        self.clints.push(config);
+        self
+    }
+
     pub fn add_uart(mut self, config: PlatformUartConfig) -> Self {
         self.uarts.push(config);
         self
@@ -129,6 +160,7 @@ impl PlatformBuilder {
 
         let controller = Arc::new(Mutex::new(InterruptController::new()));
         let mut bus = MmioBus::new();
+        let mut clints = BTreeMap::new();
         let mut timers = BTreeMap::new();
         let mut uarts = BTreeMap::new();
 
@@ -165,6 +197,43 @@ impl PlatformBuilder {
             timers.insert(config.id, timer);
         }
 
+        for config in self.clints {
+            validate_route(self.partition_count, config.route)?;
+            let mut harts = Vec::with_capacity(config.harts.len());
+            for hart in config.harts {
+                validate_partition(self.partition_count, hart.target_partition)?;
+                let software_port = register_interrupt(
+                    &controller,
+                    hart.target_partition,
+                    hart.software_interrupt_line,
+                    hart.interrupt_target,
+                    hart.interrupt_latency,
+                )?;
+                let timer_port = register_interrupt(
+                    &controller,
+                    hart.target_partition,
+                    hart.timer_interrupt_line,
+                    hart.interrupt_target,
+                    hart.interrupt_latency,
+                )?;
+                harts.push(ClintHartConfig::new(
+                    hart.hart,
+                    software_port,
+                    hart.software_interrupt_source,
+                    timer_port,
+                    hart.timer_interrupt_source,
+                ));
+            }
+            let device = ClintMmioDevice::new(config.base, harts).map_err(PlatformError::Timer)?;
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            clints.insert(config.id, device);
+        }
+
         for config in self.uarts {
             validate_route(self.partition_count, config.route)?;
             let port = register_interrupt(
@@ -193,6 +262,7 @@ impl PlatformBuilder {
             partition_count: self.partition_count,
             interrupt_controller: controller,
             mmio_bus: bus,
+            clints,
             timers,
             uarts,
         })
@@ -204,6 +274,7 @@ pub struct Platform {
     partition_count: u32,
     interrupt_controller: Arc<Mutex<InterruptController>>,
     mmio_bus: MmioBus,
+    clints: BTreeMap<ClintId, ClintMmioDevice>,
     timers: BTreeMap<TimerId, ProgrammableTimer>,
     uarts: BTreeMap<UartId, UartMmioDevice>,
 }
@@ -219,6 +290,14 @@ impl Platform {
 
     pub const fn mmio_bus(&self) -> &MmioBus {
         &self.mmio_bus
+    }
+
+    pub fn clint(&self, id: ClintId) -> Option<&ClintMmioDevice> {
+        self.clints.get(&id)
+    }
+
+    pub fn clints(&self) -> impl Iterator<Item = (ClintId, &ClintMmioDevice)> {
+        self.clints.iter().map(|(id, device)| (*id, device))
     }
 
     pub fn timer(&self, id: TimerId) -> Option<&ProgrammableTimer> {
@@ -338,6 +417,7 @@ pub enum PlatformError {
     Memory(MemoryError),
     Mmio(MmioError),
     Interrupt(InterruptError),
+    Timer(TimerError),
 }
 
 impl fmt::Display for PlatformError {
@@ -355,6 +435,7 @@ impl fmt::Display for PlatformError {
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Mmio(error) => write!(formatter, "{error}"),
             Self::Interrupt(error) => write!(formatter, "{error}"),
+            Self::Timer(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -365,6 +446,7 @@ impl Error for PlatformError {
             Self::Memory(error) => Some(error),
             Self::Mmio(error) => Some(error),
             Self::Interrupt(error) => Some(error),
+            Self::Timer(error) => Some(error),
             _ => None,
         }
     }

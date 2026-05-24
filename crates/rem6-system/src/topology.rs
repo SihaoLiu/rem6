@@ -50,7 +50,7 @@ use rem6_memory::{
 use rem6_mmio::MmioBus;
 use rem6_platform::Platform;
 use rem6_stats::StatsRegistry;
-use rem6_timer::TimerId;
+use rem6_timer::{ClintId, TimerId};
 use rem6_topology::Topology;
 use rem6_transport::{
     MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportError,
@@ -173,6 +173,11 @@ fn default_gpu_checkpoint_component(device: GpuDeviceId) -> CheckpointComponentI
 fn default_timer_checkpoint_component(timer: TimerId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("timer{}", timer.get()))
         .expect("formatted timer checkpoint component is nonempty")
+}
+
+fn default_clint_checkpoint_component(clint: ClintId) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("clint{}", clint.get()))
+        .expect("formatted CLINT checkpoint component is nonempty")
 }
 
 fn default_uart_checkpoint_component(uart: UartId) -> CheckpointComponentId {

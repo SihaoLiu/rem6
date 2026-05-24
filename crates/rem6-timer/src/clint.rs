@@ -17,6 +17,19 @@ pub const CLINT_MTIMECMP_STRIDE: u64 = 8;
 pub const CLINT_MTIME_OFFSET: u64 = 0xbff8;
 pub const CLINT_MTIME_REGISTER_BYTES: u64 = 8;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ClintId(u64);
+
+impl ClintId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ClintHartConfig {
     hart: u32,

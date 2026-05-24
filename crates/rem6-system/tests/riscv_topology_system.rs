@@ -12,7 +12,8 @@ use rem6_memory::{
 };
 use rem6_mmio::{MmioRequest, MmioRequestId};
 use rem6_platform::{
-    Platform, PlatformBuilder, PlatformTimerConfig, PlatformTopologyRoute, PlatformUartConfig,
+    Platform, PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformTimerConfig,
+    PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -22,7 +23,7 @@ use rem6_system::{
     RiscvTopologySystemError, RiscvTrapEventPort, StopRequest, SystemActionOutcome,
     SystemHostController, SystemHostEventPort,
 };
-use rem6_timer::{TimerArm, TimerId, TimerSnapshot};
+use rem6_timer::{ClintHartSnapshot, ClintId, ClintSnapshot, TimerArm, TimerId, TimerSnapshot};
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
@@ -122,6 +123,29 @@ fn platform_with_timer(topology: &Topology, timer_id: TimerId) -> Platform {
             interrupt_target: rem6_interrupt::InterruptTargetId::new(0),
             interrupt_source: rem6_interrupt::InterruptSourceId::new(51),
             interrupt_latency: 2,
+        })
+        .build()
+        .unwrap()
+}
+
+fn platform_with_clint(topology: &Topology, clint_id: ClintId) -> Platform {
+    PlatformBuilder::from_topology(topology)
+        .add_clint(PlatformClintConfig {
+            id: clint_id,
+            base: Address::new(0x200_0000),
+            size: AccessSize::new(0x1_0000).unwrap(),
+            route: rem6_mmio::MmioRoute::new(PartitionId::new(0), PartitionId::new(3), 2, 2)
+                .unwrap(),
+            harts: vec![PlatformClintHartConfig {
+                hart: 0,
+                target_partition: PartitionId::new(0),
+                interrupt_target: rem6_interrupt::InterruptTargetId::new(0),
+                software_interrupt_line: rem6_interrupt::InterruptLineId::new(42),
+                software_interrupt_source: rem6_interrupt::InterruptSourceId::new(52),
+                timer_interrupt_line: rem6_interrupt::InterruptLineId::new(43),
+                timer_interrupt_source: rem6_interrupt::InterruptSourceId::new(53),
+                interrupt_latency: 2,
+            }],
         })
         .build()
         .unwrap()
@@ -1132,6 +1156,110 @@ fn topology_host_controller_checkpoints_attached_timer() {
         }
     );
     assert_eq!(timer.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_clint() {
+    let topology = topology_with_timer();
+    let clint_id = ClintId::new(0);
+    let platform = platform_with_clint(&topology, clint_id);
+    let source = GuestSourceId::new(50);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("clint0").unwrap();
+    let clint = system.platform().unwrap().clint(clint_id).unwrap().clone();
+    let captured = ClintSnapshot::new(
+        Address::new(0x200_0000),
+        vec![ClintHartSnapshot::new(0, 1, 64, 2, true)],
+    );
+    let empty = ClintSnapshot::new(
+        Address::new(0x200_0000),
+        vec![ClintHartSnapshot::new(0, 0, u64::MAX, 0, false)],
+    );
+    clint.restore(&captured).unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .clint_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        26,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(194),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-clint".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&component, "clint")
+            .unwrap()
+            .len()
+            >= 48
+    );
+
+    clint.restore(&empty).unwrap();
+    assert_ne!(clint.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        39,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(195),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 39,
+            event: GuestEventId::new(195),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(clint.snapshot(), captured);
 }
 
 #[test]
