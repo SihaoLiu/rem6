@@ -1056,6 +1056,11 @@ impl RiscvCore {
         let Some(issue) = self.prepare_data_access(scheduler.now(), transport)? else {
             return Ok(None);
         };
+        if self.store_conditional_fails(&issue) {
+            return self
+                .schedule_store_conditional_failure(scheduler, issue)
+                .map(Some);
+        }
         let request = issue.memory_request()?;
 
         let core = self.clone();
@@ -1086,29 +1091,37 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some((issue, transaction)) =
-            self.prepare_data_parallel_transaction(scheduler.now(), transport, trace, responder)?
+        let Some(prepared) =
+            self.prepare_data_parallel_access(scheduler.now(), transport, trace, responder)?
         else {
             return Ok(None);
         };
-        let event = transport
-            .submit_parallel_batch(scheduler, [transaction])
-            .map_err(RiscvCpuError::Transport)?
-            .into_iter()
-            .next()
-            .expect("single data transaction returns one event");
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+        match prepared {
+            PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                let event = transport
+                    .submit_parallel_batch(scheduler, [transaction])
+                    .map_err(RiscvCpuError::Transport)?
+                    .into_iter()
+                    .next()
+                    .expect("single data transaction returns one event");
+
+                self.record_data_issue(issue);
+                Ok(Some(event))
+            }
+            PreparedDataParallelAccess::ConditionalFailed { issue } => self
+                .schedule_store_conditional_failure_parallel(scheduler, issue)
+                .map(Some),
+        }
     }
 
-    fn prepare_data_parallel_transaction<F>(
+    fn prepare_data_parallel_access<F>(
         &self,
         tick: Tick,
         transport: &MemoryTransport,
         trace: MemoryTrace,
         responder: F,
-    ) -> Result<Option<(OutstandingDataAccess, ParallelMemoryTransaction)>, RiscvCpuError>
+    ) -> Result<Option<PreparedDataParallelAccess>, RiscvCpuError>
     where
         F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
             + Send
@@ -1117,6 +1130,11 @@ impl RiscvCore {
         let Some(issue) = self.prepare_data_access(tick, transport)? else {
             return Ok(None);
         };
+        if self.store_conditional_fails(&issue) {
+            return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
+                issue,
+            }));
+        }
         let request = issue.memory_request()?;
         let core = self.clone();
         let transaction = ParallelMemoryTransaction::new(
@@ -1126,11 +1144,22 @@ impl RiscvCore {
             responder,
             move |delivery| core.record_data_response(delivery),
         );
-        Ok(Some((issue, transaction)))
+        Ok(Some(PreparedDataParallelAccess::Transaction {
+            issue,
+            transaction,
+        }))
     }
 
     fn record_prepared_data_issue(&self, issue: OutstandingDataAccess) {
         self.record_data_issue(issue);
+    }
+
+    fn schedule_prepared_store_conditional_failure_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        issue: OutstandingDataAccess,
+    ) -> Result<PartitionEventId, RiscvCpuError> {
+        self.schedule_store_conditional_failure_parallel(scheduler, issue)
     }
 
     pub fn issue_next_mmio_data_access_parallel(
@@ -1141,6 +1170,11 @@ impl RiscvCore {
         let Some(issue) = self.prepare_mmio_data_access(scheduler.now(), bus)? else {
             return Ok(None);
         };
+        if self.store_conditional_fails(&issue) {
+            return self
+                .schedule_store_conditional_failure_parallel(scheduler, issue)
+                .map(Some);
+        }
         let request = issue.mmio_request()?;
         let bus = bus.clone();
         let core = self.clone();
@@ -1292,6 +1326,67 @@ impl RiscvCore {
             .push(RiscvDataAccessEvent::issued(issue.record(issue.tick)));
     }
 
+    fn schedule_store_conditional_failure(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        issue: OutstandingDataAccess,
+    ) -> Result<PartitionEventId, RiscvCpuError> {
+        let request_id = issue.request_id;
+        let core = self.clone();
+        let event = scheduler
+            .schedule_at(self.partition(), scheduler.now(), move |context| {
+                core.record_store_conditional_failure(request_id, context.now());
+            })
+            .map_err(RiscvCpuError::Scheduler)?;
+        self.record_data_issue(issue);
+        Ok(event)
+    }
+
+    fn schedule_store_conditional_failure_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        issue: OutstandingDataAccess,
+    ) -> Result<PartitionEventId, RiscvCpuError> {
+        let request_id = issue.request_id;
+        let core = self.clone();
+        let event = scheduler
+            .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
+                core.record_store_conditional_failure(request_id, context.now());
+            })
+            .map_err(RiscvCpuError::Scheduler)?;
+        self.record_data_issue(issue);
+        Ok(event)
+    }
+
+    fn store_conditional_fails(&self, issue: &OutstandingDataAccess) -> bool {
+        if !matches!(issue.access, MemoryAccessKind::StoreConditional { .. }) {
+            return false;
+        }
+        let expected = RiscvLoadReservation::new(issue.physical_address, issue.size);
+        self.state.lock().expect("riscv core lock").reservation != Some(expected)
+    }
+
+    fn record_store_conditional_failure(&self, request_id: MemoryRequestId, tick: Tick) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let Some(access) = state.outstanding_data.remove(&request_id) else {
+            return;
+        };
+        let MemoryAccessKind::StoreConditional { rd, .. } = &access.access else {
+            debug_assert!(
+                false,
+                "store-conditional failure recorded for non-SC access"
+            );
+            return;
+        };
+        state.hart.write(*rd, 1);
+        state.reservation = None;
+        state
+            .data_events
+            .push(RiscvDataAccessEvent::conditional_failed(
+                access.record(tick),
+            ));
+    }
+
     fn record_data_response(&self, delivery: ResponseDelivery) {
         let mut state = self.state.lock().expect("riscv core lock");
         let Some(access) = state
@@ -1427,6 +1522,15 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::atomic(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                store_bytes(*value, self.size),
+                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
         }
     }
 
@@ -1480,6 +1584,16 @@ impl IssuedDataAccess {
             self.physical_address,
         )
     }
+}
+
+enum PreparedDataParallelAccess {
+    Transaction {
+        issue: OutstandingDataAccess,
+        transaction: ParallelMemoryTransaction,
+    },
+    ConditionalFailed {
+        issue: OutstandingDataAccess,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1547,6 +1661,10 @@ fn record_load_completion(
                 access.size,
             ));
         }
+        MemoryAccessKind::StoreConditional { rd, .. } => {
+            state.hart.write(*rd, 0);
+            state.reservation = None;
+        }
         MemoryAccessKind::Store { .. } => {}
     }
 }
@@ -1555,6 +1673,7 @@ fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
     match access {
         MemoryAccessKind::Load { width, .. }
         | MemoryAccessKind::LoadReserved { width, .. }
+        | MemoryAccessKind::StoreConditional { width, .. }
         | MemoryAccessKind::Store { width, .. } => *width,
     }
 }
@@ -1563,6 +1682,7 @@ fn access_address(access: &MemoryAccessKind) -> u64 {
     match access {
         MemoryAccessKind::Load { address, .. }
         | MemoryAccessKind::LoadReserved { address, .. }
+        | MemoryAccessKind::StoreConditional { address, .. }
         | MemoryAccessKind::Store { address, .. } => *address,
     }
 }
@@ -1591,7 +1711,8 @@ fn mmio_request(
         MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
             MmioRequest::read(mmio_request_id(request), address, size).map_err(RiscvCpuError::Mmio)
         }
-        MemoryAccessKind::Store { value, .. } => MmioRequest::write(
+        MemoryAccessKind::Store { value, .. }
+        | MemoryAccessKind::StoreConditional { value, .. } => MmioRequest::write(
             mmio_request_id(request),
             address,
             store_bytes(*value, size),

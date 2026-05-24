@@ -11,9 +11,9 @@ use rem6_isa_riscv::{
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId,
-    PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
-    TranslationQueueConfig, TranslationTlbConfig, TranslationTlbStats,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
+    MemoryTargetId, PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions,
+    TranslationPageSize, TranslationQueueConfig, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
@@ -69,6 +69,34 @@ fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
 
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
+}
+
+fn data_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(99), sequence),
+        Address::new(address),
+        AccessSize::new(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn read_store_bytes(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    address: u64,
+    size: u64,
+    sequence: u64,
+) -> Vec<u8> {
+    store
+        .lock()
+        .unwrap()
+        .respond(&data_read(address, size, sequence))
+        .unwrap()
+        .response()
+        .unwrap()
+        .data()
+        .unwrap()
+        .to_vec()
 }
 
 fn reg(index: u8) -> Register {
@@ -898,6 +926,164 @@ fn riscv_core_issues_load_reserved_and_records_reservation() {
         events[1].data(),
         Some(&[0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90][..])
     );
+}
+
+#[test]
+fn riscv_core_store_conditional_succeeds_with_matching_reservation() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9008);
+    core.write_register(reg(6), 0x0102_0304_0506_0708);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            atomic_type(0x02, false, false, 0, 2, 0x3, 5),
+            atomic_type(0x03, false, true, 6, 2, 0x3, 7),
+        ],
+        &[(0x9008, vec![0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88])],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    assert_eq!(
+        core.load_reservation(),
+        Some(RiscvLoadReservation::new(
+            Address::new(0x9008),
+            AccessSize::new(8).unwrap()
+        ))
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        event.execution().memory_access(),
+        Some(&MemoryAccessKind::StoreConditional {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            value: 0x0102_0304_0506_0708,
+            acquire: false,
+            release: true,
+        })
+    );
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    assert_eq!(core.read_register(reg(7)), 0);
+    assert_eq!(core.load_reservation(), None);
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 8, 40),
+        vec![0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
+    );
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert_eq!(events[2].operation(), MemoryOperation::Atomic);
+    assert_eq!(
+        events[2].access(),
+        &MemoryAccessKind::StoreConditional {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            value: 0x0102_0304_0506_0708,
+            acquire: false,
+            release: true,
+        }
+    );
+    assert_eq!(
+        events[3].data(),
+        Some(&[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01][..])
+    );
+}
+
+#[test]
+fn riscv_core_store_conditional_fails_without_matching_reservation() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9008);
+    core.write_register(reg(6), 0x1112_1314_1516_1718);
+    let store = loaded_store_with_data(
+        0x8000,
+        atomic_type(0x03, true, true, 6, 2, 0x3, 7),
+        0x9008,
+        vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        event.execution().memory_access(),
+        Some(&MemoryAccessKind::StoreConditional {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            value: 0x1112_1314_1516_1718,
+            acquire: true,
+            release: true,
+        })
+    );
+
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    assert_eq!(core.read_register(reg(7)), 1);
+    assert_eq!(core.load_reservation(), None);
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 8, 41),
+        vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11]
+    );
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::ConditionalFailed,
+        ]
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+    assert_eq!(events[1].data(), None);
 }
 
 #[test]

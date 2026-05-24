@@ -62,6 +62,14 @@ pub enum MemoryAccessKind {
         acquire: bool,
         release: bool,
     },
+    StoreConditional {
+        rd: Register,
+        address: u64,
+        width: MemoryWidth,
+        value: u64,
+        acquire: bool,
+        release: bool,
+    },
     Store {
         address: u64,
         width: MemoryWidth,
@@ -155,6 +163,14 @@ pub enum RiscvInstruction {
     LoadReserved {
         rd: Register,
         rs1: Register,
+        width: MemoryWidth,
+        acquire: bool,
+        release: bool,
+    },
+    StoreConditional {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
         width: MemoryWidth,
         acquire: bool,
         release: bool,
@@ -301,6 +317,14 @@ fn decode_atomic(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x02, 0x3, 0) => Ok(RiscvInstruction::LoadReserved {
             rd: rd(raw),
             rs1: rs1(raw),
+            width: MemoryWidth::Doubleword,
+            acquire: aq(raw),
+            release: rl(raw),
+        }),
+        (0x03, 0x3, _) => Ok(RiscvInstruction::StoreConditional {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
             width: MemoryWidth::Doubleword,
             acquire: aq(raw),
             release: rl(raw),
@@ -522,6 +546,23 @@ impl RiscvHartState {
                     rd,
                     address: self.read(rs1),
                     width,
+                    acquire,
+                    release,
+                });
+            }
+            RiscvInstruction::StoreConditional {
+                rd,
+                rs1,
+                rs2,
+                width,
+                acquire,
+                release,
+            } => {
+                memory_access = Some(MemoryAccessKind::StoreConditional {
+                    rd,
+                    address: self.read(rs1),
+                    width,
+                    value: self.read(rs2),
                     acquire,
                     release,
                 });

@@ -151,6 +151,33 @@ fn write_request_validates_payload_and_byte_mask() {
 }
 
 #[test]
+fn atomic_request_carries_data_and_returns_data() {
+    let size = AccessSize::new(8).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let request = MemoryRequest::atomic(
+        request_id(21),
+        Address::new(0x2080),
+        size,
+        vec![0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(request.operation(), MemoryOperation::Atomic);
+    assert_eq!(request.coherence_intent(), CoherenceIntent::WriteUnique);
+    assert_eq!(request.range().start(), Address::new(0x2080));
+    assert_eq!(
+        request.data(),
+        Some(&[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01][..])
+    );
+    assert_eq!(request.byte_mask(), Some(&mask));
+    assert!(request.carries_data());
+    assert!(request.requires_writable());
+    assert!(request.returns_data());
+}
+
+#[test]
 fn coherence_operations_expose_protocol_relevant_attributes() {
     let upgrade = MemoryRequest::upgrade(
         request_id(17),

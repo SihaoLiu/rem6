@@ -9,6 +9,7 @@ pub enum RiscvDataAccessEventKind {
     Issued,
     Completed,
     Retry,
+    ConditionalFailed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -129,6 +130,7 @@ impl RiscvDataAccessRecord {
             MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
                 MemoryOperation::ReadShared
             }
+            MemoryAccessKind::StoreConditional { .. } => MemoryOperation::Atomic,
             MemoryAccessKind::Store { .. } => MemoryOperation::Write,
         }
     }
@@ -162,6 +164,14 @@ impl RiscvDataAccessEvent {
         Self {
             record,
             kind: RiscvDataAccessEventKind::Retry,
+            data: None,
+        }
+    }
+
+    pub fn conditional_failed(record: RiscvDataAccessRecord) -> Self {
+        Self {
+            record,
+            kind: RiscvDataAccessEventKind::ConditionalFailed,
             data: None,
         }
     }

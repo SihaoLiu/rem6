@@ -17,7 +17,7 @@ use crate::{
     RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError, RiscvDataAccessTarget,
 };
 
-use super::OutstandingDataAccess;
+use super::{OutstandingDataAccess, PreparedDataParallelAccess};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingDataTranslation {
@@ -153,6 +153,11 @@ impl RiscvCore {
         else {
             return Ok(None);
         };
+        if self.store_conditional_fails(&issue) {
+            return self
+                .schedule_store_conditional_failure(scheduler, issue)
+                .map(Some);
+        }
         let request = issue.memory_request()?;
 
         let core = self.clone();
@@ -184,7 +189,7 @@ impl RiscvCore {
             + Send
             + 'static,
     {
-        let Some((issue, transaction)) = self.prepare_translated_data_parallel_transaction(
+        let Some(prepared) = self.prepare_translated_data_parallel_access(
             scheduler.now(),
             transport,
             trace,
@@ -194,15 +199,23 @@ impl RiscvCore {
         else {
             return Ok(None);
         };
-        let event = transport
-            .submit_parallel_batch(scheduler, [transaction])
-            .map_err(RiscvCpuError::Transport)?
-            .into_iter()
-            .next()
-            .expect("single translated data transaction returns one event");
 
-        self.record_data_issue(issue);
-        Ok(Some(event))
+        match prepared {
+            PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                let event = transport
+                    .submit_parallel_batch(scheduler, [transaction])
+                    .map_err(RiscvCpuError::Transport)?
+                    .into_iter()
+                    .next()
+                    .expect("single translated data transaction returns one event");
+
+                self.record_data_issue(issue);
+                Ok(Some(event))
+            }
+            PreparedDataParallelAccess::ConditionalFailed { issue } => self
+                .schedule_store_conditional_failure_parallel(scheduler, issue)
+                .map(Some),
+        }
     }
 
     pub fn issue_next_translated_mmio_data_access_parallel(
@@ -216,6 +229,11 @@ impl RiscvCore {
         else {
             return Ok(None);
         };
+        if self.store_conditional_fails(&issue) {
+            return self
+                .schedule_store_conditional_failure_parallel(scheduler, issue)
+                .map(Some);
+        }
         let request = issue.mmio_request()?;
         let bus = bus.clone();
         let core = self.clone();
@@ -233,14 +251,14 @@ impl RiscvCore {
         Ok(Some(event))
     }
 
-    pub(crate) fn prepare_translated_data_parallel_transaction<F>(
+    pub(crate) fn prepare_translated_data_parallel_access<F>(
         &self,
         tick: Tick,
         transport: &MemoryTransport,
         trace: MemoryTrace,
         page_map: &TranslationPageMap,
         responder: F,
-    ) -> Result<Option<(OutstandingDataAccess, ParallelMemoryTransaction)>, RiscvCpuError>
+    ) -> Result<Option<PreparedDataParallelAccess>, RiscvCpuError>
     where
         F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
             + Send
@@ -250,6 +268,11 @@ impl RiscvCore {
         else {
             return Ok(None);
         };
+        if self.store_conditional_fails(&issue) {
+            return Ok(Some(PreparedDataParallelAccess::ConditionalFailed {
+                issue,
+            }));
+        }
         let request = issue.memory_request()?;
         let core = self.clone();
         let transaction = ParallelMemoryTransaction::new(
@@ -260,7 +283,10 @@ impl RiscvCore {
             move |delivery| core.record_data_response(delivery),
         );
 
-        Ok(Some((issue, transaction)))
+        Ok(Some(PreparedDataParallelAccess::Transaction {
+            issue,
+            transaction,
+        }))
     }
 
     fn prepare_next_translated_data_access(
@@ -538,6 +564,18 @@ fn cpu_translation_request(
             )
         }
         rem6_isa_riscv::MemoryAccessKind::Store { address, value, .. } => {
+            CpuTranslationRequest::store(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                Address::new(*address),
+                size,
+                store_bytes(*value, size),
+                ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            )
+        }
+        rem6_isa_riscv::MemoryAccessKind::StoreConditional { address, value, .. } => {
             CpuTranslationRequest::store(
                 translation_id,
                 memory_request_id,

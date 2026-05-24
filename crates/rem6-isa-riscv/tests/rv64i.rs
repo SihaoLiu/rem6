@@ -260,6 +260,42 @@ fn hart_reports_load_reserved_access_without_mutating_register() {
 }
 
 #[test]
+fn hart_reports_store_conditional_access_without_mutating_register() {
+    let mut hart = RiscvHartState::new(0x6000);
+    hart.write(reg(2), 0x9008);
+    hart.write(reg(6), 0x0102_0304_0506_0708);
+
+    let instruction =
+        RiscvInstruction::decode(atomic_type(0x03, false, true, 6, 2, 0x3, 7)).unwrap();
+    assert_eq!(
+        instruction,
+        RiscvInstruction::StoreConditional {
+            rd: reg(7),
+            rs1: reg(2),
+            rs2: reg(6),
+            width: MemoryWidth::Doubleword,
+            acquire: false,
+            release: true,
+        }
+    );
+
+    let store_conditional = hart.execute(instruction).unwrap();
+    assert_eq!(store_conditional.next_pc(), 0x6004);
+    assert_eq!(
+        store_conditional.memory_access(),
+        Some(&MemoryAccessKind::StoreConditional {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            value: 0x0102_0304_0506_0708,
+            acquire: false,
+            release: true,
+        })
+    );
+    assert_eq!(hart.read(reg(7)), 0);
+}
+
+#[test]
 fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
     let mut hart = RiscvHartState::new(0x7000);
 

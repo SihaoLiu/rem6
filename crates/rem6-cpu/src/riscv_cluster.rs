@@ -17,7 +17,8 @@ use rem6_transport::{
 
 use crate::riscv_activity::{drive_action_partition, RiscvCoreDriveActivity};
 use crate::{
-    CpuId, OutstandingDataAccess, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    CpuId, OutstandingDataAccess, OutstandingFetch, PreparedDataParallelAccess, RiscvCore,
+    RiscvCoreDriveAction, RiscvCpuError,
 };
 
 enum PreparedParallelAction {
@@ -33,6 +34,11 @@ enum PreparedParallelAction {
         core: RiscvCore,
         issue: OutstandingDataAccess,
         transaction_index: usize,
+    },
+    LocalDataFailure {
+        cpu: CpuId,
+        core: RiscvCore,
+        issue: OutstandingDataAccess,
     },
 }
 
@@ -275,8 +281,8 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some((issue, transaction)) = core
-                .prepare_data_parallel_transaction(
+            if let Some(prepared) = core
+                .prepare_data_parallel_access(
                     scheduler.now(),
                     transport,
                     data_trace.clone(),
@@ -284,15 +290,26 @@ impl RiscvCluster {
                 )
                 .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
             {
-                let transaction_index = transactions.len();
-                transaction_cpus.push(*cpu);
-                transactions.push(transaction);
-                prepared_actions.push(PreparedParallelAction::Data {
-                    cpu: *cpu,
-                    core: core.clone(),
-                    issue,
-                    transaction_index,
-                });
+                match prepared {
+                    PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                        let transaction_index = transactions.len();
+                        transaction_cpus.push(*cpu);
+                        transactions.push(transaction);
+                        prepared_actions.push(PreparedParallelAction::Data {
+                            cpu: *cpu,
+                            core: core.clone(),
+                            issue,
+                            transaction_index,
+                        });
+                    }
+                    PreparedDataParallelAccess::ConditionalFailed { issue } => {
+                        prepared_actions.push(PreparedParallelAction::LocalDataFailure {
+                            cpu: *cpu,
+                            core: core.clone(),
+                            issue,
+                        });
+                    }
+                }
                 continue;
             }
 
@@ -372,8 +389,8 @@ impl RiscvCluster {
 
             let has_data_work = core.has_unissued_data_access() || core.has_pending_data_access();
             if has_data_work {
-                if let Some((issue, transaction)) = core
-                    .prepare_translated_data_parallel_transaction(
+                if let Some(prepared) = core
+                    .prepare_translated_data_parallel_access(
                         scheduler.now(),
                         transport,
                         data_trace.clone(),
@@ -382,15 +399,26 @@ impl RiscvCluster {
                     )
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
                 {
-                    let transaction_index = transactions.len();
-                    transaction_cpus.push(*cpu);
-                    transactions.push(transaction);
-                    prepared_actions.push(PreparedParallelAction::Data {
-                        cpu: *cpu,
-                        core: core.clone(),
-                        issue,
-                        transaction_index,
-                    });
+                    match prepared {
+                        PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                            let transaction_index = transactions.len();
+                            transaction_cpus.push(*cpu);
+                            transactions.push(transaction);
+                            prepared_actions.push(PreparedParallelAction::Data {
+                                cpu: *cpu,
+                                core: core.clone(),
+                                issue,
+                                transaction_index,
+                            });
+                        }
+                        PreparedDataParallelAccess::ConditionalFailed { issue } => {
+                            prepared_actions.push(PreparedParallelAction::LocalDataFailure {
+                                cpu: *cpu,
+                                core: core.clone(),
+                                issue,
+                            });
+                        }
+                    }
                 }
                 continue;
             }
@@ -485,8 +513,8 @@ impl RiscvCluster {
                     continue;
                 }
 
-                if let Some((issue, transaction)) = core
-                    .prepare_translated_data_parallel_transaction(
+                if let Some(prepared) = core
+                    .prepare_translated_data_parallel_access(
                         scheduler.now(),
                         transport,
                         data_trace.clone(),
@@ -495,15 +523,26 @@ impl RiscvCluster {
                     )
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
                 {
-                    let transaction_index = transactions.len();
-                    transaction_cpus.push(*cpu);
-                    transactions.push(transaction);
-                    prepared_actions.push(PreparedParallelAction::Data {
-                        cpu: *cpu,
-                        core: core.clone(),
-                        issue,
-                        transaction_index,
-                    });
+                    match prepared {
+                        PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                            let transaction_index = transactions.len();
+                            transaction_cpus.push(*cpu);
+                            transactions.push(transaction);
+                            prepared_actions.push(PreparedParallelAction::Data {
+                                cpu: *cpu,
+                                core: core.clone(),
+                                issue,
+                                transaction_index,
+                            });
+                        }
+                        PreparedDataParallelAccess::ConditionalFailed { issue } => {
+                            prepared_actions.push(PreparedParallelAction::LocalDataFailure {
+                                cpu: *cpu,
+                                core: core.clone(),
+                                issue,
+                            });
+                        }
+                    }
                 }
                 continue;
             }
@@ -592,6 +631,15 @@ impl RiscvCluster {
                         RiscvCoreDriveAction::DataAccessIssued {
                             event: events[transaction_index],
                         },
+                    ));
+                }
+                PreparedParallelAction::LocalDataFailure { cpu, core, issue } => {
+                    let event = core
+                        .schedule_prepared_store_conditional_failure_parallel(scheduler, issue)
+                        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
+                    actions.push(RiscvClusterDriveEvent::new(
+                        cpu,
+                        RiscvCoreDriveAction::DataAccessIssued { event },
                     ));
                 }
             }

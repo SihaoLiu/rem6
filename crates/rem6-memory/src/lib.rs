@@ -1119,6 +1119,25 @@ impl MemoryRequest {
         )
     }
 
+    pub fn atomic(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::Atomic,
+            address,
+            size,
+            line_layout,
+            Some(data),
+            Some(byte_mask),
+        )
+    }
+
     pub fn upgrade(
         id: MemoryRequestId,
         address: Address,
@@ -1256,12 +1275,20 @@ impl MemoryRequest {
         byte_mask: Option<&ByteMask>,
     ) -> Result<(), MemoryError> {
         match (operation, byte_mask) {
-            (MemoryOperation::Write, Some(mask)) if mask.len() == size.bytes() => Ok(()),
-            (MemoryOperation::Write, Some(mask)) => Err(MemoryError::ByteMaskSizeMismatch {
-                expected: size,
-                actual: mask.len(),
-            }),
-            (MemoryOperation::Write, None) => Err(MemoryError::MissingByteMask { request: id }),
+            (MemoryOperation::Write | MemoryOperation::Atomic, Some(mask))
+                if mask.len() == size.bytes() =>
+            {
+                Ok(())
+            }
+            (MemoryOperation::Write | MemoryOperation::Atomic, Some(mask)) => {
+                Err(MemoryError::ByteMaskSizeMismatch {
+                    expected: size,
+                    actual: mask.len(),
+                })
+            }
+            (MemoryOperation::Write | MemoryOperation::Atomic, None) => {
+                Err(MemoryError::MissingByteMask { request: id })
+            }
             (_, Some(_)) => Err(MemoryError::UnexpectedByteMask { request: id }),
             (_, None) => Ok(()),
         }
