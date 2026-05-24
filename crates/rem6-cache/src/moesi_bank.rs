@@ -12,7 +12,8 @@ use rem6_transport::TargetOutcome;
 use crate::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MshrCompletion, MshrHandle,
-    MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
+    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
+    MshrTargetSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -191,6 +192,10 @@ impl MoesiCacheBankSnapshot {
         self.mshr.as_ref()
     }
 
+    pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
+        self.mshr.as_ref().map(MshrQueueSnapshot::qos_profile)
+    }
+
     pub fn line_addresses(&self) -> Vec<Address> {
         self.lines
             .iter()
@@ -294,6 +299,10 @@ impl MoesiCacheBank {
             .as_ref()
             .and_then(|mshr| mshr.find_line(line))
             .and_then(|entry| entry.effective_qos())
+    }
+
+    pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
+        self.mshr.as_ref().map(MshrQueue::qos_profile)
     }
 
     pub fn state(&self, address: Address) -> Option<MoesiState> {

@@ -190,12 +190,25 @@ fn msi_cache_bank_records_mshr_qos_for_merged_read_misses() {
     );
 
     let snapshot = bank.snapshot();
+    let bank_profile = bank.mshr_qos_profile().unwrap();
+    assert_eq!(bank_profile.entry_count(), 1);
+    assert_eq!(bank_profile.target_count(), 2);
+    assert_eq!(bank_profile.qos_target_count(), 2);
+    assert_eq!(bank_profile.effective_entry_count(), 1);
+    assert_eq!(bank_profile.priority_target_count(0), 1);
+    assert_eq!(bank_profile.priority_target_count(4), 1);
+    assert_eq!(bank_profile.effective_priority_entry_count(0), 1);
+    assert_eq!(bank_profile.effective_requestor_entry_count(40), 1);
+    assert_eq!(bank_profile.best_effective_priority(), Some(0));
+    assert_eq!(snapshot.mshr_qos_profile(), Some(bank_profile.clone()));
+
     let mut restored = MsiCacheBank::new_with_mshr(cache_agent, layout(), config);
     restored.restore(&snapshot).unwrap();
     assert_eq!(
         restored.mshr_effective_qos(Address::new(0x1800)),
         Some(MshrQosClass::new(40, 0))
     );
+    assert_eq!(restored.mshr_qos_profile(), Some(bank_profile));
 }
 
 #[test]
