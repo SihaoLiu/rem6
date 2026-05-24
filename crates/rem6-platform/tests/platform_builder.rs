@@ -7,8 +7,8 @@ use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
-    PlatformInterruptControllerConfig, PlatformTimerConfig, PlatformTopologyError,
-    PlatformTopologyRoute, PlatformUartConfig,
+    PlatformInterruptControllerConfig, PlatformRiscvDeviceTreeConfig, PlatformTimerConfig,
+    PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
     ClintId, ClintResetPolicy, TimerArm, TimerExpiry, TimerId, CLINT_MSIP_BASE_OFFSET,
@@ -358,6 +358,159 @@ fn platform_builder_wires_clint_hart_interrupts_and_mmio_bus() {
                 InterruptEventKind::Assert,
             ),
         ]
+    );
+}
+
+#[test]
+fn platform_builder_emits_typed_riscv_device_tree_for_clint_and_uart() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let clint_partition = PartitionId::new(2);
+    let uart_partition = PartitionId::new(3);
+    let controller_target = InterruptTargetId::new(0);
+
+    let platform = PlatformBuilder::new(4)
+        .add_interrupt_controller(PlatformInterruptControllerConfig {
+            base: Address::new(0x0c00_0000),
+            size: AccessSize::new(0x400_0000).unwrap(),
+            route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
+            target: controller_target,
+        })
+        .add_clint(PlatformClintConfig {
+            id: ClintId::new(0),
+            base: Address::new(0x0200_0000),
+            size: AccessSize::new(0x1_0000).unwrap(),
+            route: MmioRoute::new(cpu0, clint_partition, 2, 1).unwrap(),
+            reset_policy: ClintResetPolicy::preserve_mtimecmp(),
+            harts: vec![
+                PlatformClintHartConfig {
+                    hart: 0,
+                    target_partition: cpu0,
+                    interrupt_target: InterruptTargetId::new(0),
+                    software_interrupt_line: InterruptLineId::new(60),
+                    software_interrupt_source: InterruptSourceId::new(70),
+                    timer_interrupt_line: InterruptLineId::new(61),
+                    timer_interrupt_source: InterruptSourceId::new(71),
+                    interrupt_latency: 2,
+                },
+                PlatformClintHartConfig {
+                    hart: 1,
+                    target_partition: cpu1,
+                    interrupt_target: InterruptTargetId::new(1),
+                    software_interrupt_line: InterruptLineId::new(62),
+                    software_interrupt_source: InterruptSourceId::new(72),
+                    timer_interrupt_line: InterruptLineId::new(63),
+                    timer_interrupt_source: InterruptSourceId::new(73),
+                    interrupt_latency: 2,
+                },
+            ],
+        })
+        .add_uart(PlatformUartConfig {
+            id: UartId::new(1),
+            base: Address::new(0x1000_0000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: MmioRoute::new(cpu0, uart_partition, 2, 1).unwrap(),
+            interrupt_line: InterruptLineId::new(64),
+            interrupt_target: controller_target,
+            interrupt_source: InterruptSourceId::new(10),
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap();
+
+    let config =
+        PlatformRiscvDeviceTreeConfig::new(10_000_000, "rv64imafdc", "riscv,sv48", 0x384000)
+            .unwrap();
+    let tree = platform.riscv_device_tree(&config).unwrap();
+    let cpus = tree.root().child("cpus").unwrap();
+    let cpu0_node = cpus.child("cpu@0").unwrap();
+    let cpu1_node = cpus.child("cpu@1").unwrap();
+    let cpu0_intc = cpu0_node.child("interrupt-controller").unwrap();
+    let cpu1_intc = cpu1_node.child("interrupt-controller").unwrap();
+    let cpu0_phandle = cpu0_intc.property("phandle").unwrap().words().unwrap()[0];
+    let cpu1_phandle = cpu1_intc.property("phandle").unwrap().words().unwrap()[0];
+    let soc = tree.root().child("soc").unwrap();
+    let plic = soc.child("interrupt-controller@c000000").unwrap();
+    let plic_phandle = plic.property("phandle").unwrap().words().unwrap()[0];
+    let clint = soc.child("clint@2000000").unwrap();
+    let uart = soc.child("uart@10000000").unwrap();
+
+    assert_eq!(
+        cpus.property("timebase-frequency").unwrap().words(),
+        Some(&[10_000_000][..])
+    );
+    assert_eq!(
+        cpu0_node.property("riscv,isa").unwrap().strings(),
+        Some(&["rv64imafdc".to_string()][..])
+    );
+    assert_eq!(
+        cpu1_node.property("mmu-type").unwrap().strings(),
+        Some(&["riscv,sv48".to_string()][..])
+    );
+    assert_eq!(
+        clint.property("reg").unwrap().words(),
+        Some(&[0, 0x0200_0000, 0, 0x1_0000][..])
+    );
+    assert_eq!(
+        clint.property("interrupts-extended").unwrap().words(),
+        Some(
+            &[
+                cpu0_phandle,
+                0x3,
+                cpu0_phandle,
+                0x7,
+                cpu1_phandle,
+                0x3,
+                cpu1_phandle,
+                0x7,
+            ][..]
+        )
+    );
+    assert_eq!(
+        plic.property("riscv,ndev").unwrap().words(),
+        Some(&[10][..])
+    );
+    assert_eq!(
+        uart.property("interrupt-parent").unwrap().words(),
+        Some(&[plic_phandle][..])
+    );
+    assert_eq!(
+        uart.property("interrupts").unwrap().words(),
+        Some(&[10][..])
+    );
+
+    let dts = tree.to_dts();
+    assert!(dts.contains("compatible = \"riscv,clint0\";"));
+    assert!(dts.contains("compatible = \"ns8250\", \"ns16550a\";"));
+    assert!(dts.contains("interrupt-controller@c000000"));
+}
+
+#[test]
+fn platform_builder_rejects_riscv_uart_device_tree_without_interrupt_controller() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let platform = PlatformBuilder::new(2)
+        .add_uart(PlatformUartConfig {
+            id: UartId::new(2),
+            base: Address::new(0x1000_0000),
+            size: AccessSize::new(0x100).unwrap(),
+            route: MmioRoute::new(cpu, uart_partition, 2, 1).unwrap(),
+            interrupt_line: InterruptLineId::new(65),
+            interrupt_target: InterruptTargetId::new(0),
+            interrupt_source: InterruptSourceId::new(11),
+            interrupt_latency: 2,
+        })
+        .build()
+        .unwrap();
+    let config =
+        PlatformRiscvDeviceTreeConfig::new(10_000_000, "rv64imafdc", "riscv,sv48", 0x384000)
+            .unwrap();
+
+    assert_eq!(
+        platform.riscv_device_tree(&config),
+        Err(PlatformError::DeviceTreeMissingInterruptController {
+            device: "uart@10000000".to_string(),
+        })
     );
 }
 
