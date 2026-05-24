@@ -12,7 +12,9 @@ pub use expression::{
     PowerMetricBinding, PowerMetricBindings, PowerMetricId, PowerStateExpression,
 };
 pub use thermal::{
-    ThermalDomainId, ThermalError, ThermalRcModel, ThermalRcSnapshot, ThermalUpdate,
+    ThermalDomainId, ThermalError, ThermalNetwork, ThermalNetworkNodeSnapshot,
+    ThermalNetworkSnapshot, ThermalNodeId, ThermalRcModel, ThermalRcSnapshot, ThermalResistor,
+    ThermalUpdate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -404,6 +406,7 @@ pub struct PowerDomainSnapshot {
 }
 
 impl PowerDomainSnapshot {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         config: PowerDomainConfig,
         components: Vec<PowerComponentSnapshot>,
@@ -888,6 +891,9 @@ pub enum PowerError {
     MissingPowerStateExpressionModel {
         state: PowerStateKind,
     },
+    MissingThermalDomain {
+        domain: ThermalDomainId,
+    },
 }
 
 impl fmt::Display for PowerError {
@@ -998,6 +1004,9 @@ impl fmt::Display for PowerError {
                     formatter,
                     "missing power expression model for state {state:?}"
                 )
+            }
+            Self::MissingThermalDomain { domain } => {
+                write!(formatter, "missing thermal domain {}", domain.get())
             }
         }
     }

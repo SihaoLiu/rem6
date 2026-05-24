@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    PowerError, PowerEstimate, PowerModelMode, PowerResidency, PowerStateKind, ThermalRcModel,
+    PowerError, PowerEstimate, PowerModelMode, PowerResidency, PowerStateKind, ThermalDomainId,
+    ThermalNetwork, ThermalRcModel,
 };
 use rem6_stats::{StatId, StatSnapshot};
 
@@ -115,6 +116,19 @@ impl PowerExpressionInputs {
         Ok(self)
     }
 
+    pub fn with_thermal_network_domain(
+        mut self,
+        thermal: &ThermalNetwork,
+        domain: ThermalDomainId,
+    ) -> Result<Self, PowerError> {
+        let temperature_c = thermal
+            .temperature_for_domain(domain)
+            .map_err(|_| PowerError::MissingThermalDomain { domain })?;
+        validate_expression_input(temperature_c)?;
+        self.temperature_c = temperature_c;
+        Ok(self)
+    }
+
     pub fn from_stat_snapshot(
         temperature_c: f64,
         voltage_v: f64,
@@ -196,6 +210,7 @@ impl PowerExpression {
         Self::ClockPeriodTicks
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn add(left: Self, right: Self) -> Self {
         Self::Add(Box::new(left), Box::new(right))
     }
