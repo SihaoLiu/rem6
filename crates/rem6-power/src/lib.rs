@@ -145,6 +145,237 @@ impl PowerResidency {
     pub fn entries(&self) -> &BTreeMap<PowerStateKind, Tick> {
         &self.ticks
     }
+
+    pub fn total_ticks(&self) -> Tick {
+        self.ticks.values().copied().sum()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PowerModelMode {
+    All,
+    StaticOnly,
+    DynamicOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PowerStatePower {
+    state: PowerStateKind,
+    dynamic_watts: f64,
+    static_watts: f64,
+    static_temperature_coefficient: f64,
+}
+
+impl PowerStatePower {
+    pub fn new(
+        state: PowerStateKind,
+        dynamic_watts: f64,
+        static_watts: f64,
+    ) -> Result<Self, PowerError> {
+        if state == PowerStateKind::Undefined {
+            return Err(PowerError::UndefinedState);
+        }
+        validate_power_value(dynamic_watts)?;
+        validate_power_value(static_watts)?;
+        Ok(Self {
+            state,
+            dynamic_watts,
+            static_watts,
+            static_temperature_coefficient: 0.0,
+        })
+    }
+
+    pub fn with_static_temperature_coefficient(
+        mut self,
+        coefficient: f64,
+    ) -> Result<Self, PowerError> {
+        validate_power_value(coefficient)?;
+        self.static_temperature_coefficient = coefficient;
+        Ok(self)
+    }
+
+    pub const fn state(&self) -> PowerStateKind {
+        self.state
+    }
+
+    pub const fn dynamic_watts(&self) -> f64 {
+        self.dynamic_watts
+    }
+
+    pub const fn static_watts(&self) -> f64 {
+        self.static_watts
+    }
+
+    pub const fn static_temperature_coefficient(&self) -> f64 {
+        self.static_temperature_coefficient
+    }
+
+    fn static_watts_at(&self, ambient_temperature_c: f64, temperature_c: f64) -> f64 {
+        self.static_watts
+            + self.static_temperature_coefficient * (temperature_c - ambient_temperature_c)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PowerEstimate {
+    dynamic_watts: f64,
+    static_watts: f64,
+}
+
+impl PowerEstimate {
+    pub const fn new(dynamic_watts: f64, static_watts: f64) -> Self {
+        Self {
+            dynamic_watts,
+            static_watts,
+        }
+    }
+
+    pub const fn dynamic_watts(&self) -> f64 {
+        self.dynamic_watts
+    }
+
+    pub const fn static_watts(&self) -> f64 {
+        self.static_watts
+    }
+
+    pub const fn total_watts(&self) -> f64 {
+        self.dynamic_watts + self.static_watts
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PowerModelSnapshot {
+    mode: PowerModelMode,
+    ambient_temperature_c: f64,
+    current_temperature_c: f64,
+    states: Vec<PowerStatePower>,
+}
+
+impl PowerModelSnapshot {
+    pub fn new(
+        mode: PowerModelMode,
+        ambient_temperature_c: f64,
+        states: Vec<PowerStatePower>,
+    ) -> Self {
+        Self {
+            mode,
+            ambient_temperature_c,
+            current_temperature_c: ambient_temperature_c,
+            states,
+        }
+    }
+
+    pub const fn mode(&self) -> PowerModelMode {
+        self.mode
+    }
+
+    pub const fn ambient_temperature_c(&self) -> f64 {
+        self.ambient_temperature_c
+    }
+
+    pub const fn current_temperature_c(&self) -> f64 {
+        self.current_temperature_c
+    }
+
+    pub fn states(&self) -> &[PowerStatePower] {
+        &self.states
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PowerModel {
+    mode: PowerModelMode,
+    ambient_temperature_c: f64,
+    current_temperature_c: f64,
+    states: BTreeMap<PowerStateKind, PowerStatePower>,
+}
+
+impl PowerModel {
+    pub fn new(
+        mode: PowerModelMode,
+        ambient_temperature_c: f64,
+        states: Vec<PowerStatePower>,
+    ) -> Result<Self, PowerError> {
+        validate_temperature(ambient_temperature_c)?;
+        let states = state_power_map(states)?;
+        Ok(Self {
+            mode,
+            ambient_temperature_c,
+            current_temperature_c: ambient_temperature_c,
+            states,
+        })
+    }
+
+    pub const fn mode(&self) -> PowerModelMode {
+        self.mode
+    }
+
+    pub const fn ambient_temperature_c(&self) -> f64 {
+        self.ambient_temperature_c
+    }
+
+    pub const fn current_temperature_c(&self) -> f64 {
+        self.current_temperature_c
+    }
+
+    pub fn update_temperature(&mut self, temperature_c: f64) -> Result<(), PowerError> {
+        validate_temperature(temperature_c)?;
+        self.current_temperature_c = temperature_c;
+        Ok(())
+    }
+
+    pub fn estimate(&self, residency: &PowerResidency) -> Result<PowerEstimate, PowerError> {
+        let total_ticks = residency.total_ticks();
+        if total_ticks == 0 {
+            return Err(PowerError::NoPowerResidency);
+        }
+
+        let mut dynamic_watts = 0.0;
+        let mut static_watts = 0.0;
+        for (state, ticks) in residency.entries() {
+            if *ticks == 0 {
+                continue;
+            }
+            let Some(state_power) = self.states.get(state) else {
+                return Err(PowerError::MissingPowerStateModel { state: *state });
+            };
+            let weight = *ticks as f64 / total_ticks as f64;
+            if self.mode != PowerModelMode::StaticOnly {
+                dynamic_watts += state_power.dynamic_watts() * weight;
+            }
+            if self.mode != PowerModelMode::DynamicOnly {
+                static_watts += state_power
+                    .static_watts_at(self.ambient_temperature_c, self.current_temperature_c)
+                    * weight;
+            }
+        }
+
+        Ok(PowerEstimate::new(dynamic_watts, static_watts))
+    }
+
+    pub fn snapshot(&self) -> PowerModelSnapshot {
+        PowerModelSnapshot {
+            mode: self.mode,
+            ambient_temperature_c: self.ambient_temperature_c,
+            current_temperature_c: self.current_temperature_c,
+            states: self.states.values().copied().collect(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &PowerModelSnapshot) -> Result<(), PowerError> {
+        if snapshot.mode() != self.mode {
+            return Err(PowerError::PowerModelModeMismatch {
+                expected: self.mode,
+                actual: snapshot.mode(),
+            });
+        }
+        validate_temperature(snapshot.ambient_temperature_c())?;
+        validate_temperature(snapshot.current_temperature_c())?;
+        self.ambient_temperature_c = snapshot.ambient_temperature_c();
+        self.current_temperature_c = snapshot.current_temperature_c();
+        self.states = state_power_map(snapshot.states().to_vec())?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -612,6 +843,19 @@ pub enum PowerError {
         expected: PowerDomainConfig,
         actual: PowerDomainConfig,
     },
+    InvalidPowerValue,
+    InvalidTemperature,
+    DuplicatePowerStateModel {
+        state: PowerStateKind,
+    },
+    MissingPowerStateModel {
+        state: PowerStateKind,
+    },
+    NoPowerResidency,
+    PowerModelModeMismatch {
+        expected: PowerModelMode,
+        actual: PowerModelMode,
+    },
 }
 
 impl fmt::Display for PowerError {
@@ -657,6 +901,21 @@ impl fmt::Display for PowerError {
                 formatter,
                 "power snapshot config {actual:?} does not match {expected:?}"
             ),
+            Self::InvalidPowerValue => {
+                write!(formatter, "power value must be finite and nonnegative")
+            }
+            Self::InvalidTemperature => write!(formatter, "temperature must be finite"),
+            Self::DuplicatePowerStateModel { state } => {
+                write!(formatter, "duplicate power model for state {state:?}")
+            }
+            Self::MissingPowerStateModel { state } => {
+                write!(formatter, "missing power model for state {state:?}")
+            }
+            Self::NoPowerResidency => write!(formatter, "power residency has no elapsed ticks"),
+            Self::PowerModelModeMismatch { expected, actual } => write!(
+                formatter,
+                "power model snapshot mode {actual:?} does not match {expected:?}"
+            ),
         }
     }
 }
@@ -701,4 +960,32 @@ fn canonical_states(states: Vec<PowerStateKind>) -> Vec<PowerStateKind> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn state_power_map(
+    states: Vec<PowerStatePower>,
+) -> Result<BTreeMap<PowerStateKind, PowerStatePower>, PowerError> {
+    let mut map = BTreeMap::new();
+    for state in states {
+        if map.insert(state.state(), state).is_some() {
+            return Err(PowerError::DuplicatePowerStateModel {
+                state: state.state(),
+            });
+        }
+    }
+    Ok(map)
+}
+
+fn validate_power_value(value: f64) -> Result<(), PowerError> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(PowerError::InvalidPowerValue);
+    }
+    Ok(())
+}
+
+fn validate_temperature(value: f64) -> Result<(), PowerError> {
+    if !value.is_finite() {
+        return Err(PowerError::InvalidTemperature);
+    }
+    Ok(())
 }

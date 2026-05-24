@@ -1,6 +1,6 @@
 use rem6_power::{
-    PowerComponentId, PowerDomain, PowerDomainConfig, PowerDomainSnapshot, PowerError,
-    PowerStateKind,
+    PowerComponentId, PowerDomain, PowerDomainConfig, PowerDomainSnapshot, PowerError, PowerModel,
+    PowerModelMode, PowerModelSnapshot, PowerResidency, PowerStateKind, PowerStatePower,
 };
 
 #[test]
@@ -149,6 +149,104 @@ fn power_domain_rejects_invalid_configs_and_transitions() {
             .unwrap(),
             actual: PowerDomainConfig::new("other", vec![PowerStateKind::On], PowerStateKind::On)
                 .unwrap(),
+        }
+    );
+}
+
+#[test]
+fn power_model_weights_state_power_by_residency_and_temperature() {
+    let mut model = PowerModel::new(
+        PowerModelMode::All,
+        25.0,
+        vec![
+            PowerStatePower::new(PowerStateKind::On, 10.0, 2.0)
+                .unwrap()
+                .with_static_temperature_coefficient(0.10)
+                .unwrap(),
+            PowerStatePower::new(PowerStateKind::ClockGated, 1.0, 1.0)
+                .unwrap()
+                .with_static_temperature_coefficient(0.05)
+                .unwrap(),
+            PowerStatePower::new(PowerStateKind::Off, 0.0, 0.0).unwrap(),
+        ],
+    )
+    .unwrap();
+    model.update_temperature(35.0).unwrap();
+
+    let residency = PowerResidency::new(vec![
+        (PowerStateKind::On, 12),
+        (PowerStateKind::ClockGated, 8),
+        (PowerStateKind::Off, 0),
+    ]);
+    let estimate = model.estimate(&residency).unwrap();
+
+    assert!((estimate.dynamic_watts() - 6.4).abs() < 0.0001);
+    assert!((estimate.static_watts() - 2.4).abs() < 0.0001);
+    assert!((estimate.total_watts() - 8.8).abs() < 0.0001);
+
+    let snapshot = model.snapshot();
+    let mut restored = PowerModel::new(PowerModelMode::All, 25.0, Vec::new()).unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.estimate(&residency).unwrap(), estimate);
+}
+
+#[test]
+fn power_model_modes_and_errors_are_explicit() {
+    let dynamic_only = PowerModel::new(
+        PowerModelMode::DynamicOnly,
+        25.0,
+        vec![PowerStatePower::new(PowerStateKind::On, 5.0, 7.0).unwrap()],
+    )
+    .unwrap();
+    let static_only = PowerModel::new(
+        PowerModelMode::StaticOnly,
+        25.0,
+        vec![PowerStatePower::new(PowerStateKind::On, 5.0, 7.0).unwrap()],
+    )
+    .unwrap();
+    let residency = PowerResidency::new(vec![(PowerStateKind::On, 10)]);
+
+    assert_eq!(
+        dynamic_only.estimate(&residency).unwrap().static_watts(),
+        0.0
+    );
+    assert_eq!(
+        static_only.estimate(&residency).unwrap().dynamic_watts(),
+        0.0
+    );
+    assert_eq!(
+        dynamic_only
+            .estimate(&PowerResidency::new(vec![(PowerStateKind::ClockGated, 1)]))
+            .unwrap_err(),
+        PowerError::MissingPowerStateModel {
+            state: PowerStateKind::ClockGated,
+        }
+    );
+    assert_eq!(
+        PowerStatePower::new(PowerStateKind::Undefined, 1.0, 1.0).unwrap_err(),
+        PowerError::UndefinedState,
+    );
+    assert_eq!(
+        PowerModel::new(PowerModelMode::All, f64::NAN, Vec::new()).unwrap_err(),
+        PowerError::InvalidTemperature,
+    );
+    assert_eq!(
+        PowerModel::new(
+            PowerModelMode::All,
+            25.0,
+            vec![PowerStatePower::new(PowerStateKind::On, 1.0, 1.0).unwrap()],
+        )
+        .unwrap()
+        .restore(&PowerModelSnapshot::new(
+            PowerModelMode::StaticOnly,
+            25.0,
+            Vec::new(),
+        ))
+        .unwrap_err(),
+        PowerError::PowerModelModeMismatch {
+            expected: PowerModelMode::All,
+            actual: PowerModelMode::StaticOnly,
         }
     );
 }

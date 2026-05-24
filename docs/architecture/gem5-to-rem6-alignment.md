@@ -163,7 +163,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, and scheduler snapshots exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
-| statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, and probe event snapshots exist. Full power-model equations and thermal coupling remain open. |
+| statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, and probe event snapshots exist. Math-expression power equations and thermal coupling remain open. |
 | guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, and execution mode actions are typed. Broader guest ABI support remains open. |
 
 ### External Integration and Tooling
@@ -226,7 +226,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   event, payload, and snapshot records.
 - Power tests cover typed power state domains, leader/follower matching,
   residency accounting, transition counters, invalid transition rejection, and
-  snapshot restore.
+  snapshot restore. Power-model tests cover residency-weighted dynamic/static
+  watt aggregation, static/dynamic-only modes, temperature updates, missing
+  state-model rejection, and snapshot restore.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, typed QoS policy intent, result metadata, execution mode
   switches, host action summaries, checkpoint restore labels, and statistics
