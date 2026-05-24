@@ -138,6 +138,32 @@ pub struct TraceFrameStreamWorkerAssignment {
     payload_bytes: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamWorkerRecord {
+    worker_id: usize,
+    merge_order: usize,
+    shard_index: usize,
+    record: TraceFrameStreamRecord,
+}
+
+impl TraceFrameStreamWorkerRecord {
+    pub const fn worker_id(&self) -> usize {
+        self.worker_id
+    }
+
+    pub const fn merge_order(&self) -> usize {
+        self.merge_order
+    }
+
+    pub const fn shard_index(&self) -> usize {
+        self.shard_index
+    }
+
+    pub const fn record(&self) -> &TraceFrameStreamRecord {
+        &self.record
+    }
+}
+
 impl TraceFrameStreamWorkerAssignment {
     pub const fn merge_order(&self) -> usize {
         self.merge_order
@@ -179,6 +205,16 @@ pub struct TraceFrameStreamWorkerPlan {
     worker_frame_bytes: Vec<usize>,
     total_records: usize,
     total_frame_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct TraceFrameStreamWorkerCursor<'a> {
+    bytes: &'a [u8],
+    worker_id: usize,
+    assignments: Vec<TraceFrameStreamWorkerAssignment>,
+    assignment_index: usize,
+    cursor: usize,
+    index: usize,
 }
 
 impl TraceFrameStreamWorkerPlan {
@@ -260,6 +296,145 @@ impl TraceFrameStreamWorkerPlan {
 
     pub const fn total_frame_bytes(&self) -> usize {
         self.total_frame_bytes
+    }
+}
+
+impl<'a> TraceFrameStreamWorkerCursor<'a> {
+    pub fn new(
+        bytes: &'a [u8],
+        worker_plan: &TraceFrameStreamWorkerPlan,
+        worker_id: usize,
+    ) -> Result<Self, ProtoError> {
+        validate_stream_header(bytes)?;
+        if worker_id >= worker_plan.worker_count() {
+            return Err(ProtoError::UnknownFrameStreamWorker {
+                worker_id,
+                worker_count: worker_plan.worker_count(),
+            });
+        }
+
+        let assignments = worker_plan
+            .assignments_for_worker(worker_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        for assignment in &assignments {
+            if assignment.byte_start < STREAM_HEADER_BYTES
+                || assignment.byte_start >= assignment.byte_end
+                || assignment.byte_end > bytes.len()
+            {
+                return Err(ProtoError::TruncatedFrameStream);
+            }
+        }
+
+        let (cursor, index) = assignments
+            .first()
+            .map_or((STREAM_HEADER_BYTES, 0), |assignment| {
+                (assignment.byte_start, assignment.record_start)
+            });
+        Ok(Self {
+            bytes,
+            worker_id,
+            assignments,
+            assignment_index: 0,
+            cursor,
+            index,
+        })
+    }
+
+    pub const fn worker_id(&self) -> usize {
+        self.worker_id
+    }
+
+    pub const fn byte_position(&self) -> usize {
+        self.cursor
+    }
+
+    pub const fn next_index(&self) -> usize {
+        self.index
+    }
+
+    pub fn next_merge_order(&self) -> Option<usize> {
+        self.current_assignment()
+            .map(TraceFrameStreamWorkerAssignment::merge_order)
+    }
+
+    pub fn is_finished(&self) -> bool {
+        match self.current_assignment() {
+            Some(assignment) => {
+                self.assignment_index + 1 == self.assignments.len()
+                    && self.cursor == assignment.byte_end
+            }
+            None => true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.assignment_index = 0;
+        if let Some(assignment) = self.assignments.first() {
+            self.cursor = assignment.byte_start;
+            self.index = assignment.record_start;
+        } else {
+            self.cursor = STREAM_HEADER_BYTES;
+            self.index = 0;
+        }
+    }
+
+    pub fn next_frame(&mut self) -> Result<Option<TraceFrameStreamWorkerRecord>, ProtoError> {
+        self.advance_finished_assignments();
+        let Some(assignment) = self.current_assignment() else {
+            return Ok(None);
+        };
+
+        let length_offset = self.cursor;
+        let (frame_len, frame_offset) = read_varint32(self.bytes, length_offset)?;
+        let frame_len =
+            usize::try_from(frame_len).map_err(|_| ProtoError::InvalidFrameStreamLength)?;
+        if frame_len == 0 {
+            return Err(ProtoError::InvalidFrameStreamLength);
+        }
+        let frame_end = frame_offset
+            .checked_add(frame_len)
+            .ok_or(ProtoError::TruncatedFrameStream)?;
+        if frame_end > assignment.byte_end || self.index >= assignment.record_end {
+            return Err(ProtoError::TruncatedFrameStream);
+        }
+        let frame = TraceFrame::decode(&self.bytes[frame_offset..frame_end])?;
+        let record = TraceFrameStreamRecord {
+            index: self.index,
+            length_offset,
+            frame_offset,
+            frame_len,
+            frame,
+        };
+        let worker_record = TraceFrameStreamWorkerRecord {
+            worker_id: self.worker_id,
+            merge_order: assignment.merge_order(),
+            shard_index: assignment.shard_index(),
+            record,
+        };
+        self.cursor = frame_end;
+        self.index += 1;
+        Ok(Some(worker_record))
+    }
+
+    fn current_assignment(&self) -> Option<&TraceFrameStreamWorkerAssignment> {
+        self.assignments.get(self.assignment_index)
+    }
+
+    fn advance_finished_assignments(&mut self) {
+        while let Some(assignment) = self.current_assignment() {
+            if self.cursor != assignment.byte_end {
+                break;
+            }
+            self.assignment_index += 1;
+            if let Some((byte_start, record_start)) = self
+                .current_assignment()
+                .map(|next| (next.byte_start, next.record_start))
+            {
+                self.cursor = byte_start;
+                self.index = record_start;
+            }
+        }
     }
 }
 

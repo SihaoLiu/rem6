@@ -4,7 +4,8 @@ use rem6_proto::{
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
     TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan, TraceFrameStreamWorkerPlan, TraceHeader, TraceSourceId,
+    TraceFrameStreamShardPlan, TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerPlan,
+    TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -410,6 +411,110 @@ fn trace_frame_stream_worker_plan_rejects_zero_workers() {
     assert_eq!(
         TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 0).unwrap_err(),
         ProtoError::ZeroFrameStreamWorkerCount,
+    );
+}
+
+#[test]
+fn trace_frame_stream_worker_cursor_reads_assigned_shards_without_touching_other_worker_bytes() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let encoded = TraceFrameStream::new(vec![
+        first.clone(),
+        large.clone(),
+        third.clone(),
+        fourth.clone(),
+    ])
+    .unwrap()
+    .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+
+    let mut corrupt = encoded;
+    let worker_one_assignment = &worker_plan.assignments()[1];
+    corrupt[worker_one_assignment.byte_range().end - 1] ^= 0xff;
+
+    let mut worker_zero = TraceFrameStreamWorkerCursor::new(&corrupt, &worker_plan, 0).unwrap();
+    assert_eq!(worker_zero.worker_id(), 0);
+    assert_eq!(worker_zero.next_merge_order(), Some(0));
+    assert_eq!(worker_zero.next_index(), 0);
+    assert_eq!(
+        worker_zero.byte_position(),
+        worker_plan.assignments()[0].byte_range().start
+    );
+
+    let first_record = worker_zero.next_frame().unwrap().unwrap();
+    assert_eq!(first_record.worker_id(), 0);
+    assert_eq!(first_record.merge_order(), 0);
+    assert_eq!(first_record.shard_index(), 0);
+    assert_eq!(first_record.record().index(), 0);
+    assert_eq!(first_record.record().frame(), &first);
+
+    let third_record = worker_zero.next_frame().unwrap().unwrap();
+    assert_eq!(third_record.worker_id(), 0);
+    assert_eq!(third_record.merge_order(), 2);
+    assert_eq!(third_record.shard_index(), 2);
+    assert_eq!(third_record.record().index(), 2);
+    assert_eq!(third_record.record().frame(), &third);
+
+    let fourth_record = worker_zero.next_frame().unwrap().unwrap();
+    assert_eq!(fourth_record.worker_id(), 0);
+    assert_eq!(fourth_record.merge_order(), 3);
+    assert_eq!(fourth_record.shard_index(), 3);
+    assert_eq!(fourth_record.record().index(), 3);
+    assert_eq!(fourth_record.record().frame(), &fourth);
+    assert!(worker_zero.is_finished());
+    assert!(worker_zero.next_frame().unwrap().is_none());
+
+    worker_zero.reset();
+    assert_eq!(worker_zero.next_merge_order(), Some(0));
+    assert_eq!(worker_zero.next_index(), 0);
+    assert_eq!(
+        worker_zero.next_frame().unwrap().unwrap().record().frame(),
+        &first
+    );
+
+    let mut worker_one = TraceFrameStreamWorkerCursor::new(&corrupt, &worker_plan, 1).unwrap();
+    assert_eq!(worker_one.worker_id(), 1);
+    assert_eq!(worker_one.next_merge_order(), Some(1));
+    assert_eq!(worker_one.next_index(), 1);
+    assert_eq!(
+        worker_one.byte_position(),
+        worker_one_assignment.byte_range().start
+    );
+    assert_eq!(
+        worker_one.next_frame().unwrap_err(),
+        ProtoError::FrameChecksumMismatch,
+    );
+    assert_eq!(worker_one.next_merge_order(), Some(1));
+    assert_eq!(worker_one.next_index(), 1);
+    assert_eq!(
+        worker_one.byte_position(),
+        worker_one_assignment.byte_range().start
+    );
+}
+
+#[test]
+fn trace_frame_stream_worker_cursor_rejects_unknown_worker() {
+    let frame =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let encoded = TraceFrameStream::new(vec![frame]).unwrap().encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+
+    assert_eq!(
+        TraceFrameStreamWorkerCursor::new(&encoded, &worker_plan, 2).unwrap_err(),
+        ProtoError::UnknownFrameStreamWorker {
+            worker_id: 2,
+            worker_count: 2,
+        },
     );
 }
 

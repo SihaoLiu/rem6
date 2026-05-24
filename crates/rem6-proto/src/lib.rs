@@ -12,7 +12,8 @@ pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
     TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerPlan,
+    TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerCursor,
+    TraceFrameStreamWorkerPlan, TraceFrameStreamWorkerRecord,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -833,6 +834,10 @@ pub enum ProtoError {
     EmptyFrameStream,
     ZeroFrameStreamShardBudget,
     ZeroFrameStreamWorkerCount,
+    UnknownFrameStreamWorker {
+        worker_id: usize,
+        worker_count: usize,
+    },
     InvalidFrameStreamMagic,
     UnsupportedFrameStreamVersion {
         version: u16,
@@ -949,6 +954,15 @@ impl fmt::Display for ProtoError {
                 write!(
                     formatter,
                     "trace frame stream worker count must be positive"
+                )
+            }
+            Self::UnknownFrameStreamWorker {
+                worker_id,
+                worker_count,
+            } => {
+                write!(
+                    formatter,
+                    "trace frame stream worker {worker_id} is outside worker count {worker_count}"
                 )
             }
             Self::InvalidFrameStreamMagic => {
