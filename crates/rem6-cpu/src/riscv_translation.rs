@@ -5,15 +5,16 @@ use rem6_memory::{
     Address, ByteMask, MemoryRequestId, TranslationFault, TranslationPageMap, TranslationRequestId,
     TranslationTlbStats,
 };
+use rem6_mmio::{MmioBus, MmioError};
 use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
     TransportError,
 };
 
 use crate::{
-    access_width, memory_width_size, store_bytes, CpuDataConfig, CpuTranslationFrontend,
-    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
-    RiscvCpuError, RiscvDataAccessTarget,
+    access_width, memory_width_size, mmio_request, store_bytes, CpuDataConfig,
+    CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
+    RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError, RiscvDataAccessTarget,
 };
 
 use super::OutstandingDataAccess;
@@ -204,6 +205,34 @@ impl RiscvCore {
         Ok(Some(event))
     }
 
+    pub fn issue_next_translated_mmio_data_access_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        bus: &MmioBus,
+        page_map: &TranslationPageMap,
+    ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
+        let Some(issue) =
+            self.prepare_next_translated_mmio_data_access(scheduler.now(), bus, page_map)?
+        else {
+            return Ok(None);
+        };
+        let request = issue.mmio_request()?;
+        let bus = bus.clone();
+        let core = self.clone();
+        let request_id = issue.request_id;
+        let event = scheduler
+            .schedule_parallel_at(self.partition(), scheduler.now(), move |context| {
+                bus.submit_parallel(context, request, move |completion| {
+                    core.record_mmio_completion(request_id, completion);
+                })
+                .expect("validated translated parallel MMIO data access submission");
+            })
+            .map_err(RiscvCpuError::Scheduler)?;
+
+        self.record_data_issue(issue);
+        Ok(Some(event))
+    }
+
     pub(crate) fn prepare_translated_data_parallel_transaction<F>(
         &self,
         tick: Tick,
@@ -245,6 +274,22 @@ impl RiscvCore {
         if issue.is_none() && self.enqueue_next_data_translation(tick)? {
             self.complete_ready_data_translations_with_page_map(tick, page_map)?;
             issue = self.prepare_ready_translated_data_access(tick, transport)?;
+        }
+
+        Ok(issue)
+    }
+
+    fn prepare_next_translated_mmio_data_access(
+        &self,
+        tick: Tick,
+        bus: &MmioBus,
+        page_map: &TranslationPageMap,
+    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        self.complete_ready_data_translations_with_page_map(tick, page_map)?;
+        let mut issue = self.prepare_ready_translated_mmio_data_access(tick, bus)?;
+        if issue.is_none() && self.enqueue_next_data_translation(tick)? {
+            self.complete_ready_data_translations_with_page_map(tick, page_map)?;
+            issue = self.prepare_ready_translated_mmio_data_access(tick, bus)?;
         }
 
         Ok(issue)
@@ -340,16 +385,7 @@ impl RiscvCore {
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
         let translated = {
             let mut state = self.state.lock().expect("riscv core lock");
-            let Some(fetch_request) = state.events.iter().find_map(|event| {
-                let fetch_request = event.fetch().request_id();
-                if state.issued_data_for_fetches.contains(&fetch_request) {
-                    return None;
-                }
-                state
-                    .ready_translated_data
-                    .contains_key(&fetch_request)
-                    .then_some(fetch_request)
-            }) else {
+            let Some(fetch_request) = ready_translated_fetch_request(&state) else {
                 return Ok(None);
             };
             state
@@ -360,6 +396,62 @@ impl RiscvCore {
 
         self.prepare_translated_data_access(tick, transport, translated)
             .map(Some)
+    }
+
+    fn prepare_ready_translated_mmio_data_access(
+        &self,
+        tick: Tick,
+        bus: &MmioBus,
+    ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        let translated = {
+            let state = self.state.lock().expect("riscv core lock");
+            let Some(fetch_request) = ready_translated_fetch_request(&state) else {
+                return Ok(None);
+            };
+            state
+                .ready_translated_data
+                .get(&fetch_request)
+                .expect("selected ready data translation exists")
+                .clone()
+        };
+
+        let request = mmio_request(
+            translated.request_id,
+            &translated.access,
+            translated.size,
+            translated.physical_address,
+        )?;
+        let route = match bus.route_for(&request) {
+            Ok(route) => route,
+            Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
+            Err(error) => return Err(RiscvCpuError::Mmio(error)),
+        };
+        if route.source_partition() != self.core.partition() {
+            return Err(RiscvCpuError::MmioRoutePartitionMismatch {
+                expected: self.core.partition(),
+                actual: route.source_partition(),
+            });
+        }
+
+        {
+            let mut state = self.state.lock().expect("riscv core lock");
+            state
+                .ready_translated_data
+                .remove(&translated.fetch_request)
+                .expect("selected ready data translation exists");
+        }
+
+        Ok(Some(OutstandingDataAccess {
+            tick,
+            partition: self.core.partition(),
+            target: RiscvDataAccessTarget::Mmio { route },
+            request_id: translated.request_id,
+            fetch_request: translated.fetch_request,
+            access: translated.access,
+            size: translated.size,
+            physical_address: translated.physical_address,
+            line_layout: None,
+        }))
     }
 
     fn prepare_translated_data_access(
@@ -456,6 +548,19 @@ fn cpu_translation_request(
         }
     }
     .map_err(RiscvCpuError::DataTranslation)
+}
+
+fn ready_translated_fetch_request(state: &RiscvCoreState) -> Option<MemoryRequestId> {
+    state.events.iter().find_map(|event| {
+        let fetch_request = event.fetch().request_id();
+        if state.issued_data_for_fetches.contains(&fetch_request) {
+            return None;
+        }
+        state
+            .ready_translated_data
+            .contains_key(&fetch_request)
+            .then_some(fetch_request)
+    })
 }
 
 fn translated_data_from_outcome(

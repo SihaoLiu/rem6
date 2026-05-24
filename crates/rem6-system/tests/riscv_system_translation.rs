@@ -9,10 +9,11 @@ use rem6_cpu::{
 use rem6_isa_riscv::Register;
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
     TranslationQueueConfig, TranslationTlbConfig,
 };
+use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvSystemRunStopReason,
@@ -151,6 +152,28 @@ fn single_page_map(virtual_base: u64, physical_base: u64) -> TranslationPageMap 
         TranslationPagePermissions::read_write_execute(),
     )
     .unwrap();
+    map
+}
+
+fn two_page_map(
+    first_virtual_base: u64,
+    first_physical_base: u64,
+    second_virtual_base: u64,
+    second_physical_base: u64,
+) -> TranslationPageMap {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    for (virtual_base, physical_base) in [
+        (first_virtual_base, first_physical_base),
+        (second_virtual_base, second_physical_base),
+    ] {
+        map.map(
+            Address::new(virtual_base),
+            Address::new(physical_base),
+            1,
+            TranslationPagePermissions::read_write_execute(),
+        )
+        .unwrap();
+    }
     map
 }
 
@@ -562,4 +585,195 @@ fn riscv_topology_config_builds_translated_parallel_data_cores() {
             ),
         ]
     );
+}
+
+#[test]
+fn riscv_system_parallel_driver_routes_translated_mmio_and_memory_data() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(53);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let cluster = RiscvCluster::new([
+        translated_riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        translated_riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(reg(2), 0x4000);
+    cluster
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(reg(2), 0x5010);
+
+    let page_map = two_page_map(0x4000, 0x1000, 0x5000, 0x9000);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+            (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8104, 0x0010_0073),
+        ],
+        &[(0x9018, vec![0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f])],
+    );
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe],
+    )
+    .unwrap();
+    let mmio_route = MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 2).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+        mmio_route,
+        Mutex::new(bank),
+    )
+    .unwrap();
+
+    let memory_deliveries = Arc::new(Mutex::new(Vec::new()));
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_mmio_and_data_translation(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                let memory_deliveries = Arc::clone(&memory_deliveries);
+                move |delivery, _context| {
+                    memory_deliveries
+                        .lock()
+                        .unwrap()
+                        .push((delivery.request().id(), delivery.request().range().start()));
+                    memory_response(&store, &delivery)
+                }
+            },
+            40,
+            |cpu| GuestEventId::new(160 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(160), source, 0);
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
+        0x0f1e_2d3c_4b5a_6978
+    );
+    assert_eq!(
+        *memory_deliveries.lock().unwrap(),
+        vec![(
+            MemoryRequestId::new(AgentId::new(8), 1),
+            Address::new(0x9018),
+        )]
+    );
+
+    let cpu0_events = cluster.core(CpuId::new(0)).unwrap().data_access_events();
+    let cpu1_events = cluster.core(CpuId::new(1)).unwrap().data_access_events();
+    assert!(matches!(
+        cpu0_events[0].target(),
+        rem6_cpu::RiscvDataAccessTarget::Mmio { route } if route == mmio_route
+    ));
+    assert_eq!(cpu0_events[0].physical_address(), Address::new(0x1008));
+    assert!(matches!(
+        cpu1_events[0].target(),
+        rem6_cpu::RiscvDataAccessTarget::Memory { route, .. } if route == cpu1_data
+    ));
+    assert_eq!(cpu1_events[0].physical_address(), Address::new(0x9018));
 }

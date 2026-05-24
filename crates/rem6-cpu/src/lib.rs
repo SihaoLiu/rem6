@@ -1232,7 +1232,7 @@ impl RiscvCore {
         let size = memory_width_size(access_width(&access))?;
         let address = Address::new(access_address(&access));
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
-        let request = mmio_request(request_id, &access, size)?;
+        let request = mmio_request(request_id, &access, size, address)?;
         let route = match bus.route_for(&request) {
             Ok(route) => route,
             Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
@@ -1433,7 +1433,12 @@ impl OutstandingDataAccess {
     }
 
     fn mmio_request(&self) -> Result<MmioRequest, RiscvCpuError> {
-        mmio_request(self.request_id, &self.access, self.size)
+        mmio_request(
+            self.request_id,
+            &self.access,
+            self.size,
+            self.physical_address,
+        )
     }
 
     fn clone_without_layout(&self) -> IssuedDataAccess {
@@ -1748,15 +1753,15 @@ fn mmio_request(
     request: MemoryRequestId,
     access: &MemoryAccessKind,
     size: AccessSize,
+    address: Address,
 ) -> Result<MmioRequest, RiscvCpuError> {
     match access {
-        MemoryAccessKind::Load { address, .. } => {
-            MmioRequest::read(mmio_request_id(request), Address::new(*address), size)
-                .map_err(RiscvCpuError::Mmio)
+        MemoryAccessKind::Load { .. } => {
+            MmioRequest::read(mmio_request_id(request), address, size).map_err(RiscvCpuError::Mmio)
         }
-        MemoryAccessKind::Store { address, value, .. } => MmioRequest::write(
+        MemoryAccessKind::Store { value, .. } => MmioRequest::write(
             mmio_request_id(request),
-            Address::new(*address),
+            address,
             store_bytes(*value, size),
             ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
         )
