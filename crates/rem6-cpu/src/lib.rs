@@ -38,6 +38,7 @@ mod tage_predictor;
 mod tage_sc_l_predictor;
 mod topology;
 mod tournament_predictor;
+mod translation;
 
 pub use bimode_predictor::{
     BiModeBranchPredictor, BiModeBranchPredictorConfig, BiModeBranchPredictorError,
@@ -112,6 +113,11 @@ pub use tournament_predictor::{
     TournamentBranchPredictorSnapshot, TournamentHistory, TournamentHistoryUpdate,
     TournamentPrediction, TournamentPredictorSelection, TournamentSquash, TournamentThreadSnapshot,
     TournamentTrainingUpdate,
+};
+pub use translation::{
+    CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest, CpuTranslationFaultRecord,
+    CpuTranslationFrontend, CpuTranslationFrontendError, CpuTranslationFrontendSnapshot,
+    CpuTranslationOutcome, CpuTranslationRequest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
