@@ -4,7 +4,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_cache::{
-    CacheControllerError, CacheControllerResultKind, MsiCacheBankError, MsiCacheController,
+    CacheControllerError, CacheControllerResultKind, MshrQosClass, MsiCacheBankError,
+    MsiCacheController,
 };
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryError, DirectoryGrant, DirectoryLineState,
@@ -89,6 +90,7 @@ pub struct SubmitResult {
     kind: SubmitKind,
     cache_result: CacheControllerResultKind,
     directory_decision: Option<DirectoryDecision>,
+    cache_mshr_effective_qos: Option<MshrQosClass>,
 }
 
 impl SubmitResult {
@@ -97,11 +99,17 @@ impl SubmitResult {
             kind,
             cache_result,
             directory_decision: None,
+            cache_mshr_effective_qos: None,
         }
     }
 
     fn with_directory_decision(mut self, decision: DirectoryDecision) -> Self {
         self.directory_decision = Some(decision);
+        self
+    }
+
+    fn with_cache_mshr_effective_qos(mut self, qos: Option<MshrQosClass>) -> Self {
+        self.cache_mshr_effective_qos = qos;
         self
     }
 
@@ -115,6 +123,10 @@ impl SubmitResult {
 
     pub const fn directory_decision(&self) -> Option<&DirectoryDecision> {
         self.directory_decision.as_ref()
+    }
+
+    pub const fn cache_mshr_effective_qos(&self) -> Option<MshrQosClass> {
+        self.cache_mshr_effective_qos
     }
 }
 

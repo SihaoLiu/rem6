@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use rem6_cache::{MsiCacheBankSnapshot, MsiCacheControllerSnapshot, MsiPendingMissSnapshot};
+use rem6_cache::{
+    MshrQosClass, MsiCacheBankSnapshot, MsiCacheControllerSnapshot, MsiPendingMissSnapshot,
+};
 use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, DirectorySnoop,
 };
@@ -15,7 +17,7 @@ use crate::{
     MsiBankDirectoryHarnessSnapshot, SubmitKind, SubmitResult,
 };
 
-const FORMAT_VERSION: u64 = 2;
+const FORMAT_VERSION: u64 = 3;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
@@ -381,17 +383,41 @@ fn write_submit_result(payload: &mut Vec<u8>, result: &SubmitResult) {
         }
         None => write_bool(payload, false),
     }
+    write_optional_mshr_qos(payload, result.cache_mshr_effective_qos());
 }
 
 fn read_submit_result(cursor: &mut PayloadCursor<'_>) -> Result<SubmitResult, String> {
     let kind = u8_to_submit_kind(cursor.read_u8("MSI submit result kind")?)?;
     let cache_result = u8_to_cache_result(cursor.read_u8("MSI submit cache result")?)?;
-    let result = SubmitResult::new(kind, cache_result);
+    let mut result = SubmitResult::new(kind, cache_result);
     if cursor.read_bool("MSI submit directory decision flag")? {
-        Ok(result.with_directory_decision(read_directory_decision(cursor)?))
+        result = result.with_directory_decision(read_directory_decision(cursor)?);
+    }
+    if let Some(qos) = read_optional_mshr_qos(cursor)? {
+        Ok(result.with_cache_mshr_effective_qos(Some(qos)))
     } else {
         Ok(result)
     }
+}
+
+fn write_optional_mshr_qos(payload: &mut Vec<u8>, qos: Option<MshrQosClass>) {
+    match qos {
+        Some(qos) => {
+            write_bool(payload, true);
+            write_u32(payload, qos.requestor());
+            write_u8(payload, qos.priority());
+        }
+        None => write_bool(payload, false),
+    }
+}
+
+fn read_optional_mshr_qos(cursor: &mut PayloadCursor<'_>) -> Result<Option<MshrQosClass>, String> {
+    if !cursor.read_bool("MSI submit MSHR QoS flag")? {
+        return Ok(None);
+    }
+    let requestor = cursor.read_u32("MSI submit MSHR QoS requestor")?;
+    let priority = cursor.read_u8("MSI submit MSHR QoS priority")?;
+    Ok(Some(MshrQosClass::new(requestor, priority)))
 }
 
 fn write_request(payload: &mut Vec<u8>, request: &MemoryRequest) {

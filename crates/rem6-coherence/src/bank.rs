@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cache::{
-    CacheControllerError, CacheControllerResultKind, MshrQueueConfig, MsiCacheBank,
+    CacheControllerError, CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MsiCacheBank,
     MsiCacheBankSnapshot,
 };
 use rem6_directory::{
@@ -619,13 +619,47 @@ impl MsiBankDirectoryHarness {
     where
         I: IntoIterator<Item = MemoryRequest>,
     {
+        self.submit_coalesced_cpu_requests_inner(
+            tick,
+            agent,
+            requests.into_iter().map(|request| (request, None)),
+        )
+    }
+
+    pub fn submit_coalesced_cpu_requests_with_qos<I>(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        requests: I,
+    ) -> Result<Vec<SubmitResult>, HarnessError>
+    where
+        I: IntoIterator<Item = (MemoryRequest, MshrQosClass)>,
+    {
+        self.submit_coalesced_cpu_requests_inner(
+            tick,
+            agent,
+            requests
+                .into_iter()
+                .map(|(request, qos)| (request, Some(qos))),
+        )
+    }
+
+    fn submit_coalesced_cpu_requests_inner<I>(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        requests: I,
+    ) -> Result<Vec<SubmitResult>, HarnessError>
+    where
+        I: IntoIterator<Item = (MemoryRequest, Option<MshrQosClass>)>,
+    {
         self.cache(agent)?;
         let requests = requests.into_iter().collect::<Vec<_>>();
         let Some(first) = requests.first() else {
             return Ok(Vec::new());
         };
-        let expected_line = self.layout.line_address(first.line_address());
-        for request in &requests {
+        let expected_line = self.layout.line_address(first.0.line_address());
+        for (request, _) in &requests {
             let actual = self.layout.line_address(request.line_address());
             if actual != expected_line {
                 return Err(HarnessError::WrongLine {
@@ -637,14 +671,21 @@ impl MsiBankDirectoryHarness {
 
         let mut results = Vec::with_capacity(requests.len());
         let mut pending_fill = None;
-        for request in requests {
-            let result = self
-                .cache_mut(agent)?
-                .accept_cpu_request(request)
-                .map_err(HarnessError::CacheBank)?;
+        for (request, qos) in requests {
+            let result = match qos {
+                Some(qos) => self
+                    .cache_mut(agent)?
+                    .accept_cpu_request_with_qos(request, qos),
+                None => self.cache_mut(agent)?.accept_cpu_request(request),
+            }
+            .map_err(HarnessError::CacheBank)?;
             let cache_result = result.kind();
+            let effective_qos = self.cache(agent)?.mshr_effective_qos(expected_line);
             if self.record_target_outcomes(tick, cache_result, result.target_outcomes()) > 0 {
-                results.push(SubmitResult::new(SubmitKind::ImmediateHit, cache_result));
+                results.push(
+                    SubmitResult::new(SubmitKind::ImmediateHit, cache_result)
+                        .with_cache_mshr_effective_qos(effective_qos),
+                );
                 continue;
             }
 
@@ -664,10 +705,14 @@ impl MsiBankDirectoryHarness {
                 pending_fill = Some((downstream.id(), downstream, decision.clone()));
                 results.push(
                     SubmitResult::new(SubmitKind::ScheduledMiss, cache_result)
-                        .with_directory_decision(decision),
+                        .with_directory_decision(decision)
+                        .with_cache_mshr_effective_qos(effective_qos),
                 );
             } else {
-                results.push(SubmitResult::new(SubmitKind::CoalescedMiss, cache_result));
+                results.push(
+                    SubmitResult::new(SubmitKind::CoalescedMiss, cache_result)
+                        .with_cache_mshr_effective_qos(effective_qos),
+                );
             }
         }
 
@@ -822,6 +867,14 @@ impl MsiBankDirectoryHarness {
         address: Address,
     ) -> Result<Option<Vec<u8>>, HarnessError> {
         Ok(self.cache(agent)?.cached_data(address).map(<[u8]>::to_vec))
+    }
+
+    pub fn cache_mshr_effective_qos(
+        &self,
+        agent: AgentId,
+        address: Address,
+    ) -> Result<Option<MshrQosClass>, HarnessError> {
+        Ok(self.cache(agent)?.mshr_effective_qos(address))
     }
 
     pub fn directory_state(&self, address: Address) -> DirectoryLineState {
