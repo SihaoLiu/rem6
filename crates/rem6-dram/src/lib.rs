@@ -3,13 +3,16 @@ use std::error::Error;
 use std::fmt;
 
 mod activity;
+mod qos;
 
 use activity::{collect_dram_bank_activity, collect_dram_port_activity};
 pub use activity::{
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
+pub use qos::DramQosRequest;
 
+use rem6_fabric::{QosError, QosQueueArbiter};
 use rem6_kernel::{WaitForEdgeKind, WaitForGraph, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -73,6 +76,9 @@ pub enum DramError {
         request: MemoryRequestId,
         operation: MemoryOperation,
     },
+    Qos {
+        source: QosError,
+    },
 }
 
 impl fmt::Display for DramError {
@@ -123,11 +129,27 @@ impl fmt::Display for DramError {
                 request.sequence(),
                 request.agent().get()
             ),
+            Self::Qos { source } => write!(formatter, "DRAM QoS scheduling failed: {source}"),
         }
     }
 }
 
-impl Error for DramError {}
+impl Error for DramError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Qos { source } => Some(source),
+            Self::ZeroBankCount
+            | Self::ZeroRowSize
+            | Self::ZeroLineSize
+            | Self::RowSizeNotLineMultiple { .. }
+            | Self::ZeroTimingLatency { .. }
+            | Self::ZeroProfileTopology { .. }
+            | Self::LineSizeMismatch { .. }
+            | Self::RequestCrossesRow { .. }
+            | Self::UnsupportedOperation { .. } => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DramMemoryError {
@@ -1173,6 +1195,22 @@ impl DramController {
         self.activity_log.push(access.clone());
         self.wait_log.extend(waits);
         Ok(access)
+    }
+
+    pub fn schedule_qos_batch<'a, I>(
+        &mut self,
+        arrival_cycle: u64,
+        requests: I,
+        arbiter: &mut QosQueueArbiter,
+    ) -> Result<Vec<DramAccess>, DramError>
+    where
+        I: IntoIterator<Item = DramQosRequest<'a>>,
+    {
+        qos::order_requests(requests.into_iter().collect(), arbiter)
+            .map_err(|source| DramError::Qos { source })?
+            .into_iter()
+            .map(|request| self.schedule(arrival_cycle, request.request()))
+            .collect()
     }
 }
 

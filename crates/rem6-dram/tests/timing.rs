@@ -1,6 +1,8 @@
 use rem6_dram::{
-    DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramTiming,
+    DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramQosRequest,
+    DramTiming,
 };
+use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -19,17 +21,61 @@ fn geometry() -> DramGeometry {
 }
 
 fn request_id(sequence: u64) -> MemoryRequestId {
-    MemoryRequestId::new(AgentId::new(2), sequence)
+    request_id_from(2, sequence)
+}
+
+fn request_id_from(agent: u32, sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(agent), sequence)
 }
 
 fn read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    read_from(2, address, size, sequence)
+}
+
+fn read_from(agent: u32, address: u64, size: u64, sequence: u64) -> MemoryRequest {
     MemoryRequest::read_shared(
-        request_id(sequence),
+        request_id_from(agent, sequence),
         Address::new(address),
         AccessSize::new(size).unwrap(),
         layout(),
     )
     .unwrap()
+}
+
+#[test]
+fn dram_controller_qos_batch_orders_same_arrival_before_timing() {
+    let mut controller = DramController::new(geometry(), timing());
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let low = read_from(1, 0x0000, 8, 30);
+    let high = read_from(9, 0x0100, 8, 31);
+    let marker = controller.mark_wait_for();
+
+    let accesses = controller
+        .schedule_qos_batch(
+            0,
+            [
+                DramQosRequest::new(&low, QosPriority::new(1), 0),
+                DramQosRequest::new(&high, QosPriority::new(0), 1),
+            ],
+            &mut arbiter,
+        )
+        .unwrap();
+
+    assert_eq!(accesses.len(), 2);
+    assert_eq!(accesses[0].request(), high.id());
+    assert_eq!(accesses[0].command_cycle(), 3);
+    assert_eq!(accesses[0].ready_cycle(), 8);
+    assert_eq!(accesses[1].request(), low.id());
+    assert!(accesses[1].row_hit());
+    assert_eq!(accesses[1].command_cycle(), 8);
+    assert_eq!(accesses[1].ready_cycle(), 13);
+
+    let low_request = WaitForNode::transaction("dram.agent.1.request.30").unwrap();
+    let bank = WaitForNode::resource("dram.port.0.bank.0").unwrap();
+    let graph = controller.wait_for_graph_since(marker).snapshot();
+    assert_eq!(graph.edge_count(), 1);
+    assert!(graph.contains_edge(&low_request, &bank, WaitForEdgeKind::Queue));
+    assert_eq!(graph.dependencies(&low_request)[0].last_observed_tick(), 7);
 }
 
 fn write(address: u64, sequence: u64) -> MemoryRequest {
