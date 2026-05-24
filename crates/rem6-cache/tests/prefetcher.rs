@@ -65,6 +65,55 @@ fn tagged_prefetcher_generates_next_lines_and_queues_candidates() {
 }
 
 #[test]
+fn queued_prefetcher_drops_cross_page_candidates_without_translation() {
+    let config = TaggedPrefetcherConfig::new(64, 5).unwrap();
+    let mut prefetcher = TaggedPrefetcher::new(config);
+    let candidates = prefetcher
+        .observe(tagged_access(4, 0x90, 0x0f18))
+        .unwrap()
+        .to_vec();
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x0f40),
+            Address::new(0x0f80),
+            Address::new(0x0fc0),
+            Address::new(0x1000),
+            Address::new(0x1040)
+        ]
+    );
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(8, 2, 8, true, 64)
+        .unwrap()
+        .with_page_size(4096)
+        .unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    let result = queue
+        .enqueue_candidates_filtered(5, &candidates, &[])
+        .unwrap();
+
+    assert_eq!(result.accepted(), 3);
+    assert_eq!(result.dropped_page_crossing(), 2);
+
+    let issued = queue.issue_ready(7);
+    assert_eq!(
+        issued
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x0f40),
+            Address::new(0x0f80),
+            Address::new(0x0fc0)
+        ]
+    );
+}
+
+#[test]
 fn stride_prefetcher_trains_per_requestor_context_and_snapshots_state() {
     let config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
     let mut prefetcher = StridePrefetcher::new(config.clone());

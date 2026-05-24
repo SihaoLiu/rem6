@@ -14,6 +14,7 @@ pub struct QueuedPrefetchConfig {
     max_issue_per_tick: usize,
     filter_duplicates: bool,
     line_size: u64,
+    page_size: Option<u64>,
     full_policy: QueuedPrefetchFullPolicy,
 }
 
@@ -50,6 +51,7 @@ impl QueuedPrefetchConfig {
             max_issue_per_tick,
             filter_duplicates,
             line_size,
+            page_size: None,
             full_policy: QueuedPrefetchFullPolicy::RejectNew,
         })
     }
@@ -74,8 +76,20 @@ impl QueuedPrefetchConfig {
         self.line_size
     }
 
+    pub const fn page_size(&self) -> Option<u64> {
+        self.page_size
+    }
+
     pub const fn full_policy(&self) -> QueuedPrefetchFullPolicy {
         self.full_policy
+    }
+
+    pub fn with_page_size(mut self, page_size: u64) -> Result<Self, QueuedPrefetcherError> {
+        if page_size == 0 {
+            return Err(QueuedPrefetcherError::ZeroPageSize);
+        }
+        self.page_size = Some(page_size);
+        Ok(self)
     }
 
     pub const fn with_full_policy(mut self, full_policy: QueuedPrefetchFullPolicy) -> Self {
@@ -89,6 +103,7 @@ pub enum QueuedPrefetcherError {
     ZeroCapacity,
     ZeroIssueWidth,
     ZeroLineSize,
+    ZeroPageSize,
     QueueFull {
         capacity: usize,
     },
@@ -112,6 +127,7 @@ impl fmt::Display for QueuedPrefetcherError {
             Self::ZeroCapacity => write!(formatter, "queued prefetch capacity is zero"),
             Self::ZeroIssueWidth => write!(formatter, "queued prefetch issue width is zero"),
             Self::ZeroLineSize => write!(formatter, "queued prefetch line size is zero"),
+            Self::ZeroPageSize => write!(formatter, "queued prefetch page size is zero"),
             Self::QueueFull { capacity } => write!(
                 formatter,
                 "queued prefetch resource is full at capacity {capacity}"
@@ -192,6 +208,7 @@ pub struct QueuedPrefetchEnqueueResult {
     duplicate_hits: usize,
     updated_priorities: usize,
     dropped_redundant: usize,
+    dropped_page_crossing: usize,
     dropped_throttled: usize,
     evicted_full: usize,
 }
@@ -211,6 +228,10 @@ impl QueuedPrefetchEnqueueResult {
 
     pub const fn dropped_redundant(&self) -> usize {
         self.dropped_redundant
+    }
+
+    pub const fn dropped_page_crossing(&self) -> usize {
+        self.dropped_page_crossing
     }
 
     pub const fn dropped_throttled(&self) -> usize {
@@ -554,6 +575,7 @@ impl QueuedPrefetcher {
         let mut duplicate_hits = 0;
         let mut updated_priorities = 0;
         let mut dropped_redundant = 0;
+        let mut dropped_page_crossing = 0;
         let mut dropped_throttled = 0;
         let mut evicted_full = 0;
         for (index, candidate) in candidates.iter().enumerate() {
@@ -563,6 +585,10 @@ impl QueuedPrefetcher {
             }
 
             let address = self.normalized_address(candidate.address());
+            if self.crosses_page(address, candidate.source_address()) {
+                dropped_page_crossing += 1;
+                continue;
+            }
             if self.is_redundant(address, candidate.secure(), redundant_lines) {
                 dropped_redundant += 1;
                 continue;
@@ -612,6 +638,7 @@ impl QueuedPrefetcher {
             duplicate_hits,
             updated_priorities,
             dropped_redundant,
+            dropped_page_crossing,
             dropped_throttled,
             evicted_full,
         })
@@ -686,6 +713,13 @@ impl QueuedPrefetcher {
         Address::new(address.get() / self.config.line_size() * self.config.line_size())
     }
 
+    fn crosses_page(&self, target: Address, source: Address) -> bool {
+        let Some(page_size) = self.config.page_size() else {
+            return false;
+        };
+        page_address(target, page_size) != page_address(source, page_size)
+    }
+
     fn is_redundant(
         &self,
         address: Address,
@@ -746,8 +780,13 @@ fn normalized_address(address: Address, line_size: u64) -> Address {
     Address::new(address.get() / line_size * line_size)
 }
 
+fn page_address(address: Address, page_size: u64) -> u64 {
+    address.get() / page_size
+}
+
 pub trait PrefetchCandidate {
     fn address(&self) -> Address;
+    fn source_address(&self) -> Address;
     fn context(&self) -> AgentId;
     fn pc(&self) -> u64;
     fn secure(&self) -> bool;
@@ -845,6 +884,7 @@ impl TaggedPrefetchAccess {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaggedPrefetchCandidate {
     address: Address,
+    source_address: Address,
     context: AgentId,
     pc: u64,
     secure: bool,
@@ -855,6 +895,7 @@ pub struct TaggedPrefetchCandidate {
 impl TaggedPrefetchCandidate {
     fn new(
         address: Address,
+        source_address: Address,
         context: AgentId,
         pc: u64,
         secure: bool,
@@ -863,6 +904,7 @@ impl TaggedPrefetchCandidate {
     ) -> Self {
         Self {
             address,
+            source_address,
             context,
             pc,
             secure,
@@ -873,6 +915,10 @@ impl TaggedPrefetchCandidate {
 
     pub const fn address(&self) -> Address {
         self.address
+    }
+
+    pub const fn source_address(&self) -> Address {
+        self.source_address
     }
 
     pub const fn context(&self) -> AgentId {
@@ -899,6 +945,10 @@ impl TaggedPrefetchCandidate {
 impl PrefetchCandidate for TaggedPrefetchCandidate {
     fn address(&self) -> Address {
         self.address()
+    }
+
+    fn source_address(&self) -> Address {
+        self.source_address()
     }
 
     fn context(&self) -> AgentId {
@@ -972,6 +1022,7 @@ impl TaggedPrefetcher {
             if let Some(address) = line_address.get().checked_add(offset) {
                 self.last_candidates.push(TaggedPrefetchCandidate::new(
                     Address::new(address),
+                    access.address(),
                     access.requestor(),
                     access.pc(),
                     access.secure(),
@@ -1162,6 +1213,7 @@ impl StridePrefetchAccess {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StridePrefetchCandidate {
     address: Address,
+    source_address: Address,
     context: AgentId,
     pc: u64,
     secure: bool,
@@ -1172,6 +1224,7 @@ pub struct StridePrefetchCandidate {
 impl StridePrefetchCandidate {
     fn new(
         address: Address,
+        source_address: Address,
         context: AgentId,
         pc: u64,
         secure: bool,
@@ -1180,6 +1233,7 @@ impl StridePrefetchCandidate {
     ) -> Self {
         Self {
             address,
+            source_address,
             context,
             pc,
             secure,
@@ -1190,6 +1244,10 @@ impl StridePrefetchCandidate {
 
     pub const fn address(&self) -> Address {
         self.address
+    }
+
+    pub const fn source_address(&self) -> Address {
+        self.source_address
     }
 
     pub const fn context(&self) -> AgentId {
@@ -1216,6 +1274,10 @@ impl StridePrefetchCandidate {
 impl PrefetchCandidate for StridePrefetchCandidate {
     fn address(&self) -> Address {
         self.address()
+    }
+
+    fn source_address(&self) -> Address {
+        self.source_address()
     }
 
     fn context(&self) -> AgentId {
@@ -1476,6 +1538,7 @@ impl StridePrefetcher {
             if let Some(address) = offset_address(line_address, offset) {
                 self.last_candidates.push(StridePrefetchCandidate::new(
                     address,
+                    access.address(),
                     context_key,
                     access.pc(),
                     access.secure(),
