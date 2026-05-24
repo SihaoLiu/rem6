@@ -242,6 +242,345 @@ pub enum PacketCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencyTraceHeader {
+    source: TraceSourceId,
+    version: u32,
+    tick_frequency_hz: u64,
+    window_size: u32,
+}
+
+impl DependencyTraceHeader {
+    pub fn new(
+        source: TraceSourceId,
+        tick_frequency_hz: u64,
+        window_size: u32,
+    ) -> Result<Self, ProtoError> {
+        if tick_frequency_hz == 0 {
+            return Err(ProtoError::ZeroTickFrequency);
+        }
+        if window_size == 0 {
+            return Err(ProtoError::ZeroDependencyWindowSize);
+        }
+        Ok(Self {
+            source,
+            version: 0,
+            tick_frequency_hz,
+            window_size,
+        })
+    }
+
+    pub const fn with_version(mut self, version: u32) -> Self {
+        self.version = version;
+        self
+    }
+
+    pub fn source(&self) -> &TraceSourceId {
+        &self.source
+    }
+
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    pub const fn tick_frequency_hz(&self) -> u64 {
+        self.tick_frequency_hz
+    }
+
+    pub const fn window_size(&self) -> u32 {
+        self.window_size
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DependencyRecordKind {
+    Invalid,
+    Load,
+    Store,
+    Compute,
+}
+
+impl DependencyRecordKind {
+    const fn uses_memory(self) -> bool {
+        matches!(self, Self::Load | Self::Store)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencyRecord {
+    sequence: u64,
+    kind: DependencyRecordKind,
+    physical_address: Option<Address>,
+    virtual_address: Option<Address>,
+    size: Option<u32>,
+    flags: u32,
+    order_dependencies: Vec<u64>,
+    register_dependencies: Vec<u64>,
+    compute_delay: u64,
+    weight: u32,
+    pc: Option<u64>,
+    asid: Option<u32>,
+}
+
+impl DependencyRecord {
+    pub fn new(sequence: u64, kind: DependencyRecordKind) -> Result<Self, ProtoError> {
+        if sequence == 0 {
+            return Err(ProtoError::ZeroDependencySequence);
+        }
+        if kind == DependencyRecordKind::Invalid {
+            return Err(ProtoError::InvalidDependencyRecordKind);
+        }
+        Ok(Self {
+            sequence,
+            kind,
+            physical_address: None,
+            virtual_address: None,
+            size: None,
+            flags: 0,
+            order_dependencies: Vec::new(),
+            register_dependencies: Vec::new(),
+            compute_delay: 0,
+            weight: 1,
+            pc: None,
+            asid: None,
+        })
+    }
+
+    pub fn with_physical_address(mut self, address: Address) -> Self {
+        self.physical_address = Some(address);
+        self
+    }
+
+    pub fn with_virtual_address(mut self, address: Address) -> Self {
+        self.virtual_address = Some(address);
+        self
+    }
+
+    pub const fn with_asid(mut self, asid: u32) -> Self {
+        self.asid = Some(asid);
+        self
+    }
+
+    pub fn with_size(mut self, size: u32) -> Result<Self, ProtoError> {
+        if !self.kind.uses_memory() {
+            return Err(ProtoError::UnexpectedDependencyMemoryAccess { kind: self.kind });
+        }
+        if size == 0 {
+            return Err(ProtoError::ZeroDependencyAccessSize);
+        }
+        self.size = Some(size);
+        Ok(self)
+    }
+
+    pub const fn with_flags(mut self, flags: u32) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    pub fn with_order_dependency(mut self, dependency: u64) -> Result<Self, ProtoError> {
+        if dependency == self.sequence {
+            return Err(ProtoError::SelfDependency {
+                sequence: self.sequence,
+            });
+        }
+        self.order_dependencies.push(dependency);
+        Ok(self)
+    }
+
+    pub fn with_register_dependency(mut self, dependency: u64) -> Result<Self, ProtoError> {
+        if dependency == self.sequence {
+            return Err(ProtoError::SelfDependency {
+                sequence: self.sequence,
+            });
+        }
+        self.register_dependencies.push(dependency);
+        Ok(self)
+    }
+
+    pub const fn with_compute_delay(mut self, delay: u64) -> Self {
+        self.compute_delay = delay;
+        self
+    }
+
+    pub fn with_weight(mut self, weight: u32) -> Result<Self, ProtoError> {
+        if weight == 0 {
+            return Err(ProtoError::ZeroDependencyWeight);
+        }
+        self.weight = weight;
+        Ok(self)
+    }
+
+    pub const fn with_pc(mut self, pc: u64) -> Self {
+        self.pc = Some(pc);
+        self
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(&self) -> DependencyRecordKind {
+        self.kind
+    }
+
+    pub const fn physical_address(&self) -> Option<Address> {
+        self.physical_address
+    }
+
+    pub const fn virtual_address(&self) -> Option<Address> {
+        self.virtual_address
+    }
+
+    pub const fn size(&self) -> Option<u32> {
+        self.size
+    }
+
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    pub fn order_dependencies(&self) -> &[u64] {
+        &self.order_dependencies
+    }
+
+    pub fn register_dependencies(&self) -> &[u64] {
+        &self.register_dependencies
+    }
+
+    pub const fn compute_delay(&self) -> u64 {
+        self.compute_delay
+    }
+
+    pub const fn weight(&self) -> u32 {
+        self.weight
+    }
+
+    pub const fn pc(&self) -> Option<u64> {
+        self.pc
+    }
+
+    pub const fn asid(&self) -> Option<u32> {
+        self.asid
+    }
+
+    fn validate_for_trace(&self) -> Result<(), ProtoError> {
+        if self.kind.uses_memory() && (self.physical_address.is_none() || self.size.is_none()) {
+            return Err(ProtoError::MissingDependencyMemoryAccess { kind: self.kind });
+        }
+        if !self.kind.uses_memory()
+            && (self.physical_address.is_some()
+                || self.virtual_address.is_some()
+                || self.size.is_some()
+                || self.asid.is_some())
+        {
+            return Err(ProtoError::UnexpectedDependencyMemoryAccess { kind: self.kind });
+        }
+        Ok(())
+    }
+
+    fn dependencies(&self) -> impl Iterator<Item = u64> + '_ {
+        self.order_dependencies
+            .iter()
+            .chain(self.register_dependencies.iter())
+            .copied()
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DependencyTraceIdentity(String);
+
+impl DependencyTraceIdentity {
+    fn new(value: u64) -> Self {
+        Self(format!("{value:016x}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencyTrace {
+    header: DependencyTraceHeader,
+    records: Vec<DependencyRecord>,
+    identity: DependencyTraceIdentity,
+}
+
+impl DependencyTrace {
+    pub fn builder(header: DependencyTraceHeader) -> DependencyTraceBuilder {
+        DependencyTraceBuilder::new(header)
+    }
+
+    pub fn header(&self) -> &DependencyTraceHeader {
+        &self.header
+    }
+
+    pub fn records(&self) -> &[DependencyRecord] {
+        &self.records
+    }
+
+    pub fn identity(&self) -> DependencyTraceIdentity {
+        self.identity.clone()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencyTraceBuilder {
+    header: DependencyTraceHeader,
+    records: Vec<DependencyRecord>,
+}
+
+impl DependencyTraceBuilder {
+    fn new(header: DependencyTraceHeader) -> Self {
+        Self {
+            header,
+            records: Vec::new(),
+        }
+    }
+
+    pub fn add_record(mut self, record: DependencyRecord) -> Self {
+        self.records.push(record);
+        self
+    }
+
+    pub fn build(self) -> Result<DependencyTrace, ProtoError> {
+        let mut records = BTreeMap::new();
+        for record in self.records {
+            record.validate_for_trace()?;
+            let sequence = record.sequence();
+            if records.insert(sequence, record).is_some() {
+                return Err(ProtoError::DuplicateDependencyRecord { sequence });
+            }
+        }
+        let records = records.into_values().collect::<Vec<_>>();
+        for record in &records {
+            for dependency in record.dependencies() {
+                if dependency > record.sequence() {
+                    return Err(ProtoError::UnknownDependency {
+                        sequence: record.sequence(),
+                        dependency,
+                    });
+                }
+                if record.sequence().saturating_sub(dependency)
+                    > u64::from(self.header.window_size())
+                {
+                    return Err(ProtoError::DependencyOutsideWindow {
+                        sequence: record.sequence(),
+                        dependency,
+                        window_size: self.header.window_size(),
+                    });
+                }
+            }
+        }
+        let identity = dependency_trace_identity(&self.header, &records);
+        Ok(DependencyTrace {
+            header: self.header,
+            records,
+            identity,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PacketRecord {
     tick: Tick,
     command: PacketCommand,
@@ -424,14 +763,48 @@ impl ProtoTraceBuilder {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProtoError {
     EmptyTraceSource,
-    EmptyTraceIdString { key: u32 },
+    EmptyTraceIdString {
+        key: u32,
+    },
     ZeroTickFrequency,
     EmptyInstructionBytes,
     ZeroMemoryAccessSize,
     ZeroPacketSize,
-    UnexpectedInstructionMemoryAccess { kind: InstructionKind },
-    MissingInstructionMemoryAccess { kind: InstructionKind },
-    DuplicateTraceIdString { key: u32 },
+    UnexpectedInstructionMemoryAccess {
+        kind: InstructionKind,
+    },
+    MissingInstructionMemoryAccess {
+        kind: InstructionKind,
+    },
+    DuplicateTraceIdString {
+        key: u32,
+    },
+    ZeroDependencyWindowSize,
+    ZeroDependencySequence,
+    InvalidDependencyRecordKind,
+    ZeroDependencyAccessSize,
+    ZeroDependencyWeight,
+    UnexpectedDependencyMemoryAccess {
+        kind: DependencyRecordKind,
+    },
+    MissingDependencyMemoryAccess {
+        kind: DependencyRecordKind,
+    },
+    SelfDependency {
+        sequence: u64,
+    },
+    UnknownDependency {
+        sequence: u64,
+        dependency: u64,
+    },
+    DependencyOutsideWindow {
+        sequence: u64,
+        dependency: u64,
+        window_size: u32,
+    },
+    DuplicateDependencyRecord {
+        sequence: u64,
+    },
 }
 
 impl fmt::Display for ProtoError {
@@ -459,6 +832,61 @@ impl fmt::Display for ProtoError {
             }
             Self::DuplicateTraceIdString { key } => {
                 write!(formatter, "trace id string key {key} is duplicated")
+            }
+            Self::ZeroDependencyWindowSize => {
+                write!(formatter, "dependency trace window size must be positive")
+            }
+            Self::ZeroDependencySequence => {
+                write!(formatter, "dependency record sequence must be positive")
+            }
+            Self::InvalidDependencyRecordKind => {
+                write!(formatter, "dependency record kind must not be invalid")
+            }
+            Self::ZeroDependencyAccessSize => {
+                write!(formatter, "dependency memory access size must be positive")
+            }
+            Self::ZeroDependencyWeight => {
+                write!(formatter, "dependency record weight must be positive")
+            }
+            Self::UnexpectedDependencyMemoryAccess { kind } => {
+                write!(
+                    formatter,
+                    "dependency record kind {kind:?} cannot include memory access fields"
+                )
+            }
+            Self::MissingDependencyMemoryAccess { kind } => {
+                write!(
+                    formatter,
+                    "dependency record kind {kind:?} requires physical address and size"
+                )
+            }
+            Self::SelfDependency { sequence } => {
+                write!(formatter, "dependency record {sequence} depends on itself")
+            }
+            Self::UnknownDependency {
+                sequence,
+                dependency,
+            } => {
+                write!(
+                    formatter,
+                    "dependency record {sequence} depends on future record {dependency}"
+                )
+            }
+            Self::DependencyOutsideWindow {
+                sequence,
+                dependency,
+                window_size,
+            } => {
+                write!(
+                    formatter,
+                    "dependency record {sequence} dependency {dependency} exceeds window {window_size}"
+                )
+            }
+            Self::DuplicateDependencyRecord { sequence } => {
+                write!(
+                    formatter,
+                    "dependency record sequence {sequence} is duplicated"
+                )
             }
         }
     }
@@ -491,6 +919,53 @@ fn trace_identity(
         hash_packet(&mut hash, packet);
     }
     ProtoTraceIdentity::new(hash)
+}
+
+fn dependency_trace_identity(
+    header: &DependencyTraceHeader,
+    records: &[DependencyRecord],
+) -> DependencyTraceIdentity {
+    let mut hash = FNV_OFFSET;
+    hash_str(&mut hash, "rem6.proto.dependency_trace.v1");
+    hash_str(&mut hash, header.source().as_str());
+    hash_u64(&mut hash, u64::from(header.version()));
+    hash_u64(&mut hash, header.tick_frequency_hz());
+    hash_u64(&mut hash, u64::from(header.window_size()));
+    hash_u64(&mut hash, records.len() as u64);
+    for record in records {
+        hash_dependency_record(&mut hash, record);
+    }
+    DependencyTraceIdentity::new(hash)
+}
+
+fn hash_dependency_record(hash: &mut u64, record: &DependencyRecord) {
+    hash_u64(hash, record.sequence());
+    hash_dependency_record_kind(hash, record.kind());
+    hash_optional_address(hash, record.physical_address());
+    hash_optional_address(hash, record.virtual_address());
+    hash_optional_u32(hash, record.size());
+    hash_u64(hash, u64::from(record.flags()));
+    hash_u64(hash, record.order_dependencies().len() as u64);
+    for dependency in record.order_dependencies() {
+        hash_u64(hash, *dependency);
+    }
+    hash_u64(hash, record.register_dependencies().len() as u64);
+    for dependency in record.register_dependencies() {
+        hash_u64(hash, *dependency);
+    }
+    hash_u64(hash, record.compute_delay());
+    hash_u64(hash, u64::from(record.weight()));
+    hash_optional_u64(hash, record.pc());
+    hash_optional_u32(hash, record.asid());
+}
+
+fn hash_dependency_record_kind(hash: &mut u64, kind: DependencyRecordKind) {
+    match kind {
+        DependencyRecordKind::Invalid => hash_str(hash, "invalid"),
+        DependencyRecordKind::Load => hash_str(hash, "load"),
+        DependencyRecordKind::Store => hash_str(hash, "store"),
+        DependencyRecordKind::Compute => hash_str(hash, "compute"),
+    }
 }
 
 fn hash_instruction(hash: &mut u64, instruction: &InstructionRecord) {
@@ -563,6 +1038,26 @@ fn hash_optional_u64(hash: &mut u64, value: Option<u64>) {
         Some(value) => {
             hash_str(hash, "some");
             hash_u64(hash, value);
+        }
+        None => hash_str(hash, "none"),
+    }
+}
+
+fn hash_optional_u32(hash: &mut u64, value: Option<u32>) {
+    match value {
+        Some(value) => {
+            hash_str(hash, "some");
+            hash_u64(hash, u64::from(value));
+        }
+        None => hash_str(hash, "none"),
+    }
+}
+
+fn hash_optional_address(hash: &mut u64, value: Option<Address>) {
+    match value {
+        Some(value) => {
+            hash_str(hash, "some");
+            hash_u64(hash, value.get());
         }
         None => hash_str(hash, "none"),
     }
