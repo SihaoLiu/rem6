@@ -17,6 +17,7 @@ mod moesi;
 mod moesi_bank;
 mod mshr;
 mod prefetch;
+mod prefetch_throttle;
 mod replacement;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
@@ -37,6 +38,10 @@ pub use prefetch::{
     QueuedPrefetcherSnapshot, StridePrefetchAccess, StridePrefetchCandidate,
     StridePrefetchContextSnapshot, StridePrefetchEntrySnapshot, StridePrefetcher,
     StridePrefetcherConfig, StridePrefetcherError, StridePrefetcherSnapshot,
+};
+pub use prefetch_throttle::{
+    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
+    QueuedPrefetchThrottleSnapshot,
 };
 pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,

@@ -1,6 +1,7 @@
 use rem6_cache::{
     QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
-    QueuedPrefetchRedundantLine, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
+    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
+    QueuedPrefetchThrottleError, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
     StridePrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
@@ -210,4 +211,56 @@ fn queued_prefetcher_exposes_next_ready_tick_for_scheduler_planning() {
 
     assert_eq!(restored.issue_ready(13).len(), 1);
     assert_eq!(restored.next_ready_tick(), None);
+}
+
+#[test]
+fn queued_prefetch_throttle_uses_accuracy_and_snapshots_counters() {
+    let config = QueuedPrefetchThrottleConfig::new(60).unwrap();
+    let mut throttle = QueuedPrefetchThrottle::new(config.clone());
+
+    assert_eq!(throttle.max_permitted(5), 5);
+
+    throttle.record_issued(10).unwrap();
+    throttle.record_useful(5).unwrap();
+    assert_eq!(throttle.max_permitted(5), 3);
+    assert_eq!(throttle.issued_prefetches(), 10);
+    assert_eq!(throttle.useful_prefetches(), 5);
+
+    let snapshot = throttle.snapshot();
+    let mut restored = QueuedPrefetchThrottle::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.max_permitted(5), 3);
+
+    let mut always_keeps_one =
+        QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(100).unwrap());
+    assert_eq!(always_keeps_one.max_permitted(4), 4);
+    always_keeps_one.record_issued(4).unwrap();
+    assert_eq!(always_keeps_one.max_permitted(4), 1);
+}
+
+#[test]
+fn queued_prefetch_throttle_rejects_useful_counts_above_issued() {
+    let mut throttle = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(60).unwrap());
+
+    assert_eq!(
+        throttle.record_useful(1).unwrap_err(),
+        QueuedPrefetchThrottleError::UsefulExceedsIssued {
+            issued_prefetches: 0,
+            useful_prefetches: 1,
+        }
+    );
+    assert_eq!(throttle.max_permitted(4), 4);
+
+    throttle.record_issued(2).unwrap();
+    throttle.record_useful(2).unwrap();
+    assert_eq!(
+        throttle.record_useful(1).unwrap_err(),
+        QueuedPrefetchThrottleError::UsefulExceedsIssued {
+            issued_prefetches: 2,
+            useful_prefetches: 3,
+        }
+    );
+    assert_eq!(throttle.useful_prefetches(), 2);
+    assert_eq!(throttle.max_permitted(4), 4);
 }
