@@ -7,6 +7,438 @@ use rem6_memory::{Address, AgentId};
 const MAX_CONFIDENCE: u8 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchConfig {
+    capacity: usize,
+    latency: u64,
+    max_issue_per_tick: usize,
+    filter_duplicates: bool,
+}
+
+impl QueuedPrefetchConfig {
+    pub fn new(
+        capacity: usize,
+        latency: u64,
+        max_issue_per_tick: usize,
+        filter_duplicates: bool,
+    ) -> Result<Self, QueuedPrefetcherError> {
+        if capacity == 0 {
+            return Err(QueuedPrefetcherError::ZeroCapacity);
+        }
+        if max_issue_per_tick == 0 {
+            return Err(QueuedPrefetcherError::ZeroIssueWidth);
+        }
+
+        Ok(Self {
+            capacity,
+            latency,
+            max_issue_per_tick,
+            filter_duplicates,
+        })
+    }
+
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub const fn latency(&self) -> u64 {
+        self.latency
+    }
+
+    pub const fn max_issue_per_tick(&self) -> usize {
+        self.max_issue_per_tick
+    }
+
+    pub const fn filter_duplicates(&self) -> bool {
+        self.filter_duplicates
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QueuedPrefetcherError {
+    ZeroCapacity,
+    ZeroIssueWidth,
+    QueueFull {
+        capacity: usize,
+    },
+    ReadyTickOverflow {
+        source_tick: u64,
+        latency: u64,
+    },
+    SnapshotConfigMismatch {
+        expected: QueuedPrefetchConfig,
+        actual: QueuedPrefetchConfig,
+    },
+    SnapshotQueueTooLarge {
+        pending: usize,
+        capacity: usize,
+    },
+}
+
+impl fmt::Display for QueuedPrefetcherError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroCapacity => write!(formatter, "queued prefetch capacity is zero"),
+            Self::ZeroIssueWidth => write!(formatter, "queued prefetch issue width is zero"),
+            Self::QueueFull { capacity } => write!(
+                formatter,
+                "queued prefetch resource is full at capacity {capacity}"
+            ),
+            Self::ReadyTickOverflow {
+                source_tick,
+                latency,
+            } => write!(
+                formatter,
+                "queued prefetch ready tick overflows for source tick {source_tick} and latency {latency}"
+            ),
+            Self::SnapshotConfigMismatch { expected, actual } => write!(
+                formatter,
+                "queued prefetch snapshot config {actual:?} does not match {expected:?}"
+            ),
+            Self::SnapshotQueueTooLarge { pending, capacity } => write!(
+                formatter,
+                "queued prefetch snapshot has {pending} entries for capacity {capacity}"
+            ),
+        }
+    }
+}
+
+impl Error for QueuedPrefetcherError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchEntrySnapshot {
+    address: Address,
+    context: AgentId,
+    pc: u64,
+    secure: bool,
+    stride: i64,
+    degree_index: u32,
+    source_tick: u64,
+    ready_tick: u64,
+    order: u64,
+}
+
+impl QueuedPrefetchEntrySnapshot {
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn context(&self) -> AgentId {
+        self.context
+    }
+
+    pub const fn pc(&self) -> u64 {
+        self.pc
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+
+    pub const fn stride(&self) -> i64 {
+        self.stride
+    }
+
+    pub const fn degree_index(&self) -> u32 {
+        self.degree_index
+    }
+
+    pub const fn source_tick(&self) -> u64 {
+        self.source_tick
+    }
+
+    pub const fn ready_tick(&self) -> u64 {
+        self.ready_tick
+    }
+
+    pub const fn order(&self) -> u64 {
+        self.order
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetcherSnapshot {
+    config: QueuedPrefetchConfig,
+    pending: Vec<QueuedPrefetchEntrySnapshot>,
+    next_order: u64,
+}
+
+impl QueuedPrefetcherSnapshot {
+    pub const fn config(&self) -> &QueuedPrefetchConfig {
+        &self.config
+    }
+
+    pub fn pending(&self) -> &[QueuedPrefetchEntrySnapshot] {
+        &self.pending
+    }
+
+    pub const fn next_order(&self) -> u64 {
+        self.next_order
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchIssue {
+    address: Address,
+    context: AgentId,
+    pc: u64,
+    secure: bool,
+    stride: i64,
+    degree_index: u32,
+    source_tick: u64,
+    ready_tick: u64,
+    order: u64,
+}
+
+impl QueuedPrefetchIssue {
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn context(&self) -> AgentId {
+        self.context
+    }
+
+    pub const fn pc(&self) -> u64 {
+        self.pc
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+
+    pub const fn stride(&self) -> i64 {
+        self.stride
+    }
+
+    pub const fn degree_index(&self) -> u32 {
+        self.degree_index
+    }
+
+    pub const fn source_tick(&self) -> u64 {
+        self.source_tick
+    }
+
+    pub const fn ready_tick(&self) -> u64 {
+        self.ready_tick
+    }
+
+    pub const fn order(&self) -> u64 {
+        self.order
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QueuedPrefetchEntry {
+    address: Address,
+    context: AgentId,
+    pc: u64,
+    secure: bool,
+    stride: i64,
+    degree_index: u32,
+    source_tick: u64,
+    ready_tick: u64,
+    order: u64,
+}
+
+impl QueuedPrefetchEntry {
+    fn from_candidate(
+        candidate: &StridePrefetchCandidate,
+        source_tick: u64,
+        ready_tick: u64,
+        order: u64,
+    ) -> Self {
+        Self {
+            address: candidate.address(),
+            context: candidate.context(),
+            pc: candidate.pc(),
+            secure: candidate.secure(),
+            stride: candidate.stride(),
+            degree_index: candidate.degree_index(),
+            source_tick,
+            ready_tick,
+            order,
+        }
+    }
+
+    fn from_snapshot(snapshot: &QueuedPrefetchEntrySnapshot) -> Self {
+        Self {
+            address: snapshot.address,
+            context: snapshot.context,
+            pc: snapshot.pc,
+            secure: snapshot.secure,
+            stride: snapshot.stride,
+            degree_index: snapshot.degree_index,
+            source_tick: snapshot.source_tick,
+            ready_tick: snapshot.ready_tick,
+            order: snapshot.order,
+        }
+    }
+
+    fn snapshot(&self) -> QueuedPrefetchEntrySnapshot {
+        QueuedPrefetchEntrySnapshot {
+            address: self.address,
+            context: self.context,
+            pc: self.pc,
+            secure: self.secure,
+            stride: self.stride,
+            degree_index: self.degree_index,
+            source_tick: self.source_tick,
+            ready_tick: self.ready_tick,
+            order: self.order,
+        }
+    }
+
+    fn issue(&self) -> QueuedPrefetchIssue {
+        QueuedPrefetchIssue {
+            address: self.address,
+            context: self.context,
+            pc: self.pc,
+            secure: self.secure,
+            stride: self.stride,
+            degree_index: self.degree_index,
+            source_tick: self.source_tick,
+            ready_tick: self.ready_tick,
+            order: self.order,
+        }
+    }
+
+    fn same_request(&self, candidate: &StridePrefetchCandidate) -> bool {
+        self.address == candidate.address()
+            && self.context == candidate.context()
+            && self.secure == candidate.secure()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetcher {
+    config: QueuedPrefetchConfig,
+    pending: Vec<QueuedPrefetchEntry>,
+    next_order: u64,
+}
+
+impl QueuedPrefetcher {
+    pub fn new(config: QueuedPrefetchConfig) -> Self {
+        Self {
+            config,
+            pending: Vec::new(),
+            next_order: 0,
+        }
+    }
+
+    pub const fn config(&self) -> &QueuedPrefetchConfig {
+        &self.config
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn enqueue_candidates(
+        &mut self,
+        source_tick: u64,
+        candidates: &[StridePrefetchCandidate],
+    ) -> Result<usize, QueuedPrefetcherError> {
+        let ready_tick = source_tick.checked_add(self.config.latency()).ok_or(
+            QueuedPrefetcherError::ReadyTickOverflow {
+                source_tick,
+                latency: self.config.latency(),
+            },
+        )?;
+        let mut accepted = 0;
+        for candidate in candidates {
+            if self.config.filter_duplicates()
+                && self
+                    .pending
+                    .iter()
+                    .any(|entry| entry.same_request(candidate))
+            {
+                continue;
+            }
+            if self.pending.len() == self.config.capacity() {
+                return Err(QueuedPrefetcherError::QueueFull {
+                    capacity: self.config.capacity(),
+                });
+            }
+
+            let entry = QueuedPrefetchEntry::from_candidate(
+                candidate,
+                source_tick,
+                ready_tick,
+                self.next_order,
+            );
+            self.next_order = self.next_order.saturating_add(1);
+            insert_pending_entry(&mut self.pending, entry);
+            accepted += 1;
+        }
+        Ok(accepted)
+    }
+
+    pub fn issue_ready(&mut self, tick: u64) -> Vec<QueuedPrefetchIssue> {
+        let mut issues = Vec::new();
+        while issues.len() < self.config.max_issue_per_tick() {
+            let Some(entry) = self.pending.first() else {
+                break;
+            };
+            if entry.ready_tick > tick {
+                break;
+            }
+            let entry = self.pending.remove(0);
+            issues.push(entry.issue());
+        }
+        issues
+    }
+
+    pub fn snapshot(&self) -> QueuedPrefetcherSnapshot {
+        QueuedPrefetcherSnapshot {
+            config: self.config.clone(),
+            pending: self
+                .pending
+                .iter()
+                .map(QueuedPrefetchEntry::snapshot)
+                .collect(),
+            next_order: self.next_order,
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &QueuedPrefetcherSnapshot,
+    ) -> Result<(), QueuedPrefetcherError> {
+        if snapshot.config() != &self.config {
+            return Err(QueuedPrefetcherError::SnapshotConfigMismatch {
+                expected: self.config.clone(),
+                actual: snapshot.config().clone(),
+            });
+        }
+        if snapshot.pending().len() > self.config.capacity() {
+            return Err(QueuedPrefetcherError::SnapshotQueueTooLarge {
+                pending: snapshot.pending().len(),
+                capacity: self.config.capacity(),
+            });
+        }
+        let mut pending: Vec<_> = snapshot
+            .pending()
+            .iter()
+            .map(QueuedPrefetchEntry::from_snapshot)
+            .collect();
+        pending.sort_by_key(|entry| (entry.ready_tick, entry.order));
+        self.pending = pending;
+        self.next_order = snapshot.next_order();
+        Ok(())
+    }
+}
+
+fn insert_pending_entry(pending: &mut Vec<QueuedPrefetchEntry>, entry: QueuedPrefetchEntry) {
+    let index = pending
+        .iter()
+        .position(|existing| {
+            (entry.ready_tick, entry.order) < (existing.ready_tick, existing.order)
+        })
+        .unwrap_or(pending.len());
+    pending.insert(index, entry);
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StridePrefetcherConfig {
     line_size: u64,
     table_entries: usize,

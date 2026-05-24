@@ -31,9 +31,10 @@ pub use mshr::{
     MshrQueueSnapshot, MshrQueueUpdate, MshrTarget, MshrTargetSource,
 };
 pub use prefetch::{
-    StridePrefetchAccess, StridePrefetchCandidate, StridePrefetchContextSnapshot,
-    StridePrefetchEntrySnapshot, StridePrefetcher, StridePrefetcherConfig, StridePrefetcherError,
-    StridePrefetcherSnapshot,
+    QueuedPrefetchConfig, QueuedPrefetchEntrySnapshot, QueuedPrefetchIssue, QueuedPrefetcher,
+    QueuedPrefetcherError, QueuedPrefetcherSnapshot, StridePrefetchAccess, StridePrefetchCandidate,
+    StridePrefetchContextSnapshot, StridePrefetchEntrySnapshot, StridePrefetcher,
+    StridePrefetcherConfig, StridePrefetcherError, StridePrefetcherSnapshot,
 };
 pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
