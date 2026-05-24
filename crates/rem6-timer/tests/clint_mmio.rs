@@ -383,3 +383,141 @@ fn clint_parallel_mtimecmp_write_schedules_timer_interrupt() {
         )]
     );
 }
+
+#[test]
+fn clint_snapshot_restore_reinstates_hart_register_state() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(80);
+    let timer_line = InterruptLineId::new(81);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(50);
+    let timer_source = InterruptSourceId::new(51);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::new(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+    )
+    .unwrap();
+    let captured = Arc::new(Mutex::new(None));
+    let restored_reads = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    let setup_device = device.clone();
+    let captured_writer = Arc::clone(&captured);
+    scheduler
+        .schedule_at(clint_partition, 4, move |context| {
+            setup_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(7),
+                        Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET),
+                        le32(1),
+                        full_mask(CLINT_MSIP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            setup_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(8),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(30),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            *captured_writer.lock().unwrap() = Some(setup_device.snapshot());
+        })
+        .unwrap();
+
+    let mutate_device = device.clone();
+    scheduler
+        .schedule_at(clint_partition, 8, move |context| {
+            mutate_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(9),
+                        Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET),
+                        le32(0),
+                        full_mask(CLINT_MSIP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            mutate_device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(10),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(40),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let restore_device = device.clone();
+    let captured_reader = Arc::clone(&captured);
+    let restored_writer = Arc::clone(&restored_reads);
+    scheduler
+        .schedule_at(clint_partition, 12, move |context| {
+            let snapshot = captured_reader.lock().unwrap().clone().unwrap();
+            restore_device.restore(&snapshot).unwrap();
+            let msip = restore_device
+                .respond(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(11),
+                        Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET),
+                        AccessSize::new(CLINT_MSIP_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let mtimecmp = restore_device
+                .respond(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(12),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        AccessSize::new(CLINT_MTIMECMP_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            restored_writer.lock().unwrap().extend([msip, mtimecmp]);
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    let snapshot = captured.lock().unwrap().clone().unwrap();
+    assert_eq!(snapshot.base(), Address::new(0x200_0000));
+    assert_eq!(snapshot.harts()[0].hart(), 0);
+    assert_eq!(snapshot.harts()[0].msip(), 1);
+    assert_eq!(snapshot.harts()[0].mtimecmp(), 30);
+    assert_eq!(
+        restored_reads.lock().unwrap().as_slice(),
+        &[
+            MmioResponse::completed(MmioRequestId::new(11), Some(le32(1))),
+            MmioResponse::completed(MmioRequestId::new(12), Some(le64(30))),
+        ]
+    );
+}
