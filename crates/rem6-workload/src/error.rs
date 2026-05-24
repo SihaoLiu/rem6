@@ -175,6 +175,16 @@ impl fmt::Display for WorkloadError {
                 "RISC-V core {cpu} fetch route {} starts at partition {actual}, expected {expected}",
                 route.as_str()
             ),
+            Self::CoreFetchRouteEndpointMismatch {
+                cpu,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RISC-V core {cpu} fetch route {} starts at endpoint {actual}, expected {expected}",
+                route.as_str()
+            ),
             Self::MissingCoreDataRoute { cpu, route } => write!(
                 formatter,
                 "RISC-V core {cpu} data route {} is not defined",
@@ -188,6 +198,16 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "RISC-V core {cpu} data route {} starts at partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::CoreDataRouteEndpointMismatch {
+                cpu,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RISC-V core {cpu} data route {} starts at endpoint {actual}, expected {expected}",
                 route.as_str()
             ),
             Self::ZeroGpuComputeUnits { device } => {

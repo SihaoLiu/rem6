@@ -699,6 +699,14 @@ impl WorkloadTopology {
                 actual: fetch_route.source_partition(),
             });
         }
+        if fetch_route.source_endpoint() != core.fetch_endpoint() {
+            return Err(WorkloadError::CoreFetchRouteEndpointMismatch {
+                cpu: core.cpu(),
+                route: core.fetch_route().clone(),
+                expected: core.fetch_endpoint().to_string(),
+                actual: fetch_route.source_endpoint().to_string(),
+            });
+        }
         if let Some(route) = core.data_route() {
             let data_route = self
                 .memory_routes
@@ -714,6 +722,17 @@ impl WorkloadTopology {
                     route: route.clone(),
                     expected: core.partition(),
                     actual: data_route.source_partition(),
+                });
+            }
+            let data_endpoint = core
+                .data_endpoint()
+                .expect("data route implies a data endpoint");
+            if data_route.source_endpoint() != data_endpoint {
+                return Err(WorkloadError::CoreDataRouteEndpointMismatch {
+                    cpu: core.cpu(),
+                    route: route.clone(),
+                    expected: data_endpoint.to_string(),
+                    actual: data_route.source_endpoint().to_string(),
                 });
             }
         }

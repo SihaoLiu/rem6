@@ -34,6 +34,39 @@ fn topology_with_mismatched_core_routes() -> WorkloadTopology {
                 .unwrap(),
         )
         .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+}
+
+fn topology_with_same_partition_mismatched_endpoints() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 41).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                rem6_memory::AddressRange::new(
+                    Address::new(0x8000),
+                    AccessSize::new(0x2000).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
 }
 
 #[test]
@@ -72,7 +105,7 @@ fn workload_topology_rejects_riscv_core_routes_from_different_partition() {
                     8,
                     Address::new(0x9000),
                     "cpu1.ifetch",
-                    route_id("cpu1.data"),
+                    route_id("cpu1.fetch"),
                 )
                 .unwrap()
                 .with_data("cpu1.dmem", route_id("cpu0.fetch"))
@@ -84,6 +117,58 @@ fn workload_topology_rejects_riscv_core_routes_from_different_partition() {
             route: route_id("cpu0.fetch"),
             expected: 1,
             actual: 0,
+        }
+    );
+}
+
+#[test]
+fn workload_topology_rejects_riscv_core_routes_from_different_endpoint() {
+    let topology = topology_with_same_partition_mismatched_endpoints();
+
+    assert_eq!(
+        topology
+            .clone()
+            .add_riscv_core(
+                WorkloadRiscvCore::new(
+                    0,
+                    0,
+                    7,
+                    Address::new(0x8000),
+                    "cpu0.wrong-ifetch",
+                    route_id("cpu0.fetch"),
+                )
+                .unwrap(),
+            )
+            .unwrap_err(),
+        WorkloadError::CoreFetchRouteEndpointMismatch {
+            cpu: 0,
+            route: route_id("cpu0.fetch"),
+            expected: "cpu0.wrong-ifetch".to_string(),
+            actual: "cpu0.ifetch".to_string(),
+        }
+    );
+
+    assert_eq!(
+        topology
+            .add_riscv_core(
+                WorkloadRiscvCore::new(
+                    0,
+                    0,
+                    7,
+                    Address::new(0x8000),
+                    "cpu0.ifetch",
+                    route_id("cpu0.fetch"),
+                )
+                .unwrap()
+                .with_data("cpu0.wrong-dmem", route_id("cpu0.data"))
+                .unwrap(),
+            )
+            .unwrap_err(),
+        WorkloadError::CoreDataRouteEndpointMismatch {
+            cpu: 0,
+            route: route_id("cpu0.data"),
+            expected: "cpu0.wrong-dmem".to_string(),
+            actual: "cpu0.dmem".to_string(),
         }
     );
 }
