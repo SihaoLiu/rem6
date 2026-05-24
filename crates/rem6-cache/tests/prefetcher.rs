@@ -1,9 +1,9 @@
 use rem6_cache::{
-    AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, QueuedPrefetchConfig,
-    QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
-    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
-    QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
-    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
+    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
+    QueuedPrefetchThrottleError, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
+    StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -71,6 +71,62 @@ fn ampm_prefetcher_matches_cross_zone_access_map_patterns_and_restores_state() {
     assert_eq!(restored.issued_prefetch_count(), 2);
     assert_eq!(restored.useful_prefetch_count(), 1);
     assert_eq!(restored.raw_cache_miss_count(), 3);
+}
+
+#[test]
+fn ampm_epoch_control_adjusts_degree_with_typed_stats_and_restores_state() {
+    let epoch = AmpmEpochConfig::gem5_defaults(100, 100).unwrap();
+    let config = AmpmPrefetcherConfig::new(64, 256, 2, 8)
+        .unwrap()
+        .with_epoch_control(epoch);
+    let mut prefetcher = AmpmPrefetcher::new(config.clone());
+
+    assert_eq!(prefetcher.current_degree(), 2);
+    assert_eq!(prefetcher.useful_degree(), 2);
+    for (index, address) in [0x10c0, 0x1100, 0x1140, 0x1180].into_iter().enumerate() {
+        prefetcher
+            .observe(ampm_access(3, 0x800 + index as u64, address))
+            .unwrap();
+    }
+
+    let report = prefetcher.process_epoch().unwrap();
+    assert_eq!(report.previous_degree(), 2);
+    assert_eq!(report.previous_useful_degree(), 2);
+    assert_eq!(report.next_useful_degree(), 3);
+    assert_eq!(report.memory_bandwidth_degree(), 5);
+    assert_eq!(report.next_degree(), 3);
+    assert_eq!(report.stats().issued_prefetches(), 3);
+    assert_eq!(report.stats().useful_prefetches(), 2);
+    assert_eq!(report.stats().raw_cache_misses(), 4);
+    assert_eq!(report.stats().raw_cache_hits(), 0);
+    assert_eq!(prefetcher.current_degree(), 3);
+    assert_eq!(prefetcher.useful_degree(), 3);
+    assert_eq!(prefetcher.epoch_issued_prefetch_count(), 0);
+    assert_eq!(prefetcher.epoch_useful_prefetch_count(), 0);
+    assert_eq!(prefetcher.epoch_raw_cache_miss_count(), 0);
+    assert_eq!(prefetcher.epoch_raw_cache_hit_count(), 0);
+    assert_eq!(prefetcher.last_epoch_report(), Some(&report));
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = AmpmPrefetcher::new(config.clone());
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.current_degree(), 3);
+    assert_eq!(restored.last_epoch_report(), Some(&report));
+
+    let mut conservative = AmpmPrefetcher::new(config);
+    for index in 0..10 {
+        conservative
+            .observe(ampm_access(7, 0x900 + index, 0x2000))
+            .unwrap();
+    }
+    let low_report = conservative.process_epoch().unwrap();
+    assert_eq!(low_report.previous_useful_degree(), 2);
+    assert_eq!(low_report.next_useful_degree(), 1);
+    assert_eq!(low_report.memory_bandwidth_degree(), 1);
+    assert_eq!(low_report.next_degree(), 1);
+    assert_eq!(low_report.stats().raw_cache_misses(), 1);
+    assert_eq!(low_report.stats().raw_cache_hits(), 9);
 }
 
 #[test]

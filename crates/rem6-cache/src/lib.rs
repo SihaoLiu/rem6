@@ -52,8 +52,9 @@ pub use prefetch::{
     TaggedPrefetcherSnapshot,
 };
 pub use prefetch_ampm::{
-    AmpmAccessMapEntrySnapshot, AmpmAccessMapState, AmpmPrefetchAccess, AmpmPrefetchCandidate,
-    AmpmPrefetcher, AmpmPrefetcherConfig, AmpmPrefetcherError, AmpmPrefetcherSnapshot,
+    AmpmAccessMapEntrySnapshot, AmpmAccessMapState, AmpmEpochConfig, AmpmEpochReport,
+    AmpmEpochStats, AmpmPrefetchAccess, AmpmPrefetchCandidate, AmpmPrefetcher,
+    AmpmPrefetcherConfig, AmpmPrefetcherError, AmpmPrefetcherSnapshot, AmpmRatio,
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,

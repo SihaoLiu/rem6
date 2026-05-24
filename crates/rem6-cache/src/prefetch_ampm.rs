@@ -6,6 +6,122 @@ use rem6_memory::{Address, AgentId};
 
 use crate::prefetch::PrefetchCandidate;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AmpmRatio {
+    numerator: u64,
+    denominator: u64,
+}
+
+impl AmpmRatio {
+    pub const fn new(numerator: u64, denominator: u64) -> Result<Self, AmpmPrefetcherError> {
+        if denominator == 0 {
+            return Err(AmpmPrefetcherError::ZeroRatioDenominator);
+        }
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+
+    pub const fn numerator(&self) -> u64 {
+        self.numerator
+    }
+
+    pub const fn denominator(&self) -> u64 {
+        self.denominator
+    }
+
+    fn count_ratio_exceeds(&self, numerator: u64, denominator: u64) -> bool {
+        denominator != 0
+            && (numerator as u128) * (self.denominator as u128)
+                > (self.numerator as u128) * (denominator as u128)
+    }
+
+    fn count_ratio_below(&self, numerator: u64, denominator: u64) -> bool {
+        denominator != 0
+            && (numerator as u128) * (self.denominator as u128)
+                < (self.numerator as u128) * (denominator as u128)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AmpmEpochConfig {
+    high_coverage_threshold: AmpmRatio,
+    low_coverage_threshold: AmpmRatio,
+    high_accuracy_threshold: AmpmRatio,
+    low_accuracy_threshold: AmpmRatio,
+    high_cache_hit_threshold: AmpmRatio,
+    low_cache_hit_threshold: AmpmRatio,
+    epoch_cycles: u64,
+    offchip_memory_latency_cycles: u64,
+}
+
+impl AmpmEpochConfig {
+    pub fn gem5_defaults(
+        epoch_cycles: u64,
+        offchip_memory_latency_cycles: u64,
+    ) -> Result<Self, AmpmPrefetcherError> {
+        if epoch_cycles == 0 {
+            return Err(AmpmPrefetcherError::ZeroEpochCycles);
+        }
+        if offchip_memory_latency_cycles == 0 {
+            return Err(AmpmPrefetcherError::ZeroOffchipMemoryLatency);
+        }
+        Ok(Self {
+            high_coverage_threshold: AmpmRatio::new(1, 4)?,
+            low_coverage_threshold: AmpmRatio::new(1, 8)?,
+            high_accuracy_threshold: AmpmRatio::new(1, 2)?,
+            low_accuracy_threshold: AmpmRatio::new(1, 4)?,
+            high_cache_hit_threshold: AmpmRatio::new(7, 8)?,
+            low_cache_hit_threshold: AmpmRatio::new(3, 4)?,
+            epoch_cycles,
+            offchip_memory_latency_cycles,
+        })
+    }
+
+    pub const fn high_coverage_threshold(&self) -> AmpmRatio {
+        self.high_coverage_threshold
+    }
+
+    pub const fn low_coverage_threshold(&self) -> AmpmRatio {
+        self.low_coverage_threshold
+    }
+
+    pub const fn high_accuracy_threshold(&self) -> AmpmRatio {
+        self.high_accuracy_threshold
+    }
+
+    pub const fn low_accuracy_threshold(&self) -> AmpmRatio {
+        self.low_accuracy_threshold
+    }
+
+    pub const fn high_cache_hit_threshold(&self) -> AmpmRatio {
+        self.high_cache_hit_threshold
+    }
+
+    pub const fn low_cache_hit_threshold(&self) -> AmpmRatio {
+        self.low_cache_hit_threshold
+    }
+
+    pub const fn epoch_cycles(&self) -> u64 {
+        self.epoch_cycles
+    }
+
+    pub const fn offchip_memory_latency_cycles(&self) -> u64 {
+        self.offchip_memory_latency_cycles
+    }
+
+    fn memory_bandwidth_degree(&self, stats: AmpmEpochStats) -> u32 {
+        let requests = stats
+            .raw_cache_misses()
+            .saturating_sub(stats.useful_prefetches())
+            .saturating_add(stats.issued_prefetches());
+        let degree = (requests as u128) * (self.offchip_memory_latency_cycles as u128)
+            / (self.epoch_cycles as u128);
+        degree.min(u32::MAX as u128) as u32
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AmpmPrefetcherConfig {
     line_size: u64,
@@ -13,6 +129,7 @@ pub struct AmpmPrefetcherConfig {
     degree: u32,
     table_entries: usize,
     limit_stride: Option<u64>,
+    epoch_control: Option<AmpmEpochConfig>,
 }
 
 impl AmpmPrefetcherConfig {
@@ -59,6 +176,7 @@ impl AmpmPrefetcherConfig {
             degree,
             table_entries,
             limit_stride: None,
+            epoch_control: None,
         })
     }
 
@@ -82,6 +200,10 @@ impl AmpmPrefetcherConfig {
         self.limit_stride
     }
 
+    pub const fn epoch_control(&self) -> Option<AmpmEpochConfig> {
+        self.epoch_control
+    }
+
     pub const fn with_limit_stride(
         mut self,
         limit_stride: u64,
@@ -92,6 +214,11 @@ impl AmpmPrefetcherConfig {
         self.limit_stride = Some(limit_stride);
         Ok(self)
     }
+
+    pub const fn with_epoch_control(mut self, epoch_control: AmpmEpochConfig) -> Self {
+        self.epoch_control = Some(epoch_control);
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,6 +228,10 @@ pub enum AmpmPrefetcherError {
     ZeroDegree,
     ZeroTableEntries,
     ZeroLimitStride,
+    ZeroEpochCycles,
+    ZeroOffchipMemoryLatency,
+    ZeroRatioDenominator,
+    EpochControlDisabled,
     HotZoneNotPowerOfTwo {
         hot_zone_size: u64,
     },
@@ -116,8 +247,8 @@ pub enum AmpmPrefetcherError {
         table_entries: usize,
     },
     SnapshotConfigMismatch {
-        expected: AmpmPrefetcherConfig,
-        actual: AmpmPrefetcherConfig,
+        expected: Box<AmpmPrefetcherConfig>,
+        actual: Box<AmpmPrefetcherConfig>,
     },
     SnapshotEntryCountOutOfRange {
         entries: usize,
@@ -138,6 +269,17 @@ impl fmt::Display for AmpmPrefetcherError {
             Self::ZeroDegree => write!(formatter, "AMPM prefetcher degree is zero"),
             Self::ZeroTableEntries => write!(formatter, "AMPM prefetcher table has no entries"),
             Self::ZeroLimitStride => write!(formatter, "AMPM prefetcher stride limit is zero"),
+            Self::ZeroEpochCycles => write!(formatter, "AMPM prefetcher epoch cycle count is zero"),
+            Self::ZeroOffchipMemoryLatency => write!(
+                formatter,
+                "AMPM prefetcher offchip memory latency is zero"
+            ),
+            Self::ZeroRatioDenominator => {
+                write!(formatter, "AMPM prefetcher ratio denominator is zero")
+            }
+            Self::EpochControlDisabled => {
+                write!(formatter, "AMPM prefetcher epoch control is disabled")
+            }
             Self::HotZoneNotPowerOfTwo { hot_zone_size } => write!(
                 formatter,
                 "AMPM prefetcher hot zone size {hot_zone_size} is not a power of two"
@@ -318,6 +460,72 @@ pub enum AmpmAccessMapState {
     Access,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AmpmEpochStats {
+    issued_prefetches: u64,
+    useful_prefetches: u64,
+    raw_cache_misses: u64,
+    raw_cache_hits: u64,
+}
+
+impl AmpmEpochStats {
+    pub const fn issued_prefetches(&self) -> u64 {
+        self.issued_prefetches
+    }
+
+    pub const fn useful_prefetches(&self) -> u64 {
+        self.useful_prefetches
+    }
+
+    pub const fn raw_cache_misses(&self) -> u64 {
+        self.raw_cache_misses
+    }
+
+    pub const fn raw_cache_hits(&self) -> u64 {
+        self.raw_cache_hits
+    }
+
+    const fn cache_accesses(&self) -> u64 {
+        self.raw_cache_hits.saturating_add(self.raw_cache_misses)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AmpmEpochReport {
+    stats: AmpmEpochStats,
+    previous_degree: u32,
+    previous_useful_degree: u32,
+    next_degree: u32,
+    next_useful_degree: u32,
+    memory_bandwidth_degree: u32,
+}
+
+impl AmpmEpochReport {
+    pub const fn stats(&self) -> &AmpmEpochStats {
+        &self.stats
+    }
+
+    pub const fn previous_degree(&self) -> u32 {
+        self.previous_degree
+    }
+
+    pub const fn previous_useful_degree(&self) -> u32 {
+        self.previous_useful_degree
+    }
+
+    pub const fn next_degree(&self) -> u32 {
+        self.next_degree
+    }
+
+    pub const fn next_useful_degree(&self) -> u32 {
+        self.next_useful_degree
+    }
+
+    pub const fn memory_bandwidth_degree(&self) -> u32 {
+        self.memory_bandwidth_degree
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AmpmAccessMapEntrySnapshot {
     zone: u64,
@@ -346,10 +554,14 @@ pub struct AmpmPrefetcherSnapshot {
     insertion_order: Vec<AmpmZoneKey>,
     next_victim: usize,
     last_candidates: Vec<AmpmPrefetchCandidate>,
+    current_degree: u32,
+    useful_degree: u32,
     issued_prefetches: u64,
     useful_prefetches: u64,
     raw_cache_misses: u64,
     raw_cache_hits: u64,
+    epoch_stats: AmpmEpochStats,
+    last_epoch_report: Option<AmpmEpochReport>,
 }
 
 impl AmpmPrefetcherSnapshot {
@@ -363,6 +575,22 @@ impl AmpmPrefetcherSnapshot {
 
     pub fn last_candidates(&self) -> &[AmpmPrefetchCandidate] {
         &self.last_candidates
+    }
+
+    pub const fn current_degree(&self) -> u32 {
+        self.current_degree
+    }
+
+    pub const fn useful_degree(&self) -> u32 {
+        self.useful_degree
+    }
+
+    pub const fn epoch_stats(&self) -> &AmpmEpochStats {
+        &self.epoch_stats
+    }
+
+    pub const fn last_epoch_report(&self) -> Option<&AmpmEpochReport> {
+        self.last_epoch_report.as_ref()
     }
 }
 
@@ -416,24 +644,33 @@ pub struct AmpmPrefetcher {
     insertion_order: Vec<AmpmZoneKey>,
     next_victim: usize,
     last_candidates: Vec<AmpmPrefetchCandidate>,
+    current_degree: u32,
+    useful_degree: u32,
     issued_prefetches: u64,
     useful_prefetches: u64,
     raw_cache_misses: u64,
     raw_cache_hits: u64,
+    epoch_stats: AmpmEpochStats,
+    last_epoch_report: Option<AmpmEpochReport>,
 }
 
 impl AmpmPrefetcher {
     pub fn new(config: AmpmPrefetcherConfig) -> Self {
+        let current_degree = config.degree();
         Self {
             config,
             entries: BTreeMap::new(),
             insertion_order: Vec::new(),
             next_victim: 0,
             last_candidates: Vec::new(),
+            current_degree,
+            useful_degree: current_degree,
             issued_prefetches: 0,
             useful_prefetches: 0,
             raw_cache_misses: 0,
             raw_cache_hits: 0,
+            epoch_stats: AmpmEpochStats::default(),
+            last_epoch_report: None,
         }
     }
 
@@ -465,6 +702,34 @@ impl AmpmPrefetcher {
         self.raw_cache_hits
     }
 
+    pub const fn current_degree(&self) -> u32 {
+        self.current_degree
+    }
+
+    pub const fn useful_degree(&self) -> u32 {
+        self.useful_degree
+    }
+
+    pub const fn epoch_issued_prefetch_count(&self) -> u64 {
+        self.epoch_stats.issued_prefetches()
+    }
+
+    pub const fn epoch_useful_prefetch_count(&self) -> u64 {
+        self.epoch_stats.useful_prefetches()
+    }
+
+    pub const fn epoch_raw_cache_miss_count(&self) -> u64 {
+        self.epoch_stats.raw_cache_misses()
+    }
+
+    pub const fn epoch_raw_cache_hit_count(&self) -> u64 {
+        self.epoch_stats.raw_cache_hits()
+    }
+
+    pub const fn last_epoch_report(&self) -> Option<&AmpmEpochReport> {
+        self.last_epoch_report.as_ref()
+    }
+
     pub fn observe(
         &mut self,
         access: AmpmPrefetchAccess,
@@ -476,6 +741,10 @@ impl AmpmPrefetcher {
         self.ensure_neighbor_zones(zone, access.secure());
         self.set_entry_state(zone, access.secure(), block, AmpmAccessMapState::Access);
 
+        if self.current_degree() == 0 {
+            return Ok(&self.last_candidates);
+        }
+
         let states = self.window_states(zone, access.secure());
         let lines_per_zone = self.lines_per_zone() as i64;
         let current = lines_per_zone + block as i64;
@@ -483,19 +752,74 @@ impl AmpmPrefetcher {
             if self.check_candidate(&states, current, stride as i64) {
                 self.push_candidate(access, zone, current - stride as i64);
             }
-            if self.last_candidates.len() == self.config.degree() as usize {
+            if self.last_candidates.len() == self.current_degree() as usize {
                 break;
             }
 
             if self.check_candidate(&states, current, -(stride as i64)) {
                 self.push_candidate(access, zone, current + stride as i64);
             }
-            if self.last_candidates.len() == self.config.degree() as usize {
+            if self.last_candidates.len() == self.current_degree() as usize {
                 break;
             }
         }
 
         Ok(&self.last_candidates)
+    }
+
+    pub fn process_epoch(&mut self) -> Result<AmpmEpochReport, AmpmPrefetcherError> {
+        let Some(epoch_control) = self.config.epoch_control() else {
+            return Err(AmpmPrefetcherError::EpochControlDisabled);
+        };
+
+        let stats = self.epoch_stats;
+        let prefetch_coverage_high = epoch_control
+            .high_coverage_threshold()
+            .count_ratio_exceeds(stats.useful_prefetches(), stats.raw_cache_misses());
+        let prefetch_coverage_low = epoch_control
+            .low_coverage_threshold()
+            .count_ratio_below(stats.useful_prefetches(), stats.raw_cache_misses());
+        let prefetch_accuracy_high = epoch_control
+            .high_accuracy_threshold()
+            .count_ratio_exceeds(stats.useful_prefetches(), stats.issued_prefetches());
+        let prefetch_accuracy_low = epoch_control
+            .low_accuracy_threshold()
+            .count_ratio_below(stats.useful_prefetches(), stats.issued_prefetches());
+        let cache_hit_ratio_high = epoch_control
+            .high_cache_hit_threshold()
+            .count_ratio_exceeds(stats.raw_cache_hits(), stats.cache_accesses());
+        let cache_hit_ratio_low = epoch_control
+            .low_cache_hit_threshold()
+            .count_ratio_below(stats.raw_cache_hits(), stats.cache_accesses());
+
+        let previous_degree = self.current_degree;
+        let previous_useful_degree = self.useful_degree;
+        let next_useful_degree =
+            if prefetch_coverage_high && (prefetch_accuracy_high || cache_hit_ratio_low) {
+                previous_useful_degree.saturating_add(1)
+            } else if (prefetch_coverage_low && (prefetch_accuracy_low || cache_hit_ratio_high))
+                || (prefetch_accuracy_low && cache_hit_ratio_high)
+            {
+                previous_useful_degree.saturating_sub(1)
+            } else {
+                previous_useful_degree
+            };
+        let memory_bandwidth_degree = epoch_control.memory_bandwidth_degree(stats);
+        let next_degree = memory_bandwidth_degree.min(next_useful_degree);
+        let report = AmpmEpochReport {
+            stats,
+            previous_degree,
+            previous_useful_degree,
+            next_degree,
+            next_useful_degree,
+            memory_bandwidth_degree,
+        };
+
+        self.current_degree = next_degree;
+        self.useful_degree = next_useful_degree;
+        self.epoch_stats = AmpmEpochStats::default();
+        self.last_epoch_report = Some(report);
+        Ok(report)
     }
 
     pub fn snapshot(&self) -> AmpmPrefetcherSnapshot {
@@ -513,10 +837,14 @@ impl AmpmPrefetcher {
             insertion_order: self.insertion_order.clone(),
             next_victim: self.next_victim,
             last_candidates: self.last_candidates.clone(),
+            current_degree: self.current_degree,
+            useful_degree: self.useful_degree,
             issued_prefetches: self.issued_prefetches,
             useful_prefetches: self.useful_prefetches,
             raw_cache_misses: self.raw_cache_misses,
             raw_cache_hits: self.raw_cache_hits,
+            epoch_stats: self.epoch_stats,
+            last_epoch_report: self.last_epoch_report,
         }
     }
 
@@ -526,8 +854,8 @@ impl AmpmPrefetcher {
     ) -> Result<(), AmpmPrefetcherError> {
         if snapshot.config() != &self.config {
             return Err(AmpmPrefetcherError::SnapshotConfigMismatch {
-                expected: self.config.clone(),
-                actual: snapshot.config().clone(),
+                expected: Box::new(self.config.clone()),
+                actual: Box::new(snapshot.config().clone()),
             });
         }
         if snapshot.entries().len() > self.config.table_entries() {
@@ -573,10 +901,14 @@ impl AmpmPrefetcher {
             snapshot.next_victim % self.insertion_order.len()
         };
         self.last_candidates = snapshot.last_candidates().to_vec();
+        self.current_degree = snapshot.current_degree;
+        self.useful_degree = snapshot.useful_degree;
         self.issued_prefetches = snapshot.issued_prefetches;
         self.useful_prefetches = snapshot.useful_prefetches;
         self.raw_cache_misses = snapshot.raw_cache_misses;
         self.raw_cache_hits = snapshot.raw_cache_hits;
+        self.epoch_stats = snapshot.epoch_stats;
+        self.last_epoch_report = snapshot.last_epoch_report;
         Ok(())
     }
 
@@ -633,16 +965,25 @@ impl AmpmPrefetcher {
         match (old, state) {
             (AmpmAccessMapState::Init, AmpmAccessMapState::Prefetch) => {
                 self.issued_prefetches = self.issued_prefetches.saturating_add(1);
+                self.epoch_stats.issued_prefetches =
+                    self.epoch_stats.issued_prefetches.saturating_add(1);
             }
             (AmpmAccessMapState::Init, AmpmAccessMapState::Access) => {
                 self.raw_cache_misses = self.raw_cache_misses.saturating_add(1);
+                self.epoch_stats.raw_cache_misses =
+                    self.epoch_stats.raw_cache_misses.saturating_add(1);
             }
             (AmpmAccessMapState::Prefetch, AmpmAccessMapState::Access) => {
                 self.useful_prefetches = self.useful_prefetches.saturating_add(1);
                 self.raw_cache_misses = self.raw_cache_misses.saturating_add(1);
+                self.epoch_stats.useful_prefetches =
+                    self.epoch_stats.useful_prefetches.saturating_add(1);
+                self.epoch_stats.raw_cache_misses =
+                    self.epoch_stats.raw_cache_misses.saturating_add(1);
             }
             (AmpmAccessMapState::Access, AmpmAccessMapState::Access) => {
                 self.raw_cache_hits = self.raw_cache_hits.saturating_add(1);
+                self.epoch_stats.raw_cache_hits = self.epoch_stats.raw_cache_hits.saturating_add(1);
             }
             _ => {}
         }
