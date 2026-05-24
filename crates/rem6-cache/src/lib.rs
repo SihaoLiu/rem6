@@ -16,6 +16,7 @@ mod mesi_bank;
 mod moesi;
 mod moesi_bank;
 mod mshr;
+mod prefetch;
 mod replacement;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
@@ -28,6 +29,11 @@ pub use moesi_bank::{MoesiCacheBank, MoesiCacheBankError, MoesiCacheBankSnapshot
 pub use mshr::{
     MshrCompletion, MshrEntry, MshrHandle, MshrQueue, MshrQueueConfig, MshrQueueError,
     MshrQueueSnapshot, MshrQueueUpdate, MshrTarget, MshrTargetSource,
+};
+pub use prefetch::{
+    StridePrefetchAccess, StridePrefetchCandidate, StridePrefetchContextSnapshot,
+    StridePrefetchEntrySnapshot, StridePrefetcher, StridePrefetcherConfig, StridePrefetcherError,
+    StridePrefetcherSnapshot,
 };
 pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
