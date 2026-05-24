@@ -812,11 +812,11 @@ impl RiscvWorkloadReplay {
             .plan
             .topology()
             .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
-        let mut transport = if topology
+        let has_fabric_routes = topology
             .memory_routes()
             .iter()
-            .any(|route| route.hops().iter().any(|hop| hop.fabric().is_some()))
-        {
+            .any(|route| route.hops().iter().any(|hop| hop.fabric().is_some()));
+        let mut transport = if has_fabric_routes {
             if let Some(policy) = topology.qos_policy() {
                 MemoryTransport::with_fabric_qos_policy(
                     FabricModel::new(),
@@ -826,6 +826,8 @@ impl RiscvWorkloadReplay {
             } else {
                 MemoryTransport::with_fabric(FabricModel::new())
             }
+        } else if let Some(policy) = topology.qos_policy() {
+            MemoryTransport::with_qos_policy(queue_arbiter(policy), fixed_priority_policy(policy))
         } else {
             MemoryTransport::new()
         };

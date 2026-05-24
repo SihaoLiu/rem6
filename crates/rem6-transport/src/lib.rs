@@ -15,6 +15,8 @@ use rem6_kernel::{
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_topology::{Endpoint, Topology, TopologyError, TopologyPath};
 
+mod parallel_qos;
+
 type ParallelRequestResponder =
     Box<dyn FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send>;
 type ResponseSink = Box<dyn FnOnce(ResponseDelivery) + Send>;
@@ -522,6 +524,19 @@ impl MemoryTransport {
         }
     }
 
+    pub fn with_qos_policy(
+        arbiter: QosQueueArbiter,
+        priority_policy: QosFixedPriorityPolicy,
+    ) -> Self {
+        Self {
+            next_route_id: 0,
+            routes: Vec::new(),
+            fabric: None,
+            qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
+            qos_priority_policy: Some(priority_policy),
+        }
+    }
+
     pub fn with_fabric_qos_policy(
         fabric: FabricModel,
         arbiter: QosQueueArbiter,
@@ -784,6 +799,10 @@ impl MemoryTransport {
             self.reserve_parallel_batch_first_hops(start_tick, prepared.iter())?;
         for (transaction, delay) in prepared.iter_mut().zip(first_hop_delays) {
             transaction.first_hop_delay = delay;
+        }
+
+        if self.can_submit_direct_qos_parallel_batch(&prepared) {
+            return self.submit_direct_qos_parallel_batch(scheduler, start_tick, prepared);
         }
 
         let mut events = Vec::with_capacity(prepared.len());

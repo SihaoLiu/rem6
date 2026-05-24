@@ -139,9 +139,9 @@ fn replay_topology_with_qos_dram_fetches() -> WorkloadTopology {
         .unwrap()
         .with_queue_policy(WorkloadQosQueuePolicyKind::Lifo)
         .with_turnaround_policy(WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection)
-        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(0))
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(2))
         .unwrap()
-        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(2))
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(0))
         .unwrap();
 
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
@@ -301,5 +301,19 @@ fn workload_replay_applies_declared_qos_policy_to_dram_accesses() {
         summary.dram_qos_requestor_access_count(QosRequestorId::new(8)),
         1
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_batches_same_tick_dram_accesses_before_qos_arbitration() {
+    let manifest = replay_manifest_with_qos_dram_fetches();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(outcome.run().scheduled_traps()[0].cpu(), CpuId::new(1));
     plan.verify_result(outcome.result()).unwrap();
 }
