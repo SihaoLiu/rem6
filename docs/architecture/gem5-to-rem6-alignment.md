@@ -168,7 +168,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, and scheduler snapshots exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
-| statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, typed RC thermal domains, typed multi-domain thermal-network solving, and probe event snapshots exist. Arbitrary capacitor-edge thermal solving remains open. |
+| statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, and probe event snapshots exist. Broader power-controller and external-analysis adapter breadth remains open. |
 | guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, and execution mode actions are typed. Broader guest ABI support remains open. |
 
 ### External Integration and Tooling
@@ -243,9 +243,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   power estimates, expression input temperature coupling, invalid thermal
   parameter rejection, time-order rejection, update history, and snapshot
   restore. Thermal-network tests cover fixed references, thermal resistors,
-  multi-domain implicit temperature solving, typed power inputs, expression
-  input temperature coupling, invalid topology rejection, update history, and
-  snapshot restore.
+  thermal capacitors, multi-domain implicit temperature solving, typed power
+  inputs, expression input temperature coupling, invalid topology rejection,
+  update history, and snapshot restore.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, typed QoS policy intent, result metadata, execution mode
   switches, host action summaries, checkpoint restore labels, and statistics

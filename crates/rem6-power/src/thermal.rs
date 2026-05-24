@@ -117,6 +117,47 @@ impl ThermalResistor {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThermalCapacitor {
+    left: ThermalNodeId,
+    right: ThermalNodeId,
+    capacitance_j_per_c: f64,
+}
+
+impl ThermalCapacitor {
+    pub fn new(
+        left: ThermalNodeId,
+        right: ThermalNodeId,
+        capacitance_j_per_c: f64,
+    ) -> Result<Self, ThermalError> {
+        if left == right {
+            return Err(ThermalError::ThermalSelfConnection { node: left });
+        }
+        validate_positive(capacitance_j_per_c, ThermalError::InvalidThermalCapacitance)?;
+        Ok(Self {
+            left,
+            right,
+            capacitance_j_per_c,
+        })
+    }
+
+    pub const fn left(&self) -> ThermalNodeId {
+        self.left
+    }
+
+    pub const fn right(&self) -> ThermalNodeId {
+        self.right
+    }
+
+    pub const fn capacitance_j_per_c(&self) -> f64 {
+        self.capacitance_j_per_c
+    }
+
+    fn capacitance_per_step(&self, step_seconds: f64) -> f64 {
+        self.capacitance_j_per_c / step_seconds
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThermalNetworkNodeSnapshot {
     node: ThermalNodeId,
@@ -163,6 +204,7 @@ pub struct ThermalNetworkSnapshot {
     last_tick: Tick,
     nodes: Vec<ThermalNetworkNodeSnapshot>,
     resistors: Vec<ThermalResistor>,
+    capacitors: Vec<ThermalCapacitor>,
     updates: Vec<ThermalUpdate>,
 }
 
@@ -172,6 +214,7 @@ impl ThermalNetworkSnapshot {
         last_tick: Tick,
         nodes: Vec<ThermalNetworkNodeSnapshot>,
         resistors: Vec<ThermalResistor>,
+        capacitors: Vec<ThermalCapacitor>,
         updates: Vec<ThermalUpdate>,
     ) -> Self {
         Self {
@@ -179,6 +222,7 @@ impl ThermalNetworkSnapshot {
             last_tick,
             nodes,
             resistors,
+            capacitors,
             updates,
         }
     }
@@ -199,6 +243,10 @@ impl ThermalNetworkSnapshot {
         &self.resistors
     }
 
+    pub fn capacitors(&self) -> &[ThermalCapacitor] {
+        &self.capacitors
+    }
+
     pub fn updates(&self) -> &[ThermalUpdate] {
         &self.updates
     }
@@ -211,6 +259,7 @@ pub struct ThermalNetwork {
     nodes: BTreeMap<ThermalNodeId, ThermalNetworkNode>,
     domains: BTreeMap<ThermalDomainId, ThermalNodeId>,
     resistors: Vec<ThermalResistor>,
+    capacitors: Vec<ThermalCapacitor>,
     updates: Vec<ThermalUpdate>,
 }
 
@@ -223,6 +272,7 @@ impl ThermalNetwork {
             nodes: BTreeMap::new(),
             domains: BTreeMap::new(),
             resistors: Vec::new(),
+            capacitors: Vec::new(),
             updates: Vec::new(),
         })
     }
@@ -293,6 +343,19 @@ impl ThermalNetwork {
         Ok(())
     }
 
+    pub fn add_capacitor(
+        &mut self,
+        left: ThermalNodeId,
+        right: ThermalNodeId,
+        capacitance_j_per_c: f64,
+    ) -> Result<(), ThermalError> {
+        self.require_node(left)?;
+        self.require_node(right)?;
+        self.capacitors
+            .push(ThermalCapacitor::new(left, right, capacitance_j_per_c)?);
+        Ok(())
+    }
+
     pub fn temperature_for_domain(&self, domain: ThermalDomainId) -> Result<f64, ThermalError> {
         let node = self
             .domains
@@ -337,6 +400,9 @@ impl ThermalNetwork {
         }
         for resistor in &self.resistors {
             self.apply_resistor(resistor, &index_by_node, &mut matrix, &mut rhs)?;
+        }
+        for capacitor in &self.capacitors {
+            self.apply_capacitor(capacitor, &index_by_node, &mut matrix, &mut rhs)?;
         }
 
         let temperatures = solve_linear_system(matrix, rhs)?;
@@ -389,6 +455,7 @@ impl ThermalNetwork {
             self.last_tick,
             nodes,
             self.resistors.clone(),
+            self.capacitors.clone(),
             self.updates.clone(),
         )
     }
@@ -447,12 +514,30 @@ impl ThermalNetwork {
                 resistor.resistance_c_per_w(),
             )?;
         }
+        for capacitor in snapshot.capacitors() {
+            if !nodes.contains_key(&capacitor.left()) {
+                return Err(ThermalError::UnknownThermalNode {
+                    node: capacitor.left(),
+                });
+            }
+            if !nodes.contains_key(&capacitor.right()) {
+                return Err(ThermalError::UnknownThermalNode {
+                    node: capacitor.right(),
+                });
+            }
+            ThermalCapacitor::new(
+                capacitor.left(),
+                capacitor.right(),
+                capacitor.capacitance_j_per_c(),
+            )?;
+        }
 
         self.step_seconds = snapshot.step_seconds();
         self.last_tick = snapshot.last_tick();
         self.nodes = nodes;
         self.domains = domains;
         self.resistors = snapshot.resistors().to_vec();
+        self.capacitors = snapshot.capacitors().to_vec();
         self.updates = snapshot.updates().to_vec();
         Ok(())
     }
@@ -540,6 +625,55 @@ impl ThermalNetwork {
             (None, Some(right_index)) => {
                 matrix[right_index][right_index] += conductance;
                 rhs[right_index] += conductance * left.reference_temperature_c()?;
+            }
+            (None, None) => {}
+        }
+        Ok(())
+    }
+
+    fn apply_capacitor(
+        &self,
+        capacitor: &ThermalCapacitor,
+        index_by_node: &BTreeMap<ThermalNodeId, usize>,
+        matrix: &mut [Vec<f64>],
+        rhs: &mut [f64],
+    ) -> Result<(), ThermalError> {
+        let capacitance_per_step = capacitor.capacitance_per_step(self.step_seconds);
+        let left = self
+            .nodes
+            .get(&capacitor.left())
+            .ok_or(ThermalError::UnknownThermalNode {
+                node: capacitor.left(),
+            })?;
+        let right = self
+            .nodes
+            .get(&capacitor.right())
+            .ok_or(ThermalError::UnknownThermalNode {
+                node: capacitor.right(),
+            })?;
+        let left_temperature_c = left.temperature_c();
+        let right_temperature_c = right.temperature_c();
+        match (
+            index_by_node.get(&capacitor.left()).copied(),
+            index_by_node.get(&capacitor.right()).copied(),
+        ) {
+            (Some(left_index), Some(right_index)) => {
+                matrix[left_index][left_index] += capacitance_per_step;
+                matrix[right_index][right_index] += capacitance_per_step;
+                matrix[left_index][right_index] -= capacitance_per_step;
+                matrix[right_index][left_index] -= capacitance_per_step;
+                rhs[left_index] +=
+                    capacitance_per_step * (left_temperature_c - right_temperature_c);
+                rhs[right_index] +=
+                    capacitance_per_step * (right_temperature_c - left_temperature_c);
+            }
+            (Some(left_index), None) => {
+                matrix[left_index][left_index] += capacitance_per_step;
+                rhs[left_index] += capacitance_per_step * left_temperature_c;
+            }
+            (None, Some(right_index)) => {
+                matrix[right_index][right_index] += capacitance_per_step;
+                rhs[right_index] += capacitance_per_step * right_temperature_c;
             }
             (None, None) => {}
         }
@@ -787,6 +921,14 @@ enum ThermalNetworkNode {
 }
 
 impl ThermalNetworkNode {
+    fn temperature_c(&self) -> f64 {
+        match self {
+            Self::Domain { temperature_c, .. } | Self::Reference { temperature_c } => {
+                *temperature_c
+            }
+        }
+    }
+
     fn domain_temperature_c(&self) -> Option<f64> {
         match self {
             Self::Domain { temperature_c, .. } => Some(*temperature_c),

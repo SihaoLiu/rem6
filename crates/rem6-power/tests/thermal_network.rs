@@ -57,6 +57,51 @@ fn thermal_network_solves_coupled_domain_temperatures() {
 }
 
 #[test]
+fn thermal_network_capacitor_edges_couple_domain_temperatures() {
+    let cpu_domain = ThermalDomainId::new(1);
+    let gpu_domain = ThermalDomainId::new(2);
+    let cpu = ThermalNodeId::new(10);
+    let gpu = ThermalNodeId::new(20);
+    let mut network = ThermalNetwork::new(1.0).unwrap();
+    network.add_domain(cpu, cpu_domain, 25.0, 10.0).unwrap();
+    network.add_domain(gpu, gpu_domain, 25.0, 10.0).unwrap();
+    network.add_capacitor(cpu, gpu, 5.0).unwrap();
+
+    network
+        .advance(10, vec![(cpu_domain, PowerEstimate::new(10.0, 0.0))])
+        .unwrap();
+
+    assert_close(network.temperature_for_domain(cpu_domain).unwrap(), 25.75);
+    assert_close(network.temperature_for_domain(gpu_domain).unwrap(), 25.25);
+
+    let snapshot = network.snapshot();
+    assert_eq!(snapshot.capacitors().len(), 1);
+    let mut restored = ThermalNetwork::new(1.0).unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn thermal_network_capacitor_reference_edges_add_thermal_inertia() {
+    let cpu_domain = ThermalDomainId::new(1);
+    let cpu = ThermalNodeId::new(10);
+    let air = ThermalNodeId::new(99);
+    let mut network = ThermalNetwork::new(1.0).unwrap();
+    network.add_domain(cpu, cpu_domain, 25.0, 10.0).unwrap();
+    network.add_reference(air, 10.0).unwrap();
+    network.add_capacitor(cpu, air, 5.0).unwrap();
+
+    network
+        .advance(10, vec![(cpu_domain, PowerEstimate::new(10.0, 0.0))])
+        .unwrap();
+
+    assert_close(
+        network.temperature_for_domain(cpu_domain).unwrap(),
+        25.6666667,
+    );
+}
+
+#[test]
 fn thermal_network_rejects_invalid_topology_and_runtime_state() {
     let cpu_domain = ThermalDomainId::new(1);
     let cpu = ThermalNodeId::new(10);
@@ -92,6 +137,22 @@ fn thermal_network_rejects_invalid_topology_and_runtime_state() {
         },
     );
     assert_eq!(
+        network.add_capacitor(cpu, cpu, 1.0).unwrap_err(),
+        ThermalError::ThermalSelfConnection { node: cpu },
+    );
+    assert_eq!(
+        network.add_capacitor(cpu, air, 0.0).unwrap_err(),
+        ThermalError::InvalidThermalCapacitance,
+    );
+    assert_eq!(
+        network
+            .add_capacitor(cpu, ThermalNodeId::new(77), 1.0)
+            .unwrap_err(),
+        ThermalError::UnknownThermalNode {
+            node: ThermalNodeId::new(77),
+        },
+    );
+    assert_eq!(
         network
             .advance(
                 11,
@@ -116,6 +177,7 @@ fn thermal_network_rejects_invalid_topology_and_runtime_state() {
             .restore(&ThermalNetworkSnapshot::new(
                 1.0,
                 0,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),

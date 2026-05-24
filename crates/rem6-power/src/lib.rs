@@ -12,7 +12,7 @@ pub use expression::{
     PowerMetricBinding, PowerMetricBindings, PowerMetricId, PowerStateExpression,
 };
 pub use thermal::{
-    ThermalDomainId, ThermalError, ThermalNetwork, ThermalNetworkNodeSnapshot,
+    ThermalCapacitor, ThermalDomainId, ThermalError, ThermalNetwork, ThermalNetworkNodeSnapshot,
     ThermalNetworkSnapshot, ThermalNodeId, ThermalRcModel, ThermalRcSnapshot, ThermalResistor,
     ThermalUpdate,
 };
