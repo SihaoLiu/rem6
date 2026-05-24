@@ -467,6 +467,10 @@ impl QueuedPrefetcher {
         self.pending.len()
     }
 
+    pub fn next_ready_tick(&self) -> Option<u64> {
+        self.pending.first().map(|entry| entry.ready_tick)
+    }
+
     pub fn enqueue_candidates(
         &mut self,
         source_tick: u64,
