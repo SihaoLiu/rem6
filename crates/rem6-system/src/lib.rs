@@ -34,6 +34,7 @@ mod memory_checkpoint;
 mod riscv_checkpoint;
 mod riscv_run_activity;
 mod scheduler_checkpoint;
+mod system_run_qos;
 mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
