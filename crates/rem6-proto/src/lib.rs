@@ -6,8 +6,10 @@ use rem6_kernel::Tick;
 use rem6_memory::Address;
 
 mod frame;
+mod frame_stream;
 
 pub use frame::{TraceFrame, TraceFrameKind};
+pub use frame_stream::TraceFrameStream;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -824,6 +826,13 @@ pub enum ProtoError {
     },
     TruncatedFrame,
     FrameChecksumMismatch,
+    EmptyFrameStream,
+    InvalidFrameStreamMagic,
+    UnsupportedFrameStreamVersion {
+        version: u16,
+    },
+    TruncatedFrameStream,
+    InvalidFrameStreamLength,
 }
 
 impl fmt::Display for ProtoError {
@@ -923,6 +932,20 @@ impl fmt::Display for ProtoError {
             }
             Self::TruncatedFrame => write!(formatter, "trace frame is truncated"),
             Self::FrameChecksumMismatch => write!(formatter, "trace frame checksum does not match"),
+            Self::EmptyFrameStream => write!(formatter, "trace frame stream must not be empty"),
+            Self::InvalidFrameStreamMagic => {
+                write!(formatter, "trace frame stream magic is invalid")
+            }
+            Self::UnsupportedFrameStreamVersion { version } => {
+                write!(
+                    formatter,
+                    "trace frame stream version {version} is not supported"
+                )
+            }
+            Self::TruncatedFrameStream => write!(formatter, "trace frame stream is truncated"),
+            Self::InvalidFrameStreamLength => {
+                write!(formatter, "trace frame stream record length is invalid")
+            }
         }
     }
 }
