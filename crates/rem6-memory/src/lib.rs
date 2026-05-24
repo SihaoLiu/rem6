@@ -13,8 +13,8 @@ pub use translation::{
     TranslationRequestId, TranslationResolution,
 };
 pub use translation_tlb::{
-    TranslationTlb, TranslationTlbConfig, TranslationTlbEntrySnapshot, TranslationTlbLookup,
-    TranslationTlbLookupKind, TranslationTlbSnapshot, TranslationTlbStats,
+    TranslationAddressSpaceId, TranslationTlb, TranslationTlbConfig, TranslationTlbEntrySnapshot,
+    TranslationTlbLookup, TranslationTlbLookupKind, TranslationTlbSnapshot, TranslationTlbStats,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

@@ -6,6 +6,23 @@ use crate::{
     TranslationRequest, TranslationResolution,
 };
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TranslationAddressSpaceId(u16);
+
+impl TranslationAddressSpaceId {
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    pub const fn global() -> Self {
+        Self(0)
+    }
+
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TranslationTlbConfig {
     capacity: usize,
@@ -94,6 +111,7 @@ impl TranslationTlbStats {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TranslationTlbEntrySnapshot {
+    address_space: TranslationAddressSpaceId,
     virtual_page: Address,
     physical_page: Address,
     page_size: TranslationPageSize,
@@ -109,13 +127,36 @@ impl TranslationTlbEntrySnapshot {
         permissions: TranslationPagePermissions,
         last_used: u64,
     ) -> Self {
+        Self::new_in_address_space(
+            TranslationAddressSpaceId::global(),
+            virtual_page,
+            physical_page,
+            page_size,
+            permissions,
+            last_used,
+        )
+    }
+
+    pub fn new_in_address_space(
+        address_space: TranslationAddressSpaceId,
+        virtual_page: Address,
+        physical_page: Address,
+        page_size: TranslationPageSize,
+        permissions: TranslationPagePermissions,
+        last_used: u64,
+    ) -> Self {
         Self {
+            address_space,
             virtual_page,
             physical_page,
             page_size,
             permissions,
             last_used,
         }
+    }
+
+    pub const fn address_space(&self) -> TranslationAddressSpaceId {
+        self.address_space
     }
 
     pub const fn virtual_page(&self) -> Address {
@@ -209,6 +250,7 @@ impl TranslationTlbLookup {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TranslationTlbEntry {
+    address_space: TranslationAddressSpaceId,
     virtual_page: Address,
     physical_page: Address,
     page_size: TranslationPageSize,
@@ -218,6 +260,7 @@ struct TranslationTlbEntry {
 
 impl TranslationTlbEntry {
     fn new(
+        address_space: TranslationAddressSpaceId,
         virtual_page: Address,
         physical_page: Address,
         page_size: TranslationPageSize,
@@ -225,6 +268,7 @@ impl TranslationTlbEntry {
         last_used: u64,
     ) -> Self {
         Self {
+            address_space,
             virtual_page,
             physical_page,
             page_size,
@@ -250,6 +294,7 @@ impl TranslationTlbEntry {
         entry_range(snapshot.physical_page(), snapshot.page_size())?;
 
         Ok(Self::new(
+            snapshot.address_space(),
             snapshot.virtual_page(),
             snapshot.physical_page(),
             snapshot.page_size(),
@@ -259,7 +304,8 @@ impl TranslationTlbEntry {
     }
 
     fn snapshot(&self) -> TranslationTlbEntrySnapshot {
-        TranslationTlbEntrySnapshot::new(
+        TranslationTlbEntrySnapshot::new_in_address_space(
+            self.address_space,
             self.virtual_page,
             self.physical_page,
             self.page_size,
@@ -270,6 +316,10 @@ impl TranslationTlbEntry {
 
     fn contains_range(&self, range: AddressRange) -> Result<bool, TranslationError> {
         Ok(entry_range(self.virtual_page, self.page_size)?.contains_range(range))
+    }
+
+    fn contains_address(&self, address: Address) -> Result<bool, TranslationError> {
+        Ok(entry_range(self.virtual_page, self.page_size)?.contains(address))
     }
 
     fn resolve(&self, request: &TranslationRequest) -> TranslationResolution {
@@ -285,10 +335,25 @@ impl TranslationTlbEntry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct TranslationTlbKey {
+    address_space: TranslationAddressSpaceId,
+    virtual_page: Address,
+}
+
+impl TranslationTlbKey {
+    const fn new(address_space: TranslationAddressSpaceId, virtual_page: Address) -> Self {
+        Self {
+            address_space,
+            virtual_page,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TranslationTlb {
     config: TranslationTlbConfig,
-    entries: BTreeMap<Address, TranslationTlbEntry>,
+    entries: BTreeMap<TranslationTlbKey, TranslationTlbEntry>,
     next_lru: u64,
     stats: TranslationTlbStats,
 }
@@ -310,11 +375,15 @@ impl TranslationTlb {
             });
         }
 
-        let mut virtual_pages = BTreeSet::new();
+        let mut keys = BTreeSet::new();
         let mut entries = BTreeMap::new();
         let mut minimum_next_lru = 0;
         for snapshot_entry in snapshot.entries() {
-            if !virtual_pages.insert(snapshot_entry.virtual_page()) {
+            let key = TranslationTlbKey::new(
+                snapshot_entry.address_space(),
+                snapshot_entry.virtual_page(),
+            );
+            if !keys.insert(key) {
                 return Err(TranslationError::DuplicateTlbEntry {
                     virtual_page: snapshot_entry.virtual_page(),
                 });
@@ -326,7 +395,7 @@ impl TranslationTlb {
                     .checked_add(1)
                     .ok_or(TranslationError::TlbOrderOverflow)?,
             );
-            entries.insert(snapshot_entry.virtual_page(), entry);
+            entries.insert(key, entry);
         }
 
         Ok(Self {
@@ -359,7 +428,46 @@ impl TranslationTlb {
     }
 
     pub fn contains_virtual_page(&self, virtual_page: Address) -> bool {
-        self.entries.contains_key(&virtual_page)
+        self.contains_entry(TranslationAddressSpaceId::global(), virtual_page)
+    }
+
+    pub fn contains_entry(
+        &self,
+        address_space: TranslationAddressSpaceId,
+        virtual_page: Address,
+    ) -> bool {
+        self.entries
+            .contains_key(&TranslationTlbKey::new(address_space, virtual_page))
+    }
+
+    pub fn flush_all(&mut self) -> usize {
+        let removed = self.entries.len();
+        self.entries.clear();
+        removed
+    }
+
+    pub fn flush_address_space(&mut self, address_space: TranslationAddressSpaceId) -> usize {
+        let before = self.entries.len();
+        self.entries
+            .retain(|key, _| key.address_space != address_space);
+        before - self.entries.len()
+    }
+
+    pub fn demap_page(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        virtual_address: Address,
+    ) -> usize {
+        self.remove_matching_pages(|key, entry| {
+            key.address_space == address_space
+                && entry.contains_address(virtual_address).unwrap_or(false)
+        })
+    }
+
+    pub fn demap_page_all_address_spaces(&mut self, virtual_address: Address) -> usize {
+        self.remove_matching_pages(|_, entry| {
+            entry.contains_address(virtual_address).unwrap_or(false)
+        })
     }
 
     pub fn translate(
@@ -367,12 +475,21 @@ impl TranslationTlb {
         request: &TranslationRequest,
         page_map: &TranslationPageMap,
     ) -> Result<TranslationTlbLookup, TranslationError> {
-        if let Some(virtual_page) = self.lookup_virtual_page(request.range())? {
+        self.translate_in_address_space(TranslationAddressSpaceId::global(), request, page_map)
+    }
+
+    pub fn translate_in_address_space(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        request: &TranslationRequest,
+        page_map: &TranslationPageMap,
+    ) -> Result<TranslationTlbLookup, TranslationError> {
+        if let Some(key) = self.lookup_key(address_space, request.range())? {
             self.stats.record_hit();
             let last_used = self.next_lru()?;
             let entry = self
                 .entries
-                .get_mut(&virtual_page)
+                .get_mut(&key)
                 .expect("TLB lookup returned a missing entry");
             entry.last_used = last_used;
 
@@ -395,7 +512,13 @@ impl TranslationTlb {
                     .iter()
                     .find(|mapping| mapping.virtual_range().contains_range(request.range()))
                 {
-                    self.insert_mapping(request, physical_address, mapping, page_map.page_size())?;
+                    self.insert_mapping(
+                        address_space,
+                        request,
+                        physical_address,
+                        mapping,
+                        page_map.page_size(),
+                    )?;
                 }
                 Ok(TranslationTlbLookup::new(
                     TranslationTlbLookupKind::Miss,
@@ -424,13 +547,14 @@ impl TranslationTlb {
         )
     }
 
-    fn lookup_virtual_page(
+    fn lookup_key(
         &self,
+        address_space: TranslationAddressSpaceId,
         range: AddressRange,
-    ) -> Result<Option<Address>, TranslationError> {
-        for (virtual_page, entry) in &self.entries {
-            if entry.contains_range(range)? {
-                return Ok(Some(*virtual_page));
+    ) -> Result<Option<TranslationTlbKey>, TranslationError> {
+        for (key, entry) in &self.entries {
+            if key.address_space == address_space && entry.contains_range(range)? {
+                return Ok(Some(*key));
             }
         }
 
@@ -439,6 +563,7 @@ impl TranslationTlb {
 
     fn insert_mapping(
         &mut self,
+        address_space: TranslationAddressSpaceId,
         request: &TranslationRequest,
         physical_address: Address,
         mapping: &TranslationPageMapping,
@@ -451,8 +576,10 @@ impl TranslationTlb {
 
         let physical_page = page_size.page_address(physical_address);
         let last_used = self.next_lru()?;
-        if let Some(entry) = self.entries.get_mut(&virtual_page) {
+        let key = TranslationTlbKey::new(address_space, virtual_page);
+        if let Some(entry) = self.entries.get_mut(&key) {
             *entry = TranslationTlbEntry::new(
+                address_space,
                 virtual_page,
                 physical_page,
                 page_size,
@@ -468,8 +595,9 @@ impl TranslationTlb {
         }
 
         self.entries.insert(
-            virtual_page,
+            key,
             TranslationTlbEntry::new(
+                address_space,
                 virtual_page,
                 physical_page,
                 page_size,
@@ -481,12 +609,21 @@ impl TranslationTlb {
         Ok(())
     }
 
+    fn remove_matching_pages<F>(&mut self, mut matches: F) -> usize
+    where
+        F: FnMut(&TranslationTlbKey, &TranslationTlbEntry) -> bool,
+    {
+        let before = self.entries.len();
+        self.entries.retain(|key, entry| !matches(key, entry));
+        before - self.entries.len()
+    }
+
     fn evict_lru(&mut self) {
         let Some(victim) = self
             .entries
-            .values()
-            .min_by_key(|entry| (entry.last_used, entry.virtual_page))
-            .map(|entry| entry.virtual_page)
+            .iter()
+            .min_by_key(|(key, entry)| (entry.last_used, **key))
+            .map(|(key, _)| *key)
         else {
             return;
         };
