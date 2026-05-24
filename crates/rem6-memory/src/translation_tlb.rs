@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     AccessSize, Address, AddressRange, TranslationError, TranslationFault, TranslationFaultKind,
     TranslationPageMap, TranslationPageMapping, TranslationPagePermissions, TranslationPageSize,
-    TranslationRequest, TranslationResolution,
+    TranslationRequest, TranslationResolution, TranslationSegmentedResolution,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -572,6 +572,50 @@ impl TranslationTlb {
                 Ok(TranslationResolution::Fault(fault))
             }
         }
+    }
+
+    pub fn fill_segments_from_page_map(
+        &mut self,
+        request: &TranslationRequest,
+        page_map: &TranslationPageMap,
+    ) -> Result<TranslationSegmentedResolution, TranslationError> {
+        self.fill_segments_from_page_map_in_address_space(
+            TranslationAddressSpaceId::global(),
+            request,
+            page_map,
+        )
+    }
+
+    pub fn fill_segments_from_page_map_in_address_space(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        request: &TranslationRequest,
+        page_map: &TranslationPageMap,
+    ) -> Result<TranslationSegmentedResolution, TranslationError> {
+        let resolution = page_map.translate_segments(request);
+        match &resolution {
+            TranslationSegmentedResolution::Mapped(segments) => {
+                for segment in segments {
+                    let segment_request = TranslationRequest::new(
+                        request.id(),
+                        segment.virtual_start(),
+                        segment.size(),
+                        request.access(),
+                    )?;
+                    let segment_resolution = self.fill_from_page_map_in_address_space(
+                        address_space,
+                        &segment_request,
+                        page_map,
+                    )?;
+                    if let TranslationResolution::Fault(fault) = segment_resolution {
+                        return Ok(TranslationSegmentedResolution::Fault(fault));
+                    }
+                }
+            }
+            TranslationSegmentedResolution::Fault(_) => self.stats.record_fault(),
+        }
+
+        Ok(resolution)
     }
 
     pub fn snapshot(&self) -> TranslationTlbSnapshot {

@@ -2,8 +2,8 @@ use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationAddressSpaceId,
     TranslationError, TranslationFault, TranslationFaultKind, TranslationPageMap,
     TranslationPagePermissions, TranslationPageSize, TranslationRequest, TranslationRequestId,
-    TranslationResolution, TranslationTlb, TranslationTlbConfig, TranslationTlbLookupKind,
-    TranslationTlbStats,
+    TranslationResolution, TranslationSegmentedResolution, TranslationTlb, TranslationTlbConfig,
+    TranslationTlbLookupKind, TranslationTlbStats,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -61,6 +61,30 @@ fn single_page_map(
     let mut map = TranslationPageMap::new(page_size);
     map.map(virtual_base, physical_base, 1, permissions)
         .unwrap();
+    map
+}
+
+fn two_page_map(
+    virtual_base: Address,
+    first_physical_base: Address,
+    second_physical_base: Address,
+) -> TranslationPageMap {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        virtual_base,
+        first_physical_base,
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    map.map(
+        Address::new(virtual_base.get() + page_size.bytes()),
+        second_physical_base,
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
     map
 }
 
@@ -391,4 +415,71 @@ fn translation_tlb_flushes_all_address_space_and_page_scopes_explicitly() {
     .unwrap();
     assert_eq!(tlb.flush_all(), 2);
     assert!(tlb.is_empty());
+}
+
+#[test]
+fn translation_tlb_fills_cross_page_segments_as_scoped_page_entries() {
+    let virtual_base = Address::new(0xffff_0001_1000_0000);
+    let asid = TranslationAddressSpaceId::new(5);
+    let map = two_page_map(
+        virtual_base,
+        Address::new(0x0000_0001_3000_0000),
+        Address::new(0x0000_0001_4000_0000),
+    );
+    let mut tlb = TranslationTlb::new(TranslationTlbConfig::new(4).unwrap());
+
+    let resolution = tlb
+        .fill_segments_from_page_map_in_address_space(
+            asid,
+            &request(
+                19,
+                virtual_base.get() + 0xff8,
+                16,
+                TranslationAccessKind::Load,
+            ),
+            &map,
+        )
+        .unwrap();
+    let TranslationSegmentedResolution::Mapped(segments) = resolution else {
+        panic!("cross-page request should map into segments");
+    };
+    assert_eq!(segments.len(), 2);
+    assert!(tlb.contains_entry(asid, virtual_base));
+    assert!(tlb.contains_entry(asid, Address::new(virtual_base.get() + 4096)));
+    assert_eq!(tlb.stats(), TranslationTlbStats::new(0, 0, 0, 2, 0));
+
+    let first_hit = tlb
+        .lookup_cached_in_address_space(
+            asid,
+            &request(
+                20,
+                virtual_base.get() + 0x40,
+                8,
+                TranslationAccessKind::Load,
+            ),
+        )
+        .unwrap()
+        .expect("first segment page should be cached");
+    assert_eq!(
+        first_hit.physical_address(),
+        Some(Address::new(0x0000_0001_3000_0040))
+    );
+
+    let second_hit = tlb
+        .lookup_cached_in_address_space(
+            asid,
+            &request(
+                21,
+                virtual_base.get() + 0x1080,
+                8,
+                TranslationAccessKind::Load,
+            ),
+        )
+        .unwrap()
+        .expect("second segment page should be cached");
+    assert_eq!(
+        second_hit.physical_address(),
+        Some(Address::new(0x0000_0001_4000_0080))
+    );
+    assert_eq!(tlb.stats(), TranslationTlbStats::new(2, 0, 0, 2, 0));
 }

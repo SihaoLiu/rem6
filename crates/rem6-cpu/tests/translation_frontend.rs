@@ -526,3 +526,110 @@ fn cpu_translation_frontend_faults_first_failed_cross_page_segment() {
     );
     assert!(frontend.is_empty());
 }
+
+#[test]
+fn cpu_translation_frontend_segmented_completion_fills_tlb_entries() {
+    let virtual_base = Address::new(0xffff_0001_0000_0000);
+    let asid = TranslationAddressSpaceId::new(21);
+    let map = two_page_map(
+        virtual_base,
+        Address::new(0x0000_0001_1000_0000),
+        Address::new(0x0000_0001_2000_0000),
+        TranslationPagePermissions::read_write(),
+    );
+    let mut frontend = CpuTranslationFrontend::with_tlb(
+        TranslationQueueConfig::new(4, 2).unwrap(),
+        TranslationTlbConfig::new(8).unwrap(),
+    );
+
+    let cross_page = CpuTranslationRequest::load(
+        translation_id(12),
+        memory_id(21),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0xff8),
+        AccessSize::new(16).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid);
+    assert_eq!(
+        frontend
+            .enqueue_or_translate_cached(50, cross_page)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        frontend.tlb().unwrap().stats(),
+        TranslationTlbStats::new(0, 1, 0, 0, 0)
+    );
+
+    assert!(frontend
+        .complete_ready_segmented_with_tlb_page_map(51, &map)
+        .unwrap()
+        .is_empty());
+    let outcomes = frontend
+        .complete_ready_segmented_with_tlb_page_map(52, &map)
+        .unwrap();
+    let CpuSegmentedTranslationOutcome::Mapped(segments) = &outcomes[0] else {
+        panic!("cross-page load should map into TLB-backed segments");
+    };
+    assert_eq!(segments.len(), 2);
+    assert!(frontend.tlb().unwrap().contains_entry(asid, virtual_base));
+    assert!(frontend
+        .tlb()
+        .unwrap()
+        .contains_entry(asid, Address::new(virtual_base.get() + 4096)));
+    assert_eq!(
+        frontend.tlb().unwrap().stats(),
+        TranslationTlbStats::new(0, 1, 0, 2, 0)
+    );
+
+    let first_page = CpuTranslationRequest::load(
+        translation_id(13),
+        memory_id(22),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x20),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid);
+    let CpuTranslationOutcome::Mapped(first_hit) = frontend
+        .enqueue_or_translate_cached(53, first_page)
+        .unwrap()
+        .expect("first page should hit the segmented fill")
+    else {
+        panic!("first page TLB hit should map");
+    };
+    assert_eq!(
+        first_hit.physical_address(),
+        Address::new(0x0000_0001_1000_0020)
+    );
+
+    let second_page = CpuTranslationRequest::load(
+        translation_id(14),
+        memory_id(23),
+        route(),
+        endpoint(),
+        Address::new(virtual_base.get() + 0x1080),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .in_address_space(asid);
+    let CpuTranslationOutcome::Mapped(second_hit) = frontend
+        .enqueue_or_translate_cached(54, second_page)
+        .unwrap()
+        .expect("second page should hit the segmented fill")
+    else {
+        panic!("second page TLB hit should map");
+    };
+    assert_eq!(
+        second_hit.physical_address(),
+        Address::new(0x0000_0001_2000_0080)
+    );
+    assert!(frontend.is_empty());
+    assert_eq!(
+        frontend.tlb().unwrap().stats(),
+        TranslationTlbStats::new(2, 1, 0, 2, 0)
+    );
+}

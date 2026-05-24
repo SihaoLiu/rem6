@@ -789,6 +789,38 @@ impl CpuTranslationFrontend {
         Ok(outcomes)
     }
 
+    pub fn complete_ready_segmented_with_tlb_page_map(
+        &mut self,
+        tick: u64,
+        page_map: &TranslationPageMap,
+    ) -> Result<Vec<CpuSegmentedTranslationOutcome>, CpuTranslationFrontendError> {
+        let ready = self.queue.ready_request_ids(tick);
+        let mut outcomes = Vec::with_capacity(ready.len());
+        for request_id in ready {
+            let pending = self
+                .pending
+                .get(&request_id)
+                .expect("translation queue ready request has matching CPU metadata")
+                .clone();
+            let translation = pending
+                .translation_request()
+                .map_err(CpuTranslationFrontendError::Translation)?;
+            let resolution = if let Some(tlb) = &mut self.tlb {
+                tlb.fill_segments_from_page_map_in_address_space(
+                    pending.address_space(),
+                    &translation,
+                    page_map,
+                )
+                .map_err(CpuTranslationFrontendError::Translation)?
+            } else {
+                page_map.translate_segments(&translation)
+            };
+            outcomes.push(self.complete_segmented(request_id, resolution)?);
+        }
+
+        Ok(outcomes)
+    }
+
     pub fn snapshot(&self) -> CpuTranslationFrontendSnapshot {
         let queue = self.queue.snapshot();
         let pending = self
