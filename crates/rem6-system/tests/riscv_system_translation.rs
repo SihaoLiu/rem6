@@ -1,0 +1,565 @@
+use std::sync::{Arc, Mutex};
+
+use rem6_boot::BootImage;
+use rem6_cpu::{
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
+    RiscvCluster, RiscvClusterTopologyConfig, RiscvCore, RiscvCoreDriveAction,
+    RiscvCoreTopologyConfig, RiscvCoreTopologyDataTranslationConfig,
+};
+use rem6_isa_riscv::Register;
+use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
+    PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
+    TranslationQueueConfig, TranslationTlbConfig,
+};
+use rem6_stats::StatsRegistry;
+use rem6_system::{
+    GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvSystemRunStopReason,
+    RiscvTopologySystem, RiscvTrapEventPort, StopRequest, SystemHostController,
+    SystemHostEventPort,
+};
+use rem6_topology::{
+    ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
+    TopologyBuilder,
+};
+use rem6_transport::{
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
+    TransportEndpointId,
+};
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
+}
+
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
+}
+
+fn topology_component(name: &str) -> ComponentId {
+    ComponentId::new(name).unwrap()
+}
+
+fn topology_kind(name: &str) -> ComponentKind {
+    ComponentKind::new(name).unwrap()
+}
+
+fn topology_port(name: &str) -> PortName {
+    PortName::new(name).unwrap()
+}
+
+fn topology_endpoint(component: &str, port: &str) -> Endpoint {
+    Endpoint::new(topology_component(component), topology_port(port))
+}
+
+fn clock(period: u64) -> ClockDomain {
+    ClockDomain::new(period).unwrap()
+}
+
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
+}
+
+fn word(raw: u32) -> Vec<u8> {
+    raw.to_le_bytes().to_vec()
+}
+
+fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (((imm as u32) & 0x0fff) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
+struct CoreSpec<'a> {
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    entry: u64,
+    fetch_endpoint: &'a str,
+    fetch_route: MemoryRouteId,
+    data_endpoint: &'a str,
+    data_route: MemoryRouteId,
+}
+
+fn translated_riscv_core(spec: CoreSpec<'_>) -> RiscvCore {
+    let core = CpuCore::new(
+        CpuResetState::new(
+            CpuId::new(spec.cpu),
+            PartitionId::new(spec.partition),
+            AgentId::new(spec.agent),
+            Address::new(spec.entry),
+        ),
+        CpuFetchConfig::new(
+            endpoint(spec.fetch_endpoint),
+            spec.fetch_route,
+            layout(),
+            AccessSize::new(4).unwrap(),
+        ),
+    )
+    .unwrap();
+
+    RiscvCore::with_data_translation(
+        core,
+        CpuDataConfig::new(endpoint(spec.data_endpoint), spec.data_route, layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    )
+}
+
+fn store_with_programs_and_data(
+    programs: &[(u64, u32)],
+    data_segments: &[(u64, Vec<u8>)],
+) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x3000).unwrap(),
+        )
+        .unwrap();
+
+    let mut image = BootImage::new(Address::new(programs[0].0));
+    for (entry, instruction) in programs {
+        image = image
+            .add_segment(Address::new(*entry), word(*instruction))
+            .unwrap();
+    }
+    for (address, data) in data_segments {
+        image = image
+            .add_segment(Address::new(*address), data.clone())
+            .unwrap();
+    }
+    image
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn single_page_map(virtual_base: u64, physical_base: u64) -> TranslationPageMap {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map(
+        Address::new(virtual_base),
+        Address::new(physical_base),
+        1,
+        TranslationPagePermissions::read_write_execute(),
+    )
+    .unwrap();
+    map
+}
+
+fn memory_response(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    delivery: &RequestDelivery,
+) -> TargetOutcome {
+    let response = store
+        .lock()
+        .unwrap()
+        .respond(delivery.request())
+        .unwrap()
+        .response()
+        .cloned()
+        .unwrap();
+    TargetOutcome::Respond(response)
+}
+
+fn topology() -> Topology {
+    TopologyBuilder::new(4)
+        .add_component(
+            ComponentSpec::new(
+                topology_component("cpu0"),
+                topology_kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(topology_port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(topology_port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                topology_component("cpu1"),
+                topology_kind("cpu"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(topology_port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(topology_port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                topology_component("mem0"),
+                topology_kind("memory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(topology_port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            topology_endpoint("cpu0", "ifetch"),
+            topology_endpoint("mem0", "requests"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            topology_endpoint("cpu0", "dmem"),
+            topology_endpoint("mem0", "requests"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            topology_endpoint("cpu1", "ifetch"),
+            topology_endpoint("mem0", "requests"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            topology_endpoint("cpu1", "dmem"),
+            topology_endpoint("mem0", "requests"),
+            2,
+            3,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn translated_core_config(
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    entry: u64,
+) -> RiscvCoreTopologyConfig {
+    let cpu_name = format!("cpu{cpu}");
+    RiscvCoreTopologyConfig::new(
+        CpuResetState::new(
+            CpuId::new(cpu),
+            PartitionId::new(partition),
+            AgentId::new(agent),
+            Address::new(entry),
+        ),
+        topology_endpoint(&cpu_name, "ifetch"),
+        topology_endpoint("mem0", "requests"),
+        layout(),
+        AccessSize::new(4).unwrap(),
+    )
+    .with_data_translation(
+        topology_endpoint(&cpu_name, "dmem"),
+        topology_endpoint("mem0", "requests"),
+        layout(),
+        RiscvCoreTopologyDataTranslationConfig::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    )
+}
+
+#[test]
+fn riscv_system_parallel_driver_supplies_page_map_to_translated_data_path() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(51);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let cluster = RiscvCluster::new([
+        translated_riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        translated_riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(reg(2), 0x4000);
+    cluster
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(reg(2), 0x4010);
+
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+            (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8104, 0x0010_0073),
+        ],
+        &[
+            (0x9008, vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]),
+            (0x9018, vec![0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f]),
+        ],
+    );
+    let data_deliveries = Arc::new(Mutex::new(Vec::new()));
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_data_translation(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                let data_deliveries = Arc::clone(&data_deliveries);
+                move |delivery, _context| {
+                    data_deliveries
+                        .lock()
+                        .unwrap()
+                        .push((delivery.request().id(), delivery.request().range().start()));
+                    memory_response(&store, &delivery)
+                }
+            },
+            40,
+            |cpu| GuestEventId::new(140 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(140), source, 0);
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert!(run.turns().iter().any(|turn| {
+        !turn.core_events().is_empty()
+            && turn.core_events().iter().all(|event| {
+                matches!(
+                    event.action(),
+                    RiscvCoreDriveAction::DataAccessIssued { .. }
+                )
+            })
+    }));
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
+        0x0f1e_2d3c_4b5a_6978
+    );
+    let mut data_deliveries = data_deliveries.lock().unwrap().clone();
+    data_deliveries.sort();
+    assert_eq!(
+        data_deliveries,
+        vec![
+            (
+                MemoryRequestId::new(AgentId::new(7), 1),
+                Address::new(0x9008),
+            ),
+            (
+                MemoryRequestId::new(AgentId::new(8), 1),
+                Address::new(0x9018),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn riscv_topology_config_builds_translated_parallel_data_cores() {
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology(),
+        RiscvClusterTopologyConfig::new([
+            translated_core_config(0, 0, 7, 0x8000),
+            translated_core_config(1, 1, 8, 0x8100),
+        ]),
+        2,
+    )
+    .unwrap();
+    assert_eq!(system.transport().route_count(), 4);
+    system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(reg(2), 0x4000);
+    system
+        .cluster()
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(reg(2), 0x4010);
+
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+            (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8104, 0x0010_0073),
+        ],
+        &[
+            (0x9008, vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]),
+            (0x9018, vec![0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f]),
+        ],
+    );
+    let data_deliveries = Arc::new(Mutex::new(Vec::new()));
+    let source = GuestSourceId::new(52);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(PartitionId::new(3), 2, Arc::clone(&controller))
+            .unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+    let (cluster, mut scheduler, transport) = system.execution_parts_mut();
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_data_translation(
+            cluster,
+            &mut scheduler,
+            transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context: &mut rem6_kernel::ParallelSchedulerContext<'_>| {
+                    memory_response(&store, &delivery)
+                }
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                let data_deliveries = Arc::clone(&data_deliveries);
+                move |delivery, _context: &mut rem6_kernel::ParallelSchedulerContext<'_>| {
+                    data_deliveries
+                        .lock()
+                        .unwrap()
+                        .push((delivery.request().id(), delivery.request().range().start()));
+                    memory_response(&store, &delivery)
+                }
+            },
+            40,
+            |cpu| GuestEventId::new(150 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(150), source, 0);
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(reg(5)),
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(1))
+            .unwrap()
+            .read_register(reg(5)),
+        0x0f1e_2d3c_4b5a_6978
+    );
+    let mut data_deliveries = data_deliveries.lock().unwrap().clone();
+    data_deliveries.sort();
+    assert_eq!(
+        data_deliveries,
+        vec![
+            (
+                MemoryRequestId::new(AgentId::new(7), 1),
+                Address::new(0x9008),
+            ),
+            (
+                MemoryRequestId::new(AgentId::new(8), 1),
+                Address::new(0x9018),
+            ),
+        ]
+    );
+}

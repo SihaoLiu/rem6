@@ -3,13 +3,13 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_kernel::PartitionId;
-use rem6_memory::{AccessSize, CacheLineLayout};
+use rem6_memory::{AccessSize, CacheLineLayout, TranslationQueueConfig, TranslationTlbConfig};
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_transport::{MemoryTransport, TopologyRouteError, TransportEndpointId};
 
 use crate::{
-    CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuResetState, RiscvCluster,
-    RiscvClusterError, RiscvCore,
+    CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuResetState, CpuTranslationFrontend,
+    RiscvCluster, RiscvClusterError, RiscvCore,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +50,23 @@ impl RiscvCoreTopologyConfig {
             source,
             target,
             line_layout,
+            translation: None,
+        });
+        self
+    }
+
+    pub fn with_data_translation(
+        mut self,
+        source: Endpoint,
+        target: Endpoint,
+        line_layout: CacheLineLayout,
+        translation: RiscvCoreTopologyDataTranslationConfig,
+    ) -> Self {
+        self.data = Some(RiscvCoreTopologyDataConfig {
+            source,
+            target,
+            line_layout,
+            translation: Some(translation),
         });
         self
     }
@@ -84,6 +101,7 @@ pub struct RiscvCoreTopologyDataConfig {
     source: Endpoint,
     target: Endpoint,
     line_layout: CacheLineLayout,
+    translation: Option<RiscvCoreTopologyDataTranslationConfig>,
 }
 
 impl RiscvCoreTopologyDataConfig {
@@ -97,6 +115,37 @@ impl RiscvCoreTopologyDataConfig {
 
     pub const fn line_layout(&self) -> CacheLineLayout {
         self.line_layout
+    }
+
+    pub const fn translation(&self) -> Option<&RiscvCoreTopologyDataTranslationConfig> {
+        self.translation.as_ref()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvCoreTopologyDataTranslationConfig {
+    queue: TranslationQueueConfig,
+    tlb: Option<TranslationTlbConfig>,
+}
+
+impl RiscvCoreTopologyDataTranslationConfig {
+    pub const fn new(queue: TranslationQueueConfig) -> Self {
+        Self { queue, tlb: None }
+    }
+
+    pub const fn with_tlb(queue: TranslationQueueConfig, tlb: TranslationTlbConfig) -> Self {
+        Self {
+            queue,
+            tlb: Some(tlb),
+        }
+    }
+
+    pub const fn queue(self) -> TranslationQueueConfig {
+        self.queue
+    }
+
+    pub const fn tlb(self) -> Option<TranslationTlbConfig> {
+        self.tlb
     }
 }
 
@@ -208,15 +257,20 @@ impl RiscvCore {
         let data_route = transport
             .add_topology_route(topology, data.source().clone(), data.target().clone())
             .map_err(CpuTopologyError::TopologyRoute)?;
-        Ok(Self::with_data(
-            core,
-            CpuDataConfig::new(
-                TransportEndpointId::from_topology_endpoint(data.source())
-                    .map_err(CpuTopologyError::TopologyRoute)?,
-                data_route,
-                data.line_layout(),
-            ),
-        ))
+        let data_config = CpuDataConfig::new(
+            TransportEndpointId::from_topology_endpoint(data.source())
+                .map_err(CpuTopologyError::TopologyRoute)?,
+            data_route,
+            data.line_layout(),
+        );
+        let Some(translation) = data.translation() else {
+            return Ok(Self::with_data(core, data_config));
+        };
+        let frontend = match translation.tlb() {
+            Some(tlb) => CpuTranslationFrontend::with_tlb(translation.queue(), tlb),
+            None => CpuTranslationFrontend::new(translation.queue()),
+        };
+        Ok(Self::with_data_translation(core, data_config, frontend))
     }
 }
 

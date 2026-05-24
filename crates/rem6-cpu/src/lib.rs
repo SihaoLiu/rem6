@@ -108,7 +108,10 @@ pub use tage_sc_l_predictor::{
     TageScLBranchPredictorSnapshot, TageScLHistory, TageScLHistoryUpdate, TageScLPrediction,
     TageScLProvider, TageScLRepair, TageScLTrainingUpdate,
 };
-pub use topology::{CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
+pub use topology::{
+    CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig,
+    RiscvCoreTopologyDataTranslationConfig,
+};
 pub use tournament_predictor::{
     TournamentBranchPredictor, TournamentBranchPredictorConfig, TournamentBranchPredictorError,
     TournamentBranchPredictorSnapshot, TournamentHistory, TournamentHistoryUpdate,

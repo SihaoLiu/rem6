@@ -291,8 +291,10 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
             .collect::<Vec<_>>(),
         vec![CpuId::new(0), CpuId::new(1)]
     );
+    let mut deliveries = deliveries.lock().unwrap().clone();
+    deliveries.sort();
     assert_eq!(
-        *deliveries.lock().unwrap(),
+        deliveries,
         vec![
             (
                 MemoryRequestId::new(AgentId::new(7), 1),

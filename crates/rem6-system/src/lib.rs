@@ -34,6 +34,7 @@ mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod riscv_checkpoint;
 mod riscv_run_activity;
+mod riscv_run_translation;
 mod scheduler_checkpoint;
 mod system_run_qos;
 mod timer_checkpoint;
@@ -1266,7 +1267,7 @@ impl RiscvSystemRunDriver {
         ))
     }
 
-    fn host_stop_request(&self) -> Option<StopRequest> {
+    pub(crate) fn host_stop_request(&self) -> Option<StopRequest> {
         self.trap_port
             .controller()
             .lock()
@@ -1276,7 +1277,10 @@ impl RiscvSystemRunDriver {
             .copied()
     }
 
-    fn record_instruction_stats(&self, turn: &RiscvClusterTurn) -> Result<(), SystemError> {
+    pub(crate) fn record_instruction_stats(
+        &self,
+        turn: &RiscvClusterTurn,
+    ) -> Result<(), SystemError> {
         let Some(instruction_stats) = &self.instruction_stats else {
             return Ok(());
         };
@@ -1384,7 +1388,7 @@ fn merge_run_dram_activity_maps(
     }
 }
 
-fn pending_trap_cores_from_turn(
+pub(crate) fn pending_trap_cores_from_turn(
     cluster: &RiscvCluster,
     turn: &RiscvClusterTurn,
 ) -> Result<Vec<RiscvCore>, SystemError> {
