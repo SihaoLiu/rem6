@@ -84,7 +84,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/kern` | 18 | `rem6-system`, `rem6-platform`, workload resources | planned | Linux and guest ABI helpers need a typed full-system boundary instead of ad hoc scripts. |
 | `src/mem` | 682 | `rem6-memory`, `rem6-transport`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-dram`, `rem6-fabric`, protocol crates | partial | rem6 already splits protocol state, topology, NoC, DRAM, replacement state, MSHR resources, prefetch queues, and stores into typed crates. CHI-like behavior, prefetcher breadth, QoS, and Ruby-network breadth remain open. |
 | `src/python` | 253 | `rem6-workload`, `rem6-platform`, future front ends | partial | Keep gem5's ease of composition while replacing Python object wiring with checked manifests and typed builders. |
-| `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, typed probe events, and checkpoints exist. |
+| `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats`, `rem6-power` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, typed probe events, typed power domains, and checkpoints exist. |
 | `src/systemc` | 3911 | future `rem6-systemc` or adapter crate | external-adapter | Preserve interoperability only through an adapter boundary. Core rem6 timing must not depend on SystemC. |
 | `src/sst` | 6 | future SST adapter crate | external-adapter | Preserve co-simulation value behind a typed boundary that cannot bypass rem6 partition ownership. |
 | `src/proto` | 9 | future serialization boundary | planned | Any protobuf-like exchange must produce typed rem6 data before entering simulation. |
@@ -163,7 +163,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, and scheduler snapshots exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
-| statistics, probes, and power hooks | `rem6-stats`, run summaries, future power crate | partial | Counters, stats snapshots, typed probe registries, probe listener state, and probe event snapshots exist. Power modeling still needs typed ownership and checkpoints. |
+| statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, and probe event snapshots exist. Full power-model equations and thermal coupling remain open. |
 | guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, and execution mode actions are typed. Broader guest ABI support remains open. |
 
 ### External Integration and Tooling
@@ -224,6 +224,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   typed activity profiles.
 - Stats tests cover counter reset epochs and typed probe point, listener,
   event, payload, and snapshot records.
+- Power tests cover typed power state domains, leader/follower matching,
+  residency accounting, transition counters, invalid transition rejection, and
+  snapshot restore.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, typed QoS policy intent, result metadata, execution mode
   switches, host action summaries, checkpoint restore labels, and statistics
