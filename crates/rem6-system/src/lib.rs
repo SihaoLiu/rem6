@@ -23,6 +23,7 @@ use rem6_mmio::MmioBus;
 use rem6_stats::{StatId, StatsError};
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
+mod clint_checkpoint;
 mod coherence_checkpoint;
 mod data_cache_run;
 mod fabric_checkpoint;
@@ -41,6 +42,9 @@ mod uart_checkpoint;
 mod workload_replay;
 mod workload_replay_heterogeneous;
 
+pub use clint_checkpoint::{
+    ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, ClintCheckpointRecord,
+};
 pub use coherence_checkpoint::{
     MsiBankCheckpointBank, MsiBankCheckpointError, MsiBankCheckpointPort, MsiBankCheckpointRecord,
 };
@@ -1713,6 +1717,7 @@ pub enum SystemError {
     MemoryCheckpoint(MemoryStoreCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
     InterruptControllerCheckpoint(InterruptControllerCheckpointError),
+    ClintCheckpoint(ClintCheckpointError),
     TimerCheckpoint(TimerCheckpointError),
     UartCheckpoint(UartCheckpointError),
 }
@@ -1740,6 +1745,7 @@ impl fmt::Display for SystemError {
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::InterruptControllerCheckpoint(error) => write!(formatter, "{error}"),
+            Self::ClintCheckpoint(error) => write!(formatter, "{error}"),
             Self::TimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
         }
@@ -1764,6 +1770,7 @@ impl Error for SystemError {
             Self::MemoryCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
             Self::InterruptControllerCheckpoint(error) => Some(error),
+            Self::ClintCheckpoint(error) => Some(error),
             Self::TimerCheckpoint(error) => Some(error),
             Self::UartCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,

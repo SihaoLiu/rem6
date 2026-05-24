@@ -9,11 +9,12 @@ use rem6_kernel::Tick;
 use rem6_stats::{StatSnapshot, StatsRegistry, StatsResetRecord};
 
 use crate::{
-    AcceleratorCheckpointBank, DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget,
-    FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestSourceId,
-    HostAction, HostActionRecord, HostEventPolicy, InterruptControllerCheckpointBank,
-    MemoryStoreCheckpointBank, MsiBankCheckpointBank, RiscvCoreCheckpointBank,
-    SchedulerCheckpointBank, StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    AcceleratorCheckpointBank, ClintCheckpointBank, DramMemoryCheckpointBank, ExecutionMode,
+    ExecutionModeTarget, FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId,
+    GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
+    RiscvCoreCheckpointBank, SchedulerCheckpointBank, StopRequest, SystemError,
+    TimerCheckpointBank, UartCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -124,6 +125,7 @@ pub struct SystemActionExecutor {
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
     interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
+    clint_checkpoints: Option<ClintCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
@@ -149,6 +151,7 @@ impl SystemActionExecutor {
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -174,6 +177,7 @@ impl SystemActionExecutor {
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -199,6 +203,7 @@ impl SystemActionExecutor {
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -224,6 +229,7 @@ impl SystemActionExecutor {
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -249,6 +255,7 @@ impl SystemActionExecutor {
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -274,6 +281,7 @@ impl SystemActionExecutor {
             memory_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
             execution_modes: BTreeMap::new(),
@@ -300,6 +308,7 @@ impl SystemActionExecutor {
             memory_checkpoints: Some(memory_checkpoints),
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -326,6 +335,7 @@ impl SystemActionExecutor {
             memory_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
             interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -511,6 +521,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_clint_checkpoint_bank(
+        &mut self,
+        clint_checkpoints: ClintCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        clint_checkpoints.register_all(&mut self.checkpoints)?;
+        self.clint_checkpoints = Some(clint_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_uart_checkpoint_bank(
         &mut self,
         uart_checkpoints: UartCheckpointBank,
@@ -565,6 +584,10 @@ impl SystemActionExecutor {
         &self,
     ) -> Option<&InterruptControllerCheckpointBank> {
         self.interrupt_controller_checkpoints.as_ref()
+    }
+
+    pub const fn clint_checkpoint_bank(&self) -> Option<&ClintCheckpointBank> {
+        self.clint_checkpoints.as_ref()
     }
 
     pub const fn timer_checkpoint_bank(&self) -> Option<&TimerCheckpointBank> {
@@ -628,6 +651,11 @@ impl SystemActionExecutor {
             interrupt_controller_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::InterruptControllerCheckpoint)?;
+        }
+        if let Some(clint_checkpoints) = &self.clint_checkpoints {
+            clint_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::ClintCheckpoint)?;
         }
         if let Some(timer_checkpoints) = &self.timer_checkpoints {
             timer_checkpoints
@@ -717,6 +745,11 @@ impl SystemActionExecutor {
                 {
                     interrupt_controller_checkpoints
                         .capture_all_into(&mut self.checkpoints, record.tick())
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(clint_checkpoints) = &self.clint_checkpoints {
+                    clint_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(timer_checkpoints) = &self.timer_checkpoints {

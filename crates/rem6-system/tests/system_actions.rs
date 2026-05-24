@@ -17,16 +17,18 @@ use rem6_memory::{
 use rem6_mmio::{MmioRequest, MmioRequestId};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
 use rem6_system::{
-    DramMemoryCheckpointBank, DramMemoryCheckpointPort, ExecutionMode, ExecutionModeTarget,
-    GuestEvent, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction,
-    HostActionRecord, HostEventPolicy, InterruptControllerCheckpointBank,
-    InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
-    RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor,
-    SystemActionOutcome, SystemHostController, SystemHostEventPort, SystemRunController,
-    TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    ClintCheckpointBank, ClintCheckpointPort, DramMemoryCheckpointBank, DramMemoryCheckpointPort,
+    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
+    GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
+    RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
+    SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
+    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 use rem6_timer::{
-    ProgrammableTimer, TimerArm, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
+    ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, ProgrammableTimer,
+    TimerArm, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 use rem6_uart::{
@@ -150,6 +152,43 @@ fn timer_with_interrupt(
         Arc::clone(&controller),
     );
     ProgrammableTimer::new(id, timer_partition, source, port)
+}
+
+fn clint_device(base: Address, target_partition: PartitionId) -> ClintMmioDevice {
+    let target = InterruptTargetId::new(0);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_route = InterruptRoute::new(InterruptLineId::new(90), target, target_partition);
+    let timer_route = InterruptRoute::new(InterruptLineId::new(91), target, target_partition);
+    controller
+        .lock()
+        .unwrap()
+        .register_route(software_route)
+        .unwrap();
+    controller
+        .lock()
+        .unwrap()
+        .register_route(timer_route)
+        .unwrap();
+    let software_port = InterruptLinePort::new(
+        InterruptLineChannel::new(software_route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let timer_port = InterruptLinePort::new(
+        InterruptLineChannel::new(timer_route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+
+    ClintMmioDevice::new(
+        base,
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            InterruptSourceId::new(90),
+            timer_port,
+            InterruptSourceId::new(91),
+        )],
+    )
+    .unwrap()
 }
 
 fn read_uart_byte(uart: &UartMmioDevice, tick: u64) -> u8 {
@@ -855,9 +894,84 @@ fn system_action_executor_refreshes_and_restores_live_timer_checkpoint() {
 }
 
 #[test]
-fn system_action_executor_refreshes_and_restores_live_interrupt_controller_checkpoint() {
+fn system_action_executor_refreshes_and_restores_live_clint_checkpoint() {
     let host = PartitionId::new(1);
     let source = GuestSourceId::new(18);
+    let component = CheckpointComponentId::new("clint0").unwrap();
+    let clint = clint_device(Address::new(0x200_0000), PartitionId::new(0));
+    let captured = ClintSnapshot::new(
+        Address::new(0x200_0000),
+        vec![ClintHartSnapshot::new(0, 1, 44, 2, true)],
+    );
+    let empty = ClintSnapshot::new(
+        Address::new(0x200_0000),
+        vec![ClintHartSnapshot::new(0, 0, u64::MAX, 0, false)],
+    );
+    clint.restore(&captured).unwrap();
+    let bank =
+        ClintCheckpointBank::new([ClintCheckpointPort::new(component.clone(), clint.clone())])
+            .unwrap();
+    let checkpoints = CheckpointRegistry::new();
+    let mut executor = SystemActionExecutor::with_checkpoint(StatsRegistry::new(), checkpoints);
+    executor.attach_clint_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        137,
+        host,
+        host,
+        GuestEventId::new(19),
+        source,
+        HostAction::Checkpoint {
+            label: "with-clint".to_string(),
+        },
+    );
+
+    let checkpoint_outcome = executor.apply(&checkpoint).unwrap();
+    let manifest = match checkpoint_outcome {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(
+        executor
+            .checkpoints()
+            .chunk(&component, "clint")
+            .unwrap()
+            .len()
+            >= 48
+    );
+    clint.restore(&empty).unwrap();
+    assert_ne!(clint.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        138,
+        host,
+        host,
+        GuestEventId::new(20),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    let restore_outcome = executor.apply(&restore).unwrap();
+
+    assert_eq!(
+        restore_outcome,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 138,
+            event: GuestEventId::new(20),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(clint.snapshot(), captured);
+}
+
+#[test]
+fn system_action_executor_refreshes_and_restores_live_interrupt_controller_checkpoint() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(19);
     let component = CheckpointComponentId::new("interrupt0").unwrap();
     let target = InterruptTargetId::new(0);
     let cpu = PartitionId::new(0);
