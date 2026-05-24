@@ -78,6 +78,8 @@ pub struct PlatformRiscvDeviceTreeConfig {
     cpu_isa: String,
     cpu_mmu_type: String,
     uart_clock_frequency: u32,
+    bootargs: Option<String>,
+    initrd: Option<AddressRange>,
 }
 
 impl PlatformRiscvDeviceTreeConfig {
@@ -113,7 +115,19 @@ impl PlatformRiscvDeviceTreeConfig {
             cpu_isa,
             cpu_mmu_type,
             uart_clock_frequency,
+            bootargs: None,
+            initrd: None,
         })
+    }
+
+    pub fn with_bootargs(mut self, bootargs: impl Into<String>) -> Self {
+        self.bootargs = Some(bootargs.into());
+        self
+    }
+
+    pub fn with_initrd(mut self, start: Address, size: AccessSize) -> Result<Self, PlatformError> {
+        self.initrd = Some(AddressRange::new(start, size).map_err(PlatformError::Memory)?);
+        Ok(self)
     }
 
     pub const fn timebase_frequency(&self) -> u32 {
@@ -130,6 +144,14 @@ impl PlatformRiscvDeviceTreeConfig {
 
     pub const fn uart_clock_frequency(&self) -> u32 {
         self.uart_clock_frequency
+    }
+
+    pub fn bootargs(&self) -> Option<&str> {
+        self.bootargs.as_deref()
+    }
+
+    pub const fn initrd(&self) -> Option<AddressRange> {
+        self.initrd
     }
 }
 
@@ -275,10 +297,21 @@ fn encode_property_value(value: &PlatformDeviceTreePropertyValue) -> Vec<u8> {
             }
             encoded
         }
+        PlatformDeviceTreePropertyValue::DoubleWords(values) => {
+            let mut encoded = Vec::with_capacity(values.len() * 8);
+            for value in values {
+                write_be64(&mut encoded, *value);
+            }
+            encoded
+        }
     }
 }
 
 fn write_be32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_be_bytes());
+}
+
+fn write_be64(output: &mut Vec<u8>, value: u64) {
     output.extend_from_slice(&value.to_be_bytes());
 }
 
@@ -387,6 +420,16 @@ impl PlatformDeviceTreeProperty {
         }
     }
 
+    pub fn double_word_list<I>(name: impl Into<String>, values: I) -> Self
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        Self {
+            name: name.into(),
+            value: PlatformDeviceTreePropertyValue::DoubleWords(values.into_iter().collect()),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -405,6 +448,13 @@ impl PlatformDeviceTreeProperty {
     pub fn words(&self) -> Option<&[u32]> {
         match &self.value {
             PlatformDeviceTreePropertyValue::Words(values) => Some(values),
+            _ => None,
+        }
+    }
+
+    pub fn double_words(&self) -> Option<&[u64]> {
+        match &self.value {
+            PlatformDeviceTreePropertyValue::DoubleWords(values) => Some(values),
             _ => None,
         }
     }
@@ -436,6 +486,18 @@ impl PlatformDeviceTreeProperty {
                 }
                 let _ = writeln!(output, ">;");
             }
+            PlatformDeviceTreePropertyValue::DoubleWords(values) => {
+                let _ = write!(output, " = <");
+                for (index, value) in values.iter().enumerate() {
+                    if index != 0 {
+                        let _ = write!(output, " ");
+                    }
+                    let high = (value >> 32) as u32;
+                    let low = *value as u32;
+                    let _ = write!(output, "0x{high:x} 0x{low:x}");
+                }
+                let _ = writeln!(output, ">;");
+            }
         }
     }
 }
@@ -445,6 +507,7 @@ pub enum PlatformDeviceTreePropertyValue {
     Empty,
     Strings(Vec<String>),
     Words(Vec<u32>),
+    DoubleWords(Vec<u64>),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -478,10 +541,39 @@ impl PlatformDeviceTreeInventory {
         let controller_phandles = self.interrupt_controller_phandles(hart_phandles.len() as u32);
         let cpus = self.cpus_node(config, &hart_phandles);
         let soc = self.soc_node(config, &hart_phandles, &controller_phandles)?;
-        let root = PlatformDeviceTreeNode::new("/")
+        let mut root = PlatformDeviceTreeNode::new("/")
             .with_child(cpus)
             .with_child(soc);
+        if let Some(chosen) = self.chosen_node(config) {
+            root = root.with_child(chosen);
+        }
         Ok(PlatformDeviceTree::new(root))
+    }
+
+    fn chosen_node(
+        &self,
+        config: &PlatformRiscvDeviceTreeConfig,
+    ) -> Option<PlatformDeviceTreeNode> {
+        let mut chosen = PlatformDeviceTreeNode::new("chosen");
+        if let Some(bootargs) = config.bootargs() {
+            chosen = chosen.with_property(PlatformDeviceTreeProperty::string_list(
+                "bootargs",
+                [bootargs.to_string()],
+            ));
+        }
+        if let Some(initrd) = config.initrd() {
+            chosen = chosen
+                .with_property(PlatformDeviceTreeProperty::double_word_list(
+                    "linux,initrd-start",
+                    [initrd.start().get()],
+                ))
+                .with_property(PlatformDeviceTreeProperty::double_word_list(
+                    "linux,initrd-end",
+                    [initrd.end().get()],
+                ));
+        }
+
+        (!chosen.properties().is_empty()).then_some(chosen)
     }
 
     fn hart_phandles(&self) -> BTreeMap<u32, u32> {

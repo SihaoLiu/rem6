@@ -581,6 +581,77 @@ fn platform_builder_emits_binary_riscv_device_tree_blob() {
 }
 
 #[test]
+fn platform_builder_emits_riscv_chosen_boot_data() {
+    let platform = PlatformBuilder::new(3)
+        .add_clint(PlatformClintConfig {
+            id: ClintId::new(0),
+            base: Address::new(0x0200_0000),
+            size: AccessSize::new(0x1_0000).unwrap(),
+            route: MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 1).unwrap(),
+            reset_policy: ClintResetPolicy::preserve_mtimecmp(),
+            harts: vec![PlatformClintHartConfig {
+                hart: 0,
+                target_partition: PartitionId::new(0),
+                interrupt_target: InterruptTargetId::new(0),
+                software_interrupt_line: InterruptLineId::new(60),
+                software_interrupt_source: InterruptSourceId::new(70),
+                timer_interrupt_line: InterruptLineId::new(61),
+                timer_interrupt_source: InterruptSourceId::new(71),
+                interrupt_latency: 2,
+            }],
+        })
+        .build()
+        .unwrap();
+    let bootargs = "console=ttyS0 root=/dev/vda";
+    let config =
+        PlatformRiscvDeviceTreeConfig::new(10_000_000, "rv64imafdc", "riscv,sv48", 0x384000)
+            .unwrap()
+            .with_bootargs(bootargs)
+            .with_initrd(Address::new(0x8800_0000), AccessSize::new(0x2000).unwrap())
+            .unwrap();
+
+    let tree = platform.riscv_device_tree(&config).unwrap();
+
+    let chosen = tree.root().child("chosen").unwrap();
+    assert_eq!(
+        chosen.property("bootargs").unwrap().strings().unwrap(),
+        &[bootargs.to_string()]
+    );
+    assert_eq!(
+        chosen
+            .property("linux,initrd-start")
+            .unwrap()
+            .double_words()
+            .unwrap(),
+        &[0x8800_0000]
+    );
+    assert_eq!(
+        chosen
+            .property("linux,initrd-end")
+            .unwrap()
+            .double_words()
+            .unwrap(),
+        &[0x8800_2000]
+    );
+
+    let dts = tree.to_dts();
+    assert!(dts.contains("linux,initrd-start = <0x0 0x88000000>;"));
+    assert!(dts.contains("linux,initrd-end = <0x0 0x88002000>;"));
+
+    let dtb = tree.to_dtb();
+    let strings_offset = be32_at(&dtb, 12) as usize;
+    let strings = std::str::from_utf8(&dtb[strings_offset..]).unwrap();
+    assert!(strings.contains("bootargs\0"));
+    assert!(strings.contains("linux,initrd-start\0"));
+    assert!(strings.contains("linux,initrd-end\0"));
+
+    assert!(find_ascii(&dtb, b"chosen\0"));
+    assert!(find_ascii(&dtb, format!("{bootargs}\0").as_bytes()));
+    assert!(find_ascii(&dtb, &0x8800_0000_u64.to_be_bytes()));
+    assert!(find_ascii(&dtb, &0x8800_2000_u64.to_be_bytes()));
+}
+
+#[test]
 fn platform_builder_rejects_riscv_uart_device_tree_without_interrupt_controller() {
     let cpu = PartitionId::new(0);
     let uart_partition = PartitionId::new(1);

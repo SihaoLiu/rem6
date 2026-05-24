@@ -188,6 +188,28 @@ fn assert_a1_handoff(system: &RiscvTopologySystem, dtb_addr: Address) {
     );
 }
 
+fn read_store_blob(system: &RiscvTopologySystem, start: Address, len: usize) -> Vec<u8> {
+    let mut cursor = start.get();
+    let mut bytes = Vec::with_capacity(len);
+    let memory = system.memory_store().unwrap().lock().unwrap();
+    while bytes.len() < len {
+        let address = Address::new(cursor);
+        let line = layout().line_address(address);
+        let offset = layout().line_offset(address) as usize;
+        let data = memory.line_data(MemoryTargetId::new(0), line).unwrap();
+        let take = (data.len() - offset).min(len - bytes.len());
+        bytes.extend_from_slice(&data[offset..offset + take]);
+        cursor += take as u64;
+    }
+    bytes
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
 #[test]
 fn topology_system_installs_riscv_device_tree_handoff() {
     let topology = topology();
@@ -221,6 +243,43 @@ fn topology_system_installs_riscv_device_tree_handoff() {
         .line_data(MemoryTargetId::new(0), dtb_addr)
         .unwrap();
     assert_eq!(&line[..4], &[0xd0, 0x0d, 0xfe, 0xed]);
+    assert_a1_handoff(&system, dtb_addr);
+}
+
+#[test]
+fn topology_system_installs_linux_boot_data_in_riscv_device_tree_handoff() {
+    let topology = topology();
+    let platform = platform_with_two_hart_clint(&topology, ClintId::new(2));
+    let memory = RiscvTopologyMemoryConfig::new(MemoryTargetId::new(0), layout()).add_region(
+        Address::new(0x8000_0000),
+        AccessSize::new(0x1000_0000).unwrap(),
+    );
+    let image = BootImage::new(Address::new(0x8000_0000));
+    let system = RiscvTopologySystem::with_min_remote_delay(topology, cluster_config(), 2)
+        .unwrap()
+        .with_boot_image_memory(memory, &image)
+        .unwrap()
+        .with_platform(platform)
+        .unwrap();
+    let bootargs = "console=ttyS0 root=/dev/vda";
+    let config = device_tree_config()
+        .with_bootargs(bootargs)
+        .with_initrd(Address::new(0x8800_0000), AccessSize::new(0x2000).unwrap())
+        .unwrap();
+    let dtb_addr = Address::new(0x87e0_0000);
+
+    let report = system
+        .install_riscv_device_tree_handoff(&config, dtb_addr)
+        .unwrap();
+
+    let dtb = read_store_blob(&system, dtb_addr, report.dtb_len());
+    assert!(contains_bytes(&dtb, b"chosen\0"));
+    assert!(contains_bytes(&dtb, format!("{bootargs}\0").as_bytes()));
+    assert!(contains_bytes(&dtb, b"bootargs\0"));
+    assert!(contains_bytes(&dtb, b"linux,initrd-start\0"));
+    assert!(contains_bytes(&dtb, b"linux,initrd-end\0"));
+    assert!(contains_bytes(&dtb, &0x8800_0000_u64.to_be_bytes()));
+    assert!(contains_bytes(&dtb, &0x8800_2000_u64.to_be_bytes()));
     assert_a1_handoff(&system, dtb_addr);
 }
 
