@@ -33,6 +33,7 @@ mod prefetch_sms;
 mod prefetch_stems;
 mod prefetch_throttle;
 mod replacement;
+mod write_queue;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
 pub use chi::{
@@ -136,6 +137,11 @@ pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
     ReplacementDecision, ReplacementEntry, ReplacementSet, ReplacementSetSnapshot,
     ReplacementUpdate,
+};
+pub use write_queue::{
+    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntry, CacheWriteQueueEntryKind,
+    CacheWriteQueueError, CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot,
+    CacheWriteQueueUpdate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

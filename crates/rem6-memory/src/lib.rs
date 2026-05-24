@@ -1150,6 +1150,30 @@ impl MemoryRequest {
         )
     }
 
+    pub fn clean_evict(
+        id: MemoryRequestId,
+        address: Address,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        if line_layout.line_offset(address) != 0 {
+            return Err(MemoryError::UnalignedLineAddress {
+                address,
+                line_size: line_layout.bytes(),
+            });
+        }
+
+        let size = AccessSize::new(line_layout.bytes())?;
+        Self::new(
+            id,
+            MemoryOperation::CleanEvict,
+            address,
+            size,
+            line_layout,
+            None,
+            None,
+        )
+    }
+
     fn writeback(
         id: MemoryRequestId,
         operation: MemoryOperation,
