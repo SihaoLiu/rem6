@@ -4,8 +4,8 @@ use rem6_proto::{
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
     TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardCursor,
-    TraceFrameStreamShardPlan, TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerPlan,
-    TraceHeader, TraceSourceId,
+    TraceFrameStreamShardPlan, TraceFrameStreamWorkerCursor, TraceFrameStreamWorkerMergeBuffer,
+    TraceFrameStreamWorkerPlan, TraceHeader, TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -514,6 +514,138 @@ fn trace_frame_stream_worker_cursor_rejects_unknown_worker() {
         ProtoError::UnknownFrameStreamWorker {
             worker_id: 2,
             worker_count: 2,
+        },
+    );
+}
+
+#[test]
+fn trace_frame_stream_worker_merge_buffer_emits_ready_records_in_global_order() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let encoded = TraceFrameStream::new(vec![
+        first.clone(),
+        large.clone(),
+        third.clone(),
+        fourth.clone(),
+    ])
+    .unwrap()
+    .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+    let mut worker_zero = TraceFrameStreamWorkerCursor::new(&encoded, &worker_plan, 0).unwrap();
+    let mut worker_one = TraceFrameStreamWorkerCursor::new(&encoded, &worker_plan, 1).unwrap();
+
+    let first_record = worker_zero.next_frame().unwrap().unwrap();
+    let third_record = worker_zero.next_frame().unwrap().unwrap();
+    let fourth_record = worker_zero.next_frame().unwrap().unwrap();
+    let large_record = worker_one.next_frame().unwrap().unwrap();
+
+    let mut merge_buffer = TraceFrameStreamWorkerMergeBuffer::new(&worker_plan);
+    assert_eq!(merge_buffer.total_records(), 4);
+    assert_eq!(merge_buffer.next_index(), 0);
+    assert_eq!(merge_buffer.pending_records(), 0);
+    assert!(!merge_buffer.is_complete());
+
+    merge_buffer.push(large_record).unwrap();
+    assert_eq!(merge_buffer.next_index(), 0);
+    assert_eq!(merge_buffer.pending_records(), 1);
+    assert!(merge_buffer.pop_ready().is_none());
+
+    merge_buffer.push(first_record).unwrap();
+    let ready_first = merge_buffer.pop_ready().unwrap();
+    assert_eq!(ready_first.record().index(), 0);
+    assert_eq!(ready_first.record().frame(), &first);
+    let ready_large = merge_buffer.pop_ready().unwrap();
+    assert_eq!(ready_large.record().index(), 1);
+    assert_eq!(ready_large.record().frame(), &large);
+    assert!(merge_buffer.pop_ready().is_none());
+    assert_eq!(merge_buffer.next_index(), 2);
+    assert_eq!(merge_buffer.pending_records(), 0);
+
+    merge_buffer.push(fourth_record).unwrap();
+    assert!(merge_buffer.pop_ready().is_none());
+    assert_eq!(merge_buffer.next_index(), 2);
+    assert_eq!(merge_buffer.pending_records(), 1);
+
+    merge_buffer.push(third_record).unwrap();
+    let ready = merge_buffer.drain_ready();
+    assert_eq!(ready.len(), 2);
+    assert_eq!(ready[0].record().index(), 2);
+    assert_eq!(ready[0].record().frame(), &third);
+    assert_eq!(ready[1].record().index(), 3);
+    assert_eq!(ready[1].record().frame(), &fourth);
+    assert_eq!(merge_buffer.pending_records(), 0);
+    assert_eq!(merge_buffer.next_index(), 4);
+    assert!(merge_buffer.is_complete());
+}
+
+#[test]
+fn trace_frame_stream_worker_merge_buffer_rejects_duplicate_wrong_worker_and_out_of_range_records()
+{
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap();
+    let large =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2; 512]).unwrap();
+    let third =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu2.proto", 30), vec![3, 4]).unwrap();
+    let fourth =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu3.proto", 40), vec![5, 6, 7]).unwrap();
+    let encoded = TraceFrameStream::new(vec![first, large, third, fourth])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+    let shard_plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    let worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 2).unwrap();
+    let mut worker_zero = TraceFrameStreamWorkerCursor::new(&encoded, &worker_plan, 0).unwrap();
+    let mut worker_one = TraceFrameStreamWorkerCursor::new(&encoded, &worker_plan, 1).unwrap();
+
+    let first_record = worker_zero.next_frame().unwrap().unwrap();
+    let out_of_range_record = worker_zero.next_frame().unwrap().unwrap();
+    let duplicate_first = first_record.clone();
+    let wrong_worker_record = worker_one.next_frame().unwrap().unwrap();
+
+    let mut merge_buffer = TraceFrameStreamWorkerMergeBuffer::new(&worker_plan);
+    merge_buffer.push(first_record).unwrap();
+    assert_eq!(
+        merge_buffer.push(duplicate_first).unwrap_err(),
+        ProtoError::DuplicateFrameStreamWorkerRecord { index: 0 },
+    );
+
+    let single_worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&shard_plan, 1).unwrap();
+    let mut single_worker_merge = TraceFrameStreamWorkerMergeBuffer::new(&single_worker_plan);
+    assert_eq!(
+        single_worker_merge
+            .push(wrong_worker_record.clone())
+            .unwrap_err(),
+        ProtoError::UnexpectedFrameStreamWorkerRecord {
+            index: 1,
+            worker_id: 1,
+            expected_worker_id: 0,
+        },
+    );
+
+    let short_stream = TraceFrameStream::new(vec![
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1]).unwrap(),
+        TraceFrame::from_proto_trace(&instruction_trace("cpu1.proto", 20), vec![2]).unwrap(),
+    ])
+    .unwrap()
+    .encode();
+    let short_index = TraceFrameStreamIndex::from_bytes(&short_stream).unwrap();
+    let short_shards = TraceFrameStreamShardPlan::by_frame_bytes(&short_index, 1).unwrap();
+    let short_worker_plan = TraceFrameStreamWorkerPlan::by_frame_bytes(&short_shards, 1).unwrap();
+    let mut short_merge = TraceFrameStreamWorkerMergeBuffer::new(&short_worker_plan);
+    assert_eq!(
+        short_merge.push(out_of_range_record).unwrap_err(),
+        ProtoError::FrameStreamWorkerRecordOutOfRange {
+            index: 2,
+            total_records: 2,
         },
     );
 }

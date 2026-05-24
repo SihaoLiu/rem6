@@ -207,6 +207,14 @@ pub struct TraceFrameStreamWorkerPlan {
     total_frame_bytes: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamWorkerMergeBuffer {
+    expected_workers: Vec<usize>,
+    records: Vec<Option<TraceFrameStreamWorkerRecord>>,
+    next_index: usize,
+    pending_records: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct TraceFrameStreamWorkerCursor<'a> {
     bytes: &'a [u8],
@@ -296,6 +304,84 @@ impl TraceFrameStreamWorkerPlan {
 
     pub const fn total_frame_bytes(&self) -> usize {
         self.total_frame_bytes
+    }
+}
+
+impl TraceFrameStreamWorkerMergeBuffer {
+    pub fn new(worker_plan: &TraceFrameStreamWorkerPlan) -> Self {
+        let mut expected_workers = vec![0usize; worker_plan.total_records()];
+        for assignment in worker_plan.assignments() {
+            for index in assignment.record_range() {
+                if let Some(expected_worker) = expected_workers.get_mut(index) {
+                    *expected_worker = assignment.worker_id();
+                }
+            }
+        }
+
+        Self {
+            records: vec![None; worker_plan.total_records()],
+            expected_workers,
+            next_index: 0,
+            pending_records: 0,
+        }
+    }
+
+    pub fn push(&mut self, record: TraceFrameStreamWorkerRecord) -> Result<(), ProtoError> {
+        let index = record.record().index();
+        if index >= self.records.len() {
+            return Err(ProtoError::FrameStreamWorkerRecordOutOfRange {
+                index,
+                total_records: self.records.len(),
+            });
+        }
+
+        let expected_worker_id = self.expected_workers[index];
+        if record.worker_id() != expected_worker_id {
+            return Err(ProtoError::UnexpectedFrameStreamWorkerRecord {
+                index,
+                worker_id: record.worker_id(),
+                expected_worker_id,
+            });
+        }
+
+        if index < self.next_index || self.records[index].is_some() {
+            return Err(ProtoError::DuplicateFrameStreamWorkerRecord { index });
+        }
+
+        self.records[index] = Some(record);
+        self.pending_records += 1;
+        Ok(())
+    }
+
+    pub fn pop_ready(&mut self) -> Option<TraceFrameStreamWorkerRecord> {
+        let record = self.records.get_mut(self.next_index)?.take()?;
+        self.next_index += 1;
+        self.pending_records -= 1;
+        Some(record)
+    }
+
+    pub fn drain_ready(&mut self) -> Vec<TraceFrameStreamWorkerRecord> {
+        let mut records = Vec::new();
+        while let Some(record) = self.pop_ready() {
+            records.push(record);
+        }
+        records
+    }
+
+    pub fn total_records(&self) -> usize {
+        self.records.len()
+    }
+
+    pub const fn next_index(&self) -> usize {
+        self.next_index
+    }
+
+    pub const fn pending_records(&self) -> usize {
+        self.pending_records
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.next_index == self.records.len()
     }
 }
 

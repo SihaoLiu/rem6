@@ -13,7 +13,7 @@ pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
     TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardCursor,
     TraceFrameStreamShardPlan, TraceFrameStreamWorkerAssignment, TraceFrameStreamWorkerCursor,
-    TraceFrameStreamWorkerPlan, TraceFrameStreamWorkerRecord,
+    TraceFrameStreamWorkerMergeBuffer, TraceFrameStreamWorkerPlan, TraceFrameStreamWorkerRecord,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -838,6 +838,18 @@ pub enum ProtoError {
         worker_id: usize,
         worker_count: usize,
     },
+    DuplicateFrameStreamWorkerRecord {
+        index: usize,
+    },
+    UnexpectedFrameStreamWorkerRecord {
+        index: usize,
+        worker_id: usize,
+        expected_worker_id: usize,
+    },
+    FrameStreamWorkerRecordOutOfRange {
+        index: usize,
+        total_records: usize,
+    },
     InvalidFrameStreamMagic,
     UnsupportedFrameStreamVersion {
         version: u16,
@@ -963,6 +975,31 @@ impl fmt::Display for ProtoError {
                 write!(
                     formatter,
                     "trace frame stream worker {worker_id} is outside worker count {worker_count}"
+                )
+            }
+            Self::DuplicateFrameStreamWorkerRecord { index } => {
+                write!(
+                    formatter,
+                    "trace frame stream worker record {index} was already merged"
+                )
+            }
+            Self::UnexpectedFrameStreamWorkerRecord {
+                index,
+                worker_id,
+                expected_worker_id,
+            } => {
+                write!(
+                    formatter,
+                    "trace frame stream worker record {index} came from worker {worker_id}, expected worker {expected_worker_id}"
+                )
+            }
+            Self::FrameStreamWorkerRecordOutOfRange {
+                index,
+                total_records,
+            } => {
+                write!(
+                    formatter,
+                    "trace frame stream worker record {index} is outside total record count {total_records}"
                 )
             }
             Self::InvalidFrameStreamMagic => {
