@@ -12,7 +12,7 @@ use rem6_transport::TargetOutcome;
 use crate::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MshrCompletion, MshrHandle,
-    MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
+    MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,6 +288,14 @@ impl MoesiCacheBank {
             .map(|entry| entry.target_count())
     }
 
+    pub fn mshr_effective_qos(&self, address: Address) -> Option<MshrQosClass> {
+        let line = self.layout.line_address(address);
+        self.mshr
+            .as_ref()
+            .and_then(|mshr| mshr.find_line(line))
+            .and_then(|entry| entry.effective_qos())
+    }
+
     pub fn state(&self, address: Address) -> Option<MoesiState> {
         self.lines
             .get(&self.layout.line_address(address))
@@ -380,6 +388,22 @@ impl MoesiCacheBank {
         &mut self,
         request: MemoryRequest,
     ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
+        self.accept_cpu_request_inner(request, None)
+    }
+
+    pub fn accept_cpu_request_with_qos(
+        &mut self,
+        request: MemoryRequest,
+        qos: MshrQosClass,
+    ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
+        self.accept_cpu_request_inner(request, Some(qos))
+    }
+
+    fn accept_cpu_request_inner(
+        &mut self,
+        request: MemoryRequest,
+        qos: Option<MshrQosClass>,
+    ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
         if self.can_merge_pending_read_miss(line, &request) {
@@ -390,7 +414,7 @@ impl MoesiCacheBank {
             self.mshr
                 .as_mut()
                 .expect("MSHR lookup succeeded but bank has no MSHR queue")
-                .allocate_or_merge(request, 0, MshrTargetSource::Demand, true)?;
+                .allocate_or_merge_optional_qos(request, 0, MshrTargetSource::Demand, true, qos)?;
             return Ok(MoesiCacheControllerResult::new(
                 MoesiCacheControllerResultKind::Miss,
                 state,
@@ -418,8 +442,14 @@ impl MoesiCacheBank {
         if let Some(downstream) = result.downstream_request() {
             let mshr = match &mut self.mshr {
                 Some(mshr) => Some(
-                    mshr.allocate_or_merge(original, 0, MshrTargetSource::Demand, true)?
-                        .handle(),
+                    mshr.allocate_or_merge_optional_qos(
+                        original,
+                        0,
+                        MshrTargetSource::Demand,
+                        true,
+                        qos,
+                    )?
+                    .handle(),
                 ),
                 None => None,
             };

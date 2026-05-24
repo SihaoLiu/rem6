@@ -11,8 +11,8 @@ use rem6_transport::TargetOutcome;
 
 use crate::{
     CacheControllerError, CacheControllerResult, CacheControllerResultKind, MshrCompletion,
-    MshrHandle, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
-    MsiCacheController, MsiCacheControllerSnapshot,
+    MshrHandle, MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
+    MshrTargetSource, MsiCacheController, MsiCacheControllerSnapshot,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,6 +288,14 @@ impl MsiCacheBank {
             .map(|entry| entry.target_count())
     }
 
+    pub fn mshr_effective_qos(&self, address: Address) -> Option<MshrQosClass> {
+        let line = self.layout.line_address(address);
+        self.mshr
+            .as_ref()
+            .and_then(|mshr| mshr.find_line(line))
+            .and_then(|entry| entry.effective_qos())
+    }
+
     pub fn state(&self, address: Address) -> Option<MsiState> {
         self.lines
             .get(&self.layout.line_address(address))
@@ -377,6 +385,22 @@ impl MsiCacheBank {
         &mut self,
         request: MemoryRequest,
     ) -> Result<CacheControllerResult, MsiCacheBankError> {
+        self.accept_cpu_request_inner(request, None)
+    }
+
+    pub fn accept_cpu_request_with_qos(
+        &mut self,
+        request: MemoryRequest,
+        qos: MshrQosClass,
+    ) -> Result<CacheControllerResult, MsiCacheBankError> {
+        self.accept_cpu_request_inner(request, Some(qos))
+    }
+
+    fn accept_cpu_request_inner(
+        &mut self,
+        request: MemoryRequest,
+        qos: Option<MshrQosClass>,
+    ) -> Result<CacheControllerResult, MsiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
         if self.can_merge_pending_read_miss(line, &request) {
@@ -387,7 +411,7 @@ impl MsiCacheBank {
             self.mshr
                 .as_mut()
                 .expect("MSHR lookup succeeded but bank has no MSHR queue")
-                .allocate_or_merge(request, 0, MshrTargetSource::Demand, true)?;
+                .allocate_or_merge_optional_qos(request, 0, MshrTargetSource::Demand, true, qos)?;
             return Ok(CacheControllerResult::new(
                 CacheControllerResultKind::Miss,
                 state,
@@ -415,8 +439,14 @@ impl MsiCacheBank {
         if let Some(downstream) = result.downstream_request() {
             let mshr = match &mut self.mshr {
                 Some(mshr) => Some(
-                    mshr.allocate_or_merge(original, 0, MshrTargetSource::Demand, true)?
-                        .handle(),
+                    mshr.allocate_or_merge_optional_qos(
+                        original,
+                        0,
+                        MshrTargetSource::Demand,
+                        true,
+                        qos,
+                    )?
+                    .handle(),
                 ),
                 None => None,
             };

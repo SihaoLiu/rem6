@@ -1,5 +1,6 @@
 use rem6_cache::{
-    CacheControllerResultKind, MshrQueueConfig, MshrQueueError, MsiCacheBank, MsiCacheBankError,
+    CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MshrQueueError, MsiCacheBank,
+    MsiCacheBankError,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
@@ -164,6 +165,37 @@ fn msi_cache_bank_mshr_coalesces_same_line_read_misses() {
     assert_eq!(bank.pending_fill_count(), 0);
     assert_eq!(bank.mshr_allocated_count(), 0);
     assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Shared));
+}
+
+#[test]
+fn msi_cache_bank_records_mshr_qos_for_merged_read_misses() {
+    let cache_agent = agent(7);
+    let config = MshrQueueConfig::new(2, 3, 0).unwrap();
+    let mut bank = MsiCacheBank::new_with_mshr(cache_agent, layout(), config.clone());
+
+    let first = read(cache_agent, 300, 0x1804);
+    bank.accept_cpu_request_with_qos(first, MshrQosClass::new(30, 4))
+        .unwrap();
+    assert_eq!(
+        bank.mshr_effective_qos(Address::new(0x1800)),
+        Some(MshrQosClass::new(30, 4))
+    );
+
+    let second = read(cache_agent, 301, 0x1808);
+    bank.accept_cpu_request_with_qos(second, MshrQosClass::new(40, 0))
+        .unwrap();
+    assert_eq!(
+        bank.mshr_effective_qos(Address::new(0x1800)),
+        Some(MshrQosClass::new(40, 0))
+    );
+
+    let snapshot = bank.snapshot();
+    let mut restored = MsiCacheBank::new_with_mshr(cache_agent, layout(), config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(
+        restored.mshr_effective_qos(Address::new(0x1800)),
+        Some(MshrQosClass::new(40, 0))
+    );
 }
 
 #[test]

@@ -494,6 +494,17 @@ impl MshrQueue {
         self.allocate_or_merge_inner(request, ready_tick, source, alloc_on_fill, Some(qos))
     }
 
+    pub(crate) fn allocate_or_merge_optional_qos(
+        &mut self,
+        request: MemoryRequest,
+        ready_tick: u64,
+        source: MshrTargetSource,
+        alloc_on_fill: bool,
+        qos: Option<MshrQosClass>,
+    ) -> Result<MshrQueueUpdate, MshrQueueError> {
+        self.allocate_or_merge_inner(request, ready_tick, source, alloc_on_fill, qos)
+    }
+
     fn allocate_or_merge_inner(
         &mut self,
         request: MemoryRequest,

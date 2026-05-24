@@ -1,4 +1,4 @@
-use rem6_cache::{MoesiCacheBank, MshrQueueConfig};
+use rem6_cache::{MoesiCacheBank, MshrQosClass, MshrQueueConfig};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
 };
@@ -86,4 +86,33 @@ fn moesi_cache_bank_mshr_coalesces_same_line_read_misses() {
     assert_eq!(response_data(&fill_result.target_outcomes()[1]), &[0x66; 8]);
     assert_eq!(bank.pending_fill_count(), 0);
     assert_eq!(bank.mshr_allocated_count(), 0);
+}
+
+#[test]
+fn moesi_cache_bank_records_mshr_qos_for_merged_read_misses() {
+    let cache_agent = agent(30);
+    let config = MshrQueueConfig::new(2, 3, 0).unwrap();
+    let mut bank = MoesiCacheBank::new_with_mshr(cache_agent, layout(), config.clone());
+
+    bank.accept_cpu_request_with_qos(read(cache_agent, 300, 0x4804), MshrQosClass::new(30, 5))
+        .unwrap();
+    assert_eq!(
+        bank.mshr_effective_qos(Address::new(0x4800)),
+        Some(MshrQosClass::new(30, 5))
+    );
+
+    bank.accept_cpu_request_with_qos(read(cache_agent, 301, 0x4808), MshrQosClass::new(40, 1))
+        .unwrap();
+    assert_eq!(
+        bank.mshr_effective_qos(Address::new(0x4800)),
+        Some(MshrQosClass::new(40, 1))
+    );
+
+    let snapshot = bank.snapshot();
+    let mut restored = MoesiCacheBank::new_with_mshr(cache_agent, layout(), config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(
+        restored.mshr_effective_qos(Address::new(0x4800)),
+        Some(MshrQosClass::new(40, 1))
+    );
 }
