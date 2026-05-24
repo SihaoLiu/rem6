@@ -22,8 +22,9 @@ use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualN
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, WaitForGraph};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
-    MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
+    MemoryRequestId, MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot,
+    PartitionedMemoryStore,
 };
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
@@ -43,7 +44,10 @@ mod qos;
 mod summary;
 mod workload_replay_dma;
 
-use self::cache_response::{cached_memory_response, data_cache_agents, data_cache_response_result};
+use self::cache_response::{
+    cached_memory_response, cached_target_batch_response, data_cache_agents,
+    data_cache_response_result,
+};
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{fixed_priority_policy, queue_arbiter};
 use self::summary::{parallel_execution_summary, WorkloadReplayActivityRefs};
@@ -273,6 +277,10 @@ impl WorkloadDataCacheLineBackend {
         self.line
     }
 
+    fn accepts_delivery(&self, delivery: &RequestDelivery) -> bool {
+        delivery.request().operation() != MemoryOperation::InstructionFetch
+    }
+
     fn final_line_data(&self) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
         match &self.harness {
             WorkloadDataCacheHarness::Msi(harness) => {
@@ -330,6 +338,9 @@ impl WorkloadDataCacheLineBackend {
     }
 
     fn respond(&mut self, delivery: &RequestDelivery) -> Option<TargetOutcome> {
+        if !self.accepts_delivery(delivery) {
+            return None;
+        }
         if delivery.request().line_address() != self.line {
             return None;
         }
@@ -483,11 +494,16 @@ impl RiscvWorkloadReplay {
         let data_cache = self.build_data_cache(&memory)?;
         let gpu_devices = build_gpu_devices(topology)?;
         let mut transport = self.build_transport()?;
-        if data_cache.is_none() && topology.qos_policy().is_some() {
+        if topology.qos_policy().is_some() {
             let batch_memory = memory.clone();
+            let batch_data_cache = data_cache.clone();
             transport =
                 transport.with_direct_target_batch_responder(move |deliveries, _context| {
-                    batch_memory.target_batch_response(deliveries)
+                    cached_target_batch_response(
+                        batch_data_cache.as_ref(),
+                        &batch_memory,
+                        deliveries,
+                    )
                 });
         }
         let fabric_activity_start = transport.mark_fabric_activity();

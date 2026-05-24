@@ -6,11 +6,12 @@ use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::RiscvWorkloadReplay;
 use rem6_workload::{
-    HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosPolicy, WorkloadQosQueuePolicyKind,
-    WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadTopology,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadHostEvent, WorkloadHostPlacement,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosPolicy,
+    WorkloadQosQueuePolicyKind, WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore,
+    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -85,6 +86,12 @@ fn boot_image_with_same_tick_data_read_write() -> BootImage {
             Address::new(0x9008),
             0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
         )
+        .unwrap()
+}
+
+fn boot_image_with_same_tick_data_read_write_and_cache_line() -> BootImage {
+    boot_image_with_same_tick_data_read_write()
+        .add_segment(Address::new(0x9020), vec![0x5a; 16])
         .unwrap()
 }
 
@@ -240,6 +247,91 @@ fn replay_topology_with_qos_dram_fetches() -> WorkloadTopology {
         )
         .unwrap()
         .with_qos_policy(policy)
+}
+
+fn replay_topology_with_qos_dram_fetches_and_data_cache() -> WorkloadTopology {
+    let policy = WorkloadQosPolicy::new(4, QosPriority::new(3))
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::Lifo)
+        .with_turnaround_policy(WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection)
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(2))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(0))
+        .unwrap();
+
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                layout().bytes(),
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(single_channel_ddr_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.data"), "cpu1.dmem", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x9000),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu1.dmem", route_id("cpu1.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .with_qos_policy(policy)
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x8000),
+                2,
+                "dcache.dir",
+            )
+            .unwrap(),
+        )
+        .unwrap()
 }
 
 fn replay_topology_with_multihop_qos_dram_fetches() -> WorkloadTopology {
@@ -400,6 +492,21 @@ fn replay_topology_with_qos_dram_data_read_write() -> WorkloadTopology {
         .with_qos_policy(policy)
 }
 
+fn replay_topology_with_qos_dram_data_read_write_and_cache() -> WorkloadTopology {
+    replay_topology_with_qos_dram_data_read_write()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                1,
+                Address::new(0x9020),
+                2,
+                "dcache.dir",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_manifest_with_qos_fabric_fetches() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("qos-fabric-fetches"), boot_image())
         .with_topology(replay_topology_with_qos_fabric_fetches())
@@ -454,6 +561,41 @@ fn replay_manifest_with_qos_dram_data_read_write() -> WorkloadManifest {
         boot_image_with_same_tick_data_read_write(),
     )
     .with_topology(replay_topology_with_qos_dram_data_read_write())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_qos_dram_fetches_and_data_cache() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("qos-dram-fetches-with-cache"), boot_image())
+        .with_topology(replay_topology_with_qos_dram_fetches_and_data_cache())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_qos_dram_data_read_write_and_cache() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("qos-dram-data-read-write-with-cache"),
+        boot_image_with_same_tick_data_read_write_and_cache_line(),
+    )
+    .with_topology(replay_topology_with_qos_dram_data_read_write_and_cache())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -560,6 +702,21 @@ fn workload_replay_batches_same_tick_dram_accesses_before_qos_arbitration() {
 }
 
 #[test]
+fn workload_replay_batches_uncached_dram_fetches_when_data_cache_exists() {
+    let manifest = replay_manifest_with_qos_dram_fetches_and_data_cache();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(outcome.run().scheduled_traps()[0].cpu(), CpuId::new(1));
+    assert_eq!(outcome.run().data_cache_run_count(), 0);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
 fn workload_replay_orders_multihop_same_tick_dram_accesses_before_target_delivery() {
     let manifest = replay_manifest_with_multihop_qos_dram_fetches();
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
@@ -591,5 +748,27 @@ fn workload_replay_coalesces_same_tick_dram_target_deliveries_into_controller_ba
             .read_register(Register::new(5).unwrap()),
         0xfedc_ba98_7654_3210
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_coalesces_uncached_dram_deliveries_when_data_cache_exists() {
+    let manifest = replay_manifest_with_qos_dram_data_read_write_and_cache();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(256)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(CpuId::new(1))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(outcome.run().data_cache_run_count(), 0);
     plan.verify_result(outcome.result()).unwrap();
 }

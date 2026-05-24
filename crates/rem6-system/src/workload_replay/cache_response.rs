@@ -10,7 +10,7 @@ use rem6_coherence::{
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
-use rem6_transport::{RequestDelivery, TargetOutcome, TransportEndpointId};
+use rem6_transport::{RequestDelivery, TargetBatchOutcome, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadMemoryRoute, WorkloadRouteId, WorkloadTopology};
 
 use super::{
@@ -69,6 +69,41 @@ pub(super) fn cached_memory_response(
         }
     }
     memory_response(memory, delivery)
+}
+
+pub(super) fn cached_target_batch_response(
+    data_cache: Option<&Arc<Mutex<WorkloadDataCacheBackend>>>,
+    memory: &WorkloadMemoryBackend,
+    deliveries: Vec<RequestDelivery>,
+) -> Option<Vec<TargetBatchOutcome>> {
+    let Some(data_cache) = data_cache else {
+        return memory.target_batch_response(deliveries);
+    };
+
+    let mut outcomes = Vec::with_capacity(deliveries.len());
+    let mut memory_deliveries = Vec::new();
+    for delivery in deliveries {
+        let cache_outcome = data_cache
+            .lock()
+            .expect("workload data cache lock")
+            .respond(&delivery);
+        match cache_outcome {
+            Some(outcome) => {
+                outcomes.push(TargetBatchOutcome::new(delivery.request().id(), outcome))
+            }
+            None => memory_deliveries.push(delivery),
+        }
+    }
+
+    if let Some(mut memory_outcomes) = memory.target_batch_response(memory_deliveries.clone()) {
+        outcomes.append(&mut memory_outcomes);
+    } else {
+        outcomes.extend(memory_deliveries.iter().map(|delivery| {
+            TargetBatchOutcome::new(delivery.request().id(), memory_response(memory, delivery))
+        }));
+    }
+
+    Some(outcomes)
 }
 
 pub(super) trait WorkloadDataCacheResponseHarness {
@@ -379,5 +414,22 @@ where
                 .map_err(RiscvWorkloadReplayError::Memory)
         }
         ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rem6_transport::TargetBatchOutcome;
+
+    type CachedTargetBatchAdapter = fn(
+        Option<&Arc<Mutex<WorkloadDataCacheBackend>>>,
+        &WorkloadMemoryBackend,
+        Vec<RequestDelivery>,
+    ) -> Option<Vec<TargetBatchOutcome>>;
+
+    #[test]
+    fn cached_target_batch_response_entrypoint_exists() {
+        let _adapter: CachedTargetBatchAdapter = cached_target_batch_response;
     }
 }
