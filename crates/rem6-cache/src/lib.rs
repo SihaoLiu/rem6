@@ -12,6 +12,7 @@ use rem6_protocol_msi::{MsiCacheLine, MsiError, MsiEvent, MsiLineId, MsiState, M
 use rem6_transport::TargetOutcome;
 
 mod bank;
+mod chi;
 mod mesi_bank;
 mod moesi;
 mod moesi_bank;
@@ -22,6 +23,10 @@ mod prefetch_throttle;
 mod replacement;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
+pub use chi::{
+    ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
+    ChiCacheControllerResultKind, ChiCacheControllerSnapshot, ChiPendingMissSnapshot,
+};
 pub use mesi_bank::{MesiCacheBank, MesiCacheBankError, MesiCacheBankSnapshot};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,

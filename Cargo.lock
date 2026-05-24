@@ -24,6 +24,7 @@ name = "rem6-cache"
 version = "0.1.0"
 dependencies = [
  "rem6-memory",
+ "rem6-protocol-chi",
  "rem6-protocol-mesi",
  "rem6-protocol-moesi",
  "rem6-protocol-msi",
