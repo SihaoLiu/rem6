@@ -11,7 +11,7 @@ mod frame_stream;
 pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
-    TraceFrameStreamRecord,
+    TraceFrameStreamRecord, TraceFrameStreamShard, TraceFrameStreamShardPlan,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -830,6 +830,7 @@ pub enum ProtoError {
     TruncatedFrame,
     FrameChecksumMismatch,
     EmptyFrameStream,
+    ZeroFrameStreamShardBudget,
     InvalidFrameStreamMagic,
     UnsupportedFrameStreamVersion {
         version: u16,
@@ -936,6 +937,12 @@ impl fmt::Display for ProtoError {
             Self::TruncatedFrame => write!(formatter, "trace frame is truncated"),
             Self::FrameChecksumMismatch => write!(formatter, "trace frame checksum does not match"),
             Self::EmptyFrameStream => write!(formatter, "trace frame stream must not be empty"),
+            Self::ZeroFrameStreamShardBudget => {
+                write!(
+                    formatter,
+                    "trace frame stream shard budget must be positive"
+                )
+            }
             Self::InvalidFrameStreamMagic => {
                 write!(formatter, "trace frame stream magic is invalid")
             }

@@ -72,6 +72,137 @@ pub struct TraceFrameStreamIndex {
     total_payload_bytes: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamShard {
+    index: usize,
+    record_start: usize,
+    record_end: usize,
+    byte_start: usize,
+    byte_end: usize,
+    frame_bytes: usize,
+    payload_bytes: usize,
+    instruction_packet_records: usize,
+    dependency_records: usize,
+}
+
+impl TraceFrameStreamShard {
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn record_range(&self) -> Range<usize> {
+        self.record_start..self.record_end
+    }
+
+    pub fn byte_range(&self) -> Range<usize> {
+        self.byte_start..self.byte_end
+    }
+
+    pub fn frame_count(&self) -> usize {
+        self.record_end - self.record_start
+    }
+
+    pub const fn frame_bytes(&self) -> usize {
+        self.frame_bytes
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+
+    pub const fn count_kind(&self, kind: TraceFrameKind) -> usize {
+        match kind {
+            TraceFrameKind::InstructionPacketTrace => self.instruction_packet_records,
+            TraceFrameKind::DependencyTrace => self.dependency_records,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceFrameStreamShardPlan {
+    shards: Vec<TraceFrameStreamShard>,
+    total_records: usize,
+    total_frame_bytes: usize,
+}
+
+impl TraceFrameStreamShardPlan {
+    pub fn by_frame_bytes(
+        index: &TraceFrameStreamIndex,
+        max_frame_bytes: usize,
+    ) -> Result<Self, ProtoError> {
+        if max_frame_bytes == 0 {
+            return Err(ProtoError::ZeroFrameStreamShardBudget);
+        }
+
+        let mut shards = Vec::new();
+        let mut start = 0usize;
+        while start < index.records().len() {
+            let first = &index.records()[start];
+            let mut end = start;
+            let mut frame_bytes = 0usize;
+            let mut payload_bytes = 0usize;
+            let mut instruction_packet_records = 0usize;
+            let mut dependency_records = 0usize;
+
+            while end < index.records().len() {
+                let record = &index.records()[end];
+                let would_exceed =
+                    frame_bytes > 0 && frame_bytes + record.frame_len() > max_frame_bytes;
+                if would_exceed {
+                    break;
+                }
+                frame_bytes += record.frame_len();
+                payload_bytes += record.payload_len();
+                match record.kind() {
+                    TraceFrameKind::InstructionPacketTrace => instruction_packet_records += 1,
+                    TraceFrameKind::DependencyTrace => dependency_records += 1,
+                }
+                end += 1;
+            }
+
+            let last = &index.records()[end - 1];
+            shards.push(TraceFrameStreamShard {
+                index: shards.len(),
+                record_start: start,
+                record_end: end,
+                byte_start: first.length_offset(),
+                byte_end: last.frame_offset() + last.frame_len(),
+                frame_bytes,
+                payload_bytes,
+                instruction_packet_records,
+                dependency_records,
+            });
+            start = end;
+        }
+
+        Ok(Self {
+            shards,
+            total_records: index.len(),
+            total_frame_bytes: index.total_frame_bytes(),
+        })
+    }
+
+    pub fn shards(&self) -> &[TraceFrameStreamShard] {
+        &self.shards
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shards.is_empty()
+    }
+
+    pub const fn total_records(&self) -> usize {
+        self.total_records
+    }
+
+    pub const fn total_frame_bytes(&self) -> usize {
+        self.total_frame_bytes
+    }
+}
+
 impl TraceFrameStreamIndex {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtoError> {
         let mut cursor = TraceFrameStreamCursor::new(bytes)?;

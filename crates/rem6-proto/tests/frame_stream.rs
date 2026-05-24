@@ -3,7 +3,8 @@ use rem6_proto::{
     DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader,
     InstructionEncoding, InstructionKind, InstructionRecord, MemoryAccess, PacketCommand,
     PacketRecord, ProtoError, ProtoTrace, TraceFrame, TraceFrameKind, TraceFrameStream,
-    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceHeader, TraceSourceId,
+    TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamShardPlan, TraceHeader,
+    TraceSourceId,
 };
 
 fn instruction_trace(source: &str, tick: u64) -> ProtoTrace {
@@ -248,6 +249,84 @@ fn trace_frame_stream_index_rejects_corrupt_streams() {
         TraceFrameStreamIndex::from_bytes(&corrupt_frame).unwrap_err(),
         ProtoError::FrameChecksumMismatch,
     );
+}
+
+#[test]
+fn trace_frame_stream_shard_plan_groups_contiguous_records_for_parallel_ingestion() {
+    let first_trace = instruction_trace("cpu0.proto", 10);
+    let second_trace = instruction_trace("cpu1.proto", 20);
+    let dependency_trace = dependency_trace();
+    let first = TraceFrame::from_proto_trace(&first_trace, vec![1, 2, 3]).unwrap();
+    let dependency = TraceFrame::from_dependency_trace(&dependency_trace, vec![8, 9]).unwrap();
+    let second = TraceFrame::from_proto_trace(&second_trace, vec![4, 5, 6, 7]).unwrap();
+    let first_len = first.encode().len();
+    let dependency_len = dependency.encode().len();
+    let second_len = second.encode().len();
+    let encoded = TraceFrameStream::new(vec![first, dependency, second])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+
+    let plan =
+        TraceFrameStreamShardPlan::by_frame_bytes(&index, first_len + dependency_len).unwrap();
+
+    assert_eq!(plan.len(), 2);
+    assert!(!plan.is_empty());
+    assert_eq!(plan.total_records(), 3);
+    assert_eq!(
+        plan.total_frame_bytes(),
+        first_len + dependency_len + second_len
+    );
+
+    let shards = plan.shards();
+    assert_eq!(shards[0].index(), 0);
+    assert_eq!(shards[0].record_range(), 0..2);
+    assert_eq!(shards[0].frame_count(), 2);
+    assert_eq!(shards[0].frame_bytes(), first_len + dependency_len);
+    assert_eq!(shards[0].payload_bytes(), 3 + 2);
+    assert_eq!(
+        shards[0].byte_range(),
+        index.records()[0].length_offset()
+            ..index.records()[1].frame_offset() + index.records()[1].frame_len()
+    );
+    assert_eq!(
+        shards[0].count_kind(TraceFrameKind::InstructionPacketTrace),
+        1
+    );
+    assert_eq!(shards[0].count_kind(TraceFrameKind::DependencyTrace), 1);
+
+    assert_eq!(shards[1].index(), 1);
+    assert_eq!(shards[1].record_range(), 2..3);
+    assert_eq!(shards[1].frame_count(), 1);
+    assert_eq!(shards[1].frame_bytes(), second_len);
+    assert_eq!(shards[1].payload_bytes(), 4);
+    assert_eq!(
+        shards[1].byte_range(),
+        index.records()[2].length_offset()
+            ..index.records()[2].frame_offset() + index.records()[2].frame_len()
+    );
+}
+
+#[test]
+fn trace_frame_stream_shard_plan_keeps_oversized_frames_intact_and_rejects_zero_budget() {
+    let first =
+        TraceFrame::from_proto_trace(&instruction_trace("cpu0.proto", 10), vec![1, 2, 3]).unwrap();
+    let dependency = TraceFrame::from_dependency_trace(&dependency_trace(), vec![8, 9]).unwrap();
+    let encoded = TraceFrameStream::new(vec![first.clone(), dependency])
+        .unwrap()
+        .encode();
+    let index = TraceFrameStreamIndex::from_bytes(&encoded).unwrap();
+
+    assert_eq!(
+        TraceFrameStreamShardPlan::by_frame_bytes(&index, 0).unwrap_err(),
+        ProtoError::ZeroFrameStreamShardBudget,
+    );
+
+    let plan = TraceFrameStreamShardPlan::by_frame_bytes(&index, 1).unwrap();
+    assert_eq!(plan.len(), 2);
+    assert_eq!(plan.shards()[0].record_range(), 0..1);
+    assert_eq!(plan.shards()[0].frame_bytes(), first.encode().len());
+    assert_eq!(plan.shards()[1].record_range(), 1..2);
 }
 
 #[test]
