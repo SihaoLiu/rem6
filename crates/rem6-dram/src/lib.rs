@@ -10,7 +10,7 @@ pub use activity::{
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
-pub use qos::{DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
+pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
 
 use rem6_fabric::{QosError, QosQueueArbiter};
 use rem6_kernel::{WaitForEdgeKind, WaitForGraph, WaitForNode};
@@ -693,6 +693,7 @@ pub struct DramAccess {
     command_cycle: u64,
     ready_cycle: u64,
     commands: Vec<DramCommand>,
+    qos: Option<DramQosAccess>,
 }
 
 impl DramAccess {
@@ -734,6 +735,10 @@ impl DramAccess {
 
     pub fn commands(&self) -> &[DramCommand] {
         &self.commands
+    }
+
+    pub const fn qos(&self) -> Option<DramQosAccess> {
+        self.qos
     }
 }
 
@@ -1115,6 +1120,15 @@ impl DramController {
         arrival_cycle: u64,
         request: &MemoryRequest,
     ) -> Result<DramAccess, DramError> {
+        self.schedule_with_qos(arrival_cycle, request, None)
+    }
+
+    pub(crate) fn schedule_with_qos(
+        &mut self,
+        arrival_cycle: u64,
+        request: &MemoryRequest,
+        qos: Option<DramQosAccess>,
+    ) -> Result<DramAccess, DramError> {
         let kind = DramAccessKind::from_operation(request)?;
         let decoded = self
             .geometry
@@ -1191,6 +1205,7 @@ impl DramController {
             command_cycle,
             ready_cycle,
             commands,
+            qos,
         };
         self.activity_log.push(access.clone());
         self.wait_log.extend(waits);

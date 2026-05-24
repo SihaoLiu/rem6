@@ -618,6 +618,6 @@ fn merge_run_dram_activity_maps(
                     stored.profile().merge_window(activity.profile()),
                 );
             })
-            .or_insert(*activity);
+            .or_insert_with(|| activity.clone());
     }
 }

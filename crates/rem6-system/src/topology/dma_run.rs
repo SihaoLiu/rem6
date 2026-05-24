@@ -321,7 +321,7 @@ impl RiscvTopologyDmaStageRunSummary {
         self.dram_activity
             .iter()
             .find(|activity| activity.target() == target)
-            .copied()
+            .cloned()
     }
 
     pub fn dram_target_activities(&self) -> &[DramTargetActivity] {
@@ -706,7 +706,7 @@ fn collect_dram_activity(
 ) -> BTreeMap<MemoryTargetId, DramTargetActivity> {
     source
         .iter()
-        .map(|activity| (activity.target(), *activity))
+        .map(|activity| (activity.target(), activity.clone()))
         .collect()
 }
 
@@ -723,6 +723,6 @@ fn merge_dram_activity_maps(
                     stored.profile().merge_window(activity.profile()),
                 );
             })
-            .or_insert(*activity);
+            .or_insert_with(|| activity.clone());
     }
 }

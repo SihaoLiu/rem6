@@ -56,7 +56,8 @@ impl Default for DramQosSchedulingPolicy {
 pub struct DramQosRequest<'a> {
     request: &'a MemoryRequest,
     requestor: QosRequestorId,
-    priority: QosPriority,
+    assigned_priority: QosPriority,
+    effective_priority: QosPriority,
     order: u64,
 }
 
@@ -65,7 +66,8 @@ impl<'a> DramQosRequest<'a> {
         Self {
             request,
             requestor: QosRequestorId::new(request.id().agent().get()),
-            priority,
+            assigned_priority: priority,
+            effective_priority: priority,
             order,
         }
     }
@@ -76,7 +78,7 @@ impl<'a> DramQosRequest<'a> {
     }
 
     pub const fn with_priority(mut self, priority: QosPriority) -> Self {
-        self.priority = priority;
+        self.effective_priority = priority;
         self
     }
 
@@ -89,7 +91,15 @@ impl<'a> DramQosRequest<'a> {
     }
 
     pub const fn priority(&self) -> QosPriority {
-        self.priority
+        self.effective_priority
+    }
+
+    pub const fn assigned_priority(&self) -> QosPriority {
+        self.assigned_priority
+    }
+
+    pub const fn effective_priority(&self) -> QosPriority {
+        self.effective_priority
     }
 
     pub const fn order(&self) -> u64 {
@@ -100,10 +110,49 @@ impl<'a> DramQosRequest<'a> {
         QosQueuedRequest::new(
             QosRequestId::new(self.request.id().sequence()),
             self.requestor,
-            self.priority,
+            self.effective_priority,
             self.request.size().bytes(),
             self.order,
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramQosAccess {
+    requestor: QosRequestorId,
+    assigned_priority: QosPriority,
+    effective_priority: QosPriority,
+    bytes: u64,
+}
+
+impl DramQosAccess {
+    pub(crate) fn from_request(request: &DramQosRequest<'_>) -> Self {
+        Self {
+            requestor: request.requestor(),
+            assigned_priority: request.assigned_priority(),
+            effective_priority: request.effective_priority(),
+            bytes: request.request().size().bytes(),
+        }
+    }
+
+    pub const fn requestor(self) -> QosRequestorId {
+        self.requestor
+    }
+
+    pub const fn assigned_priority(self) -> QosPriority {
+        self.assigned_priority
+    }
+
+    pub const fn effective_priority(self) -> QosPriority {
+        self.effective_priority
+    }
+
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+
+    pub const fn escalated(self) -> bool {
+        self.assigned_priority.get() > self.effective_priority.get()
     }
 }
 
@@ -179,7 +228,13 @@ where
     };
     ordered
         .into_iter()
-        .map(|request| controller.schedule(arrival_cycle, request.request()))
+        .map(|request| {
+            controller.schedule_with_qos(
+                arrival_cycle,
+                request.request(),
+                Some(DramQosAccess::from_request(&request)),
+            )
+        })
         .collect()
 }
 

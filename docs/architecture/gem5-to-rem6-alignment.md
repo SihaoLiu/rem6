@@ -11,6 +11,42 @@ import it, execute it, depend on its build outputs, or require it at runtime.
 The reference is used only to identify modeling scope, useful design ideas, and
 gaps in rem6 coverage.
 
+## External Pain Point Research
+
+External research reinforces that rem6 must be a new implementation, not a
+line-for-line port. The important gem5 pain points are architectural rather than
+isolated bugs:
+
+- Parallel simulation is not a natural baseline in gem5. Historical Parallel M5
+  material describes a migration away from a global event queue toward per-object
+  queues, barriers, slack, and queue assignment. Current gem5 event-queue code
+  still exposes global simulation quantum and main event queue concepts. Recent
+  par-gem5 and parti-gem5 work treat parallel timing simulation as an extension
+  to gem5, with explicit synchronization and, for timing mode, accepted timing
+  deviation. rem6 therefore treats partition ownership, lookahead, deterministic
+  merge order, and per-partition snapshots as core kernel contracts.
+- Configuration and experiment reproducibility are too script-dependent in
+  gem5. Official documentation says parts of Learning gem5 are outdated, and the
+  standard library exists partly because hand-built scripts can grow to hundreds
+  of lines. Full-system runs also require firmware, kernels, disk images, and
+  resource coordination outside the simulator binary. rem6 therefore keeps
+  typed builders and manifests as the authority for platform and workload state.
+- Observability and statistics need stronger contracts. A gem5 issue about
+  stats reset explicitly calls out missing reset tests and user confusion from
+  inconsistent stats. rem6 therefore treats statistics, activity, wait-for
+  graphs, and run summaries as typed data with tests rather than string-only
+  logs or ad hoc probes.
+- Compatibility bugs cluster around cross-subsystem seams. Recent public gem5
+  issues include syscall-emulation gaps for modern libc behavior, RISC-V vector
+  tracing crashes, and a three-level CHI LR/SC race in multicore RISC-V
+  workloads. rem6 therefore keeps ISA, guest ABI, coherence, memory ordering,
+  and device behavior behind typed crate boundaries with focused regression
+  tests before broad parity claims.
+
+Research anchors: gem5 documentation; Parallel M5; gem5 `src/sim/eventq.hh`;
+par-gem5; parti-gem5; gem5 issues for stats reset, syscall emulation, RISC-V
+vector tracing, and CHI LR/SC behavior.
+
 ## Audit Method
 
 The audit is recursive. Each gem5 subtree gets an entry with four facts:
@@ -97,7 +133,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/mem/ruby` | `rem6-coherence`, `rem6-directory`, `rem6-fabric` | partial | rem6 keeps detailed coherence and NoC behavior without a second memory-stack vocabulary. |
 | `src/mem/slicc` | protocol crates and typed transition records | partial | rem6 should preserve protocol expressiveness while avoiding generated controllers that hide transient behavior. |
 | `src/mem/protocol` | `rem6-protocol-msi`, `rem6-protocol-mesi`, `rem6-protocol-moesi`, future CHI-like crate | partial | MSI, MESI, MOESI exist. CHI-like behavior is required for the completion bar. |
-| `src/mem/qos` | `rem6-fabric`, `rem6-dram`, `rem6-transport` | partial | rem6-fabric has typed QoS requestor IDs, checked priorities, fixed-priority assignment, FIFO/LIFO/LRG queue arbitration, non-mutating empty polls, queue-arbiter snapshots, and QoS-ordered fabric batch transmission that reserves shared links in grant order. rem6-transport can attach a shared QoS arbiter to parallel batch submission so request priority and requestor identity affect first-hop NoC reservation before partition events are scheduled. rem6-dram can order same-arrival timing batches through the same typed arbiter before bank, row, and bus timing are computed, prefer the current read/write bus direction among same-priority candidates, and explicitly escalate queued same-requestor candidates to their best assigned batch priority without embedding controller back pointers in the queue policy. This preserves gem5's fixed-priority, queue-policy, turnaround, and priority-escalation concepts while avoiding global requestor lookup and memory-controller back pointers. Richer bandwidth accounting and run-summary diagnostics remain open. |
+| `src/mem/qos` | `rem6-fabric`, `rem6-dram`, `rem6-transport` | partial | rem6-fabric has typed QoS requestor IDs, checked priorities, fixed-priority assignment, FIFO/LIFO/LRG queue arbitration, non-mutating empty polls, queue-arbiter snapshots, and QoS-ordered fabric batch transmission that reserves shared links in grant order. rem6-transport can attach a shared QoS arbiter to parallel batch submission so request priority and requestor identity affect first-hop NoC reservation before partition events are scheduled. rem6-dram can order same-arrival timing batches through the same typed arbiter before bank, row, and bus timing are computed, prefer the current read/write bus direction among same-priority candidates, explicitly escalate queued same-requestor candidates to their best assigned batch priority without embedding controller back pointers in the queue policy, and preserve assigned priority, effective priority, requestor, byte count, and escalation status as typed DRAM activity metadata. This preserves gem5's fixed-priority, queue-policy, turnaround, escalation, and bandwidth-accounting concepts while avoiding global requestor lookup, memory-controller back pointers, and string-only stats. Run-summary diagnostics remain open. |
 | `src/mem/probes` | `rem6-stats`, runtime summaries | partial | Observability should be typed counters and run summaries, not string-only probes. |
 | memory ports, packets, requests in `src/mem` root | `rem6-transport`, `rem6-memory` | partial | Shared request/response transport exists; more gem5 packet semantics need mapping as features are added. |
 
@@ -171,8 +207,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   cover QoS-driven first-hop fabric reservation before parallel batch events
   are scheduled. DRAM tests cover QoS-driven same-arrival request ordering
   before bank and bus timing are computed, plus typed read/write direction
-  preference among same-priority timing candidates and explicit same-requestor
-  priority escalation inside timing batches.
+  preference among same-priority timing candidates, explicit same-requestor
+  priority escalation inside timing batches, and per-priority/per-requestor QoS
+  access and byte accounting in DRAM activity profiles.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, result metadata, execution mode switches, host action
   summaries, checkpoint restore labels, and statistics snapshots.

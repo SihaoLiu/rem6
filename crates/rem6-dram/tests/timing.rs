@@ -2,7 +2,7 @@ use rem6_dram::{
     DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramQosRequest,
     DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
 };
-use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
+use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -144,6 +144,26 @@ fn dram_controller_qos_batch_can_escalate_requestor_priority() {
     assert_eq!(accesses[2].request(), other_mid.id());
     assert_eq!(accesses[2].command_cycle(), 8);
     assert_eq!(accesses[2].ready_cycle(), 13);
+
+    let escalated = accesses[0].qos().unwrap();
+    assert_eq!(escalated.requestor(), QosRequestorId::new(7));
+    assert_eq!(escalated.assigned_priority(), QosPriority::new(2));
+    assert_eq!(escalated.effective_priority(), QosPriority::new(0));
+    assert_eq!(escalated.bytes(), 8);
+    assert!(escalated.escalated());
+
+    let profile = controller.activity_profile();
+    assert_eq!(profile.qos_access_count(), 3);
+    assert_eq!(profile.qos_byte_count(), 24);
+    assert_eq!(profile.qos_escalated_access_count(), 1);
+    assert_eq!(profile.qos_priority_access_count(QosPriority::new(0)), 2);
+    assert_eq!(profile.qos_priority_byte_count(QosPriority::new(0)), 16);
+    assert_eq!(profile.qos_priority_access_count(QosPriority::new(1)), 1);
+    assert_eq!(
+        profile.qos_requestor_access_count(QosRequestorId::new(7)),
+        2
+    );
+    assert_eq!(profile.qos_requestor_byte_count(QosRequestorId::new(7)), 16);
 }
 
 fn write(address: u64, sequence: u64) -> MemoryRequest {

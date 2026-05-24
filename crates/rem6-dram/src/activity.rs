@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
 
 use crate::{DramAccess, DramAccessKind};
@@ -15,7 +16,7 @@ impl DramActivityMarker {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DramBankActivity {
     access_count: usize,
     row_hit_count: usize,
@@ -25,6 +26,13 @@ pub struct DramBankActivity {
     last_ready_cycle: u64,
     total_ready_latency_cycles: u64,
     max_ready_latency_cycles: u64,
+    qos_access_count: usize,
+    qos_byte_count: u64,
+    qos_escalated_access_count: usize,
+    qos_priority_access_counts: BTreeMap<QosPriority, usize>,
+    qos_priority_byte_counts: BTreeMap<QosPriority, u64>,
+    qos_requestor_access_counts: BTreeMap<QosRequestorId, usize>,
+    qos_requestor_byte_counts: BTreeMap<QosRequestorId, u64>,
 }
 
 impl DramBankActivity {
@@ -45,42 +53,105 @@ impl DramBankActivity {
         let ready_latency = access.ready_cycle() - access.arrival_cycle();
         self.total_ready_latency_cycles += ready_latency;
         self.max_ready_latency_cycles = self.max_ready_latency_cycles.max(ready_latency);
+        if let Some(qos) = access.qos() {
+            self.qos_access_count += 1;
+            self.qos_byte_count += qos.bytes();
+            if qos.escalated() {
+                self.qos_escalated_access_count += 1;
+            }
+            *self
+                .qos_priority_access_counts
+                .entry(qos.effective_priority())
+                .or_default() += 1;
+            *self
+                .qos_priority_byte_counts
+                .entry(qos.effective_priority())
+                .or_default() += qos.bytes();
+            *self
+                .qos_requestor_access_counts
+                .entry(qos.requestor())
+                .or_default() += 1;
+            *self
+                .qos_requestor_byte_counts
+                .entry(qos.requestor())
+                .or_default() += qos.bytes();
+        }
     }
 
-    pub const fn access_count(self) -> usize {
+    pub const fn access_count(&self) -> usize {
         self.access_count
     }
 
-    pub const fn row_hit_count(self) -> usize {
+    pub const fn row_hit_count(&self) -> usize {
         self.row_hit_count
     }
 
-    pub const fn row_miss_count(self) -> usize {
+    pub const fn row_miss_count(&self) -> usize {
         self.row_miss_count
     }
 
-    pub const fn command_count(self) -> usize {
+    pub const fn command_count(&self) -> usize {
         self.command_count
     }
 
-    pub const fn first_arrival_cycle(self) -> u64 {
+    pub const fn first_arrival_cycle(&self) -> u64 {
         self.first_arrival_cycle
     }
 
-    pub const fn last_ready_cycle(self) -> u64 {
+    pub const fn last_ready_cycle(&self) -> u64 {
         self.last_ready_cycle
     }
 
-    pub const fn total_ready_latency_cycles(self) -> u64 {
+    pub const fn total_ready_latency_cycles(&self) -> u64 {
         self.total_ready_latency_cycles
     }
 
-    pub const fn max_ready_latency_cycles(self) -> u64 {
+    pub const fn max_ready_latency_cycles(&self) -> u64 {
         self.max_ready_latency_cycles
     }
 
-    pub const fn has_row_misses(self) -> bool {
+    pub const fn has_row_misses(&self) -> bool {
         self.row_miss_count != 0
+    }
+
+    pub const fn qos_access_count(&self) -> usize {
+        self.qos_access_count
+    }
+
+    pub const fn qos_byte_count(&self) -> u64 {
+        self.qos_byte_count
+    }
+
+    pub const fn qos_escalated_access_count(&self) -> usize {
+        self.qos_escalated_access_count
+    }
+
+    pub fn qos_priority_access_count(&self, priority: QosPriority) -> usize {
+        self.qos_priority_access_counts
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn qos_priority_byte_count(&self, priority: QosPriority) -> u64 {
+        self.qos_priority_byte_counts
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
+        self.qos_requestor_access_counts
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn qos_requestor_byte_count(&self, requestor: QosRequestorId) -> u64 {
+        self.qos_requestor_byte_counts
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -127,7 +198,7 @@ impl DramPortActivity {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DramActivityProfile {
     active_port_count: usize,
     active_bank_count: usize,
@@ -140,6 +211,13 @@ pub struct DramActivityProfile {
     turnaround_count: usize,
     total_ready_latency_cycles: u64,
     max_ready_latency_cycles: u64,
+    qos_access_count: usize,
+    qos_byte_count: u64,
+    qos_escalated_access_count: usize,
+    qos_priority_access_counts: BTreeMap<QosPriority, usize>,
+    qos_priority_byte_counts: BTreeMap<QosPriority, u64>,
+    qos_requestor_access_counts: BTreeMap<QosRequestorId, usize>,
+    qos_requestor_byte_counts: BTreeMap<QosRequestorId, u64>,
 }
 
 impl DramActivityProfile {
@@ -166,79 +244,155 @@ impl DramActivityProfile {
             profile.max_ready_latency_cycles = profile
                 .max_ready_latency_cycles
                 .max(bank.max_ready_latency_cycles());
+            profile.qos_access_count += bank.qos_access_count();
+            profile.qos_byte_count += bank.qos_byte_count();
+            profile.qos_escalated_access_count += bank.qos_escalated_access_count();
+            merge_count_map(
+                &mut profile.qos_priority_access_counts,
+                &bank.qos_priority_access_counts,
+            );
+            merge_count_map(
+                &mut profile.qos_priority_byte_counts,
+                &bank.qos_priority_byte_counts,
+            );
+            merge_count_map(
+                &mut profile.qos_requestor_access_counts,
+                &bank.qos_requestor_access_counts,
+            );
+            merge_count_map(
+                &mut profile.qos_requestor_byte_counts,
+                &bank.qos_requestor_byte_counts,
+            );
         }
         profile
     }
 
-    pub fn merge_window(self, later: Self) -> Self {
-        Self {
-            active_port_count: self.active_port_count + later.active_port_count,
-            active_bank_count: self.active_bank_count + later.active_bank_count,
-            access_count: self.access_count + later.access_count,
-            read_count: self.read_count + later.read_count,
-            write_count: self.write_count + later.write_count,
-            row_hit_count: self.row_hit_count + later.row_hit_count,
-            row_miss_count: self.row_miss_count + later.row_miss_count,
-            command_count: self.command_count + later.command_count,
-            turnaround_count: self.turnaround_count + later.turnaround_count,
-            total_ready_latency_cycles: self.total_ready_latency_cycles
-                + later.total_ready_latency_cycles,
-            max_ready_latency_cycles: self
-                .max_ready_latency_cycles
-                .max(later.max_ready_latency_cycles),
-        }
+    pub fn merge_window(mut self, later: Self) -> Self {
+        self.active_port_count += later.active_port_count;
+        self.active_bank_count += later.active_bank_count;
+        self.access_count += later.access_count;
+        self.read_count += later.read_count;
+        self.write_count += later.write_count;
+        self.row_hit_count += later.row_hit_count;
+        self.row_miss_count += later.row_miss_count;
+        self.command_count += later.command_count;
+        self.turnaround_count += later.turnaround_count;
+        self.total_ready_latency_cycles += later.total_ready_latency_cycles;
+        self.max_ready_latency_cycles = self
+            .max_ready_latency_cycles
+            .max(later.max_ready_latency_cycles);
+        self.qos_access_count += later.qos_access_count;
+        self.qos_byte_count += later.qos_byte_count;
+        self.qos_escalated_access_count += later.qos_escalated_access_count;
+        merge_count_map(
+            &mut self.qos_priority_access_counts,
+            &later.qos_priority_access_counts,
+        );
+        merge_count_map(
+            &mut self.qos_priority_byte_counts,
+            &later.qos_priority_byte_counts,
+        );
+        merge_count_map(
+            &mut self.qos_requestor_access_counts,
+            &later.qos_requestor_access_counts,
+        );
+        merge_count_map(
+            &mut self.qos_requestor_byte_counts,
+            &later.qos_requestor_byte_counts,
+        );
+        self
     }
 
-    pub const fn active_port_count(self) -> usize {
+    pub const fn active_port_count(&self) -> usize {
         self.active_port_count
     }
 
-    pub const fn active_bank_count(self) -> usize {
+    pub const fn active_bank_count(&self) -> usize {
         self.active_bank_count
     }
 
-    pub const fn access_count(self) -> usize {
+    pub const fn access_count(&self) -> usize {
         self.access_count
     }
 
-    pub const fn read_count(self) -> usize {
+    pub const fn read_count(&self) -> usize {
         self.read_count
     }
 
-    pub const fn write_count(self) -> usize {
+    pub const fn write_count(&self) -> usize {
         self.write_count
     }
 
-    pub const fn row_hit_count(self) -> usize {
+    pub const fn row_hit_count(&self) -> usize {
         self.row_hit_count
     }
 
-    pub const fn row_miss_count(self) -> usize {
+    pub const fn row_miss_count(&self) -> usize {
         self.row_miss_count
     }
 
-    pub const fn command_count(self) -> usize {
+    pub const fn command_count(&self) -> usize {
         self.command_count
     }
 
-    pub const fn turnaround_count(self) -> usize {
+    pub const fn turnaround_count(&self) -> usize {
         self.turnaround_count
     }
 
-    pub const fn total_ready_latency_cycles(self) -> u64 {
+    pub const fn total_ready_latency_cycles(&self) -> u64 {
         self.total_ready_latency_cycles
     }
 
-    pub const fn max_ready_latency_cycles(self) -> u64 {
+    pub const fn max_ready_latency_cycles(&self) -> u64 {
         self.max_ready_latency_cycles
     }
 
-    pub const fn has_row_misses(self) -> bool {
+    pub const fn has_row_misses(&self) -> bool {
         self.row_miss_count != 0
     }
 
-    pub const fn is_empty(self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.access_count == 0
+    }
+
+    pub const fn qos_access_count(&self) -> usize {
+        self.qos_access_count
+    }
+
+    pub const fn qos_byte_count(&self) -> u64 {
+        self.qos_byte_count
+    }
+
+    pub const fn qos_escalated_access_count(&self) -> usize {
+        self.qos_escalated_access_count
+    }
+
+    pub fn qos_priority_access_count(&self, priority: QosPriority) -> usize {
+        self.qos_priority_access_counts
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn qos_priority_byte_count(&self, priority: QosPriority) -> u64 {
+        self.qos_priority_byte_counts
+            .get(&priority)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
+        self.qos_requestor_access_counts
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn qos_requestor_byte_count(&self, requestor: QosRequestorId) -> u64 {
+        self.qos_requestor_byte_counts
+            .get(&requestor)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -257,7 +411,7 @@ impl DramMemoryActivityMarker {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DramTargetActivity {
     target: MemoryTargetId,
     profile: DramActivityProfile,
@@ -268,16 +422,16 @@ impl DramTargetActivity {
         Self { target, profile }
     }
 
-    pub const fn target(self) -> MemoryTargetId {
+    pub const fn target(&self) -> MemoryTargetId {
         self.target
     }
 
-    pub const fn profile(self) -> DramActivityProfile {
-        self.profile
+    pub fn profile(&self) -> DramActivityProfile {
+        self.profile.clone()
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DramMemoryActivityProfile {
     active_target_count: usize,
     profile: DramActivityProfile,
@@ -302,60 +456,98 @@ impl DramMemoryActivityProfile {
         }
     }
 
-    pub const fn active_target_count(self) -> usize {
+    pub const fn active_target_count(&self) -> usize {
         self.active_target_count
     }
 
-    pub const fn active_port_count(self) -> usize {
+    pub const fn active_port_count(&self) -> usize {
         self.profile.active_port_count()
     }
 
-    pub const fn active_bank_count(self) -> usize {
+    pub const fn active_bank_count(&self) -> usize {
         self.profile.active_bank_count()
     }
 
-    pub const fn access_count(self) -> usize {
+    pub const fn access_count(&self) -> usize {
         self.profile.access_count()
     }
 
-    pub const fn read_count(self) -> usize {
+    pub const fn read_count(&self) -> usize {
         self.profile.read_count()
     }
 
-    pub const fn write_count(self) -> usize {
+    pub const fn write_count(&self) -> usize {
         self.profile.write_count()
     }
 
-    pub const fn row_hit_count(self) -> usize {
+    pub const fn row_hit_count(&self) -> usize {
         self.profile.row_hit_count()
     }
 
-    pub const fn row_miss_count(self) -> usize {
+    pub const fn row_miss_count(&self) -> usize {
         self.profile.row_miss_count()
     }
 
-    pub const fn command_count(self) -> usize {
+    pub const fn command_count(&self) -> usize {
         self.profile.command_count()
     }
 
-    pub const fn turnaround_count(self) -> usize {
+    pub const fn turnaround_count(&self) -> usize {
         self.profile.turnaround_count()
     }
 
-    pub const fn total_ready_latency_cycles(self) -> u64 {
+    pub const fn total_ready_latency_cycles(&self) -> u64 {
         self.profile.total_ready_latency_cycles()
     }
 
-    pub const fn max_ready_latency_cycles(self) -> u64 {
+    pub const fn max_ready_latency_cycles(&self) -> u64 {
         self.profile.max_ready_latency_cycles()
     }
 
-    pub const fn has_row_misses(self) -> bool {
+    pub const fn has_row_misses(&self) -> bool {
         self.profile.has_row_misses()
     }
 
-    pub const fn is_empty(self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.profile.is_empty()
+    }
+
+    pub const fn qos_access_count(&self) -> usize {
+        self.profile.qos_access_count()
+    }
+
+    pub const fn qos_byte_count(&self) -> u64 {
+        self.profile.qos_byte_count()
+    }
+
+    pub const fn qos_escalated_access_count(&self) -> usize {
+        self.profile.qos_escalated_access_count()
+    }
+
+    pub fn qos_priority_access_count(&self, priority: QosPriority) -> usize {
+        self.profile.qos_priority_access_count(priority)
+    }
+
+    pub fn qos_priority_byte_count(&self, priority: QosPriority) -> u64 {
+        self.profile.qos_priority_byte_count(priority)
+    }
+
+    pub fn qos_requestor_access_count(&self, requestor: QosRequestorId) -> usize {
+        self.profile.qos_requestor_access_count(requestor)
+    }
+
+    pub fn qos_requestor_byte_count(&self, requestor: QosRequestorId) -> u64 {
+        self.profile.qos_requestor_byte_count(requestor)
+    }
+}
+
+fn merge_count_map<K, V>(target: &mut BTreeMap<K, V>, source: &BTreeMap<K, V>)
+where
+    K: Copy + Ord,
+    V: Copy + Default + std::ops::AddAssign,
+{
+    for (key, value) in source {
+        *target.entry(*key).or_default() += *value;
     }
 }
 
