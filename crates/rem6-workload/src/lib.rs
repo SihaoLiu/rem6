@@ -1187,6 +1187,19 @@ pub enum WorkloadError {
         expected: String,
         actual: String,
     },
+    MissingDataCacheBackingRoute {
+        route: WorkloadRouteId,
+    },
+    DataCacheBackingRouteSourceMismatch {
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    DataCacheBackingRouteEndpointMismatch {
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
     ZeroGpuComputeUnits {
         device: u32,
     },

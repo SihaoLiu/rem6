@@ -320,6 +320,19 @@ fn replay_topology_with_qos_dram_fetches_and_data_cache() -> WorkloadTopology {
             .unwrap(),
         )
         .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
         .with_qos_policy(policy)
         .with_riscv_data_cache(
             WorkloadRiscvDataCache::new(
@@ -328,6 +341,7 @@ fn replay_topology_with_qos_dram_fetches_and_data_cache() -> WorkloadTopology {
                 Address::new(0x8000),
                 2,
                 "dcache.dir",
+                route_id("dcache.backing"),
             )
             .unwrap(),
         )
@@ -494,6 +508,19 @@ fn replay_topology_with_qos_dram_data_read_write() -> WorkloadTopology {
 
 fn replay_topology_with_qos_dram_data_read_write_and_cache() -> WorkloadTopology {
     replay_topology_with_qos_dram_data_read_write()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
         .with_riscv_data_cache(
             WorkloadRiscvDataCache::new(
                 WorkloadDataCacheProtocol::Msi,
@@ -501,6 +528,7 @@ fn replay_topology_with_qos_dram_data_read_write_and_cache() -> WorkloadTopology
                 Address::new(0x9020),
                 2,
                 "dcache.dir",
+                route_id("dcache.backing"),
             )
             .unwrap(),
         )

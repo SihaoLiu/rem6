@@ -210,6 +210,29 @@ impl fmt::Display for WorkloadError {
                 "RISC-V core {cpu} data route {} starts at endpoint {actual}, expected {expected}",
                 route.as_str()
             ),
+            Self::MissingDataCacheBackingRoute { route } => write!(
+                formatter,
+                "RISC-V data cache backing route {} is not defined",
+                route.as_str()
+            ),
+            Self::DataCacheBackingRouteSourceMismatch {
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RISC-V data cache backing route {} starts at partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::DataCacheBackingRouteEndpointMismatch {
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RISC-V data cache backing route {} starts at endpoint {actual}, expected {expected}",
+                route.as_str()
+            ),
             Self::ZeroGpuComputeUnits { device } => {
                 write!(formatter, "GPU device {device} needs at least one compute unit")
             }

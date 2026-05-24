@@ -514,6 +514,7 @@ pub struct WorkloadRiscvDataCache {
     line_addresses: Vec<Address>,
     directory_partition: u32,
     directory_endpoint: String,
+    backing_route: WorkloadRouteId,
 }
 
 impl WorkloadRiscvDataCache {
@@ -523,6 +524,7 @@ impl WorkloadRiscvDataCache {
         line_address: Address,
         directory_partition: u32,
         directory_endpoint: impl Into<String>,
+        backing_route: WorkloadRouteId,
     ) -> Result<Self, WorkloadError> {
         let directory_endpoint = directory_endpoint.into();
         if directory_endpoint.is_empty() {
@@ -535,6 +537,7 @@ impl WorkloadRiscvDataCache {
             line_addresses: vec![line_address],
             directory_partition,
             directory_endpoint,
+            backing_route,
         })
     }
 
@@ -568,6 +571,10 @@ impl WorkloadRiscvDataCache {
 
     pub fn directory_endpoint(&self) -> &str {
         &self.directory_endpoint
+    }
+
+    pub fn backing_route(&self) -> &WorkloadRouteId {
+        &self.backing_route
     }
 }
 
@@ -961,6 +968,27 @@ impl WorkloadTopology {
         {
             return Err(WorkloadError::MissingMemoryTarget {
                 target: cache.memory_target(),
+            });
+        }
+        let route = self
+            .memory_routes
+            .iter()
+            .find(|route| route.id() == cache.backing_route())
+            .ok_or_else(|| WorkloadError::MissingDataCacheBackingRoute {
+                route: cache.backing_route().clone(),
+            })?;
+        if route.source_partition() != cache.directory_partition() {
+            return Err(WorkloadError::DataCacheBackingRouteSourceMismatch {
+                route: cache.backing_route().clone(),
+                expected: cache.directory_partition(),
+                actual: route.source_partition(),
+            });
+        }
+        if route.source_endpoint() != cache.directory_endpoint() {
+            return Err(WorkloadError::DataCacheBackingRouteEndpointMismatch {
+                route: cache.backing_route().clone(),
+                expected: cache.directory_endpoint().to_string(),
+                actual: route.source_endpoint().to_string(),
             });
         }
 

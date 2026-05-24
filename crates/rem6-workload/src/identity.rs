@@ -155,6 +155,7 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
             }
             hash_u64(hash, u64::from(cache.directory_partition()));
             hash_str(hash, cache.directory_endpoint());
+            hash_str(hash, cache.backing_route().as_str());
         }
         None => hash_str(hash, "riscv.data_cache.none"),
     }

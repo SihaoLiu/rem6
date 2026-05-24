@@ -85,6 +85,19 @@ fn replay_topology_with_chi_data_cache() -> WorkloadTopology {
                 .unwrap(),
         )
         .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
         .add_riscv_core(
             WorkloadRiscvCore::new(
                 0,
@@ -106,6 +119,7 @@ fn replay_topology_with_chi_data_cache() -> WorkloadTopology {
                 Address::new(0x9000),
                 2,
                 "dcache.dir",
+                route_id("dcache.backing"),
             )
             .unwrap(),
         )

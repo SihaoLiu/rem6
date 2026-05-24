@@ -1095,20 +1095,16 @@ impl RiscvWorkloadReplay {
         &self,
         topology: &'a WorkloadTopology,
     ) -> Result<&'a WorkloadMemoryRoute, RiscvWorkloadReplayError> {
-        let Some(data_route) = topology
-            .riscv_cores()
-            .iter()
-            .filter_map(|core| core.data_route())
-            .next()
-        else {
+        let Some(config) = topology.riscv_data_cache() else {
             return Err(RiscvWorkloadReplayError::MissingDataCacheAgent);
         };
+        let backing_route = config.backing_route();
         topology
             .memory_routes()
             .iter()
-            .find(|route| route.id() == data_route)
+            .find(|route| route.id() == backing_route)
             .ok_or_else(|| RiscvWorkloadReplayError::MissingRoute {
-                route: data_route.clone(),
+                route: backing_route.clone(),
             })
     }
 
