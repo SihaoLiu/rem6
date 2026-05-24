@@ -250,6 +250,14 @@ fn mshr_queue_qos_profile_counts_targets_and_effective_entries() {
 }
 
 #[test]
+fn mshr_qos_class_exports_transport_qos_class() {
+    let qos = MshrQosClass::new(42, 3).transport_qos_class();
+
+    assert_eq!(qos.requestor().get(), 42);
+    assert_eq!(qos.priority().get(), 3);
+}
+
+#[test]
 fn mshr_queue_rejects_bad_configs_unknown_handles_and_wrong_snapshots() {
     assert_eq!(
         MshrQueueConfig::new(0, 2, 0),

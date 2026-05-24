@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
     FabricPacket, FabricPacketId, FabricPath, FabricQosRequest, FabricWaitForMarker,
-    QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosRequestorId, VirtualNetworkId,
+    QosFixedPriorityPolicy, QosQueueArbiter, VirtualNetworkId,
 };
+pub use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
     SchedulerContext, SchedulerError, Tick, WaitForGraph,
@@ -75,6 +76,36 @@ impl MemoryRouteId {
 pub enum TransportLatency {
     Request,
     Response,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransportQosClass {
+    requestor: QosRequestorId,
+    priority: QosPriority,
+}
+
+impl TransportQosClass {
+    pub const fn new(requestor: QosRequestorId, priority: QosPriority) -> Self {
+        Self {
+            requestor,
+            priority,
+        }
+    }
+
+    pub const fn from_raw(requestor: u32, priority: u8) -> Self {
+        Self {
+            requestor: QosRequestorId::new(requestor),
+            priority: QosPriority::new(priority),
+        }
+    }
+
+    pub const fn requestor(self) -> QosRequestorId {
+        self.requestor
+    }
+
+    pub const fn priority(self) -> QosPriority {
+        self.priority
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -433,6 +464,7 @@ pub struct ParallelMemoryTransaction {
     trace: MemoryTrace,
     responder: ParallelRequestResponder,
     response_sink: ResponseSink,
+    qos_requestor: Option<QosRequestorId>,
     qos_priority: Option<QosPriority>,
 }
 
@@ -456,12 +488,24 @@ impl ParallelMemoryTransaction {
             trace,
             responder: Box::new(responder),
             response_sink: Box::new(response_sink),
+            qos_requestor: None,
             qos_priority: None,
         }
     }
 
     pub fn with_qos_priority(mut self, priority: QosPriority) -> Self {
         self.qos_priority = Some(priority);
+        self
+    }
+
+    pub fn with_qos_requestor(mut self, requestor: QosRequestorId) -> Self {
+        self.qos_requestor = Some(requestor);
+        self
+    }
+
+    pub fn with_qos_class(mut self, qos: TransportQosClass) -> Self {
+        self.qos_requestor = Some(qos.requestor());
+        self.qos_priority = Some(qos.priority());
         self
     }
 
@@ -482,6 +526,7 @@ struct PreparedParallelTransaction {
     responder: ParallelRequestResponder,
     response_sink: ResponseSink,
     first_hop_delay: Tick,
+    qos_requestor: QosRequestorId,
     qos_priority: QosPriority,
 }
 
@@ -863,6 +908,7 @@ impl MemoryTransport {
                 responder,
                 response_sink,
                 first_hop_delay,
+                qos_requestor: _,
                 qos_priority: _,
             } = transaction;
             let source_partition = route.source_partition();
@@ -923,14 +969,14 @@ impl MemoryTransport {
             }));
         }
 
+        let qos_requestor = transaction
+            .qos_requestor
+            .unwrap_or_else(|| QosRequestorId::new(transaction.request.id().agent().get()));
         let qos_priority = transaction.qos_priority.unwrap_or_else(|| {
             self.qos_priority_policy
                 .as_ref()
                 .map_or(QosPriority::new(0), |policy| {
-                    policy.priority_for(
-                        QosRequestorId::new(transaction.request.id().agent().get()),
-                        transaction.request.size().bytes(),
-                    )
+                    policy.priority_for(qos_requestor, transaction.request.size().bytes())
                 })
         });
 
@@ -942,6 +988,7 @@ impl MemoryTransport {
             responder: transaction.responder,
             response_sink: transaction.response_sink,
             first_hop_delay: 0,
+            qos_requestor,
             qos_priority,
         })
     }
@@ -983,7 +1030,7 @@ impl MemoryTransport {
                 index,
                 packet,
                 path.clone(),
-                transaction.request.id().agent(),
+                transaction.qos_requestor,
                 transaction.qos_priority,
             ));
         }
@@ -1002,9 +1049,9 @@ impl MemoryTransport {
             fabric.transmit_qos_batch(
                 now,
                 fabric_requests.iter().enumerate().map(
-                    |(order, (_, packet, path, agent, priority))| {
+                    |(order, (_, packet, path, requestor, priority))| {
                         FabricQosRequest::new(
-                            QosRequestorId::new(agent.get()),
+                            *requestor,
                             *priority,
                             order as u64,
                             packet.clone(),

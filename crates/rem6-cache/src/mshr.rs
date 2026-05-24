@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_memory::{Address, MemoryRequest};
+use rem6_transport::TransportQosClass;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MshrHandle(u64);
@@ -44,6 +45,10 @@ impl MshrQosClass {
 
     pub const fn priority(self) -> u8 {
         self.priority
+    }
+
+    pub const fn transport_qos_class(self) -> TransportQosClass {
+        TransportQosClass::from_raw(self.requestor, self.priority)
     }
 }
 

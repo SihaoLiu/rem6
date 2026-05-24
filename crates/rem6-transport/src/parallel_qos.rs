@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_fabric::{QosQueuedRequest, QosRequestId, QosRequestorId};
+use rem6_fabric::{QosQueuedRequest, QosRequestId};
 use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError, Tick};
 
 use crate::{
@@ -121,7 +121,7 @@ impl MemoryTransport {
                 .map(|(order, (_, transaction))| {
                     QosQueuedRequest::new(
                         QosRequestId::new(transaction.request.id().sequence()),
-                        QosRequestorId::new(transaction.request.id().agent().get()),
+                        transaction.qos_requestor,
                         transaction.qos_priority,
                         transaction.request.size().bytes(),
                         order as u64,
@@ -154,6 +154,7 @@ impl MemoryTransport {
             responder,
             response_sink,
             first_hop_delay: _,
+            qos_requestor: _,
             qos_priority: _,
         } = transaction;
         let request_id = request.id();
@@ -289,6 +290,7 @@ impl MemoryTransport {
                 responder,
                 response_sink,
                 first_hop_delay: _,
+                qos_requestor: _,
                 qos_priority: _,
             } = transaction;
             let request_id = request.id();
