@@ -5,7 +5,8 @@ use rem6_topology::{ComponentId, ComponentSpec, Endpoint, PortName, Topology, To
 use rem6_transport::TransportEndpointId;
 
 use crate::{
-    HarnessError, MesiHarnessError, MoesiHarnessError, PartitionedCacheAgentConfig,
+    ChiHarnessError, HarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
+    PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
     PartitionedDirectoryLineHarness, PartitionedDramMemoryConfig,
     PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
     PartitionedRouteHopConfig,
@@ -107,6 +108,67 @@ pub struct TopologyDirectoryHarnessConfig {
     caches: Vec<TopologyCacheAgentConfig>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TopologyChiDirectoryHarnessConfig {
+    layout: CacheLineLayout,
+    line_address: Address,
+    backing: LineBackingStore,
+    directory: TopologyDirectoryConfig,
+    caches: Vec<TopologyCacheAgentConfig>,
+}
+
+impl TopologyChiDirectoryHarnessConfig {
+    pub fn new<I>(
+        layout: CacheLineLayout,
+        line_address: Address,
+        backing: LineBackingStore,
+        directory: TopologyDirectoryConfig,
+        caches: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = TopologyCacheAgentConfig>,
+    {
+        Self {
+            layout,
+            line_address,
+            backing,
+            directory,
+            caches: caches.into_iter().collect(),
+        }
+    }
+
+    pub const fn layout(&self) -> CacheLineLayout {
+        self.layout
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+
+    pub const fn backing(&self) -> &LineBackingStore {
+        &self.backing
+    }
+
+    pub const fn directory(&self) -> &TopologyDirectoryConfig {
+        &self.directory
+    }
+
+    pub fn caches(&self) -> &[TopologyCacheAgentConfig] {
+        &self.caches
+    }
+
+    pub fn set_directory(&mut self, directory: TopologyDirectoryConfig) {
+        self.directory = directory;
+    }
+
+    pub fn set_caches<I>(&mut self, caches: I)
+    where
+        I: IntoIterator<Item = TopologyCacheAgentConfig>,
+    {
+        self.caches = caches.into_iter().collect();
+    }
+}
+
 impl TopologyDirectoryHarnessConfig {
     pub fn new<I>(
         layout: CacheLineLayout,
@@ -149,6 +211,62 @@ impl TopologyDirectoryHarnessConfig {
 
     pub fn set_directory(&mut self, directory: TopologyDirectoryConfig) {
         self.directory = directory;
+    }
+}
+
+impl PartitionedChiDirectoryLineHarness {
+    pub fn new_with_topology(
+        topology: &Topology,
+        config: TopologyChiDirectoryHarnessConfig,
+    ) -> Result<Self, ChiHarnessError> {
+        let TopologyChiDirectoryHarnessConfig {
+            layout,
+            line_address,
+            backing,
+            directory,
+            caches,
+        } = config;
+        let directory_component =
+            topology_component(topology, directory.component()).map_err(map_chi_topology_error)?;
+        let directory_endpoint = transport_endpoint_chi(directory.component())?;
+
+        let mut agents = Vec::with_capacity(caches.len());
+        for cache in caches {
+            let cache_component =
+                topology_component(topology, cache.component()).map_err(map_chi_topology_error)?;
+            let cache_path = topology_route_path(
+                topology,
+                Endpoint::new(cache.component().clone(), cache.port().clone()),
+                Endpoint::new(
+                    directory.component().clone(),
+                    directory.cache_port().clone(),
+                ),
+            )
+            .map_err(map_chi_topology_error)?;
+            agents.push(
+                PartitionedCacheAgentConfig::new(
+                    cache.agent(),
+                    cache_component.partition(),
+                    transport_endpoint_chi(cache.component())?,
+                    cache_path.request,
+                    cache_path.response,
+                )
+                .with_virtual_networks(
+                    cache_path.request_virtual_network,
+                    cache_path.response_virtual_network,
+                )
+                .with_route_hops(cache_path.route_hops),
+            );
+        }
+
+        Self::new(
+            layout,
+            line_address,
+            backing,
+            directory_component.partition(),
+            directory_endpoint,
+            agents,
+        )
     }
 }
 
@@ -474,6 +592,21 @@ fn transport_endpoint_moesi(
     component: &ComponentId,
 ) -> Result<TransportEndpointId, MoesiHarnessError> {
     TransportEndpointId::new(component.as_str()).map_err(MoesiHarnessError::Transport)
+}
+
+fn transport_endpoint_chi(component: &ComponentId) -> Result<TransportEndpointId, ChiHarnessError> {
+    TransportEndpointId::new(component.as_str()).map_err(ChiHarnessError::Transport)
+}
+
+fn map_chi_topology_error(error: HarnessError) -> ChiHarnessError {
+    match error {
+        HarnessError::MissingTopologyConnection { from, to } => {
+            ChiHarnessError::MissingTopologyConnection { from, to }
+        }
+        HarnessError::Topology(error) => ChiHarnessError::Topology(error),
+        HarnessError::Transport(error) => ChiHarnessError::Transport(error),
+        error => ChiHarnessError::Backing(error),
+    }
 }
 
 fn map_mesi_topology_error(error: HarnessError) -> MesiHarnessError {

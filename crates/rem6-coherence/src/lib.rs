@@ -73,8 +73,8 @@ pub use summary::{
     ParallelCoherenceRunHistory, ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
 };
 pub use topology::{
-    TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
-    TopologyDramMemoryConfig,
+    TopologyCacheAgentConfig, TopologyChiDirectoryHarnessConfig, TopologyDirectoryConfig,
+    TopologyDirectoryHarnessConfig, TopologyDramMemoryConfig,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

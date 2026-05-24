@@ -16,11 +16,13 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
+use rem6_topology::{Endpoint, TopologyError};
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTraceEvent, TargetOutcome,
     TransportEndpointId, TransportError,
 };
 
+use rem6_fabric::FabricModel;
 use rem6_kernel::{
     ConservativeRunSummary, PartitionId, PartitionedScheduler, SchedulerError, SchedulerSnapshot,
     Tick,
@@ -36,6 +38,7 @@ pub enum ChiHarnessError {
     LineBusy { state: ChiState },
     UnknownCache { agent: AgentId },
     DuplicateCache { agent: AgentId },
+    MissingTopologyConnection { from: Endpoint, to: Endpoint },
     MissingDirectoryGrant { request: MemoryRequestId },
     GrantDataUnavailable { agent: AgentId, line: ChiLineId },
     UnexpectedGrantState { state: ChiState },
@@ -45,6 +48,7 @@ pub enum ChiHarnessError {
     Scheduler(SchedulerError),
     Backing(HarnessError),
     SnapshotResourceMismatch { resource: &'static str },
+    Topology(TopologyError),
     Transport(TransportError),
 }
 
@@ -62,6 +66,14 @@ impl fmt::Display for ChiHarnessError {
                     agent.get()
                 )
             }
+            Self::MissingTopologyConnection { from, to } => write!(
+                formatter,
+                "topology connection {}.{} to {}.{} is not declared",
+                from.component().as_str(),
+                from.port().as_str(),
+                to.component().as_str(),
+                to.port().as_str()
+            ),
             Self::MissingDirectoryGrant { request } => write!(
                 formatter,
                 "directory did not grant request {} from agent {}",
@@ -86,6 +98,7 @@ impl fmt::Display for ChiHarnessError {
                 formatter,
                 "snapshot resource {resource} does not match harness configuration"
             ),
+            Self::Topology(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
@@ -99,6 +112,7 @@ impl Error for ChiHarnessError {
             Self::Memory(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Backing(error) => Some(error),
+            Self::Topology(error) => Some(error),
             Self::Transport(error) => Some(error),
             _ => None,
         }
@@ -644,11 +658,20 @@ impl PartitionedChiDirectoryLineHarness {
             .index()
             .checked_add(1)
             .ok_or(ChiHarnessError::Scheduler(SchedulerError::NoPartitions))?;
-        let mut transport = rem6_transport::MemoryTransport::new();
+        let agent_configs: Vec<_> = agents.into_iter().collect();
+        let uses_fabric = agent_configs
+            .iter()
+            .any(|config| chi_route_hops_use_fabric(config.route_hops()));
+        let fabric = uses_fabric.then(|| Arc::new(Mutex::new(FabricModel::new())));
+        let mut transport = if let Some(fabric) = &fabric {
+            rem6_transport::MemoryTransport::with_shared_fabric(Arc::clone(fabric))
+        } else {
+            rem6_transport::MemoryTransport::new()
+        };
         let mut caches = BTreeMap::new();
         let mut routes = BTreeMap::new();
 
-        for config in agents {
+        for config in agent_configs {
             partition_count = partition_count.max(
                 config
                     .partition()
@@ -1013,6 +1036,11 @@ fn expand_partition_count_for_chi_hops(
     }
 
     Ok(())
+}
+
+fn chi_route_hops_use_fabric(hops: &[PartitionedRouteHopConfig]) -> bool {
+    hops.iter()
+        .any(|hop| hop.request_fabric_path().is_some() || hop.response_fabric_path().is_some())
 }
 
 #[allow(clippy::too_many_arguments)]
