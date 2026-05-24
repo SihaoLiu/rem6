@@ -628,16 +628,19 @@ impl QueuedPrefetcher {
     pub fn issue_ready(&mut self, tick: u64) -> Vec<QueuedPrefetchIssue> {
         let mut issues = Vec::new();
         while issues.len() < self.config.max_issue_per_tick() {
-            let Some(entry) = self.pending.first() else {
+            let Some(issue) = self.issue_one_ready(tick) else {
                 break;
             };
-            if entry.ready_tick > tick {
-                break;
-            }
-            let entry = self.pending.remove(0);
-            issues.push(entry.issue());
+            issues.push(issue);
         }
         issues
+    }
+
+    pub(crate) fn issue_one_ready(&mut self, tick: u64) -> Option<QueuedPrefetchIssue> {
+        if self.pending.first()?.ready_tick > tick {
+            return None;
+        }
+        Some(self.pending.remove(0).issue())
     }
 
     pub fn snapshot(&self) -> QueuedPrefetcherSnapshot {
