@@ -126,6 +126,65 @@ impl fmt::Display for QueuedPrefetcherError {
 impl Error for QueuedPrefetcherError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QueuedPrefetchResidency {
+    Cache,
+    MissQueue,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchRedundantLine {
+    address: Address,
+    secure: bool,
+    residency: QueuedPrefetchResidency,
+}
+
+impl QueuedPrefetchRedundantLine {
+    pub const fn in_cache(address: Address, secure: bool) -> Self {
+        Self {
+            address,
+            secure,
+            residency: QueuedPrefetchResidency::Cache,
+        }
+    }
+
+    pub const fn in_miss_queue(address: Address, secure: bool) -> Self {
+        Self {
+            address,
+            secure,
+            residency: QueuedPrefetchResidency::MissQueue,
+        }
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn secure(&self) -> bool {
+        self.secure
+    }
+
+    pub const fn residency(&self) -> QueuedPrefetchResidency {
+        self.residency
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchEnqueueResult {
+    accepted: usize,
+    dropped_redundant: usize,
+}
+
+impl QueuedPrefetchEnqueueResult {
+    pub const fn accepted(&self) -> usize {
+        self.accepted
+    }
+
+    pub const fn dropped_redundant(&self) -> usize {
+        self.dropped_redundant
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueuedPrefetchDemandAccess {
     address: Address,
     secure: bool,
@@ -380,6 +439,17 @@ impl QueuedPrefetcher {
         source_tick: u64,
         candidates: &[StridePrefetchCandidate],
     ) -> Result<usize, QueuedPrefetcherError> {
+        Ok(self
+            .enqueue_candidates_filtered(source_tick, candidates, &[])?
+            .accepted())
+    }
+
+    pub fn enqueue_candidates_filtered(
+        &mut self,
+        source_tick: u64,
+        candidates: &[StridePrefetchCandidate],
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+    ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
         let ready_tick = source_tick.checked_add(self.config.latency()).ok_or(
             QueuedPrefetcherError::ReadyTickOverflow {
                 source_tick,
@@ -387,8 +457,13 @@ impl QueuedPrefetcher {
             },
         )?;
         let mut accepted = 0;
+        let mut dropped_redundant = 0;
         for candidate in candidates {
             let address = self.normalized_address(candidate.address());
+            if self.is_redundant(address, candidate.secure(), redundant_lines) {
+                dropped_redundant += 1;
+                continue;
+            }
             if self.config.filter_duplicates()
                 && self
                     .pending
@@ -414,7 +489,10 @@ impl QueuedPrefetcher {
             insert_pending_entry(&mut self.pending, entry);
             accepted += 1;
         }
-        Ok(accepted)
+        Ok(QueuedPrefetchEnqueueResult {
+            accepted,
+            dropped_redundant,
+        })
     }
 
     pub fn squash_demand_access(&mut self, access: QueuedPrefetchDemandAccess) -> usize {
@@ -481,6 +559,17 @@ impl QueuedPrefetcher {
 
     fn normalized_address(&self, address: Address) -> Address {
         Address::new(address.get() / self.config.line_size() * self.config.line_size())
+    }
+
+    fn is_redundant(
+        &self,
+        address: Address,
+        secure: bool,
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+    ) -> bool {
+        redundant_lines.iter().any(|line| {
+            self.normalized_address(line.address()) == address && line.secure() == secure
+        })
     }
 }
 

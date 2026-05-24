@@ -31,8 +31,9 @@ pub use mshr::{
     MshrQueueSnapshot, MshrQueueUpdate, MshrTarget, MshrTargetSource,
 };
 pub use prefetch::{
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchEntrySnapshot,
-    QueuedPrefetchIssue, QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchEnqueueResult,
+    QueuedPrefetchEntrySnapshot, QueuedPrefetchIssue, QueuedPrefetchRedundantLine,
+    QueuedPrefetchResidency, QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
     StridePrefetchAccess, StridePrefetchCandidate, StridePrefetchContextSnapshot,
     StridePrefetchEntrySnapshot, StridePrefetcher, StridePrefetcherConfig, StridePrefetcherError,
     StridePrefetcherSnapshot,

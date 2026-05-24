@@ -1,6 +1,6 @@
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetcher, StridePrefetchAccess,
-    StridePrefetcher, StridePrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchRedundantLine,
+    QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -111,4 +111,38 @@ fn queued_prefetcher_squashes_same_line_demand_accesses() {
     assert_eq!(issued.len(), 1);
     assert_eq!(issued[0].address(), Address::new(0x1100));
     assert_eq!(restored.pending_count(), 0);
+}
+
+#[test]
+fn queued_prefetcher_filters_candidates_already_in_cache_resources() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 2, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    let result = queue
+        .enqueue_candidates_filtered(
+            10,
+            &candidates,
+            &[
+                QueuedPrefetchRedundantLine::in_cache(Address::new(0x10f8), false),
+                QueuedPrefetchRedundantLine::in_miss_queue(Address::new(0x1108), true),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(result.accepted(), 1);
+    assert_eq!(result.dropped_redundant(), 1);
+    assert_eq!(queue.pending_count(), 1);
+    assert_eq!(
+        queue.snapshot().pending()[0].address(),
+        Address::new(0x1100)
+    );
+
+    let issued = queue.issue_ready(13);
+    assert_eq!(issued.len(), 1);
+    assert_eq!(issued[0].address(), Address::new(0x1100));
 }
