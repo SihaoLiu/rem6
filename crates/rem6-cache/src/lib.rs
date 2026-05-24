@@ -23,6 +23,7 @@ mod prefetch_ampm;
 mod prefetch_bop;
 mod prefetch_dcpt;
 mod prefetch_multi;
+mod prefetch_sbooe;
 mod prefetch_throttle;
 mod replacement;
 
@@ -70,6 +71,10 @@ pub use prefetch_dcpt::{
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,
+};
+pub use prefetch_sbooe::{
+    SbooePrefetchAccess, SbooePrefetchCandidate, SbooePrefetcher, SbooePrefetcherConfig,
+    SbooePrefetcherError, SbooePrefetcherSnapshot, SbooeSandboxEntrySnapshot, SbooeSandboxSnapshot,
 };
 pub use prefetch_throttle::{
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,

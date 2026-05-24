@@ -4,8 +4,9 @@ use rem6_cache::{
     DcptPrefetchAccess, DcptPrefetcher, DcptPrefetcherConfig, QueuedPrefetchConfig,
     QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
-    QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
-    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
+    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
+    TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -27,6 +28,10 @@ fn dcpt_access(agent: u32, pc: u64, address: u64) -> DcptPrefetchAccess {
 
 fn bop_access(agent: u32, pc: u64, address: u64) -> BopPrefetchAccess {
     BopPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn sbooe_access(agent: u32, pc: u64, address: u64) -> SbooePrefetchAccess {
+    SbooePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
 }
 
 #[test]
@@ -156,6 +161,90 @@ fn bop_prefetcher_delays_rr_training_and_restores_delay_queue() {
     assert!(restored.issue_prefetch_requests());
     assert_eq!(restored.delay_queue_len(), 2);
     assert_eq!(restored.next_delay_ready_tick(), Some(4));
+}
+
+#[test]
+fn sbooe_prefetcher_selects_best_sandbox_stride_and_restores_state() {
+    let config = SbooePrefetcherConfig::new(64, 3, 4, 25, 2).unwrap();
+    let mut prefetcher = SbooePrefetcher::new(config.clone());
+
+    assert!(prefetcher
+        .observe_at(0, sbooe_access(6, 0xb00, 0x1000))
+        .unwrap()
+        .is_empty());
+    assert!(prefetcher
+        .observe_at(1, sbooe_access(6, 0xb04, 0x1040))
+        .unwrap()
+        .is_empty());
+
+    let candidates = prefetcher
+        .observe_at(2, sbooe_access(6, 0xb08, 0x1080))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x10c0)]
+    );
+    assert_eq!(candidates[0].source_address(), Address::new(0x1080));
+    assert_eq!(candidates[0].context(), AgentId::new(6));
+    assert_eq!(candidates[0].pc(), 0xb08);
+    assert_eq!(candidates[0].sandbox_stride(), 1);
+    assert_eq!(candidates[0].stride(), 64);
+    assert_eq!(candidates[0].degree_index(), 1);
+    assert_eq!(prefetcher.best_sandbox_stride(), Some(1));
+    assert_eq!(prefetcher.sandbox_scores(), vec![0, 0, 2]);
+    assert_eq!(prefetcher.last_candidates(), candidates.as_slice());
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = SbooePrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+
+    let restored_candidates = restored
+        .observe_at(3, sbooe_access(6, 0xb0c, 0x10c0))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        restored_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x1100)]
+    );
+    assert_eq!(restored_candidates[0].sandbox_stride(), 1);
+    assert_eq!(restored.sandbox_scores(), vec![0, 0, 3]);
+}
+
+#[test]
+fn sbooe_prefetcher_tracks_latency_and_late_sandbox_hits() {
+    let config = SbooePrefetcherConfig::new(64, 3, 4, 25, 2).unwrap();
+    let mut prefetcher = SbooePrefetcher::new(config);
+
+    assert!(prefetcher
+        .observe_at(0, sbooe_access(6, 0xc00, 0x2000))
+        .unwrap()
+        .is_empty());
+    assert_eq!(prefetcher.pending_demand_count(), 1);
+    prefetcher.observe_fill_at(10, Address::new(0x2000));
+    assert_eq!(prefetcher.average_access_latency(), 10);
+    assert_eq!(prefetcher.pending_demand_count(), 0);
+
+    assert!(prefetcher
+        .observe_at(20, sbooe_access(6, 0xc04, 0x3000))
+        .unwrap()
+        .is_empty());
+    assert!(prefetcher
+        .observe_at(21, sbooe_access(6, 0xc08, 0x3040))
+        .unwrap()
+        .is_empty());
+    assert_eq!(prefetcher.sandbox_raw_scores(), vec![0, 0, 1]);
+    assert_eq!(prefetcher.sandbox_late_scores(), vec![0, 0, 1]);
+    assert_eq!(prefetcher.sandbox_scores(), vec![0, 0, 0]);
+    assert_eq!(prefetcher.best_sandbox_stride(), Some(-1));
+    assert_eq!(prefetcher.last_candidates(), &[]);
 }
 
 #[test]
