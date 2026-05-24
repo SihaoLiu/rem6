@@ -1,6 +1,6 @@
 use rem6_dram::{
     DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramQosRequest,
-    DramQosTurnaroundPolicy, DramTiming,
+    DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
 };
 use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
@@ -108,6 +108,42 @@ fn dram_controller_qos_batch_can_prefer_current_bus_direction() {
     assert_eq!(accesses[1].kind(), DramAccessKind::Write);
     assert_eq!(accesses[1].command_cycle(), 12);
     assert_eq!(accesses[1].ready_cycle(), 19);
+}
+
+#[test]
+fn dram_controller_qos_batch_can_escalate_requestor_priority() {
+    let mut controller = DramController::new(geometry(), timing());
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let old_low = read_from(7, 0x0000, 8, 50);
+    let other_mid = read_from(8, 0x0040, 8, 51);
+    let new_high = read_from(7, 0x0100, 8, 52);
+
+    let accesses = controller
+        .schedule_qos_batch_with_policy(
+            0,
+            [
+                DramQosRequest::new(&old_low, QosPriority::new(2), 0),
+                DramQosRequest::new(&other_mid, QosPriority::new(1), 1),
+                DramQosRequest::new(&new_high, QosPriority::new(0), 2),
+            ],
+            &mut arbiter,
+            DramQosSchedulingPolicy::new()
+                .with_priority_escalation()
+                .with_turnaround(DramQosTurnaroundPolicy::RequestOrder),
+        )
+        .unwrap();
+
+    assert_eq!(accesses.len(), 3);
+    assert_eq!(accesses[0].request(), old_low.id());
+    assert_eq!(accesses[0].command_cycle(), 3);
+    assert_eq!(accesses[0].ready_cycle(), 8);
+    assert_eq!(accesses[1].request(), new_high.id());
+    assert!(accesses[1].row_hit());
+    assert_eq!(accesses[1].command_cycle(), 8);
+    assert_eq!(accesses[1].ready_cycle(), 13);
+    assert_eq!(accesses[2].request(), other_mid.id());
+    assert_eq!(accesses[2].command_cycle(), 8);
+    assert_eq!(accesses[2].ready_cycle(), 13);
 }
 
 fn write(address: u64, sequence: u64) -> MemoryRequest {

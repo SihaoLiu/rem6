@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rem6_fabric::{
     QosError, QosPriority, QosQueueArbiter, QosQueuedRequest, QosRequestId, QosRequestorId,
 };
@@ -9,6 +11,45 @@ use crate::{DramAccess, DramAccessKind, DramController, DramError};
 pub enum DramQosTurnaroundPolicy {
     RequestOrder,
     PreferCurrentDirection,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramQosSchedulingPolicy {
+    turnaround: DramQosTurnaroundPolicy,
+    priority_escalation: bool,
+}
+
+impl DramQosSchedulingPolicy {
+    pub const fn new() -> Self {
+        Self {
+            turnaround: DramQosTurnaroundPolicy::RequestOrder,
+            priority_escalation: false,
+        }
+    }
+
+    pub const fn with_turnaround(mut self, turnaround: DramQosTurnaroundPolicy) -> Self {
+        self.turnaround = turnaround;
+        self
+    }
+
+    pub const fn with_priority_escalation(mut self) -> Self {
+        self.priority_escalation = true;
+        self
+    }
+
+    pub const fn turnaround(self) -> DramQosTurnaroundPolicy {
+        self.turnaround
+    }
+
+    pub const fn priority_escalation(self) -> bool {
+        self.priority_escalation
+    }
+}
+
+impl Default for DramQosSchedulingPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,6 +72,11 @@ impl<'a> DramQosRequest<'a> {
 
     pub const fn with_requestor(mut self, requestor: QosRequestorId) -> Self {
         self.requestor = requestor;
+        self
+    }
+
+    pub const fn with_priority(mut self, priority: QosPriority) -> Self {
+        self.priority = priority;
         self
     }
 
@@ -100,8 +146,30 @@ pub(crate) fn schedule_qos_batch<'a, I>(
 where
     I: IntoIterator<Item = DramQosRequest<'a>>,
 {
-    let requests = requests.into_iter().collect();
-    let ordered = match turnaround {
+    schedule_qos_batch_with_policy(
+        controller,
+        arrival_cycle,
+        requests,
+        arbiter,
+        DramQosSchedulingPolicy::new().with_turnaround(turnaround),
+    )
+}
+
+pub(crate) fn schedule_qos_batch_with_policy<'a, I>(
+    controller: &mut DramController,
+    arrival_cycle: u64,
+    requests: I,
+    arbiter: &mut QosQueueArbiter,
+    policy: DramQosSchedulingPolicy,
+) -> Result<Vec<DramAccess>, DramError>
+where
+    I: IntoIterator<Item = DramQosRequest<'a>>,
+{
+    let mut requests: Vec<DramQosRequest<'a>> = requests.into_iter().collect();
+    if policy.priority_escalation() {
+        escalate_requestor_priorities(&mut requests);
+    }
+    let ordered = match policy.turnaround() {
         DramQosTurnaroundPolicy::RequestOrder => {
             order_requests(requests, arbiter).map_err(|source| DramError::Qos { source })?
         }
@@ -113,6 +181,21 @@ where
         .into_iter()
         .map(|request| controller.schedule(arrival_cycle, request.request()))
         .collect()
+}
+
+fn escalate_requestor_priorities(requests: &mut [DramQosRequest<'_>]) {
+    let mut highest_by_requestor = BTreeMap::<QosRequestorId, QosPriority>::new();
+    for request in requests.iter() {
+        highest_by_requestor
+            .entry(request.requestor())
+            .and_modify(|priority| *priority = (*priority).min(request.priority()))
+            .or_insert(request.priority());
+    }
+    for request in requests.iter_mut() {
+        if let Some(priority) = highest_by_requestor.get(&request.requestor()).copied() {
+            *request = request.with_priority(priority);
+        }
+    }
 }
 
 fn order_requests_with_current_direction<'a>(
