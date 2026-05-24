@@ -16,8 +16,11 @@ impl MemoryTransport {
         self.qos_arbiter.is_some()
             && transactions.len() > 1
             && transactions.iter().all(|transaction| {
-                let hops = transaction.route.hops();
-                hops.len() == 1 && hops[0].request_fabric_path().is_none()
+                transaction
+                    .route
+                    .hops()
+                    .iter()
+                    .all(|hop| hop.request_fabric_path().is_none())
             })
     }
 
@@ -33,15 +36,18 @@ impl MemoryTransport {
             Vec<(usize, PreparedParallelTransaction)>,
         >::new();
         for (index, transaction) in transactions.into_iter().enumerate() {
-            let hop = &transaction.route.hops()[0];
-            let arrival_tick = start_tick.checked_add(transaction.first_hop_delay).ok_or(
-                TransportError::Scheduler(SchedulerError::TickOverflow {
+            let arrival_tick = start_tick
+                .checked_add(transaction.route.request_latency())
+                .ok_or(TransportError::Scheduler(SchedulerError::TickOverflow {
                     now: start_tick,
-                    delay: transaction.first_hop_delay,
-                }),
-            )?;
+                    delay: transaction.route.request_latency(),
+                }))?;
             groups
-                .entry((arrival_tick, hop.partition(), hop.endpoint().clone()))
+                .entry((
+                    arrival_tick,
+                    transaction.route.target_partition(),
+                    transaction.route.target().clone(),
+                ))
                 .or_default()
                 .push((index, transaction));
         }
@@ -119,27 +125,13 @@ impl MemoryTransport {
             qos_priority: _,
         } = transaction;
         let request_id = request.id();
-        let source_endpoint = route.source().clone();
+        let last_hop_index = route.hops().len() - 1;
         let fabric = self.fabric.clone();
-        trace.record(MemoryTraceEvent::request(
-            start_tick,
-            route_id,
-            source_endpoint,
-            MemoryTraceKind::RequestSent,
-            request_id,
-        ));
+        record_direct_request_trace(&trace, start_tick, route_id, &route, request_id)?;
 
         scheduler
             .schedule_parallel_at(target_partition, arrival_tick, move |context| {
-                let hop_index = 0;
-                let hop = route.hops()[hop_index].clone();
-                trace.record(MemoryTraceEvent::request(
-                    context.now(),
-                    route_id,
-                    hop.endpoint().clone(),
-                    MemoryTraceKind::RequestArrived,
-                    request.id(),
-                ));
+                let hop = route.hops()[last_hop_index].clone();
                 let delivery = RequestDelivery {
                     tick: context.now(),
                     route: route_id,
@@ -153,7 +145,7 @@ impl MemoryTransport {
                             context,
                             route_id,
                             route,
-                            hop_index,
+                            last_hop_index,
                             response,
                             trace,
                             fabric,
@@ -167,7 +159,7 @@ impl MemoryTransport {
                                     context,
                                     route_id,
                                     route,
-                                    hop_index,
+                                    last_hop_index,
                                     response,
                                     trace,
                                     fabric,
@@ -181,4 +173,39 @@ impl MemoryTransport {
             })
             .map_err(TransportError::Scheduler)
     }
+}
+
+fn record_direct_request_trace(
+    trace: &crate::MemoryTrace,
+    start_tick: Tick,
+    route_id: crate::MemoryRouteId,
+    route: &crate::MemoryRoute,
+    request_id: rem6_memory::MemoryRequestId,
+) -> Result<(), TransportError> {
+    trace.record(MemoryTraceEvent::request(
+        start_tick,
+        route_id,
+        route.source().clone(),
+        MemoryTraceKind::RequestSent,
+        request_id,
+    ));
+
+    let mut tick = start_tick;
+    for hop in route.hops() {
+        tick = tick
+            .checked_add(hop.request_latency())
+            .ok_or(TransportError::Scheduler(SchedulerError::TickOverflow {
+                now: tick,
+                delay: hop.request_latency(),
+            }))?;
+        trace.record(MemoryTraceEvent::request(
+            tick,
+            route_id,
+            hop.endpoint().clone(),
+            MemoryTraceKind::RequestArrived,
+            request_id,
+        ));
+    }
+
+    Ok(())
 }

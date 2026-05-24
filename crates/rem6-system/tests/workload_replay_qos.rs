@@ -8,8 +8,8 @@ use rem6_workload::{
     HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
     WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosPolicy, WorkloadQosQueuePolicyKind,
     WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteId,
-    WorkloadTopology,
+    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -194,6 +194,81 @@ fn replay_topology_with_qos_dram_fetches() -> WorkloadTopology {
         .with_qos_policy(policy)
 }
 
+fn replay_topology_with_multihop_qos_dram_fetches() -> WorkloadTopology {
+    let policy = WorkloadQosPolicy::new(4, QosPriority::new(3))
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::Fifo)
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(2))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(0))
+        .unwrap();
+
+    WorkloadTopology::new(5, 2, 2, WorkloadHostPlacement::new(4, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                layout().bytes(),
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(single_channel_ddr_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new_path(
+                route_id("cpu0.fetch"),
+                "cpu0.ifetch",
+                0,
+                [
+                    WorkloadRouteHop::new("router.cpu0", 3, 2, 2).unwrap(),
+                    WorkloadRouteHop::new("memory", 2, 2, 3).unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new_path(
+                route_id("cpu1.fetch"),
+                "cpu1.ifetch",
+                1,
+                [
+                    WorkloadRouteHop::new("router.cpu1", 3, 2, 2).unwrap(),
+                    WorkloadRouteHop::new("memory", 2, 2, 3).unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x9000),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .with_qos_policy(policy)
+}
+
 fn replay_manifest_with_qos_fabric_fetches() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("qos-fabric-fetches"), boot_image())
         .with_topology(replay_topology_with_qos_fabric_fetches())
@@ -213,6 +288,22 @@ fn replay_manifest_with_qos_fabric_fetches() -> WorkloadManifest {
 fn replay_manifest_with_qos_dram_fetches() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("qos-dram-fetches"), boot_image())
         .with_topology(replay_topology_with_qos_dram_fetches())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_multihop_qos_dram_fetches() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("multihop-qos-dram-fetches"), boot_image())
+        .with_topology(replay_topology_with_multihop_qos_dram_fetches())
         .add_resource(kernel_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
@@ -307,6 +398,20 @@ fn workload_replay_applies_declared_qos_policy_to_dram_accesses() {
 #[test]
 fn workload_replay_batches_same_tick_dram_accesses_before_qos_arbitration() {
     let manifest = replay_manifest_with_qos_dram_fetches();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(outcome.run().scheduled_traps()[0].cpu(), CpuId::new(1));
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_orders_multihop_same_tick_dram_accesses_before_target_delivery() {
+    let manifest = replay_manifest_with_multihop_qos_dram_fetches();
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
