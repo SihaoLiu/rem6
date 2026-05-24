@@ -824,15 +824,17 @@ impl RiscvWorkloadReplay {
                         route: data_route.clone(),
                     }
                 })?;
-                Ok(RiscvCore::with_data(
-                    cpu_core,
-                    CpuDataConfig::new(
-                        TransportEndpointId::new(data_endpoint)
-                            .map_err(RiscvWorkloadReplayError::Transport)?,
-                        data_route,
-                        layout,
-                    ),
-                ))
+                let data_endpoint = TransportEndpointId::new(data_endpoint)
+                    .map_err(RiscvWorkloadReplayError::Transport)?;
+                let data_config = topology.memory_targets().iter().try_fold(
+                    CpuDataConfig::new(data_endpoint, data_route, layout),
+                    |config, target| {
+                        let target_layout = CacheLineLayout::new(target.line_bytes())
+                            .map_err(RiscvWorkloadReplayError::Memory)?;
+                        Ok(config.with_line_layout_range(target.range(), target_layout))
+                    },
+                )?;
+                Ok(RiscvCore::with_data(cpu_core, data_config))
             })
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 

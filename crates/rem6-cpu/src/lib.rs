@@ -23,6 +23,7 @@ use rem6_transport::{
 
 mod bimode_predictor;
 mod branch_predictor;
+mod data_config;
 mod error;
 mod gshare_predictor;
 mod indirect_target_predictor;
@@ -51,6 +52,7 @@ pub use branch_predictor::{
     ReturnAddressStackError, ReturnAddressStackOperation, ReturnAddressStackOperationId,
     ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
+pub use data_config::CpuDataConfig;
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use gshare_predictor::{
     GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
@@ -204,39 +206,6 @@ impl CpuFetchConfig {
 
     pub const fn width(&self) -> AccessSize {
         self.width
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuDataConfig {
-    endpoint: TransportEndpointId,
-    route: MemoryRouteId,
-    line_layout: CacheLineLayout,
-}
-
-impl CpuDataConfig {
-    pub const fn new(
-        endpoint: TransportEndpointId,
-        route: MemoryRouteId,
-        line_layout: CacheLineLayout,
-    ) -> Self {
-        Self {
-            endpoint,
-            route,
-            line_layout,
-        }
-    }
-
-    pub fn endpoint(&self) -> &TransportEndpointId {
-        &self.endpoint
-    }
-
-    pub const fn route(&self) -> MemoryRouteId {
-        self.route
-    }
-
-    pub const fn line_layout(&self) -> CacheLineLayout {
-        self.line_layout
     }
 }
 
@@ -1222,12 +1191,15 @@ impl RiscvCore {
 
         let size = memory_width_size(access_width(&access))?;
         let address = Address::new(access_address(&access));
-        let line_offset = data.line_layout().line_offset(address);
-        if line_offset + size.bytes() > data.line_layout().bytes() {
+        let line_layout = data
+            .line_layout_for_access(address, size)
+            .map_err(RiscvCpuError::Memory)?;
+        let line_offset = line_layout.line_offset(address);
+        if line_offset + size.bytes() > line_layout.bytes() {
             return Err(RiscvCpuError::DataAccessCrossesLine {
                 address,
                 size,
-                line_size: data.line_layout().bytes(),
+                line_size: line_layout.bytes(),
             });
         }
 
@@ -1244,7 +1216,7 @@ impl RiscvCore {
             fetch_request,
             access,
             size,
-            line_layout: Some(data.line_layout()),
+            line_layout: Some(line_layout),
         }))
     }
 
