@@ -25,6 +25,7 @@ mod bimode_predictor;
 mod branch_predictor;
 mod data_config;
 mod error;
+mod fetch_config;
 mod gshare_predictor;
 mod indirect_target_predictor;
 mod loop_predictor;
@@ -54,6 +55,7 @@ pub use branch_predictor::{
 };
 pub use data_config::CpuDataConfig;
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
+pub use fetch_config::CpuFetchConfig;
 pub use gshare_predictor::{
     GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
     GShareBranchPredictorSnapshot, GShareHistory, GShareHistoryUpdate, GSharePrediction,
@@ -166,46 +168,6 @@ impl CpuResetState {
 
     pub const fn entry(&self) -> Address {
         self.entry
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuFetchConfig {
-    endpoint: TransportEndpointId,
-    route: MemoryRouteId,
-    line_layout: CacheLineLayout,
-    width: AccessSize,
-}
-
-impl CpuFetchConfig {
-    pub const fn new(
-        endpoint: TransportEndpointId,
-        route: MemoryRouteId,
-        line_layout: CacheLineLayout,
-        width: AccessSize,
-    ) -> Self {
-        Self {
-            endpoint,
-            route,
-            line_layout,
-            width,
-        }
-    }
-
-    pub fn endpoint(&self) -> &TransportEndpointId {
-        &self.endpoint
-    }
-
-    pub const fn route(&self) -> MemoryRouteId {
-        self.route
-    }
-
-    pub const fn line_layout(&self) -> CacheLineLayout {
-        self.line_layout
-    }
-
-    pub const fn width(&self) -> AccessSize {
-        self.width
     }
 }
 
@@ -397,12 +359,16 @@ impl CpuCore {
             });
         }
 
-        let line_offset = state.fetch.line_layout().line_offset(state.pc);
-        if line_offset + state.fetch.width().bytes() > state.fetch.line_layout().bytes() {
+        let line_layout = state
+            .fetch
+            .line_layout_for_fetch(state.pc)
+            .map_err(CpuError::Memory)?;
+        let line_offset = line_layout.line_offset(state.pc);
+        if line_offset + state.fetch.width().bytes() > line_layout.bytes() {
             return Err(CpuError::FetchCrossesLine {
                 pc: state.pc,
                 size: state.fetch.width(),
-                line_size: state.fetch.line_layout().bytes(),
+                line_size: line_layout.bytes(),
             });
         }
 
@@ -414,7 +380,7 @@ impl CpuCore {
             request_id: MemoryRequestId::new(state.reset.agent(), state.next_sequence),
             pc: state.pc,
             size: state.fetch.width(),
-            line_layout: state.fetch.line_layout(),
+            line_layout,
         })
     }
 

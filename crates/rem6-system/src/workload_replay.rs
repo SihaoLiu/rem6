@@ -797,6 +797,16 @@ impl RiscvWorkloadReplay {
                         route: core.fetch_route().clone(),
                     }
                 })?;
+                let fetch_endpoint = TransportEndpointId::new(core.fetch_endpoint())
+                    .map_err(RiscvWorkloadReplayError::Transport)?;
+                let fetch_config = topology.memory_targets().iter().try_fold(
+                    CpuFetchConfig::new(fetch_endpoint, route, layout, fetch_size),
+                    |config, target| {
+                        let target_layout = CacheLineLayout::new(target.line_bytes())
+                            .map_err(RiscvWorkloadReplayError::Memory)?;
+                        Ok(config.with_line_layout_range(target.range(), target_layout))
+                    },
+                )?;
                 let cpu_core = CpuCore::new(
                     CpuResetState::new(
                         CpuId::new(core.cpu()),
@@ -804,13 +814,7 @@ impl RiscvWorkloadReplay {
                         AgentId::new(core.agent()),
                         core.entry(),
                     ),
-                    CpuFetchConfig::new(
-                        TransportEndpointId::new(core.fetch_endpoint())
-                            .map_err(RiscvWorkloadReplayError::Transport)?,
-                        route,
-                        layout,
-                        fetch_size,
-                    ),
+                    fetch_config,
                 )
                 .map_err(RiscvWorkloadReplayError::Cpu)?;
                 let Some(data_route) = core.data_route() else {
