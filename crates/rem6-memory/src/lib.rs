@@ -2,6 +2,14 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+mod translation;
+
+pub use translation::{
+    TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
+    TranslationFaultKind, TranslationQueue, TranslationQueueConfig, TranslationQueueEntrySnapshot,
+    TranslationQueueSnapshot, TranslationRequest, TranslationRequestId, TranslationResolution,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Address(u64);
 
