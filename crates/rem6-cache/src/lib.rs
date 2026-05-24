@@ -29,6 +29,7 @@ mod prefetch_pif;
 mod prefetch_sbooe;
 mod prefetch_signature_path;
 mod prefetch_sms;
+mod prefetch_stems;
 mod prefetch_throttle;
 mod replacement;
 
@@ -112,6 +113,12 @@ pub use prefetch_sms::{
     SmsActiveEntrySnapshot, SmsFilterEntrySnapshot, SmsPatternEntrySnapshot, SmsPrefetchAccess,
     SmsPrefetchCandidate, SmsPrefetcher, SmsPrefetcherConfig, SmsPrefetcherError,
     SmsPrefetcherSnapshot,
+};
+pub use prefetch_stems::{
+    StemsActiveGenerationKeySnapshot, StemsCacheResidency, StemsGenerationEntrySnapshot,
+    StemsPatternSequenceEntrySnapshot, StemsPatternSequenceKeySnapshot, StemsPrefetchAccess,
+    StemsPrefetchCandidate, StemsPrefetcher, StemsPrefetcherConfig, StemsPrefetcherError,
+    StemsPrefetcherSnapshot, StemsRegionMissOrderBufferEntrySnapshot, StemsSequenceEntrySnapshot,
 };
 pub use prefetch_throttle::{
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
