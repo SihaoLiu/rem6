@@ -23,7 +23,7 @@ use rem6_accelerator::{
     AcceleratorCommand, AcceleratorEngineId, AcceleratorError, AcceleratorTopologyConfig,
     AcceleratorTopologyDevice,
 };
-use rem6_boot::{BootError, BootImage};
+use rem6_boot::{BootError, BootImage, BootLoadReport};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_coherence::{
     ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError,
@@ -39,6 +39,7 @@ use rem6_dram::{
 };
 use rem6_fabric::FabricModel;
 use rem6_gpu::{GpuDeviceId, GpuError, GpuKernelLaunch, GpuTopologyConfig, GpuTopologyDevice};
+use rem6_isa_riscv::Register;
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
     Tick, WaitForGraph,
@@ -48,7 +49,7 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_mmio::MmioBus;
-use rem6_platform::Platform;
+use rem6_platform::{Platform, PlatformError, PlatformRiscvDeviceTreeConfig};
 use rem6_stats::StatsRegistry;
 use rem6_timer::{ClintId, TimerId};
 use rem6_topology::Topology;
@@ -84,6 +85,35 @@ pub struct RiscvTopologySystem {
     moesi_data_cache: Option<RiscvTopologyMoesiDataCache>,
     chi_data_cache: Option<RiscvTopologyChiDataCache>,
     host: Option<RiscvTopologyHost>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvDtbHandoffReport {
+    dtb_addr: Address,
+    dtb_len: usize,
+    load_report: BootLoadReport,
+}
+
+impl RiscvDtbHandoffReport {
+    pub const fn new(dtb_addr: Address, dtb_len: usize, load_report: BootLoadReport) -> Self {
+        Self {
+            dtb_addr,
+            dtb_len,
+            load_report,
+        }
+    }
+
+    pub const fn dtb_addr(&self) -> Address {
+        self.dtb_addr
+    }
+
+    pub const fn dtb_len(&self) -> usize {
+        self.dtb_len
+    }
+
+    pub const fn load_report(&self) -> &BootLoadReport {
+        &self.load_report
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -686,6 +716,52 @@ impl RiscvTopologySystem {
         Ok(self)
     }
 
+    pub fn install_riscv_device_tree_handoff(
+        &self,
+        config: &PlatformRiscvDeviceTreeConfig,
+        dtb_addr: Address,
+    ) -> Result<RiscvDtbHandoffReport, RiscvTopologySystemError> {
+        let platform = self
+            .platform
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingPlatform)?;
+        let dtb = platform
+            .riscv_device_tree(config)
+            .map_err(RiscvTopologySystemError::Platform)?
+            .to_dtb();
+        let dtb_len = dtb.len();
+        let image = BootImage::new(dtb_addr)
+            .add_segment(dtb_addr, dtb)
+            .map_err(RiscvTopologySystemError::Boot)?;
+        let load_report = match self
+            .memory
+            .as_ref()
+            .ok_or(RiscvTopologySystemError::MissingMemoryStore)?
+        {
+            RiscvTopologyMemoryBackend::Store { memory, .. } => image
+                .load_into_partitioned_store_by_address(
+                    &mut memory.lock().expect("topology memory store lock"),
+                )
+                .map_err(RiscvTopologySystemError::Boot)?,
+            RiscvTopologyMemoryBackend::Dram { memory, .. } => {
+                load_boot_image_into_dram_controller_by_address(
+                    &mut memory.lock().expect("topology DRAM memory lock"),
+                    &image,
+                )?
+            }
+        };
+
+        let a1 = Register::new(11).expect("RISC-V A1 register index is valid");
+        for cpu in self.cluster.core_ids() {
+            self.cluster
+                .core(cpu)
+                .expect("cluster core id is valid")
+                .write_register(a1, dtb_addr.get());
+        }
+
+        Ok(RiscvDtbHandoffReport::new(dtb_addr, dtb_len, load_report))
+    }
+
     pub fn with_mesi_data_cache(
         mut self,
         harness: PartitionedMesiDirectoryLineHarness,
@@ -1124,6 +1200,7 @@ pub enum RiscvTopologySystemError {
     GpuDmaWriteNotReady { device: GpuDeviceId },
     PlatformPartitionMismatch { topology: u32, platform: u32 },
     HostPartitionOutOfRange { host: PartitionId, partitions: u32 },
+    MissingPlatform,
     MissingMemoryStore,
     MissingHostController,
     MissingMsiDataResponse { request: MemoryRequestId },
@@ -1139,6 +1216,7 @@ pub enum RiscvTopologySystemError {
     Transport(TransportError),
     Memory(MemoryError),
     Dram(DramMemoryError),
+    Platform(PlatformError),
     Boot(BootError),
     System(SystemError),
 }
@@ -1181,6 +1259,7 @@ impl fmt::Display for RiscvTopologySystemError {
                 "host partition {} is outside topology partition count {partitions}",
                 host.index()
             ),
+            Self::MissingPlatform => write!(formatter, "topology system has no platform"),
             Self::MissingMemoryStore => write!(formatter, "topology system has no memory store"),
             Self::MissingHostController => {
                 write!(formatter, "topology system has no host controller")
@@ -1218,6 +1297,7 @@ impl fmt::Display for RiscvTopologySystemError {
             Self::Transport(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
+            Self::Platform(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
             Self::System(error) => write!(formatter, "{error}"),
         }
@@ -1237,6 +1317,7 @@ impl Error for RiscvTopologySystemError {
             Self::GpuDmaWriteNotReady { .. } => None,
             Self::PlatformPartitionMismatch { .. } => None,
             Self::HostPartitionOutOfRange { .. } => None,
+            Self::MissingPlatform => None,
             Self::MissingMemoryStore => None,
             Self::MissingHostController => None,
             Self::MissingMsiDataResponse { .. } => None,
@@ -1252,10 +1333,32 @@ impl Error for RiscvTopologySystemError {
             Self::Transport(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
+            Self::Platform(error) => Some(error),
             Self::Boot(error) => Some(error),
             Self::System(error) => Some(error),
         }
     }
+}
+
+fn load_boot_image_into_dram_controller_by_address(
+    controller: &mut DramMemoryController,
+    image: &BootImage,
+) -> Result<BootLoadReport, RiscvTopologySystemError> {
+    let mut staging = PartitionedMemoryStore::from_snapshot(controller.snapshot().store())
+        .map_err(RiscvTopologySystemError::Memory)?;
+    let report = image
+        .load_into_partitioned_store_by_address(&mut staging)
+        .map_err(RiscvTopologySystemError::Boot)?;
+
+    for partition in staging.snapshot().partitions() {
+        for line in partition.lines() {
+            controller
+                .insert_line(partition.target(), line.line(), line.data().to_vec())
+                .map_err(RiscvTopologySystemError::Dram)?;
+        }
+    }
+
+    Ok(report)
 }
 
 fn topology_memory_response(
