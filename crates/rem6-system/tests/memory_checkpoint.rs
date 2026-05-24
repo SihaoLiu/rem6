@@ -289,6 +289,20 @@ fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
 
     port.register(&mut registry).unwrap();
     let captured = port.capture_into(&mut registry).unwrap();
+    let captured_target = captured
+        .snapshot()
+        .targets()
+        .iter()
+        .find(|target_snapshot| target_snapshot.target() == target)
+        .unwrap();
+    assert_eq!(
+        captured_target.controller().nvm_pending_read_completions(),
+        &[39]
+    );
+    assert_eq!(
+        captured_target.controller().nvm_pending_write_completions(),
+        &[59]
+    );
 
     {
         let mut controller = controller.lock().unwrap();
@@ -304,6 +318,16 @@ fn dram_memory_checkpoint_preserves_profiled_parallel_ports() {
     let restored = port.restore_from(&registry).unwrap();
 
     assert_eq!(restored, captured);
+    let restored_target = restored
+        .snapshot()
+        .targets()
+        .iter()
+        .find(|target_snapshot| target_snapshot.target() == target)
+        .unwrap();
+    assert_eq!(
+        restored_target.controller().nvm_pending_read_completions(),
+        &[39]
+    );
     let mut controller = controller.lock().unwrap();
     assert_eq!(controller.memory_profile(target).unwrap(), &profile);
     assert_eq!(

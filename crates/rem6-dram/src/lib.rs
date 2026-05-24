@@ -500,6 +500,7 @@ pub struct DramAccess {
     kind: DramAccessKind,
     byte_count: u64,
     persistent_ready_cycle: Option<u64>,
+    pending_nvm_read_count: usize,
     pending_persistent_write_count: usize,
     parallel_port: u32,
     bank: u32,
@@ -527,6 +528,10 @@ impl DramAccess {
 
     pub const fn persistent_ready_cycle(&self) -> Option<u64> {
         self.persistent_ready_cycle
+    }
+
+    pub const fn pending_nvm_read_count(&self) -> usize {
+        self.pending_nvm_read_count
     }
 
     pub const fn pending_persistent_write_count(&self) -> usize {
@@ -574,6 +579,8 @@ impl DramAccess {
 enum DramWaitResource {
     Bank { parallel_port: u32, bank: u32 },
     Bus { parallel_port: u32 },
+    NvmReadBuffer,
+    NvmWriteQueue,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -614,6 +621,26 @@ impl DramWaitRecord {
         Self {
             request,
             resource: DramWaitResource::Bus { parallel_port },
+            kind: WaitForEdgeKind::Resource,
+            first_cycle,
+            last_cycle,
+        }
+    }
+
+    fn nvm_read_buffer(request: MemoryRequestId, first_cycle: u64, last_cycle: u64) -> Self {
+        Self {
+            request,
+            resource: DramWaitResource::NvmReadBuffer,
+            kind: WaitForEdgeKind::Resource,
+            first_cycle,
+            last_cycle,
+        }
+    }
+
+    fn nvm_write_queue(request: MemoryRequestId, first_cycle: u64, last_cycle: u64) -> Self {
+        Self {
+            request,
+            resource: DramWaitResource::NvmWriteQueue,
             kind: WaitForEdgeKind::Resource,
             first_cycle,
             last_cycle,
@@ -673,6 +700,12 @@ fn dram_resource_node(resource: DramWaitResource, target: Option<MemoryTargetId>
         (Some(target), DramWaitResource::Bus { parallel_port }) => {
             format!("dram.target.{}.port.{}.bus", target.get(), parallel_port)
         }
+        (Some(target), DramWaitResource::NvmReadBuffer) => {
+            format!("dram.target.{}.nvm.read_buffer", target.get())
+        }
+        (Some(target), DramWaitResource::NvmWriteQueue) => {
+            format!("dram.target.{}.nvm.write_queue", target.get())
+        }
         (
             None,
             DramWaitResource::Bank {
@@ -683,6 +716,8 @@ fn dram_resource_node(resource: DramWaitResource, target: Option<MemoryTargetId>
         (None, DramWaitResource::Bus { parallel_port }) => {
             format!("dram.port.{}.bus", parallel_port)
         }
+        (None, DramWaitResource::NvmReadBuffer) => "dram.nvm.read_buffer".to_string(),
+        (None, DramWaitResource::NvmWriteQueue) => "dram.nvm.write_queue".to_string(),
     };
     WaitForNode::resource(label).expect("DRAM resource wait-for label uses numeric ids")
 }
@@ -791,6 +826,7 @@ pub struct DramController {
     banks: Vec<DramBankState>,
     ports: Vec<DramPortState>,
     nvm_media_timing: Option<NvmMediaTiming>,
+    nvm_pending_read_completions: Vec<u64>,
     nvm_pending_write_completions: Vec<u64>,
     activity_log: Vec<DramAccess>,
     wait_log: Vec<DramWaitRecord>,
@@ -815,6 +851,7 @@ impl DramController {
             ],
             ports: vec![DramPortState::new(); parallel_port_count as usize],
             nvm_media_timing: None,
+            nvm_pending_read_completions: Vec::new(),
             nvm_pending_write_completions: Vec::new(),
             activity_log: Vec::new(),
             wait_log: Vec::new(),
@@ -855,6 +892,10 @@ impl DramController {
         self.nvm_media_timing
     }
 
+    pub fn nvm_pending_read_completions(&self) -> &[u64] {
+        &self.nvm_pending_read_completions
+    }
+
     pub fn nvm_pending_write_completions(&self) -> &[u64] {
         &self.nvm_pending_write_completions
     }
@@ -868,6 +909,7 @@ impl DramController {
         )
         .with_nvm_media_state(
             self.nvm_media_timing,
+            self.nvm_pending_read_completions.clone(),
             self.nvm_pending_write_completions.clone(),
         )
     }
@@ -887,6 +929,7 @@ impl DramController {
                 snapshot.ports().to_vec()
             },
             nvm_media_timing: snapshot.nvm_media_timing(),
+            nvm_pending_read_completions: snapshot.nvm_pending_read_completions().to_vec(),
             nvm_pending_write_completions: snapshot.nvm_pending_write_completions().to_vec(),
             activity_log: Vec::new(),
             wait_log: Vec::new(),
@@ -1038,13 +1081,38 @@ impl DramController {
             ));
         }
         let mut command_cycle = next_cycle.max(bus_ready_cycle);
-        if kind == DramAccessKind::Write {
-            if let Some(nvm_media_timing) = self.nvm_media_timing {
-                command_cycle = reserve_nvm_write_slot(
-                    &mut self.nvm_pending_write_completions,
-                    nvm_media_timing.max_pending_writes(),
-                    command_cycle,
-                );
+        if let Some(nvm_media_timing) = self.nvm_media_timing {
+            match kind {
+                DramAccessKind::Read => {
+                    let requested_cycle = command_cycle;
+                    command_cycle = reserve_nvm_completion_slot(
+                        &mut self.nvm_pending_read_completions,
+                        nvm_media_timing.max_pending_reads(),
+                        command_cycle,
+                    );
+                    if command_cycle > requested_cycle {
+                        waits.push(DramWaitRecord::nvm_read_buffer(
+                            request.id(),
+                            requested_cycle,
+                            command_cycle - 1,
+                        ));
+                    }
+                }
+                DramAccessKind::Write => {
+                    let requested_cycle = command_cycle;
+                    command_cycle = reserve_nvm_completion_slot(
+                        &mut self.nvm_pending_write_completions,
+                        nvm_media_timing.max_pending_writes(),
+                        command_cycle,
+                    );
+                    if command_cycle > requested_cycle {
+                        waits.push(DramWaitRecord::nvm_write_queue(
+                            request.id(),
+                            requested_cycle,
+                            command_cycle - 1,
+                        ));
+                    }
+                }
             }
         }
         commands.push(DramCommand::new(
@@ -1075,6 +1143,14 @@ impl DramController {
 
         bank.available_cycle = persistent_ready_cycle.unwrap_or(ready_cycle);
         self.ports[port_index] = DramPortState::from_snapshot(command_cycle, Some(kind));
+        let pending_nvm_read_count =
+            if kind == DramAccessKind::Read && self.nvm_media_timing.is_some() {
+                self.nvm_pending_read_completions.push(ready_cycle);
+                self.nvm_pending_read_completions.sort_unstable();
+                self.nvm_pending_read_completions.len()
+            } else {
+                0
+            };
         let pending_persistent_write_count =
             if let Some(persistent_ready_cycle) = persistent_ready_cycle {
                 self.nvm_pending_write_completions
@@ -1090,6 +1166,7 @@ impl DramController {
             kind,
             byte_count: request.size().bytes(),
             persistent_ready_cycle,
+            pending_nvm_read_count,
             pending_persistent_write_count,
             parallel_port: decoded.parallel_port,
             bank: decoded.bank,
@@ -1151,16 +1228,16 @@ impl DramController {
     }
 }
 
-fn reserve_nvm_write_slot(
-    pending_write_completions: &mut Vec<u64>,
-    max_pending_writes: u32,
+fn reserve_nvm_completion_slot(
+    pending_completions: &mut Vec<u64>,
+    max_pending: u32,
     mut command_cycle: u64,
 ) -> u64 {
-    pending_write_completions.retain(|completion| *completion > command_cycle);
-    if pending_write_completions.len() >= max_pending_writes as usize {
-        if let Some(next_completion) = pending_write_completions.iter().copied().min() {
+    pending_completions.retain(|completion| *completion > command_cycle);
+    if pending_completions.len() >= max_pending as usize {
+        if let Some(next_completion) = pending_completions.iter().copied().min() {
             command_cycle = command_cycle.max(next_completion);
-            pending_write_completions.retain(|completion| *completion > command_cycle);
+            pending_completions.retain(|completion| *completion > command_cycle);
         }
     }
     command_cycle
@@ -1173,6 +1250,7 @@ pub struct DramControllerSnapshot {
     banks: Vec<DramBankState>,
     ports: Vec<DramPortState>,
     nvm_media_timing: Option<NvmMediaTiming>,
+    nvm_pending_read_completions: Vec<u64>,
     nvm_pending_write_completions: Vec<u64>,
 }
 
@@ -1193,6 +1271,7 @@ impl DramControllerSnapshot {
                 last_access_kind,
             )],
             nvm_media_timing: None,
+            nvm_pending_read_completions: Vec::new(),
             nvm_pending_write_completions: Vec::new(),
         }
     }
@@ -1209,6 +1288,7 @@ impl DramControllerSnapshot {
             banks,
             ports,
             nvm_media_timing: None,
+            nvm_pending_read_completions: Vec::new(),
             nvm_pending_write_completions: Vec::new(),
         }
     }
@@ -1216,9 +1296,12 @@ impl DramControllerSnapshot {
     pub fn with_nvm_media_state(
         mut self,
         nvm_media_timing: Option<NvmMediaTiming>,
+        nvm_pending_read_completions: Vec<u64>,
         nvm_pending_write_completions: Vec<u64>,
     ) -> Self {
         self.nvm_media_timing = nvm_media_timing;
+        self.nvm_pending_read_completions = nvm_pending_read_completions;
+        self.nvm_pending_read_completions.sort_unstable();
         self.nvm_pending_write_completions = nvm_pending_write_completions;
         self.nvm_pending_write_completions.sort_unstable();
         self
@@ -1256,6 +1339,10 @@ impl DramControllerSnapshot {
 
     pub const fn nvm_media_timing(&self) -> Option<NvmMediaTiming> {
         self.nvm_media_timing
+    }
+
+    pub fn nvm_pending_read_completions(&self) -> &[u64] {
+        &self.nvm_pending_read_completions
     }
 
     pub fn nvm_pending_write_completions(&self) -> &[u64] {

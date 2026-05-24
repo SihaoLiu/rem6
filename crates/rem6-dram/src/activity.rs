@@ -21,6 +21,7 @@ pub struct DramBankActivity {
     access_count: usize,
     read_byte_count: u64,
     write_byte_count: u64,
+    max_pending_nvm_reads: usize,
     max_pending_persistent_writes: usize,
     row_hit_count: usize,
     row_miss_count: usize,
@@ -53,6 +54,9 @@ impl DramBankActivity {
         self.max_pending_persistent_writes = self
             .max_pending_persistent_writes
             .max(access.pending_persistent_write_count());
+        self.max_pending_nvm_reads = self
+            .max_pending_nvm_reads
+            .max(access.pending_nvm_read_count());
         if access.row_hit() {
             self.row_hit_count += 1;
         } else {
@@ -102,6 +106,10 @@ impl DramBankActivity {
 
     pub const fn max_pending_persistent_writes(&self) -> usize {
         self.max_pending_persistent_writes
+    }
+
+    pub const fn max_pending_nvm_reads(&self) -> usize {
+        self.max_pending_nvm_reads
     }
 
     pub const fn row_hit_count(&self) -> usize {
@@ -243,6 +251,7 @@ pub struct DramActivityProfile {
     write_count: usize,
     read_byte_count: u64,
     write_byte_count: u64,
+    max_pending_nvm_reads: usize,
     max_pending_persistent_writes: usize,
     row_hit_count: usize,
     row_miss_count: usize,
@@ -284,6 +293,9 @@ impl DramActivityProfile {
             profile.max_pending_persistent_writes = profile
                 .max_pending_persistent_writes
                 .max(bank.max_pending_persistent_writes());
+            profile.max_pending_nvm_reads = profile
+                .max_pending_nvm_reads
+                .max(bank.max_pending_nvm_reads());
             profile.total_ready_latency_cycles += bank.total_ready_latency_cycles();
             profile.max_ready_latency_cycles = profile
                 .max_ready_latency_cycles
@@ -322,6 +334,7 @@ impl DramActivityProfile {
         self.max_pending_persistent_writes = self
             .max_pending_persistent_writes
             .max(later.max_pending_persistent_writes);
+        self.max_pending_nvm_reads = self.max_pending_nvm_reads.max(later.max_pending_nvm_reads);
         self.row_hit_count += later.row_hit_count;
         self.row_miss_count += later.row_miss_count;
         self.command_count += later.command_count;
@@ -382,6 +395,10 @@ impl DramActivityProfile {
 
     pub const fn max_pending_persistent_writes(&self) -> usize {
         self.max_pending_persistent_writes
+    }
+
+    pub const fn max_pending_nvm_reads(&self) -> usize {
+        self.max_pending_nvm_reads
     }
 
     pub const fn row_hit_count(&self) -> usize {
@@ -555,6 +572,14 @@ impl DramTargetActivity {
         }
     }
 
+    pub fn max_pending_nvm_reads(&self) -> usize {
+        if self.has_persistent_media() {
+            self.profile.max_pending_nvm_reads()
+        } else {
+            0
+        }
+    }
+
     fn has_persistent_media(&self) -> bool {
         self.memory_profile
             .as_ref()
@@ -621,6 +646,10 @@ impl DramMemoryActivityProfile {
 
     pub const fn max_pending_persistent_writes(&self) -> usize {
         self.profile.max_pending_persistent_writes()
+    }
+
+    pub const fn max_pending_nvm_reads(&self) -> usize {
+        self.profile.max_pending_nvm_reads()
     }
 
     pub const fn row_hit_count(&self) -> usize {

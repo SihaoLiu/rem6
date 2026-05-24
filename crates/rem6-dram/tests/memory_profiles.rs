@@ -2,6 +2,7 @@ use rem6_dram::{
     DramControllerConfig, DramError, DramGeometry, DramMemoryController, DramMemoryTechnology,
     DramProfileField, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     MemoryTargetId,
@@ -284,9 +285,129 @@ fn nvm_media_timing_delays_reads_and_tracks_persistent_write_queue() {
 }
 
 #[test]
+fn nvm_media_timing_limits_pending_reads() {
+    let media_timing = NvmMediaTiming::new(30, 50, 6, 1, 4).unwrap();
+    let profile = ExternalMemoryProfile::nvm(target(11), layout(), 2, 8, geometry(), timing())
+        .unwrap()
+        .with_nvm_media_timing(media_timing)
+        .unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+
+    let first_read = controller.accept(0, &read(0x0000, 80)).unwrap();
+    let second_read = controller.accept(0, &read(0x0040, 81)).unwrap();
+
+    assert_eq!(first_read.dram_access().parallel_port(), 0);
+    assert_eq!(first_read.dram_access().command_cycle(), 4);
+    assert_eq!(first_read.ready_cycle(), 40);
+    assert_eq!(first_read.dram_access().pending_nvm_read_count(), 1);
+
+    assert_eq!(second_read.dram_access().parallel_port(), 1);
+    assert_eq!(second_read.dram_access().command_cycle(), 40);
+    assert_eq!(second_read.ready_cycle(), 76);
+    assert_eq!(second_read.dram_access().pending_nvm_read_count(), 1);
+
+    let activity = controller.target_activity(profile.target()).unwrap();
+    assert_eq!(activity.max_pending_nvm_reads(), 1);
+}
+
+#[test]
+fn nvm_media_timing_reports_pending_read_waits() {
+    let media_timing = NvmMediaTiming::new(30, 50, 6, 1, 4).unwrap();
+    let profile = ExternalMemoryProfile::nvm(target(12), layout(), 2, 8, geometry(), timing())
+        .unwrap()
+        .with_nvm_media_timing(media_timing)
+        .unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+    let marker = controller.mark_wait_for();
+
+    controller.accept(0, &read(0x0000, 90)).unwrap();
+    controller.accept(0, &read(0x0040, 91)).unwrap();
+
+    let graph = controller
+        .target_wait_for_graph_since(&marker, profile.target())
+        .unwrap()
+        .snapshot();
+    let request = WaitForNode::transaction("dram.target.12.agent.9.request.91").unwrap();
+    let read_buffer = WaitForNode::resource("dram.target.12.nvm.read_buffer").unwrap();
+
+    assert_eq!(graph.edge_count(), 1);
+    assert_eq!(graph.first_observed_tick(), Some(4));
+    assert_eq!(graph.last_observed_tick(), Some(39));
+    assert!(graph.contains_edge(&request, &read_buffer, WaitForEdgeKind::Resource));
+}
+
+#[test]
+fn nvm_media_timing_reports_pending_write_waits() {
+    let media_timing = NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap();
+    let profile = ExternalMemoryProfile::nvm(target(13), layout(), 2, 8, geometry(), timing())
+        .unwrap()
+        .with_nvm_media_timing(media_timing)
+        .unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+    let marker = controller.mark_wait_for();
+
+    controller.accept(0, &write(0x0000, 100)).unwrap();
+    controller.accept(0, &write(0x0040, 101)).unwrap();
+
+    let graph = controller
+        .target_wait_for_graph_since(&marker, profile.target())
+        .unwrap()
+        .snapshot();
+    let request = WaitForNode::transaction("dram.target.13.agent.9.request.101").unwrap();
+    let write_queue = WaitForNode::resource("dram.target.13.nvm.write_queue").unwrap();
+
+    assert_eq!(graph.edge_count(), 1);
+    assert_eq!(graph.first_observed_tick(), Some(4));
+    assert_eq!(graph.last_observed_tick(), Some(59));
+    assert!(graph.contains_edge(&request, &write_queue, WaitForEdgeKind::Resource));
+}
+
+#[test]
 fn nvm_activity_reports_typed_media_bytes_and_persistent_writes() {
     let profile =
-        ExternalMemoryProfile::nvm(target(11), layout(), 2, 8, geometry(), timing()).unwrap();
+        ExternalMemoryProfile::nvm(target(14), layout(), 2, 8, geometry(), timing()).unwrap();
     let mut controller = DramMemoryController::new();
     controller.add_profile(profile).unwrap();
     controller
@@ -323,7 +444,7 @@ fn nvm_activity_reports_typed_media_bytes_and_persistent_writes() {
 #[test]
 fn volatile_memory_activity_keeps_persistent_write_counters_zero() {
     let profile =
-        ExternalMemoryProfile::ddr(target(12), layout(), 1, 1, geometry(), timing()).unwrap();
+        ExternalMemoryProfile::ddr(target(15), layout(), 1, 1, geometry(), timing()).unwrap();
     let mut controller = DramMemoryController::new();
     controller.add_profile(profile).unwrap();
     controller

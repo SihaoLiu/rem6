@@ -481,6 +481,7 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_nvm_media_state(
             &mut payload,
             controller.nvm_media_timing(),
+            controller.nvm_pending_read_completions(),
             controller.nvm_pending_write_completions(),
         );
         write_u64(&mut payload, controller.parallel_port_count() as u64);
@@ -551,9 +552,14 @@ fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>)
 fn write_nvm_media_state(
     payload: &mut Vec<u8>,
     nvm_media_timing: Option<NvmMediaTiming>,
+    pending_read_completions: &[u64],
     pending_write_completions: &[u64],
 ) {
     write_nvm_media_timing(payload, nvm_media_timing);
+    write_u64(payload, pending_read_completions.len() as u64);
+    for completion in pending_read_completions {
+        write_u64(payload, *completion);
+    }
     write_u64(payload, pending_write_completions.len() as u64);
     for completion in pending_write_completions {
         write_u64(payload, *completion);
@@ -681,7 +687,7 @@ fn decode_dram_memory(
             ))
         })?;
         let profile = read_profile(&mut cursor, target, line_layout, geometry, timing)?;
-        let (nvm_media_timing, nvm_pending_write_completions) =
+        let (nvm_media_timing, nvm_pending_read_completions, nvm_pending_write_completions) =
             read_nvm_media_state(&mut cursor, target)?;
         let port_count = cursor.read_count("DRAM parallel port count")?;
         if port_count == 0 {
@@ -728,7 +734,11 @@ fn decode_dram_memory(
         }
 
         let controller = DramControllerSnapshot::with_ports(geometry, timing, banks, ports)
-            .with_nvm_media_state(nvm_media_timing, nvm_pending_write_completions);
+            .with_nvm_media_state(
+                nvm_media_timing,
+                nvm_pending_read_completions,
+                nvm_pending_write_completions,
+            );
         if let Some(profile) = profile {
             targets.push(DramMemoryTargetSnapshot::with_profile(
                 target, controller, profile,
@@ -807,15 +817,25 @@ fn read_profile(
 fn read_nvm_media_state(
     cursor: &mut DramPayloadCursor<'_>,
     target: MemoryTargetId,
-) -> Result<(Option<NvmMediaTiming>, Vec<u64>), DramMemoryCheckpointError> {
+) -> Result<(Option<NvmMediaTiming>, Vec<u64>, Vec<u64>), DramMemoryCheckpointError> {
     let nvm_media_timing = read_nvm_media_timing(cursor, target)?;
+    let pending_read_count = cursor.read_count("DRAM NVM pending read completion count")?;
+    let mut pending_read_completions = Vec::with_capacity(pending_read_count);
+    for _ in 0..pending_read_count {
+        pending_read_completions.push(cursor.read_u64("DRAM NVM pending read completion")?);
+    }
+    pending_read_completions.sort_unstable();
     let pending_count = cursor.read_count("DRAM NVM pending write completion count")?;
     let mut pending_write_completions = Vec::with_capacity(pending_count);
     for _ in 0..pending_count {
         pending_write_completions.push(cursor.read_u64("DRAM NVM pending write completion")?);
     }
     pending_write_completions.sort_unstable();
-    Ok((nvm_media_timing, pending_write_completions))
+    Ok((
+        nvm_media_timing,
+        pending_read_completions,
+        pending_write_completions,
+    ))
 }
 
 fn read_nvm_media_timing(
