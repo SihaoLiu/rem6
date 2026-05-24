@@ -145,6 +145,7 @@ fn workload_resolved_resources_validate_linux_initrd_payload() {
     .unwrap();
     let handoff = manifest.linux_boot_handoff().unwrap();
 
+    assert_eq!(resources.manifest_identity(), manifest.identity());
     assert_eq!(
         resources.payload_data(&resource_id("initrd")).unwrap(),
         &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    WorkloadError, WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadResourceId,
-    WorkloadResourceKind,
+    WorkloadError, WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadManifestIdentity,
+    WorkloadResourceId, WorkloadResourceKind,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +46,7 @@ impl WorkloadResourcePayload {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResolvedResources {
+    manifest_identity: WorkloadManifestIdentity,
     payloads: BTreeMap<WorkloadResourceId, WorkloadResourcePayload>,
 }
 
@@ -87,7 +88,14 @@ impl WorkloadResolvedResources {
         validate_linux_device_tree_payload(manifest, &resolved)?;
         validate_linux_initrd_payload(manifest, &resolved)?;
 
-        Ok(Self { payloads: resolved })
+        Ok(Self {
+            manifest_identity: manifest.identity(),
+            payloads: resolved,
+        })
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
     }
 
     pub fn payload(&self, resource: &WorkloadResourceId) -> Option<&WorkloadResourcePayload> {

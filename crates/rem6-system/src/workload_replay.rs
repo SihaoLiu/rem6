@@ -505,6 +505,7 @@ impl RiscvWorkloadReplay {
     }
 
     pub fn run_parallel(&self) -> Result<RiscvWorkloadReplayOutcome, RiscvWorkloadReplayError> {
+        self.validate_resolved_resources()?;
         let topology = self
             .plan
             .topology()
@@ -681,6 +682,21 @@ impl RiscvWorkloadReplay {
             memory_snapshot,
             dram_snapshot,
             RiscvWorkloadReplayDeviceSnapshots::new(gpu_snapshots, accelerator_snapshots),
+        ))
+    }
+
+    fn validate_resolved_resources(&self) -> Result<(), RiscvWorkloadReplayError> {
+        let Some(resources) = &self.resolved_resources else {
+            return Ok(());
+        };
+        let expected = self.plan.manifest_identity();
+        let actual = resources.manifest_identity();
+        if actual == expected {
+            return Ok(());
+        }
+
+        Err(RiscvWorkloadReplayError::Workload(
+            WorkloadError::ManifestIdentityMismatch { expected, actual },
         ))
     }
 

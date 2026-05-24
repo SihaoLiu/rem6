@@ -2,9 +2,9 @@ use rem6_boot::BootImage;
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId, PartitionedMemorySnapshot,
 };
-use rem6_system::RiscvWorkloadReplay;
+use rem6_system::{RiscvWorkloadReplay, RiscvWorkloadReplayError};
 use rem6_workload::{
-    HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
+    HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
     WorkloadLinuxBootHandoff, WorkloadLinuxInitrd, WorkloadManifest, WorkloadMemoryRoute,
     WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadResourcePayload, WorkloadRiscvCore,
@@ -108,6 +108,10 @@ fn replay_topology() -> WorkloadTopology {
 }
 
 fn replay_manifest_with_linux_boot_handoff() -> WorkloadManifest {
+    replay_manifest_with_bootargs("console=ttyS0 root=/dev/vda")
+}
+
+fn replay_manifest_with_bootargs(bootargs: &str) -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-linux-initrd-replay"), boot_image())
         .with_topology(replay_topology())
         .add_resource(device_tree_resource())
@@ -117,7 +121,7 @@ fn replay_manifest_with_linux_boot_handoff() -> WorkloadManifest {
         .with_linux_boot_handoff(
             WorkloadLinuxBootHandoff::new(Address::new(0x97c0))
                 .with_device_tree_resource(resource_id("dtb"))
-                .with_bootargs("console=ttyS0 root=/dev/vda")
+                .with_bootargs(bootargs)
                 .with_initrd(
                     WorkloadLinuxInitrd::new(
                         resource_id("initrd"),
@@ -212,4 +216,34 @@ fn workload_replay_installs_resolved_linux_boot_payloads() {
         initrd_data
     );
     plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_rejects_resolved_payloads_from_different_manifest() {
+    let manifest = replay_manifest_with_linux_boot_handoff();
+    let other_manifest = replay_manifest_with_bootargs("console=ttyS1 root=/dev/vda");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &other_manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 20])
+                .unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let error = RiscvWorkloadReplay::new(plan.clone())
+        .with_resolved_resources(resources)
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        RiscvWorkloadReplayError::Workload(WorkloadError::ManifestIdentityMismatch {
+            expected: plan.manifest_identity(),
+            actual: other_manifest.identity(),
+        })
+    );
 }
