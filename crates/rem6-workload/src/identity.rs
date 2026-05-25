@@ -237,6 +237,14 @@ fn hash_expected_parallel_remote_flow_timing(
     hash_u64(hash, expected.send_count() as u64);
     hash_u64(hash, expected.first_tick());
     hash_u64(hash, expected.last_tick());
+    match expected.delay_bounds() {
+        Some((minimum_delay, maximum_delay)) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, minimum_delay);
+            hash_u64(hash, maximum_delay);
+        }
+        None => hash_u64(hash, 0),
+    }
 }
 
 fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {

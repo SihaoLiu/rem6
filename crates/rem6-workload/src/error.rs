@@ -353,6 +353,13 @@ pub enum WorkloadError {
         first_tick: Tick,
         last_tick: Tick,
     },
+    InvalidExpectedParallelRemoteFlowDelayBounds {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        minimum_delay: Tick,
+        maximum_delay: Tick,
+    },
     DuplicateExpectedParallelRemoteFlowTiming {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
@@ -376,6 +383,15 @@ pub enum WorkloadError {
         actual_first_tick: Option<Tick>,
         expected_last_tick: Tick,
         actual_last_tick: Option<Tick>,
+    },
+    ExpectedParallelRemoteFlowDelayBoundsMismatch {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_minimum_delay: Tick,
+        actual_minimum_delay: Option<Tick>,
+        expected_maximum_delay: Tick,
+        actual_maximum_delay: Option<Tick>,
     },
     ZeroExpectedParallelWorkerCount {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1157,6 +1173,17 @@ impl fmt::Display for WorkloadError {
                 "expected {} remote flow timing {source}->{target} first tick {first_tick} is after last tick {last_tick}",
                 scope.as_str()
             ),
+            Self::InvalidExpectedParallelRemoteFlowDelayBounds {
+                scope,
+                source,
+                target,
+                minimum_delay,
+                maximum_delay,
+            } => write!(
+                formatter,
+                "expected {} remote flow timing {source}->{target} minimum delay {minimum_delay} is above maximum delay {maximum_delay}",
+                scope.as_str()
+            ),
             Self::DuplicateExpectedParallelRemoteFlowTiming {
                 scope,
                 source,
@@ -1198,6 +1225,27 @@ impl fmt::Display for WorkloadError {
                 write!(
                     formatter,
                     "expected {} remote flow timing {source}->{target} to have {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}, got {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
+                    scope.as_str()
+                )
+            }
+            Self::ExpectedParallelRemoteFlowDelayBoundsMismatch {
+                scope,
+                source,
+                target,
+                expected_minimum_delay,
+                actual_minimum_delay,
+                expected_maximum_delay,
+                actual_maximum_delay,
+            } => {
+                let actual_minimum_delay = actual_minimum_delay
+                    .map(|delay| delay.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let actual_maximum_delay = actual_maximum_delay
+                    .map(|delay| delay.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                write!(
+                    formatter,
+                    "expected {} remote flow timing {source}->{target} delay bounds {expected_minimum_delay} to {expected_maximum_delay}, got {actual_minimum_delay} to {actual_maximum_delay}",
                     scope.as_str()
                 )
             }

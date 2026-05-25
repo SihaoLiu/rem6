@@ -525,6 +525,8 @@ pub struct WorkloadExpectedParallelRemoteFlowTiming {
     send_count: usize,
     first_tick: u64,
     last_tick: u64,
+    minimum_delay: Option<u64>,
+    maximum_delay: Option<u64>,
 }
 
 impl WorkloadExpectedParallelRemoteFlowTiming {
@@ -535,6 +537,52 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
         send_count: usize,
         first_tick: u64,
         last_tick: u64,
+    ) -> Result<Self, WorkloadError> {
+        Self::from_parts(
+            scope, source, target, send_count, first_tick, last_tick, None,
+        )
+    }
+
+    pub fn with_delay_bounds(
+        scope: WorkloadParallelRemoteFlowScope,
+        source: PartitionId,
+        target: PartitionId,
+        send_count: usize,
+        first_tick: u64,
+        last_tick: u64,
+        delay_bounds: (u64, u64),
+    ) -> Result<Self, WorkloadError> {
+        let (minimum_delay, maximum_delay) = delay_bounds;
+        if minimum_delay > maximum_delay {
+            return Err(
+                WorkloadError::InvalidExpectedParallelRemoteFlowDelayBounds {
+                    scope,
+                    source: source.index(),
+                    target: target.index(),
+                    minimum_delay,
+                    maximum_delay,
+                },
+            );
+        }
+        Self::from_parts(
+            scope,
+            source,
+            target,
+            send_count,
+            first_tick,
+            last_tick,
+            Some(delay_bounds),
+        )
+    }
+
+    fn from_parts(
+        scope: WorkloadParallelRemoteFlowScope,
+        source: PartitionId,
+        target: PartitionId,
+        send_count: usize,
+        first_tick: u64,
+        last_tick: u64,
+        delay_bounds: Option<(u64, u64)>,
     ) -> Result<Self, WorkloadError> {
         if send_count == 0 {
             return Err(WorkloadError::ZeroExpectedParallelRemoteFlowCount {
@@ -561,6 +609,8 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
             send_count,
             first_tick,
             last_tick,
+            minimum_delay: delay_bounds.map(|(minimum_delay, _)| minimum_delay),
+            maximum_delay: delay_bounds.map(|(_, maximum_delay)| maximum_delay),
         })
     }
 
@@ -586,6 +636,21 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
 
     pub const fn last_tick(self) -> u64 {
         self.last_tick
+    }
+
+    pub const fn minimum_delay(self) -> Option<u64> {
+        self.minimum_delay
+    }
+
+    pub const fn maximum_delay(self) -> Option<u64> {
+        self.maximum_delay
+    }
+
+    pub const fn delay_bounds(self) -> Option<(u64, u64)> {
+        match (self.minimum_delay, self.maximum_delay) {
+            (Some(minimum_delay), Some(maximum_delay)) => Some((minimum_delay, maximum_delay)),
+            _ => None,
+        }
     }
 
     pub(crate) const fn sort_key(self) -> (u8, u32, u32) {
@@ -620,6 +685,31 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
                 self.target,
             ),
         }
+    }
+
+    pub(crate) fn delay_bounds_mismatch(
+        self,
+        actual: Option<ParallelRemoteFlowRecord>,
+    ) -> Option<WorkloadError> {
+        let (expected_minimum_delay, expected_maximum_delay) = self.delay_bounds()?;
+        let actual_minimum_delay = actual.and_then(|record| record.minimum_delay());
+        let actual_maximum_delay = actual.and_then(|record| record.maximum_delay());
+        if actual_minimum_delay == Some(expected_minimum_delay)
+            && actual_maximum_delay == Some(expected_maximum_delay)
+        {
+            return None;
+        }
+        Some(
+            WorkloadError::ExpectedParallelRemoteFlowDelayBoundsMismatch {
+                scope: self.scope(),
+                source: self.source().index(),
+                target: self.target().index(),
+                expected_minimum_delay,
+                actual_minimum_delay,
+                expected_maximum_delay,
+                actual_maximum_delay,
+            },
+        )
     }
 }
 

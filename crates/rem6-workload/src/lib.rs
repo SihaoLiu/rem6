@@ -1652,6 +1652,9 @@ impl WorkloadReplayPlan {
                     actual_last_tick,
                 });
             }
+            if let Some(error) = expected.delay_bounds_mismatch(actual) {
+                return Err(error);
+            }
         }
         Ok(())
     }

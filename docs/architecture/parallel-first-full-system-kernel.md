@@ -390,6 +390,9 @@ Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
+They may also require remote-flow delivery windows and optional min/max delay
+bounds, turning cross-partition timing into replayable evidence instead of an
+aggregate traffic count.
 
 ## Message Model
 
