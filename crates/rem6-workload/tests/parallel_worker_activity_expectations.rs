@@ -1,4 +1,5 @@
 use rem6_boot::BootImage;
+use rem6_kernel::{ParallelPartitionActivity, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelWorkerActivity, WorkloadId,
@@ -220,6 +221,53 @@ fn workload_replay_plan_derives_total_workers_from_batch_histograms() {
     assert_eq!(summary.total_parallel_scheduler_workers(), 10);
     assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 11);
     assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 21);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_total_workers_from_partition_activity() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-worker-activity-from-partitions"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            7,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            12,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([
+            (PartitionId::new(0), ParallelPartitionActivity::new(2, 3, 5)),
+            (PartitionId::new(1), ParallelPartitionActivity::new(3, 1, 2)),
+        ])
+        .with_data_cache_parallel_scheduler_partition_activities([
+            (PartitionId::new(2), ParallelPartitionActivity::new(4, 2, 7)),
+            (PartitionId::new(3), ParallelPartitionActivity::new(3, 2, 4)),
+        ]);
+
+    assert_eq!(summary.total_parallel_scheduler_workers(), 5);
+    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 7);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 12);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();

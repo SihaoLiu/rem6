@@ -21,7 +21,7 @@ use crate::result_collect::{
 use crate::result_partition_activity::{
     combined_parallel_active_partition_count, merge_parallel_partition_activity_options,
     parallel_active_partition_count, parallel_partition_activity_for_partition,
-    parallel_partition_dispatch_count,
+    parallel_partition_dispatch_count, parallel_partition_worker_count,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -770,7 +770,9 @@ impl WorkloadParallelExecutionSummary {
         if self.total_parallel_scheduler_workers != 0 {
             self.total_parallel_scheduler_workers
         } else {
-            total_parallel_batch_worker_count(&self.parallel_scheduler_batch_worker_counts)
+            total_parallel_batch_worker_count(&self.parallel_scheduler_batch_worker_counts).max(
+                parallel_partition_worker_count(&self.parallel_scheduler_partition_activities),
+            )
         }
     }
 
@@ -957,6 +959,9 @@ impl WorkloadParallelExecutionSummary {
             total_parallel_batch_worker_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
             )
+            .max(parallel_partition_worker_count(
+                &self.data_cache_parallel_scheduler_partition_activities,
+            ))
         }
     }
 

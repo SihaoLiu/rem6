@@ -32,6 +32,15 @@ pub(crate) fn parallel_partition_dispatch_count(
         .sum()
 }
 
+pub(crate) fn parallel_partition_worker_count(
+    activities: &[(PartitionId, ParallelPartitionActivity)],
+) -> usize {
+    activities
+        .iter()
+        .map(|(_, activity)| activity.worker_count())
+        .sum()
+}
+
 pub(crate) fn parallel_partition_activity_for_partition(
     activities: &[(PartitionId, ParallelPartitionActivity)],
     flows: &[ParallelRemoteFlowRecord],
