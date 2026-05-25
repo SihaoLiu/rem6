@@ -367,8 +367,11 @@ frontier and partition evidence as parallel work even when worker and batch
 aggregates are not present. Exact batch partition-set histograms also imply
 active partition counts, minimum max-worker use, total-worker activity, and
 multi-worker batch activity for any worker threshold not larger than the
-recorded partition set. Workload manifests may declare required initial or
-final frontier minima for specific partitions and scopes, turning
+recorded partition set. They also imply per-partition worker and dispatch
+activity for every partition contained in each recorded batch set, making
+same-batch participation replay-verifiable without duplicating explicit
+activity records. Workload manifests may declare required initial or final
+frontier minima for specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
 

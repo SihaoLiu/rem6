@@ -3,8 +3,9 @@ use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, Partition
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionActivity, WorkloadId,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -286,6 +287,81 @@ fn workload_replay_plan_derives_partition_remote_activity_from_flows() {
     assert_eq!(
         summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(2)),
         Some(ParallelPartitionActivity::with_remote_counts(0, 0, 3, 5, 0)),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_partition_activity_from_batch_partition_sets() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("partition-activity-from-batch-partition-sets"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            5,
+            5,
+            0,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            3,
+            6,
+            6,
+            0,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            3,
+            9,
+            9,
+            0,
+            0,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 2),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(0),
+                    PartitionId::new(2),
+                    PartitionId::new(3),
+                ],
+                3,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(3)], 4),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(3), PartitionId::new(4)], 2),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(5, 5, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_partition_activity(PartitionId::new(3)),
+        Some(ParallelPartitionActivity::with_remote_counts(6, 6, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(3)),
+        Some(ParallelPartitionActivity::with_remote_counts(9, 9, 0, 0, 0)),
     );
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);

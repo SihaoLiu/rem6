@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_kernel::PartitionId;
+use rem6_kernel::{ParallelPartitionActivity, PartitionId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelBatchWorkerCount {
@@ -296,6 +296,27 @@ pub(crate) fn combined_parallel_batch_active_partition_count(
     collect_parallel_batch_active_partitions(&mut partitions, left);
     collect_parallel_batch_active_partitions(&mut partitions, right);
     partitions.len()
+}
+
+pub(crate) fn parallel_batch_partition_activity_for_partition(
+    sets: &[WorkloadParallelBatchPartitionSet],
+    partition: PartitionId,
+) -> Option<ParallelPartitionActivity> {
+    let batch_count = sets
+        .iter()
+        .filter(|set| set.partitions().contains(&partition))
+        .map(WorkloadParallelBatchPartitionSet::batch_count)
+        .sum();
+    if batch_count == 0 {
+        return None;
+    }
+    Some(ParallelPartitionActivity::with_remote_counts(
+        batch_count,
+        batch_count,
+        0,
+        0,
+        0,
+    ))
 }
 
 fn collect_parallel_batch_active_partitions(

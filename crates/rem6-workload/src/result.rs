@@ -10,9 +10,9 @@ use crate::parallel_batch::{
     collect_parallel_batch_partition_streaks_from_sequence, collect_parallel_batch_worker_counts,
     max_parallel_batch_activity_worker_count, parallel_batch_active_partition_count,
     parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
-    parallel_batch_streak_count_for_partition_set, total_parallel_batch_activity_worker_count,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchWorkerCount,
+    parallel_batch_partition_activity_for_partition, parallel_batch_streak_count_for_partition_set,
+    total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flows,
@@ -20,8 +20,9 @@ use crate::result_collect::{
     parallel_remote_flow_count,
 };
 use crate::result_partition_activity::{
-    parallel_active_partition_count, parallel_partition_activity_for_partition,
-    parallel_partition_dispatch_count, parallel_partition_worker_count,
+    merge_parallel_partition_activity_options, parallel_active_partition_count,
+    parallel_partition_activity_for_partition, parallel_partition_dispatch_count,
+    parallel_partition_worker_count,
 };
 
 mod full_system_parallel;
@@ -861,10 +862,16 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        parallel_partition_activity_for_partition(
-            &self.parallel_scheduler_partition_activities,
-            &self.parallel_scheduler_remote_flows,
-            partition,
+        merge_parallel_partition_activity_options(
+            parallel_partition_activity_for_partition(
+                &self.parallel_scheduler_partition_activities,
+                &self.parallel_scheduler_remote_flows,
+                partition,
+            ),
+            parallel_batch_partition_activity_for_partition(
+                &self.parallel_scheduler_batch_partition_sets,
+                partition,
+            ),
         )
     }
 
@@ -1059,10 +1066,16 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        parallel_partition_activity_for_partition(
-            &self.data_cache_parallel_scheduler_partition_activities,
-            &self.data_cache_parallel_scheduler_remote_flows,
-            partition,
+        merge_parallel_partition_activity_options(
+            parallel_partition_activity_for_partition(
+                &self.data_cache_parallel_scheduler_partition_activities,
+                &self.data_cache_parallel_scheduler_remote_flows,
+                partition,
+            ),
+            parallel_batch_partition_activity_for_partition(
+                &self.data_cache_parallel_scheduler_batch_partition_sets,
+                partition,
+            ),
         )
     }
 
