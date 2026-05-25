@@ -269,6 +269,20 @@ pub(crate) fn total_parallel_batch_worker_count(
         .sum()
 }
 
+pub(crate) fn total_parallel_batch_count(counts: &[WorkloadParallelBatchWorkerCount]) -> usize {
+    counts
+        .iter()
+        .map(WorkloadParallelBatchWorkerCount::batch_count)
+        .sum()
+}
+
+pub(crate) fn strongest_parallel_batch_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    total_parallel_batch_count(counts).max(total_parallel_batch_partition_set_count(sets))
+}
+
 pub(crate) fn total_parallel_batch_activity_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
@@ -333,6 +347,12 @@ fn total_parallel_batch_partition_set_worker_count(
 ) -> usize {
     sets.iter()
         .map(|set| set.partitions().len() * set.batch_count())
+        .sum()
+}
+
+fn total_parallel_batch_partition_set_count(sets: &[WorkloadParallelBatchPartitionSet]) -> usize {
+    sets.iter()
+        .map(WorkloadParallelBatchPartitionSet::batch_count)
         .sum()
 }
 

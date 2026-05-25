@@ -31,8 +31,8 @@ impl WorkloadParallelExecutionSummary {
         self.scheduler_dispatch_count() + self.data_cache_parallel_scheduler_dispatch_count()
     }
 
-    pub const fn full_system_parallel_scheduler_batch_count(&self) -> usize {
-        self.scheduler_batch_count + self.data_cache_parallel_scheduler_batch_count
+    pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {
+        self.scheduler_batch_count() + self.data_cache_parallel_scheduler_batch_count()
     }
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {

@@ -11,8 +11,9 @@ use crate::parallel_batch::{
     max_parallel_batch_activity_worker_count, parallel_batch_active_partition_count,
     parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_count_for_partition_set,
-    total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
+    strongest_parallel_batch_count, total_parallel_batch_activity_worker_count,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flows,
@@ -755,8 +756,12 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
-    pub const fn scheduler_batch_count(&self) -> usize {
+    pub fn scheduler_batch_count(&self) -> usize {
         self.scheduler_batch_count
+            .max(strongest_parallel_batch_count(
+                &self.parallel_scheduler_batch_worker_counts,
+                &self.parallel_scheduler_batch_partition_sets,
+            ))
     }
 
     pub fn active_scheduler_partition_count(&self) -> usize {
@@ -959,8 +964,12 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
-    pub const fn data_cache_parallel_scheduler_batch_count(&self) -> usize {
+    pub fn data_cache_parallel_scheduler_batch_count(&self) -> usize {
         self.data_cache_parallel_scheduler_batch_count
+            .max(strongest_parallel_batch_count(
+                &self.data_cache_parallel_scheduler_batch_worker_counts,
+                &self.data_cache_parallel_scheduler_batch_partition_sets,
+            ))
     }
 
     pub fn active_data_cache_parallel_scheduler_partition_count(&self) -> usize {

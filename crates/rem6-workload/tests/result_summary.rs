@@ -504,6 +504,25 @@ fn workload_result_records_parallel_execution_summary() {
 }
 
 #[test]
+fn workload_result_batch_counts_use_stronger_batch_evidence_than_aggregate_counts() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 2),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(2)], 3),
+        ])
+        .with_scheduler_counts(1, 0, 1, 1)
+        .with_data_cache_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(3, 1),
+        ])
+        .with_data_cache_parallel_counts(1, 1, 1, 2, 1);
+
+    assert_eq!(summary.scheduler_batch_count(), 5);
+    assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 5);
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 10);
+}
+
+#[test]
 fn workload_result_marks_typed_parallel_evidence_as_work() {
     let scheduler_flow =
         WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
