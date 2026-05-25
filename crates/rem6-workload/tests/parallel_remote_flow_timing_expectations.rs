@@ -261,6 +261,59 @@ fn workload_replay_plan_derives_parallel_remote_flow_timing_from_remote_sends() 
 }
 
 #[test]
+fn workload_replay_plan_prefers_remote_send_delay_bounds_over_unbounded_aggregates() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+            11,
+            17,
+            (8, 10),
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+            11,
+            17,
+            (8, 10),
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            2,
+            11,
+            17,
+        )])
+        .with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                7,
+                17,
+                1,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_remote_flow_timing() {
     let base = rem6_workload::WorkloadManifest::builder(id("identity-flow-timing"), boot_image())
         .add_resource(kernel_resource())

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -49,30 +49,45 @@ pub(crate) fn collect_parallel_remote_flow_evidence(
     sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
 ) -> Vec<ParallelRemoteFlowRecord> {
     let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
-    let mut explicit_routes = BTreeSet::<(PartitionId, PartitionId)>::new();
     for flow in flows {
         if flow.send_count() == 0 {
             continue;
         }
         let route = (flow.source(), flow.target());
-        explicit_routes.insert(route);
         by_route
             .entry(route)
             .and_modify(|stored| *stored = stored.merged_with(flow))
             .or_insert(flow);
     }
+    let mut send_flows = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
     for send in sends {
         let route = (send.source(), send.target());
-        if explicit_routes.contains(&route) {
-            continue;
-        }
         let flow = parallel_remote_flow_from_send(send);
-        by_route
+        send_flows
             .entry(route)
             .and_modify(|stored| *stored = stored.merged_with(flow))
             .or_insert(flow);
     }
+    for (route, send_flow) in send_flows {
+        by_route
+            .entry(route)
+            .and_modify(|stored| {
+                *stored = stronger_parallel_remote_flow_evidence(*stored, send_flow)
+            })
+            .or_insert(send_flow);
+    }
     by_route.into_values().collect()
+}
+
+fn stronger_parallel_remote_flow_evidence(
+    explicit_flow: ParallelRemoteFlowRecord,
+    send_flow: ParallelRemoteFlowRecord,
+) -> ParallelRemoteFlowRecord {
+    if send_flow.send_count() >= explicit_flow.send_count() {
+        send_flow
+    } else {
+        explicit_flow
+    }
 }
 
 fn parallel_remote_flow_from_send(send: ParallelRemoteSendRecord) -> ParallelRemoteFlowRecord {
