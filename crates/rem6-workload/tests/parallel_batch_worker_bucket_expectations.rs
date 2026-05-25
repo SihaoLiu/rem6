@@ -7,8 +7,9 @@ use rem6_workload::{
     WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
     WorkloadId, WorkloadParallelBatchPartitionSet, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -105,6 +106,58 @@ fn expected_worker_ticks_at_or_above(
     .unwrap()
 }
 
+fn expected_dma_bucket(
+    scope: WorkloadParallelBatchWorkerScope,
+    worker_count: usize,
+    minimum_batch_count: usize,
+) -> WorkloadExpectedParallelBatchWorkerBucket {
+    WorkloadExpectedParallelBatchWorkerBucket::new(scope, worker_count, minimum_batch_count)
+        .unwrap()
+}
+
+fn expected_dma_tick_bucket(
+    scope: WorkloadParallelBatchWorkerScope,
+    worker_count: usize,
+    minimum_ticks: u64,
+) -> WorkloadExpectedParallelBatchWorkerTickBucket {
+    WorkloadExpectedParallelBatchWorkerTickBucket::new(scope, worker_count, minimum_ticks).unwrap()
+}
+
+fn expected_dma_tick_activity(
+    scope: WorkloadParallelBatchWorkerScope,
+    minimum_worker_count: usize,
+    minimum_ticks: u64,
+) -> WorkloadExpectedParallelBatchWorkerTickActivity {
+    WorkloadExpectedParallelBatchWorkerTickActivity::new(scope, minimum_worker_count, minimum_ticks)
+        .unwrap()
+}
+
+fn expected_dma_tick_streak(
+    scope: WorkloadParallelBatchWorkerScope,
+    minimum_worker_count: usize,
+    minimum_consecutive_ticks: u64,
+) -> WorkloadExpectedParallelBatchWorkerTickStreak {
+    WorkloadExpectedParallelBatchWorkerTickStreak::new(
+        scope,
+        minimum_worker_count,
+        minimum_consecutive_ticks,
+    )
+    .unwrap()
+}
+
+fn expected_dma_worker_ticks_at_or_above(
+    scope: WorkloadParallelBatchWorkerScope,
+    minimum_worker_count: usize,
+    minimum_worker_ticks: u64,
+) -> WorkloadExpectedParallelBatchWorkerTicks {
+    WorkloadExpectedParallelBatchWorkerTicks::new_at_or_above(
+        scope,
+        minimum_worker_count,
+        minimum_worker_ticks,
+    )
+    .unwrap()
+}
+
 fn timeline_record(
     scope: WorkloadParallelBatchScope,
     start_tick: u64,
@@ -117,6 +170,88 @@ fn timeline_record(
 
 fn partition(index: u32) -> PartitionId {
     PartitionId::new(index)
+}
+
+#[test]
+fn workload_replay_plan_checks_dma_scheduler_batch_worker_expectations_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(expected_dma_bucket(
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler,
+            3,
+            1,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_tick_bucket(expected_dma_tick_bucket(
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler,
+            3,
+            6,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_tick_activity(expected_dma_tick_activity(
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler,
+            2,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_tick_streak(expected_dma_tick_streak(
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler,
+            3,
+            6,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_ticks(expected_dma_worker_ticks_at_or_above(
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler,
+            2,
+            10,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            8,
+            14,
+            [partition(3), partition(4), partition(5)],
+            3,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            16,
+            21,
+            [partition(6), partition(7)],
+            2,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let failing_plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_bucket(expected_dma_tick_bucket(
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler,
+            2,
+            6,
+        ))
+        .unwrap();
+    let underfilled_summary = WorkloadParallelExecutionSummary::default()
+        .with_accelerator_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            16,
+            21,
+            [partition(6), partition(7)],
+            2,
+        )]);
+    let underfilled = WorkloadResult::new(failing_plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underfilled_summary);
+
+    assert_eq!(
+        failing_plan.verify_result(&underfilled).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchWorkerTickBucketBelowMinimum {
+            scope: WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler,
+            worker_count: 2,
+            minimum_ticks: 6,
+            actual_ticks: 5,
+        },
+    );
 }
 
 #[test]
@@ -230,7 +365,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_buc
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelBatchWorkerBucketSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             worker_count: 3,
             minimum_batch_count: 3,
         },
@@ -246,7 +381,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_buc
     assert_eq!(
         plan.verify_result(&underfilled).unwrap_err(),
         WorkloadError::ExpectedParallelBatchWorkerBucketBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             worker_count: 3,
             minimum_batch_count: 3,
             actual_batch_count: 1,
@@ -303,7 +438,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_bucke
         )
         .unwrap_err(),
         WorkloadError::InvalidExpectedParallelBatchWorkerBucket {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             worker_count: 1,
         },
     );
@@ -315,7 +450,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_bucke
         )
         .unwrap_err(),
         WorkloadError::ZeroExpectedParallelBatchWorkerBucket {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelBatchWorkerScope::DataCacheScheduler,
             worker_count: 2,
         },
     );
@@ -336,7 +471,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_bucke
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerBucket {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             worker_count: 2,
         },
     );
@@ -479,7 +614,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelBatchWorkerTickBucketSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             worker_count: 2,
             minimum_ticks: 12,
         },
@@ -505,7 +640,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&underfilled).unwrap_err(),
         WorkloadError::ExpectedParallelBatchWorkerTickBucketBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             worker_count: 2,
             minimum_ticks: 12,
             actual_ticks: 5,
@@ -523,7 +658,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
         )
         .unwrap_err(),
         WorkloadError::InvalidExpectedParallelBatchWorkerTickBucket {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             worker_count: 1,
         },
     );
@@ -535,7 +670,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
         )
         .unwrap_err(),
         WorkloadError::ZeroExpectedParallelBatchWorkerTickBucket {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelBatchWorkerScope::DataCacheScheduler,
             worker_count: 2,
         },
     );
@@ -556,7 +691,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerTickBucket {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             worker_count: 2,
         },
     );
@@ -704,7 +839,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelBatchWorkerTickActivitySummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 2,
             minimum_ticks: 12,
         },
@@ -730,7 +865,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&underfilled).unwrap_err(),
         WorkloadError::ExpectedParallelBatchWorkerTickActivityBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 2,
             minimum_ticks: 12,
             actual_ticks: 9,
@@ -748,7 +883,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
         )
         .unwrap_err(),
         WorkloadError::InvalidExpectedParallelBatchWorkerTickActivity {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 1,
         },
     );
@@ -760,7 +895,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
         )
         .unwrap_err(),
         WorkloadError::ZeroExpectedParallelBatchWorkerTickActivity {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelBatchWorkerScope::DataCacheScheduler,
             minimum_worker_count: 2,
         },
     );
@@ -781,7 +916,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerTickActivity {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 2,
         },
     );
@@ -924,7 +1059,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelBatchWorkerTickStreakSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 2,
             minimum_consecutive_ticks: 8,
         },
@@ -950,7 +1085,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&underfilled).unwrap_err(),
         WorkloadError::ExpectedParallelBatchWorkerTickStreakBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 2,
             minimum_consecutive_ticks: 8,
             actual_consecutive_ticks: 5,
@@ -968,7 +1103,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
         )
         .unwrap_err(),
         WorkloadError::InvalidExpectedParallelBatchWorkerTickStreak {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 1,
         },
     );
@@ -980,7 +1115,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
         )
         .unwrap_err(),
         WorkloadError::ZeroExpectedParallelBatchWorkerTickStreak {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelBatchWorkerScope::DataCacheScheduler,
             minimum_worker_count: 2,
         },
     );
@@ -1001,7 +1136,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerTickStreak {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 2,
         },
     );
@@ -1191,7 +1326,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelBatchWorkerTicksSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 1,
             minimum_worker_ticks: 24,
         },
@@ -1217,7 +1352,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
     assert_eq!(
         plan.verify_result(&underfilled).unwrap_err(),
         WorkloadError::ExpectedParallelBatchWorkerTicksBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 1,
             minimum_worker_ticks: 24,
             actual_worker_ticks: 22,
@@ -1253,7 +1388,7 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
             .verify_result(&threshold_underfilled)
             .unwrap_err(),
         WorkloadError::ExpectedParallelBatchWorkerTicksBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_worker_count: 3,
             minimum_worker_ticks: 13,
             actual_worker_ticks: 12,
@@ -1270,7 +1405,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_ticks
         )
         .unwrap_err(),
         WorkloadError::ZeroExpectedParallelBatchWorkerTicks {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 1,
         },
     );
@@ -1282,7 +1417,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_ticks
         )
         .unwrap_err(),
         WorkloadError::InvalidExpectedParallelBatchWorkerTicks {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 1,
         },
     );
@@ -1294,7 +1429,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_ticks
         )
         .unwrap_err(),
         WorkloadError::ZeroExpectedParallelBatchWorkerTicks {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 2,
         },
     );
@@ -1313,7 +1448,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_ticks
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerTicks {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 1,
         },
     );
@@ -1342,7 +1477,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_ticks
     assert_eq!(
         duplicate_threshold,
         WorkloadError::DuplicateExpectedParallelBatchWorkerTicks {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_worker_count: 2,
         },
     );

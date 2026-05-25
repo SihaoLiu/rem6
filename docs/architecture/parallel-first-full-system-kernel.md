@@ -456,7 +456,11 @@ timeline, worker-count, max-worker, total-worker, worker-tick, and thresholded
 batch queries used by CPU/cache runs. Batch-timeline expectations also expose
 dedicated GPU DMA scheduler and accelerator DMA scheduler scopes, keeping exact
 DMA occupancy checks separate from remote-flow contracts while still allowing
-full-system aggregate checks.
+full-system aggregate checks. Batch-worker expectations use the same split for
+exact worker-count buckets, duration-weighted tick buckets, minimum tick
+activity, sustained tick streaks, and thresholded worker-tick contracts, so a
+manifest can require DMA scheduler occupancy without treating it as remote
+traffic.
 The full-system batch sequence is merged by worker start tick with deterministic
 tie breakers, which prevents a CPU batch between two data-cache batches from
 being hidden by subsystem-local concatenation when sustained occupancy is
@@ -475,7 +479,8 @@ tick bucket contracts, minimum-worker duration-weighted tick activity
 contracts, sustained minimum-worker tick-streak contracts, minimum batch
 worker-tick contracts under a declared minimum worker count, and batch timeline
 records. Batch timeline records additionally support direct GPU DMA scheduler
-and accelerator DMA scheduler scopes. Replay verification rejects
+and accelerator DMA scheduler scopes, and batch-worker contracts can use the
+same direct DMA scheduler scopes. Replay verification rejects
 underfilled exact worker buckets, underfilled worker-count tick buckets,
 underfilled minimum-worker tick activity, underfilled sustained minimum-worker
 tick streaks, underfilled thresholded batch worker-ticks, and missing or unexpected

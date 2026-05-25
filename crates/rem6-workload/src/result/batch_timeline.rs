@@ -244,6 +244,26 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn gpu_dma_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        parallel_batch_longest_tick_streak_at_or_above(
+            &self.gpu_dma_scheduler_batch_timeline,
+            minimum_worker_count,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        parallel_batch_longest_tick_streak_at_or_above(
+            &self.accelerator_dma_scheduler_batch_timeline,
+            minimum_worker_count,
+        )
+    }
+
     pub fn full_system_parallel_scheduler_batch_ticks_for_worker_count(
         &self,
         worker_count: usize,

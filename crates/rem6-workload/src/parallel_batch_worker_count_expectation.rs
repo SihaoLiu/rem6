@@ -5,19 +5,61 @@ use crate::{
     WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
 };
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadParallelBatchWorkerScope {
+    Scheduler,
+    DataCacheScheduler,
+    GpuDmaScheduler,
+    AcceleratorDmaScheduler,
+    FullSystem,
+}
+
+impl WorkloadParallelBatchWorkerScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduler => "scheduler",
+            Self::DataCacheScheduler => "data-cache-scheduler",
+            Self::GpuDmaScheduler => "gpu-dma-scheduler",
+            Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::FullSystem => "full-system",
+        }
+    }
+
+    pub(crate) const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Scheduler => 0,
+            Self::DataCacheScheduler => 1,
+            Self::GpuDmaScheduler => 2,
+            Self::AcceleratorDmaScheduler => 3,
+            Self::FullSystem => 4,
+        }
+    }
+}
+
+impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelBatchWorkerScope {
+    fn from(scope: WorkloadParallelRemoteFlowScope) -> Self {
+        match scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => Self::Scheduler,
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => Self::DataCacheScheduler,
+            WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchWorkerBucket {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     worker_count: usize,
     minimum_batch_count: usize,
 }
 
 impl WorkloadExpectedParallelBatchWorkerBucket {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         worker_count: usize,
         minimum_batch_count: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if worker_count < 2 {
             return Err(WorkloadError::InvalidExpectedParallelBatchWorkerBucket {
                 scope,
@@ -37,7 +79,7 @@ impl WorkloadExpectedParallelBatchWorkerBucket {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -55,12 +97,18 @@ impl WorkloadExpectedParallelBatchWorkerBucket {
 
     pub(crate) fn actual_batch_count(self, summary: &WorkloadParallelExecutionSummary) -> usize {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => {
                 summary.parallel_scheduler_batch_count_for_worker_count(self.worker_count)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => summary
                 .data_cache_parallel_scheduler_batch_count_for_worker_count(self.worker_count),
-            WorkloadParallelRemoteFlowScope::FullSystem => summary
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_batch_count_for_worker_count(self.worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_batch_count_for_worker_count(self.worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_for_worker_count(self.worker_count),
         }
     }
@@ -68,17 +116,18 @@ impl WorkloadExpectedParallelBatchWorkerBucket {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchWorkerTickBucket {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     worker_count: usize,
     minimum_ticks: Tick,
 }
 
 impl WorkloadExpectedParallelBatchWorkerTickBucket {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         worker_count: usize,
         minimum_ticks: Tick,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if worker_count < 2 {
             return Err(
                 WorkloadError::InvalidExpectedParallelBatchWorkerTickBucket {
@@ -100,7 +149,7 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -118,12 +167,18 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
 
     pub(crate) fn actual_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Tick {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => {
                 summary.parallel_scheduler_batch_ticks_for_worker_count(self.worker_count)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => summary
                 .data_cache_parallel_scheduler_batch_ticks_for_worker_count(self.worker_count),
-            WorkloadParallelRemoteFlowScope::FullSystem => summary
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_batch_ticks_for_worker_count(self.worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_batch_ticks_for_worker_count(self.worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_ticks_for_worker_count(self.worker_count),
         }
     }
@@ -131,17 +186,18 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchWorkerTickActivity {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_worker_count: usize,
     minimum_ticks: Tick,
 }
 
 impl WorkloadExpectedParallelBatchWorkerTickActivity {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_worker_count: usize,
         minimum_ticks: Tick,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_worker_count < 2 {
             return Err(
                 WorkloadError::InvalidExpectedParallelBatchWorkerTickActivity {
@@ -163,7 +219,7 @@ impl WorkloadExpectedParallelBatchWorkerTickActivity {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -181,12 +237,18 @@ impl WorkloadExpectedParallelBatchWorkerTickActivity {
 
     pub(crate) fn actual_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Tick {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => {
                 summary.parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => summary
                 .data_cache_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
-            WorkloadParallelRemoteFlowScope::FullSystem => summary
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_batch_ticks_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_batch_ticks_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
         }
     }
@@ -194,17 +256,18 @@ impl WorkloadExpectedParallelBatchWorkerTickActivity {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchWorkerTickStreak {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_worker_count: usize,
     minimum_consecutive_ticks: Tick,
 }
 
 impl WorkloadExpectedParallelBatchWorkerTickStreak {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_worker_count: usize,
         minimum_consecutive_ticks: Tick,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_worker_count < 2 {
             return Err(
                 WorkloadError::InvalidExpectedParallelBatchWorkerTickStreak {
@@ -226,7 +289,7 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -247,15 +310,21 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
         summary: &WorkloadParallelExecutionSummary,
     ) -> Tick {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => summary
+            WorkloadParallelBatchWorkerScope::Scheduler => summary
                 .parallel_scheduler_longest_batch_tick_streak_at_or_above(
                     self.minimum_worker_count,
                 ),
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => summary
                 .data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(
                     self.minimum_worker_count,
                 ),
-            WorkloadParallelRemoteFlowScope::FullSystem => summary
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => summary
+                .gpu_dma_scheduler_longest_batch_tick_streak_at_or_above(self.minimum_worker_count),
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => summary
+                .accelerator_dma_scheduler_longest_batch_tick_streak_at_or_above(
+                    self.minimum_worker_count,
+                ),
+            WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
                     self.minimum_worker_count,
                 ),
@@ -265,16 +334,17 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchWorkerTicks {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_worker_count: usize,
     minimum_worker_ticks: Tick,
 }
 
 impl WorkloadExpectedParallelBatchWorkerTicks {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_worker_ticks: Tick,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_worker_ticks == 0 {
             return Err(WorkloadError::ZeroExpectedParallelBatchWorkerTicks {
                 scope,
@@ -289,10 +359,11 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
     }
 
     pub fn new_at_or_above(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_worker_count: usize,
         minimum_worker_ticks: Tick,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_worker_count < 2 {
             return Err(WorkloadError::InvalidExpectedParallelBatchWorkerTicks {
                 scope,
@@ -312,7 +383,7 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -330,14 +401,21 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
 
     pub(crate) fn actual_worker_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Tick {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => {
                 summary.parallel_scheduler_batch_worker_ticks_at_or_above(self.minimum_worker_count)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => summary
                 .data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(
                     self.minimum_worker_count,
                 ),
-            WorkloadParallelRemoteFlowScope::FullSystem => summary
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_batch_worker_ticks_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => summary
+                .accelerator_dma_scheduler_batch_worker_ticks_at_or_above(
+                    self.minimum_worker_count,
+                ),
+            WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
                     self.minimum_worker_count,
                 ),

@@ -17,9 +17,9 @@ use crate::{
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
     WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
     WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResource,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -427,6 +427,10 @@ fn hash_parallel_batch_timeline_scope(hash: &mut u64, scope: WorkloadParallelBat
     hash_str(hash, scope.as_str());
 }
 
+fn hash_parallel_batch_worker_scope(hash: &mut u64, scope: WorkloadParallelBatchWorkerScope) {
+    hash_str(hash, scope.as_str());
+}
+
 fn hash_parallel_frontier_stage(hash: &mut u64, stage: WorkloadParallelFrontierStage) {
     hash_str(hash, stage.as_str());
 }
@@ -478,7 +482,7 @@ fn hash_expected_parallel_batch_worker_bucket(
     hash: &mut u64,
     expected: WorkloadExpectedParallelBatchWorkerBucket,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.worker_count() as u64);
     hash_u64(hash, expected.minimum_batch_count() as u64);
 }
@@ -487,7 +491,7 @@ fn hash_expected_parallel_batch_worker_tick_bucket(
     hash: &mut u64,
     expected: WorkloadExpectedParallelBatchWorkerTickBucket,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.worker_count() as u64);
     hash_u64(hash, expected.minimum_ticks());
 }
@@ -496,7 +500,7 @@ fn hash_expected_parallel_batch_worker_tick_activity(
     hash: &mut u64,
     expected: WorkloadExpectedParallelBatchWorkerTickActivity,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_ticks());
 }
@@ -505,7 +509,7 @@ fn hash_expected_parallel_batch_worker_tick_streak(
     hash: &mut u64,
     expected: WorkloadExpectedParallelBatchWorkerTickStreak,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_consecutive_ticks());
 }
@@ -514,7 +518,7 @@ fn hash_expected_parallel_batch_worker_ticks(
     hash: &mut u64,
     expected: WorkloadExpectedParallelBatchWorkerTicks,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_worker_ticks());
 }

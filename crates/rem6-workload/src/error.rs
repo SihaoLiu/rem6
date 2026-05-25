@@ -6,10 +6,10 @@ use rem6_memory::MemoryError;
 use crate::{
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadId, WorkloadManifestIdentity,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
-    WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
-    WorkloadRouteLatency, WorkloadSuiteIdentity,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelDiagnosticScope,
+    WorkloadParallelFrontierStage, WorkloadParallelProgressTransitionExpectationError,
+    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency, WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -838,116 +838,116 @@ pub enum WorkloadError {
         actual_batch_count: usize,
     },
     InvalidExpectedParallelBatchWorkerBucket {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
     },
     ZeroExpectedParallelBatchWorkerBucket {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
     },
     DuplicateExpectedParallelBatchWorkerBucket {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
     },
     MissingParallelBatchWorkerBucketSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
         minimum_batch_count: usize,
     },
     ExpectedParallelBatchWorkerBucketBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
     InvalidExpectedParallelBatchWorkerTickBucket {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
     },
     ZeroExpectedParallelBatchWorkerTickBucket {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
     },
     DuplicateExpectedParallelBatchWorkerTickBucket {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
     },
     MissingParallelBatchWorkerTickBucketSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
         minimum_ticks: Tick,
     },
     ExpectedParallelBatchWorkerTickBucketBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,
         minimum_ticks: Tick,
         actual_ticks: Tick,
     },
     InvalidExpectedParallelBatchWorkerTickActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     ZeroExpectedParallelBatchWorkerTickActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     DuplicateExpectedParallelBatchWorkerTickActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     MissingParallelBatchWorkerTickActivitySummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_ticks: Tick,
     },
     ExpectedParallelBatchWorkerTickActivityBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_ticks: Tick,
         actual_ticks: Tick,
     },
     InvalidExpectedParallelBatchWorkerTickStreak {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     ZeroExpectedParallelBatchWorkerTickStreak {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     DuplicateExpectedParallelBatchWorkerTickStreak {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     MissingParallelBatchWorkerTickStreakSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_consecutive_ticks: Tick,
     },
     ExpectedParallelBatchWorkerTickStreakBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_consecutive_ticks: Tick,
         actual_consecutive_ticks: Tick,
     },
     InvalidExpectedParallelBatchWorkerTicks {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     ZeroExpectedParallelBatchWorkerTicks {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     DuplicateExpectedParallelBatchWorkerTicks {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     MissingParallelBatchWorkerTicksSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_worker_ticks: Tick,
     },
     ExpectedParallelBatchWorkerTicksBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_worker_ticks: Tick,
         actual_worker_ticks: Tick,

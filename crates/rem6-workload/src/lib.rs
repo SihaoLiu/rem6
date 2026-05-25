@@ -58,7 +58,7 @@ pub use parallel_batch_timeline_expectation::{
 pub use parallel_batch_worker_count_expectation::{
     WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
     WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
-    WorkloadExpectedParallelBatchWorkerTicks,
+    WorkloadExpectedParallelBatchWorkerTicks, WorkloadParallelBatchWorkerScope,
 };
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
