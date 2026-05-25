@@ -563,6 +563,50 @@ impl WorkloadSuiteExecutionSummary {
         self.verify_minimum_simultaneous_workers(expectation.minimum_simultaneous_workers())
     }
 
+    pub fn execution_efficiency(
+        &self,
+        worker_count: usize,
+    ) -> Result<WorkloadSuiteExecutionEfficiency, WorkloadError> {
+        if worker_count == 0 {
+            return Err(WorkloadError::ZeroWorkloadSuiteWorkers);
+        }
+        let active_workers = self
+            .records
+            .iter()
+            .map(WorkloadSuiteExecutionRecord::worker_index)
+            .max()
+            .map_or(0, |worker| worker + 1);
+        if worker_count < active_workers {
+            return Err(WorkloadError::SuiteExecutionWorkerCountBelowActiveWorkers {
+                worker_count,
+                active_workers,
+            });
+        }
+        let minimum_start_tick = self.minimum_start_tick();
+        let maximum_final_tick = self.maximum_final_tick();
+        let wall_clock_ticks = match (minimum_start_tick, maximum_final_tick) {
+            (Some(start), Some(final_tick)) => final_tick - start,
+            _ => 0,
+        };
+        let serial_completion_ticks = self.total_completion_ticks();
+        let worker_capacity_ticks = wall_clock_ticks * worker_count as Tick;
+        if worker_capacity_ticks < serial_completion_ticks {
+            return Err(WorkloadError::SuiteExecutionCapacityBelowCompletionTicks {
+                worker_capacity_ticks,
+                serial_completion_ticks,
+            });
+        }
+        Ok(WorkloadSuiteExecutionEfficiency::new(
+            self.suite_identity(),
+            worker_count,
+            minimum_start_tick,
+            maximum_final_tick,
+            wall_clock_ticks,
+            serial_completion_ticks,
+            worker_capacity_ticks,
+        ))
+    }
+
     pub fn worker_summaries(&self) -> Vec<WorkloadSuiteWorkerExecutionSummary> {
         let mut summaries = BTreeMap::new();
         for record in &self.records {
@@ -653,6 +697,115 @@ impl WorkloadSuiteExecutionSummary {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteExecutionEfficiency {
+    suite_identity: WorkloadSuiteIdentity,
+    worker_count: usize,
+    minimum_start_tick: Option<Tick>,
+    maximum_final_tick: Option<Tick>,
+    wall_clock_ticks: Tick,
+    serial_completion_ticks: Tick,
+    worker_capacity_ticks: Tick,
+    idle_worker_ticks: Tick,
+}
+
+impl WorkloadSuiteExecutionEfficiency {
+    fn new(
+        suite_identity: WorkloadSuiteIdentity,
+        worker_count: usize,
+        minimum_start_tick: Option<Tick>,
+        maximum_final_tick: Option<Tick>,
+        wall_clock_ticks: Tick,
+        serial_completion_ticks: Tick,
+        worker_capacity_ticks: Tick,
+    ) -> Self {
+        Self {
+            suite_identity,
+            worker_count,
+            minimum_start_tick,
+            maximum_final_tick,
+            wall_clock_ticks,
+            serial_completion_ticks,
+            worker_capacity_ticks,
+            idle_worker_ticks: worker_capacity_ticks.saturating_sub(serial_completion_ticks),
+        }
+    }
+
+    pub fn ratio(
+        numerator: Tick,
+        denominator: Tick,
+    ) -> Result<WorkloadSuiteExecutionRatio, WorkloadError> {
+        WorkloadSuiteExecutionRatio::new(numerator, denominator)
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub const fn minimum_start_tick(&self) -> Option<Tick> {
+        self.minimum_start_tick
+    }
+
+    pub const fn maximum_final_tick(&self) -> Option<Tick> {
+        self.maximum_final_tick
+    }
+
+    pub const fn wall_clock_ticks(&self) -> Tick {
+        self.wall_clock_ticks
+    }
+
+    pub const fn serial_completion_ticks(&self) -> Tick {
+        self.serial_completion_ticks
+    }
+
+    pub const fn worker_capacity_ticks(&self) -> Tick {
+        self.worker_capacity_ticks
+    }
+
+    pub const fn idle_worker_ticks(&self) -> Tick {
+        self.idle_worker_ticks
+    }
+
+    pub fn parallel_speedup_ratio(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        WorkloadSuiteExecutionRatio::new(self.serial_completion_ticks, self.wall_clock_ticks).ok()
+    }
+
+    pub fn worker_utilization_ratio(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        WorkloadSuiteExecutionRatio::new(self.serial_completion_ticks, self.worker_capacity_ticks)
+            .ok()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteExecutionRatio {
+    numerator: Tick,
+    denominator: Tick,
+}
+
+impl WorkloadSuiteExecutionRatio {
+    pub const fn numerator(&self) -> Tick {
+        self.numerator
+    }
+
+    pub const fn denominator(&self) -> Tick {
+        self.denominator
+    }
+
+    fn new(numerator: Tick, denominator: Tick) -> Result<Self, WorkloadError> {
+        if denominator == 0 {
+            return Err(WorkloadError::ZeroSuiteExecutionRatioDenominator);
+        }
+        Ok(Self {
+            numerator,
+            denominator,
+        })
     }
 }
 

@@ -524,6 +524,24 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite parallelism requirement needs {minimum_workers} simultaneous workers but dispatch uses {active_workers} active workers"
             ),
+            Self::SuiteExecutionWorkerCountBelowActiveWorkers {
+                worker_count,
+                active_workers,
+            } => write!(
+                formatter,
+                "workload suite execution efficiency used {worker_count} workers but execution touched {active_workers} active workers"
+            ),
+            Self::SuiteExecutionCapacityBelowCompletionTicks {
+                worker_capacity_ticks,
+                serial_completion_ticks,
+            } => write!(
+                formatter,
+                "workload suite execution capacity {worker_capacity_ticks} is below serial completion ticks {serial_completion_ticks}"
+            ),
+            Self::ZeroSuiteExecutionRatioDenominator => write!(
+                formatter,
+                "workload suite execution ratio denominator must be positive"
+            ),
             Self::StatsAfterFinalTick {
                 stats_tick,
                 final_tick,

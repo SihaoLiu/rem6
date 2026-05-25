@@ -362,6 +362,15 @@ pub enum WorkloadError {
         minimum_workers: usize,
         active_workers: usize,
     },
+    SuiteExecutionWorkerCountBelowActiveWorkers {
+        worker_count: usize,
+        active_workers: usize,
+    },
+    SuiteExecutionCapacityBelowCompletionTicks {
+        worker_capacity_ticks: Tick,
+        serial_completion_ticks: Tick,
+    },
+    ZeroSuiteExecutionRatioDenominator,
     StatsAfterFinalTick {
         stats_tick: Tick,
         final_tick: Tick,

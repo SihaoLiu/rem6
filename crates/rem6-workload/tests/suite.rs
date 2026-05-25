@@ -3,8 +3,8 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchPlan,
-    WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
-    WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
+    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -461,6 +461,90 @@ fn workload_suite_execution_summary_records_parallel_windows() {
     assert_eq!(worker_one.last_final_tick(), Some(50));
     assert_eq!(worker_one.total_completion_ticks(), 30);
     assert_eq!(worker_one.busy_tick_span(), Some(30));
+}
+
+#[test]
+fn workload_suite_execution_summary_reports_efficiency_metrics() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-efficiency"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 40)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 20, 50)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 45, 60)
+        .unwrap();
+
+    let efficiency = summary.execution_efficiency(2).unwrap();
+
+    assert_eq!(efficiency.suite_identity(), suite.identity());
+    assert_eq!(efficiency.worker_count(), 2);
+    assert_eq!(efficiency.minimum_start_tick(), Some(10));
+    assert_eq!(efficiency.maximum_final_tick(), Some(60));
+    assert_eq!(efficiency.wall_clock_ticks(), 50);
+    assert_eq!(efficiency.serial_completion_ticks(), 75);
+    assert_eq!(efficiency.worker_capacity_ticks(), 100);
+    assert_eq!(efficiency.idle_worker_ticks(), 25);
+    assert_eq!(
+        efficiency.parallel_speedup_ratio().unwrap(),
+        WorkloadSuiteExecutionEfficiency::ratio(75, 50).unwrap()
+    );
+    assert_eq!(
+        efficiency.worker_utilization_ratio().unwrap(),
+        WorkloadSuiteExecutionEfficiency::ratio(75, 100).unwrap()
+    );
+}
+
+#[test]
+fn workload_suite_execution_summary_rejects_invalid_efficiency_capacity() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("bad-efficiency"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let two_worker_summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 40)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 20, 50)
+        .unwrap();
+    let too_few_workers = two_worker_summary.execution_efficiency(1).unwrap_err();
+    assert!(matches!(
+        too_few_workers,
+        WorkloadError::SuiteExecutionWorkerCountBelowActiveWorkers {
+            worker_count: 1,
+            active_workers: 2
+        }
+    ));
+
+    let overlapping_single_worker = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 40)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 0, 20, 50)
+        .unwrap();
+    let over_capacity = overlapping_single_worker
+        .execution_efficiency(1)
+        .unwrap_err();
+    assert!(matches!(
+        over_capacity,
+        WorkloadError::SuiteExecutionCapacityBelowCompletionTicks {
+            worker_capacity_ticks: 40,
+            serial_completion_ticks: 60
+        }
+    ));
 }
 
 #[test]
