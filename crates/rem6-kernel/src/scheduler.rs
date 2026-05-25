@@ -909,6 +909,7 @@ impl PartitionedScheduler {
         dispatches.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
         progress_transitions
             .sort_by_key(|record| (record.tick(), record.partition(), record.order()));
+        remote_events.sort_by_key(remote_event_delivery_key);
         let remote_sends = remote_events
             .iter()
             .map(|event| {
@@ -941,7 +942,7 @@ impl PartitionedScheduler {
         &mut self,
         mut remote_events: Vec<RemoteScheduledEvent>,
     ) -> Result<(), SchedulerError> {
-        remote_events.sort_by_key(|event| (event.target, event.tick, event.source, event.order));
+        remote_events.sort_by_key(remote_event_delivery_key);
         for event in remote_events {
             self.partitions[event.target.index() as usize].schedule_parallel_at(
                 event.target,
@@ -1189,6 +1190,12 @@ impl ParallelSchedulerContext<'_> {
             local: order,
         })
     }
+}
+
+fn remote_event_delivery_key(
+    event: &RemoteScheduledEvent,
+) -> (PartitionId, Tick, PartitionId, u64) {
+    (event.target, event.tick, event.source, event.order)
 }
 
 fn sort_ready_partitions(mut ready_partitions: Vec<ReadyPartition>) -> Vec<ReadyPartition> {
