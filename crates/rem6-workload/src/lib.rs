@@ -1375,6 +1375,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_worker_activity(result)?;
         replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;
         replay_verify::verify_expected_data_cache_run_attribution(self, result)?;
+        replay_verify::verify_expected_data_cache_run_accounting(self, result)?;
         replay_verify::verify_expected_parallel_scheduler_progress(self, result)?;
         replay_verify::verify_expected_parallel_scheduler_idle_bounds(self, result)?;
         replay_verify::verify_expected_parallel_batch_activity(self, result)?;

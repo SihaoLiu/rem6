@@ -416,6 +416,15 @@ pub enum WorkloadError {
         maximum_unattributed_run_count: usize,
         actual_unattributed_run_count: usize,
     },
+    DataCacheRunAccountingMismatch {
+        data_cache_parallel_run_count: usize,
+        attributed_run_count: usize,
+        unattributed_run_count: usize,
+    },
+    DataCacheProtocolAccountingMismatch {
+        attributed_run_count: usize,
+        protocol_run_count: usize,
+    },
     MissingParallelWorkerSummary {
         scope: WorkloadParallelRemoteFlowScope,
         minimum_max_workers: usize,
@@ -1248,6 +1257,21 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected data-cache run attribution to keep unattributed runs at or below {maximum_unattributed_run_count}, got {actual_unattributed_run_count}"
+            ),
+            Self::DataCacheRunAccountingMismatch {
+                data_cache_parallel_run_count,
+                attributed_run_count,
+                unattributed_run_count,
+            } => write!(
+                formatter,
+                "data-cache run accounting mismatch: total {data_cache_parallel_run_count}, attributed {attributed_run_count}, unattributed {unattributed_run_count}"
+            ),
+            Self::DataCacheProtocolAccountingMismatch {
+                attributed_run_count,
+                protocol_run_count,
+            } => write!(
+                formatter,
+                "data-cache protocol accounting mismatch: attributed {attributed_run_count}, protocol-count total {protocol_run_count}"
             ),
             Self::ZeroExpectedParallelSchedulerProgress { scope } => write!(
                 formatter,

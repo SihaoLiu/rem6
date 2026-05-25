@@ -85,10 +85,13 @@ fn workload_manifest_records_data_cache_protocol_run_expectations() {
         manifest.expected_data_cache_protocol_run_counts(),
     );
 
-    let summary = WorkloadParallelExecutionSummary::default().with_data_cache_protocol_counts([
-        WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
-        WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Chi, 1),
-    ]);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_counts(3, 1, 3, 1, 1)
+        .with_data_cache_run_attribution(3, 0)
+        .with_data_cache_protocol_counts([
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 2),
+            WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Chi, 1),
+        ]);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
@@ -119,7 +122,13 @@ fn workload_manifest_records_data_cache_run_attribution_expectation() {
         manifest.expected_data_cache_run_attribution(),
     );
 
-    let summary = WorkloadParallelExecutionSummary::default().with_data_cache_run_attribution(2, 0);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_counts(2, 1, 2, 1, 1)
+        .with_data_cache_run_attribution(2, 0)
+        .with_data_cache_protocol_counts([WorkloadDataCacheProtocolCount::new(
+            WorkloadDataCacheProtocol::Msi,
+            2,
+        )]);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
@@ -296,6 +305,53 @@ fn workload_replay_plan_rejects_missing_or_mismatched_data_cache_run_attribution
         WorkloadError::ExpectedDataCacheRunAttributionAboveMaximum {
             maximum_unattributed_run_count: 0,
             actual_unattributed_run_count: 1,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_inconsistent_data_cache_run_accounting() {
+    let plan = replay_plan()
+        .add_expected_data_cache_protocol_run_count(expected_protocol(
+            WorkloadDataCacheProtocol::Msi,
+            1,
+        ))
+        .unwrap()
+        .add_expected_data_cache_run_attribution(expected_attribution(2, 0))
+        .unwrap();
+
+    let total_mismatch_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_counts(3, 1, 2, 1, 1)
+        .with_data_cache_run_attribution(2, 0)
+        .with_data_cache_protocol_counts([WorkloadDataCacheProtocolCount::new(
+            WorkloadDataCacheProtocol::Msi,
+            2,
+        )]);
+    let total_mismatch = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(total_mismatch_summary);
+    assert_eq!(
+        plan.verify_result(&total_mismatch).unwrap_err(),
+        WorkloadError::DataCacheRunAccountingMismatch {
+            data_cache_parallel_run_count: 3,
+            attributed_run_count: 2,
+            unattributed_run_count: 0,
+        },
+    );
+
+    let protocol_mismatch_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_counts(2, 1, 2, 1, 1)
+        .with_data_cache_run_attribution(2, 0)
+        .with_data_cache_protocol_counts([WorkloadDataCacheProtocolCount::new(
+            WorkloadDataCacheProtocol::Msi,
+            1,
+        )]);
+    let protocol_mismatch = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(protocol_mismatch_summary);
+    assert_eq!(
+        plan.verify_result(&protocol_mismatch).unwrap_err(),
+        WorkloadError::DataCacheProtocolAccountingMismatch {
+            attributed_run_count: 2,
+            protocol_run_count: 1,
         },
     );
 }

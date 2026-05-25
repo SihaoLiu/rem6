@@ -90,6 +90,40 @@ pub(crate) fn verify_expected_data_cache_run_attribution(
     Ok(())
 }
 
+pub(crate) fn verify_expected_data_cache_run_accounting(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    if plan.expected_data_cache_protocol_run_counts().is_empty()
+        && plan.expected_data_cache_run_attribution().is_none()
+    {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        return Ok(());
+    };
+
+    let attributed_run_count = summary.attributed_data_cache_parallel_run_count();
+    let unattributed_run_count = summary.unattributed_data_cache_parallel_run_count();
+    let accounted_run_count = attributed_run_count.saturating_add(unattributed_run_count);
+    if accounted_run_count != summary.data_cache_parallel_run_count() {
+        return Err(WorkloadError::DataCacheRunAccountingMismatch {
+            data_cache_parallel_run_count: summary.data_cache_parallel_run_count(),
+            attributed_run_count,
+            unattributed_run_count,
+        });
+    }
+
+    let protocol_run_count = summary.attributed_data_cache_protocol_run_count();
+    if protocol_run_count != attributed_run_count {
+        return Err(WorkloadError::DataCacheProtocolAccountingMismatch {
+            attributed_run_count,
+            protocol_run_count,
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_scheduler_progress(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
