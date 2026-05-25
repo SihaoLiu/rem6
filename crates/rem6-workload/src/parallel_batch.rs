@@ -208,6 +208,16 @@ pub(crate) fn parallel_batch_count_at_or_above(
         .sum()
 }
 
+pub(crate) fn max_parallel_batch_worker_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+) -> usize {
+    counts
+        .iter()
+        .map(WorkloadParallelBatchWorkerCount::worker_count)
+        .max()
+        .unwrap_or(0)
+}
+
 pub(crate) fn parallel_batch_count_for_partition_set(
     sets: &[WorkloadParallelBatchPartitionSet],
     partitions: impl IntoIterator<Item = PartitionId>,

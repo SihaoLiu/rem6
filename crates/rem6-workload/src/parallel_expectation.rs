@@ -668,10 +668,7 @@ impl WorkloadExpectedParallelWorkerUse {
         self.scope.sort_rank()
     }
 
-    pub(crate) const fn actual_max_workers(
-        self,
-        summary: &WorkloadParallelExecutionSummary,
-    ) -> usize {
+    pub(crate) fn actual_max_workers(self, summary: &WorkloadParallelExecutionSummary) -> usize {
         match self.scope {
             WorkloadParallelRemoteFlowScope::Scheduler => summary.max_parallel_scheduler_workers(),
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
