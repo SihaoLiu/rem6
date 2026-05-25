@@ -50,7 +50,7 @@ pub(crate) fn parallel_partition_activity_for_partition(
         .iter()
         .find(|(existing, _)| *existing == partition)
         .map(|(_, activity)| *activity);
-    merge_parallel_partition_activity_options(
+    merge_parallel_partition_activity_evidence_options(
         explicit,
         parallel_remote_flow_partition_activity(flows, partition),
     )
@@ -66,6 +66,24 @@ pub(crate) fn merge_parallel_partition_activity_options(
             left.dispatch_count() + right.dispatch_count(),
             left.remote_send_count() + right.remote_send_count(),
             left.remote_receive_count() + right.remote_receive_count(),
+            left.max_pending_events().max(right.max_pending_events()),
+        )),
+        (Some(activity), None) | (None, Some(activity)) => Some(activity),
+        (None, None) => None,
+    }
+}
+
+pub(crate) fn merge_parallel_partition_activity_evidence_options(
+    left: Option<ParallelPartitionActivity>,
+    right: Option<ParallelPartitionActivity>,
+) -> Option<ParallelPartitionActivity> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(ParallelPartitionActivity::with_remote_counts(
+            left.worker_count().max(right.worker_count()),
+            left.dispatch_count().max(right.dispatch_count()),
+            left.remote_send_count().max(right.remote_send_count()),
+            left.remote_receive_count()
+                .max(right.remote_receive_count()),
             left.max_pending_events().max(right.max_pending_events()),
         )),
         (Some(activity), None) | (None, Some(activity)) => Some(activity),

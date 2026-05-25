@@ -369,6 +369,87 @@ fn workload_replay_plan_derives_partition_activity_from_batch_partition_sets() {
 }
 
 #[test]
+fn workload_replay_plan_does_not_double_count_overlapping_partition_activity_evidence() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("partition-activity-overlapping-evidence"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            5,
+            7,
+            3,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            0,
+            4,
+            4,
+            0,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            9,
+            11,
+            3,
+            2,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([(
+            PartitionId::new(0),
+            ParallelPartitionActivity::with_remote_counts(5, 7, 3, 2, 9),
+        )])
+        .with_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 2),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(2)], 3),
+        ])
+        .with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 3, 10, 14),
+            ParallelRemoteFlowRecord::new(PartitionId::new(2), PartitionId::new(0), 2, 11, 15),
+        ])
+        .with_data_cache_parallel_scheduler_partition_activities([(
+            PartitionId::new(0),
+            ParallelPartitionActivity::new(2, 2, 4),
+        )])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(3)], 4),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(5, 7, 3, 2, 9)),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(4, 4, 0, 0, 4)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(
+            9, 11, 3, 2, 9
+        )),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_partition_activity() {
     let zero = WorkloadExpectedParallelPartitionActivity::new(
         WorkloadParallelRemoteFlowScope::Scheduler,

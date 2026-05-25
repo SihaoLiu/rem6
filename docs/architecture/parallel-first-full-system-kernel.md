@@ -370,8 +370,13 @@ multi-worker batch activity for any worker threshold not larger than the
 recorded partition set. They also imply per-partition worker and dispatch
 activity for every partition contained in each recorded batch set, making
 same-batch participation replay-verifiable without duplicating explicit
-activity records. Workload manifests may declare required initial or final
-frontier minima for specific partitions and scopes, turning
+activity records. Within one scheduler scope, explicit per-partition activity,
+remote-flow-derived activity, and batch-derived activity are alternative
+lower-bound evidence and merge by the strongest recorded field instead of by
+addition. Full-system activity only adds after the CPU scheduler and
+data-cache/coherence scheduler have been summarized separately. Workload
+manifests may declare required initial or final frontier minima for specific
+partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
 

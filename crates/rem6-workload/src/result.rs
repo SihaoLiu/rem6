@@ -20,7 +20,7 @@ use crate::result_collect::{
     parallel_remote_flow_count,
 };
 use crate::result_partition_activity::{
-    merge_parallel_partition_activity_options, parallel_active_partition_count,
+    merge_parallel_partition_activity_evidence_options, parallel_active_partition_count,
     parallel_partition_activity_for_partition, parallel_partition_dispatch_count,
     parallel_partition_worker_count,
 };
@@ -862,7 +862,7 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        merge_parallel_partition_activity_options(
+        merge_parallel_partition_activity_evidence_options(
             parallel_partition_activity_for_partition(
                 &self.parallel_scheduler_partition_activities,
                 &self.parallel_scheduler_remote_flows,
@@ -1066,7 +1066,7 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        merge_parallel_partition_activity_options(
+        merge_parallel_partition_activity_evidence_options(
             parallel_partition_activity_for_partition(
                 &self.data_cache_parallel_scheduler_partition_activities,
                 &self.data_cache_parallel_scheduler_remote_flows,
