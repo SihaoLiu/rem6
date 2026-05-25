@@ -586,6 +586,14 @@ impl WorkloadExpectedParallelRemoteSend {
         )
     }
 
+    pub(crate) fn matches_record(self, send: ParallelRemoteSendRecord) -> bool {
+        send.source() == self.source
+            && send.target() == self.target
+            && send.source_tick() == self.source_tick
+            && send.delivery_tick() == self.delivery_tick
+            && send.order() == self.order
+    }
+
     pub(crate) fn actual_record(
         self,
         summary: &WorkloadParallelExecutionSummary,
@@ -826,13 +834,9 @@ fn find_parallel_remote_send<I>(
 where
     I: IntoIterator<Item = ParallelRemoteSendRecord>,
 {
-    sends.into_iter().find(|send| {
-        send.source() == expected.source()
-            && send.target() == expected.target()
-            && send.source_tick() == expected.source_tick()
-            && send.delivery_tick() == expected.delivery_tick()
-            && send.order() == expected.order()
-    })
+    sends
+        .into_iter()
+        .find(|send| expected.matches_record(*send))
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

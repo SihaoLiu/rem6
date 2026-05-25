@@ -60,7 +60,9 @@ isolated bugs:
   source-partition activity, and target-partition activity scope. RISC-V
   cluster, coherence, full-system run, and workload-result summaries preserve
   those flow records. Workload manifests and replay plans can declare exact
-  expected remote-flow counts, exact remote-flow first/last tick windows,
+  expected remote-send actual sets for scheduler, data-cache scheduler, or
+  merged full-system scope, exact expected remote-flow counts, exact
+  remote-flow first/last tick windows,
   minimum max-worker use derived from aggregate, worker-count, exact
   partition-set, or streak evidence, batch counts derived from the strongest
   available aggregate, worker-count, exact partition-set, or streak evidence,

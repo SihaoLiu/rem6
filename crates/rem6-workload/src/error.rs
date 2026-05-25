@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::fmt;
 
 use rem6_boot::BootError;
@@ -7,8 +6,8 @@ use rem6_kernel::Tick;
 use rem6_memory::MemoryError;
 
 use crate::{
-    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
-    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    error_support::format_partition_indexes, WorkloadDataCacheProtocol, WorkloadExecutionMode,
+    WorkloadManifestIdentity, WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
     WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency,
 };
@@ -363,6 +362,14 @@ pub enum WorkloadError {
         order: u64,
     },
     ExpectedParallelRemoteSendMissing {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
+    UnexpectedParallelRemoteSend {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
         target: u32,
@@ -1222,6 +1229,18 @@ impl fmt::Display for WorkloadError {
                 "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} was not recorded",
                 scope.as_str()
             ),
+            Self::UnexpectedParallelRemoteSend {
+                scope,
+                source,
+                target,
+                source_tick,
+                delivery_tick,
+                order,
+            } => write!(
+                formatter,
+                "unexpected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order}",
+                scope.as_str()
+            ),
             Self::InvalidExpectedParallelRemoteFlowTimingWindow {
                 scope,
                 source,
@@ -1770,25 +1789,6 @@ impl fmt::Display for WorkloadError {
                 "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges, {deadlock_diagnostic_count} deadlock diagnostics, and {livelock_diagnostic_count} livelock diagnostics",
                 scope.as_str()
             ),
-        }
-    }
-}
-
-fn format_partition_indexes(partitions: &[u32]) -> String {
-    let values = partitions
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{values}]")
-}
-
-impl Error for WorkloadError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Boot(error) => Some(error),
-            Self::Memory(error) => Some(error),
-            _ => None,
         }
     }
 }

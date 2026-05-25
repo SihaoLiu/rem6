@@ -1,4 +1,15 @@
-use crate::{WorkloadError, WorkloadReplayPlan, WorkloadResult};
+use rem6_kernel::ParallelRemoteSendRecord;
+
+use crate::{
+    WorkloadError, WorkloadExpectedParallelRemoteSend, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResult,
+};
+
+const PARALLEL_REMOTE_SEND_SCOPES: [WorkloadParallelRemoteFlowScope; 3] = [
+    WorkloadParallelRemoteFlowScope::Scheduler,
+    WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+    WorkloadParallelRemoteFlowScope::FullSystem,
+];
 
 pub(crate) fn verify_expected_parallel_remote_sends(
     plan: &WorkloadReplayPlan,
@@ -32,7 +43,75 @@ pub(crate) fn verify_expected_parallel_remote_sends(
             });
         }
     }
+    for scope in PARALLEL_REMOTE_SEND_SCOPES {
+        let expected_for_scope = expected_parallel_remote_sends_for_scope(expected_sends, scope);
+        if expected_for_scope.is_empty() {
+            continue;
+        }
+        let actual_for_scope = actual_parallel_remote_sends_for_scope(summary, scope);
+        if let Some(actual) =
+            unexpected_parallel_remote_send(&expected_for_scope, &actual_for_scope)
+        {
+            return Err(WorkloadError::UnexpectedParallelRemoteSend {
+                scope,
+                source: actual.source().index(),
+                target: actual.target().index(),
+                source_tick: actual.source_tick(),
+                delivery_tick: actual.delivery_tick(),
+                order: actual.order(),
+            });
+        }
+    }
     Ok(())
+}
+
+fn expected_parallel_remote_sends_for_scope(
+    expected_sends: &[WorkloadExpectedParallelRemoteSend],
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<WorkloadExpectedParallelRemoteSend> {
+    expected_sends
+        .iter()
+        .copied()
+        .filter(|expected| expected.scope() == scope)
+        .collect()
+}
+
+fn actual_parallel_remote_sends_for_scope(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<ParallelRemoteSendRecord> {
+    match scope {
+        WorkloadParallelRemoteFlowScope::Scheduler => {
+            summary.parallel_scheduler_remote_sends().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            .data_cache_parallel_scheduler_remote_sends()
+            .to_vec(),
+        WorkloadParallelRemoteFlowScope::FullSystem => {
+            summary.full_system_parallel_scheduler_remote_sends()
+        }
+    }
+}
+
+fn unexpected_parallel_remote_send(
+    expected_sends: &[WorkloadExpectedParallelRemoteSend],
+    actual_sends: &[ParallelRemoteSendRecord],
+) -> Option<ParallelRemoteSendRecord> {
+    let mut matched_expectations = vec![false; expected_sends.len()];
+    for actual in actual_sends {
+        let matching_index = expected_sends
+            .iter()
+            .enumerate()
+            .find(|(index, expected)| {
+                !matched_expectations[*index] && expected.matches_record(*actual)
+            })
+            .map(|(index, _)| index);
+        match matching_index {
+            Some(index) => matched_expectations[index] = true,
+            None => return Some(*actual),
+        }
+    }
+    None
 }
 
 pub(crate) fn verify_expected_parallel_remote_flows(

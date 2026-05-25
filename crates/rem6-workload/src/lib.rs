@@ -6,6 +6,7 @@ use rem6_memory::{Address, AddressRange};
 
 mod boot_handoff;
 mod error;
+mod error_support;
 mod heterogeneous;
 mod host_event;
 mod identity;

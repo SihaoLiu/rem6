@@ -73,11 +73,15 @@ fn workload_manifest_records_parallel_remote_send_expectations() {
     );
     let full_system_send =
         expected_send(WorkloadParallelRemoteFlowScope::FullSystem, 0, 1, 3, 11, 0);
+    let full_system_data_cache_send =
+        expected_send(WorkloadParallelRemoteFlowScope::FullSystem, 2, 3, 5, 13, 1);
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("manifest-remote-send"), boot_image())
             .add_resource(kernel_resource())
             .unwrap()
             .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_remote_send(full_system_data_cache_send)
+            .unwrap()
             .add_expected_parallel_remote_send(full_system_send)
             .unwrap()
             .add_expected_parallel_remote_send(data_cache_send)
@@ -95,7 +99,12 @@ fn workload_manifest_records_parallel_remote_send_expectations() {
     assert_eq!(scheduler_send.order(), 0);
     assert_eq!(
         manifest.expected_parallel_remote_sends(),
-        &[scheduler_send, data_cache_send, full_system_send],
+        &[
+            scheduler_send,
+            data_cache_send,
+            full_system_send,
+            full_system_data_cache_send,
+        ],
     );
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     assert_eq!(
@@ -222,6 +231,52 @@ fn workload_replay_plan_rejects_missing_parallel_remote_send() {
             source_tick: 3,
             delivery_tick: 11,
             order: 0,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_unexpected_parallel_remote_send() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(expected_send(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            3,
+            11,
+            0,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                4,
+                12,
+                1,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelRemoteSend {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            source_tick: 4,
+            delivery_tick: 12,
+            order: 1,
         },
     );
 }
