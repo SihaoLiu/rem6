@@ -357,6 +357,10 @@ pub enum WorkloadError {
         stats_tick: Tick,
         final_tick: Tick,
     },
+    ResultStartAfterFinalTick {
+        start_tick: Tick,
+        final_tick: Tick,
+    },
     PlannedHostEventAfterFinalTick {
         event_tick: Tick,
         final_tick: Tick,

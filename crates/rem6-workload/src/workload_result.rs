@@ -9,6 +9,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResult {
     manifest_identity: WorkloadManifestIdentity,
+    start_tick: Tick,
     final_tick: Tick,
     stop_reason: Option<String>,
     stats_snapshot: Option<StatSnapshot>,
@@ -23,6 +24,7 @@ impl WorkloadResult {
     pub const fn new(manifest_identity: WorkloadManifestIdentity, final_tick: Tick) -> Self {
         Self {
             manifest_identity,
+            start_tick: 0,
             final_tick,
             stop_reason: None,
             stats_snapshot: None,
@@ -32,6 +34,17 @@ impl WorkloadResult {
             restored_checkpoint_labels: Vec::new(),
             execution_mode_switches: Vec::new(),
         }
+    }
+
+    pub fn with_start_tick(mut self, start_tick: Tick) -> Result<Self, WorkloadError> {
+        if start_tick > self.final_tick {
+            return Err(WorkloadError::ResultStartAfterFinalTick {
+                start_tick,
+                final_tick: self.final_tick,
+            });
+        }
+        self.start_tick = start_tick;
+        Ok(self)
     }
 
     pub fn with_stop_reason(mut self, reason: impl Into<String>) -> Self {
@@ -95,6 +108,10 @@ impl WorkloadResult {
 
     pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
         self.manifest_identity.clone()
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
     }
 
     pub const fn final_tick(&self) -> Tick {

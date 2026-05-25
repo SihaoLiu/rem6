@@ -513,6 +513,13 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "stats snapshot tick {stats_tick} is after final tick {final_tick}"
             ),
+            Self::ResultStartAfterFinalTick {
+                start_tick,
+                final_tick,
+            } => write!(
+                formatter,
+                "workload result start tick {start_tick} is after final tick {final_tick}"
+            ),
             Self::PlannedHostEventAfterFinalTick {
                 event_tick,
                 final_tick,

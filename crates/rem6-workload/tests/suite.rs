@@ -330,6 +330,80 @@ fn workload_suite_execution_summary_derives_from_dispatch_results() {
 }
 
 #[test]
+fn workload_suite_execution_summary_derives_windows_from_results() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-result-windows"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let results = WorkloadSuiteResult::new(suite.identity())
+        .add_result(
+            beta.id().clone(),
+            WorkloadResult::new(beta.identity(), 50)
+                .with_start_tick(20)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_result(
+            gamma.id().clone(),
+            WorkloadResult::new(gamma.identity(), 60)
+                .with_start_tick(45)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_result(
+            alpha.id().clone(),
+            WorkloadResult::new(alpha.identity(), 40)
+                .with_start_tick(10)
+                .unwrap(),
+        )
+        .unwrap();
+
+    let summary =
+        WorkloadSuiteExecutionSummary::from_dispatch_results(&dispatch, &results).unwrap();
+
+    assert_eq!(summary.minimum_start_tick(), Some(10));
+    assert_eq!(summary.maximum_final_tick(), Some(60));
+    assert_eq!(summary.total_completion_ticks(), 75);
+    assert_eq!(summary.maximum_simultaneous_workers(), 2);
+    assert_eq!(summary.records()[0].start_tick(), 10);
+    assert_eq!(summary.records()[1].start_tick(), 20);
+    assert_eq!(summary.records()[2].start_tick(), 45);
+    assert_eq!(
+        summary.worker_summary(0).unwrap().busy_tick_span(),
+        Some(50)
+    );
+}
+
+#[test]
+fn workload_result_rejects_start_tick_after_final_tick() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let error = WorkloadResult::new(alpha.identity(), 20)
+        .with_start_tick(30)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::ResultStartAfterFinalTick {
+            start_tick: 30,
+            final_tick: 20
+        }
+    ));
+}
+
+#[test]
 fn workload_suite_execution_summary_records_parallel_windows() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

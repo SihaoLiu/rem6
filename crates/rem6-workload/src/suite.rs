@@ -420,7 +420,7 @@ impl WorkloadSuiteExecutionSummary {
                 expected_identity,
                 record.dispatch_order(),
                 record.worker_index(),
-                0,
+                result.start_tick(),
                 result.final_tick(),
             )?;
         }
