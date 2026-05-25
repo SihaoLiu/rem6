@@ -112,6 +112,34 @@ fn stats_snapshot_rejects_time_before_last_reset() {
 }
 
 #[test]
+fn stats_reset_rejects_time_before_last_reset_without_mutating_scope() {
+    let mut stats = StatsRegistry::new();
+    let cycles = stats.register_counter("cpu0.cycles", "cycles").unwrap();
+    stats.increment(cycles, 7).unwrap();
+    stats.reset(50);
+    stats.increment(cycles, 3).unwrap();
+
+    assert_eq!(
+        stats.try_reset(49).unwrap_err(),
+        StatsError::ResetBeforeLastReset {
+            tick: 49 as Tick,
+            reset_tick: 50,
+        }
+    );
+    assert_eq!(stats.epoch(), 1);
+    assert_eq!(stats.reset_tick(), 50);
+    assert_eq!(
+        stats.snapshot(55),
+        StatSnapshot::new(
+            55,
+            1,
+            50,
+            vec![StatSample::new(cycles, "cpu0.cycles", "cycles", 3)],
+        )
+    );
+}
+
+#[test]
 fn probe_registry_records_typed_events_and_listener_state() {
     let mut probes = ProbeRegistry::new();
     let committed = probes.register_point("cpu0", "commit").unwrap();

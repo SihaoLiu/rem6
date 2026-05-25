@@ -588,7 +588,7 @@ work.
 | Multi-protocol integration | Tests that swap protocol backend without changing topology definitions. |
 | Host events | Tests for guest event delivery, stop requests, statistics actions, and deterministic replay metadata. |
 | Checkpointing | Tests for manifest validation, scheduler restore, memory restore, device restore, coherence restore, and restore rejection for incompatible state. |
-| Statistics | Tests for registry ownership, reset behavior, dump records, and aggregation into system summaries. |
+| Statistics | Tests for registry ownership, monotonic reset behavior, dump records, and aggregation into system summaries. |
 | Deadlock diagnostics | Tests that create a wait-for cycle and assert a bounded diagnostic. |
 | Livelock diagnostics | Tests that create repeated progress-free transitions and assert a bounded diagnostic. |
 

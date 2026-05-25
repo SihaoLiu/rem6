@@ -15,14 +15,14 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
 use rem6_mmio::{MmioRequest, MmioRequestId};
-use rem6_stats::{StatSample, StatSnapshot, StatsRegistry, StatsResetRecord};
+use rem6_stats::{StatSample, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
 use rem6_system::{
     ClintCheckpointBank, ClintCheckpointPort, DramMemoryCheckpointBank, DramMemoryCheckpointPort,
     ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
     GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
-    RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome,
+    RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome, SystemError,
     SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
     TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
@@ -328,6 +328,58 @@ fn system_action_executor_applies_stats_reset_and_dump_actions() {
             10,
             vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
         ))
+    );
+}
+
+#[test]
+fn system_action_executor_rejects_out_of_order_stats_reset_actions() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(4);
+    let mut stats = StatsRegistry::new();
+    let insts = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    stats.increment(insts, 9).unwrap();
+    let mut executor = SystemActionExecutor::new(stats);
+
+    let reset = HostActionRecord::new(
+        10,
+        guest,
+        host,
+        GuestEventId::new(1),
+        source,
+        HostAction::ResetStats,
+    );
+    executor.apply(&reset).unwrap();
+    executor.stats_mut().increment(insts, 3).unwrap();
+
+    let out_of_order_reset = HostActionRecord::new(
+        9,
+        guest,
+        host,
+        GuestEventId::new(2),
+        source,
+        HostAction::ResetStats,
+    );
+    assert_eq!(
+        executor.apply(&out_of_order_reset).unwrap_err(),
+        SystemError::Stats(StatsError::ResetBeforeLastReset {
+            tick: 9,
+            reset_tick: 10,
+        })
+    );
+
+    assert_eq!(executor.stats().epoch(), 1);
+    assert_eq!(executor.stats().reset_tick(), 10);
+    assert_eq!(
+        executor.stats().snapshot(12),
+        StatSnapshot::new(
+            12,
+            1,
+            10,
+            vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
+        )
     );
 }
 

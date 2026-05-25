@@ -678,9 +678,11 @@ impl SystemActionExecutor {
                 source: record.source(),
                 command: command.clone(),
             }),
-            HostAction::ResetStats => Ok(SystemActionOutcome::StatsReset(
-                self.stats.reset(record.tick()),
-            )),
+            HostAction::ResetStats => self
+                .stats
+                .try_reset(record.tick())
+                .map(SystemActionOutcome::StatsReset)
+                .map_err(SystemError::Stats),
             HostAction::DumpStats => self
                 .stats
                 .try_snapshot(record.tick())

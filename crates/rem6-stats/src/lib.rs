@@ -492,6 +492,18 @@ impl StatsRegistry {
     }
 
     pub fn reset(&mut self, tick: Tick) -> StatsResetRecord {
+        self.try_reset(tick)
+            .expect("reset tick must be at or after the last reset")
+    }
+
+    pub fn try_reset(&mut self, tick: Tick) -> Result<StatsResetRecord, StatsError> {
+        if tick < self.reset_tick {
+            return Err(StatsError::ResetBeforeLastReset {
+                tick,
+                reset_tick: self.reset_tick,
+            });
+        }
+
         self.epoch += 1;
         self.reset_tick = tick;
         let mut previous_values = Vec::new();
@@ -499,7 +511,7 @@ impl StatsRegistry {
             previous_values.push((*id, *counter));
             *counter = 0;
         }
-        StatsResetRecord::new(tick, self.epoch, previous_values)
+        Ok(StatsResetRecord::new(tick, self.epoch, previous_values))
     }
 }
 
@@ -528,6 +540,10 @@ pub enum StatsError {
         stat: StatId,
     },
     SnapshotBeforeReset {
+        tick: Tick,
+        reset_tick: Tick,
+    },
+    ResetBeforeLastReset {
         tick: Tick,
         reset_tick: Tick,
     },
@@ -567,6 +583,10 @@ impl fmt::Display for StatsError {
             Self::SnapshotBeforeReset { tick, reset_tick } => write!(
                 formatter,
                 "cannot snapshot at tick {tick}; last reset was at tick {reset_tick}"
+            ),
+            Self::ResetBeforeLastReset { tick, reset_tick } => write!(
+                formatter,
+                "cannot reset stats at tick {tick}; last reset was at tick {reset_tick}"
             ),
             Self::EmptyProbeComponent => write!(formatter, "probe component must not be empty"),
             Self::EmptyProbeName => write!(formatter, "probe point name must not be empty"),
