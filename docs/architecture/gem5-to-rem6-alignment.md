@@ -85,6 +85,8 @@ isolated bugs:
   minimum max-worker use derived from aggregate, worker-count, exact
   partition-set, or streak evidence, batch counts derived from the strongest
   available aggregate, worker-count, exact partition-set, or streak evidence,
+  exact worker-count bucket contracts derived from worker-count, exact
+  partition-set, or streak evidence,
   minimum total-worker activity derived from the strongest available aggregate,
   worker-count, exact partition-set, streak, or per-partition evidence, minimum scheduler epoch progress plus dispatch
   progress from the strongest available aggregate counts, batch-histogram,
@@ -457,7 +459,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   full-system deadlock diagnostic counts, batch counts derived from the
   strongest available aggregate, worker-count, exact partition-set, or streak evidence,
   exact worker-count bucket counts derived from the strongest available
-  worker-count, exact partition-set, or streak evidence,
+  worker-count, exact partition-set, or streak evidence, manifest-verifiable
+  exact worker-count bucket contracts,
   total-worker counts derived from the
   strongest available aggregate, batch-histogram, exact partition-set, streak, or per-partition worker evidence, exact batch
   partition-set histograms, maximum
