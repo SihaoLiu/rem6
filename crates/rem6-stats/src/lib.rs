@@ -304,6 +304,61 @@ impl StatDumpId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StatGroupId(u64);
+
+impl StatGroupId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StatScope {
+    spelling: String,
+    segments: Vec<String>,
+}
+
+impl StatScope {
+    pub fn new<I, S>(segments: I) -> Result<Self, StatPathError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::from_segments(segments.into_iter().map(Into::into).collect())
+    }
+
+    pub fn from_segments(segments: Vec<String>) -> Result<Self, StatPathError> {
+        let spelling = segments.join(".");
+        validate_stat_segments(segments.iter().map(String::as_str))?;
+        Ok(Self { spelling, segments })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.spelling
+    }
+
+    pub fn segments(&self) -> &[String] {
+        &self.segments
+    }
+
+    pub fn stat_path(&self, name: impl Into<String>) -> Result<StatPath, StatPathError> {
+        let mut segments = self.segments.clone();
+        segments.push(name.into());
+        StatPath::from_segments(segments)
+    }
+}
+
+impl fmt::Display for StatScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StatPath {
     spelling: String,
@@ -330,7 +385,7 @@ impl StatPath {
 
     pub fn from_segments(segments: Vec<String>) -> Result<Self, StatPathError> {
         let spelling = segments.join(".");
-        validate_stat_path(&spelling)?;
+        validate_stat_segments(segments.iter().map(String::as_str))?;
         Ok(Self { spelling, segments })
     }
 
@@ -490,6 +545,7 @@ impl fmt::Display for StatUnit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatSample {
     id: StatId,
+    group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
     value: u64,
@@ -514,6 +570,7 @@ impl StatSample {
             .map_err(|reason| StatsError::InvalidUnit { unit, reason })?;
         Ok(Self {
             id,
+            group: None,
             path: stat_path,
             unit: stat_unit,
             value,
@@ -521,8 +578,19 @@ impl StatSample {
     }
 
     pub const fn from_parts(id: StatId, path: StatPath, unit: StatUnit, value: u64) -> Self {
+        Self::from_registered_parts(id, None, path, unit, value)
+    }
+
+    pub const fn from_registered_parts(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        value: u64,
+    ) -> Self {
         Self {
             id,
+            group,
             path,
             unit,
             value,
@@ -531,6 +599,10 @@ impl StatSample {
 
     pub const fn id(&self) -> StatId {
         self.id
+    }
+
+    pub const fn group(&self) -> Option<StatGroupId> {
+        self.group
     }
 
     pub fn path(&self) -> &str {
@@ -565,6 +637,7 @@ impl StatSample {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatDeltaSample {
     id: StatId,
+    group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
     previous_value: u64,
@@ -598,6 +671,7 @@ impl StatDeltaSample {
             .map_err(|reason| StatsError::InvalidUnit { unit, reason })?;
         Ok(Self {
             id,
+            group: None,
             path: stat_path,
             unit: stat_unit,
             previous_value,
@@ -612,8 +686,20 @@ impl StatDeltaSample {
         previous_value: u64,
         current_value: u64,
     ) -> Self {
+        Self::from_registered_parts(id, None, path, unit, previous_value, current_value)
+    }
+
+    pub const fn from_registered_parts(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
         Self {
             id,
+            group,
             path,
             unit,
             previous_value,
@@ -623,6 +709,10 @@ impl StatDeltaSample {
 
     pub const fn id(&self) -> StatId {
         self.id
+    }
+
+    pub const fn group(&self) -> Option<StatGroupId> {
+        self.group
     }
 
     pub fn path(&self) -> &str {
@@ -802,10 +892,11 @@ impl StatSnapshot {
                     current: current_sample.value(),
                 });
             }
-            deltas.push(StatDeltaSample::new(
+            deltas.push(StatDeltaSample::from_registered_parts(
                 previous_sample.id(),
-                previous_sample.path(),
-                previous_sample.unit(),
+                previous_sample.group(),
+                previous_sample.stat_path().clone(),
+                previous_sample.stat_unit().clone(),
                 previous_sample.value(),
                 current_sample.value(),
             ));
@@ -945,9 +1036,12 @@ impl fmt::Display for StatUnitError {
 pub struct StatsRegistry {
     next_id: u64,
     next_dump_id: u64,
+    next_group_id: u64,
     epoch: u64,
     reset_tick: Tick,
     paths: BTreeSet<String>,
+    group_paths: BTreeMap<String, StatGroupId>,
+    groups: BTreeMap<StatGroupId, StatScope>,
     descriptors: BTreeMap<StatId, StatDescriptor>,
     counters: BTreeMap<StatId, u64>,
     dump_records: Vec<StatDumpRecord>,
@@ -958,9 +1052,12 @@ impl StatsRegistry {
         Self {
             next_id: 0,
             next_dump_id: 0,
+            next_group_id: 0,
             epoch: 0,
             reset_tick: 0,
             paths: BTreeSet::new(),
+            group_paths: BTreeMap::new(),
+            groups: BTreeMap::new(),
             descriptors: BTreeMap::new(),
             counters: BTreeMap::new(),
             dump_records: Vec::new(),
@@ -991,7 +1088,7 @@ impl StatsRegistry {
         }
         let stat_path = StatPath::parse(path.clone())
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(stat_path, unit)
+        self.register_counter_path(None, stat_path, unit)
     }
 
     pub fn register_scoped_counter<I, S>(
@@ -1027,11 +1124,69 @@ impl StatsRegistry {
         let path = segments.join(".");
         let stat_path = StatPath::from_segments(segments)
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(stat_path, unit)
+        self.register_counter_path(None, stat_path, unit)
+    }
+
+    pub fn register_group<I, S>(&mut self, scope: I) -> Result<StatGroupId, StatsError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let segments = scope.into_iter().map(Into::into).collect::<Vec<_>>();
+        let path = segments.join(".");
+        let scope = StatScope::from_segments(segments)
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        if self.group_paths.contains_key(scope.as_str()) {
+            return Err(StatsError::DuplicateGroup {
+                scope: scope.as_str().to_string(),
+            });
+        }
+
+        let id = StatGroupId::new(self.next_group_id);
+        self.next_group_id = self
+            .next_group_id
+            .checked_add(1)
+            .ok_or(StatsError::GroupSequenceOverflow)?;
+        self.group_paths.insert(scope.as_str().to_string(), id);
+        self.groups.insert(id, scope);
+        Ok(id)
+    }
+
+    pub fn register_group_counter(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: impl Into<String>,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_group_counter_with_unit(group, name, unit)
+    }
+
+    pub fn register_group_counter_with_unit(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: StatUnit,
+    ) -> Result<StatId, StatsError> {
+        let Some(scope) = self.groups.get(&group) else {
+            return Err(StatsError::UnknownStatGroup { group });
+        };
+        let name = name.into();
+        let mut segments = scope.segments().to_vec();
+        segments.push(name);
+        let path = segments.join(".");
+        let stat_path = StatPath::from_segments(segments)
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        self.register_counter_path(Some(group), stat_path, unit)
     }
 
     fn register_counter_path(
         &mut self,
+        group: Option<StatGroupId>,
         path: StatPath,
         unit: StatUnit,
     ) -> Result<StatId, StatsError> {
@@ -1044,7 +1199,8 @@ impl StatsRegistry {
         let id = StatId::new(self.next_id);
         self.next_id += 1;
         self.paths.insert(path.as_str().to_string());
-        self.descriptors.insert(id, StatDescriptor { path, unit });
+        self.descriptors
+            .insert(id, StatDescriptor { group, path, unit });
         self.counters.insert(id, 0);
         Ok(id)
     }
@@ -1085,8 +1241,9 @@ impl StatsRegistry {
             .descriptors
             .iter()
             .map(|(id, descriptor)| {
-                StatSample::from_parts(
+                StatSample::from_registered_parts(
                     *id,
+                    descriptor.group,
                     descriptor.path.clone(),
                     descriptor.unit.clone(),
                     self.counters.get(id).copied().unwrap_or_default(),
@@ -1153,7 +1310,15 @@ impl Default for StatsRegistry {
 }
 
 fn validate_stat_path(path: &str) -> Result<(), StatPathError> {
-    for (index, segment) in path.split('.').enumerate() {
+    validate_stat_segments(path.split('.'))
+}
+
+fn validate_stat_segments<'a>(
+    segments: impl IntoIterator<Item = &'a str>,
+) -> Result<(), StatPathError> {
+    let mut saw_segment = false;
+    for (index, segment) in segments.into_iter().enumerate() {
+        saw_segment = true;
         let mut chars = segment.chars();
         let Some(first) = chars.next() else {
             return Err(StatPathError::EmptySegment { index });
@@ -1172,6 +1337,9 @@ fn validate_stat_path(path: &str) -> Result<(), StatPathError> {
                 });
             }
         }
+    }
+    if !saw_segment {
+        return Err(StatPathError::EmptySegment { index: 0 });
     }
     Ok(())
 }
@@ -1256,6 +1424,7 @@ fn stat_unit_symbol_kind(symbol: &str) -> StatUnitKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StatDescriptor {
+    group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
 }
@@ -1274,8 +1443,14 @@ pub enum StatsError {
     DuplicatePath {
         path: String,
     },
+    DuplicateGroup {
+        scope: String,
+    },
     UnknownStat {
         stat: StatId,
+    },
+    UnknownStatGroup {
+        group: StatGroupId,
     },
     CounterOverflow {
         stat: StatId,
@@ -1338,6 +1513,7 @@ pub enum StatsError {
         listener: ProbeListenerId,
     },
     ProbeSequenceOverflow,
+    GroupSequenceOverflow,
     DumpSequenceOverflow,
 }
 
@@ -1352,7 +1528,13 @@ impl fmt::Display for StatsError {
                 write!(formatter, "stat unit {unit} is invalid: {reason}")
             }
             Self::DuplicatePath { path } => write!(formatter, "stat path already exists: {path}"),
+            Self::DuplicateGroup { scope } => {
+                write!(formatter, "stat group already exists: {scope}")
+            }
             Self::UnknownStat { stat } => write!(formatter, "unknown stat id {}", stat.get()),
+            Self::UnknownStatGroup { group } => {
+                write!(formatter, "unknown stat group id {}", group.get())
+            }
             Self::CounterOverflow { stat } => {
                 write!(formatter, "counter {} overflowed", stat.get())
             }
@@ -1436,6 +1618,7 @@ impl fmt::Display for StatsError {
                 point.get()
             ),
             Self::ProbeSequenceOverflow => write!(formatter, "probe event sequence overflowed"),
+            Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
         }
     }

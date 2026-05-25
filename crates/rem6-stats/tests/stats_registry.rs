@@ -1,9 +1,9 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatPath, StatPathError, StatSample,
-    StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
-    StatsResetRecord,
+    StatDeltaSample, StatDumpId, StatDumpRecord, StatGroupId, StatId, StatPath, StatPathError,
+    StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError,
+    StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -306,6 +306,86 @@ fn stats_registry_records_scoped_counter_identity_without_string_joining() {
     assert_eq!(sample.scope(), ["system".to_string(), "cpu0".to_string()]);
     assert_eq!(sample.name(), "cycles");
     assert_eq!(sample.stat_path(), &scoped_path);
+}
+
+#[test]
+fn stats_registry_records_group_owned_counters_and_rejects_bad_groups() {
+    let mut stats = StatsRegistry::new();
+
+    assert_eq!(
+        stats.register_group(["system", "cpu-0"]).unwrap_err(),
+        StatsError::InvalidPath {
+            path: "system.cpu-0".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "cpu-0".to_string(),
+                character: '-',
+            },
+        },
+    );
+    assert_eq!(
+        stats.register_group(["system.cpu0"]).unwrap_err(),
+        StatsError::InvalidPath {
+            path: "system.cpu0".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "system.cpu0".to_string(),
+                character: '.',
+            },
+        },
+    );
+
+    let cpu0 = stats.register_group(["system", "cpu0"]).unwrap();
+    let cpu1 = stats.register_group(["system", "cpu1"]).unwrap();
+    assert_eq!(cpu0, StatGroupId::new(0));
+    assert_eq!(cpu1, StatGroupId::new(1));
+    assert_eq!(
+        stats.register_group(["system", "cpu0"]).unwrap_err(),
+        StatsError::DuplicateGroup {
+            scope: "system.cpu0".to_string(),
+        },
+    );
+    assert_eq!(
+        stats
+            .register_group_counter(StatGroupId::new(99), "cycles", "Cycle")
+            .unwrap_err(),
+        StatsError::UnknownStatGroup {
+            group: StatGroupId::new(99),
+        },
+    );
+
+    let cycles = stats
+        .register_group_counter_with_unit(cpu0, "cycles", StatUnit::cycle())
+        .unwrap();
+    let insts = stats
+        .register_group_counter(cpu0, "committed_insts", "Count")
+        .unwrap();
+    assert_eq!(cycles, StatId::new(0));
+    assert_eq!(insts, StatId::new(1));
+    assert_eq!(
+        stats
+            .register_scoped_counter(["system", "cpu0"], "cycles", "Cycle")
+            .unwrap_err(),
+        StatsError::DuplicatePath {
+            path: "system.cpu0.cycles".to_string(),
+        },
+    );
+
+    stats.increment(cycles, 4).unwrap();
+    stats.increment(insts, 9).unwrap();
+    let snapshot = stats.snapshot(20);
+    let cycles_sample = &snapshot.samples()[0];
+    assert_eq!(cycles_sample.group(), Some(cpu0));
+    assert_eq!(
+        cycles_sample.scope(),
+        StatScope::new(["system", "cpu0"]).unwrap().segments()
+    );
+    assert_eq!(cycles_sample.path(), "system.cpu0.cycles");
+    assert_eq!(cycles_sample.name(), "cycles");
+    assert_eq!(cycles_sample.value(), 4);
+    assert_eq!(snapshot.samples()[1].group(), Some(cpu0));
+
+    let later = stats.snapshot(25);
+    let delta = later.delta_since(&snapshot).unwrap();
+    assert_eq!(delta.samples()[0].group(), Some(cpu0));
 }
 
 #[test]
