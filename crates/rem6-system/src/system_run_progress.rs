@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
-    LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId, ProgressMonitor,
-    ProgressMonitorError, Tick, WaitForNode,
+    LivelockDiagnostic, LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId,
+    ProgressMonitor, ProgressMonitorError, Tick, WaitForNode,
 };
 
 use crate::RiscvSystemRun;
@@ -449,45 +449,54 @@ impl RiscvSystemRun {
         &self,
         threshold: u64,
     ) -> Result<usize, ProgressMonitorError> {
-        let mut monitor = ProgressMonitor::with_transition_threshold(threshold)?;
-        for epoch in self.parallel_scheduler_epochs() {
-            for batch in epoch.batches() {
-                for transition in batch.progress_transitions() {
-                    monitor.record_transition(
-                        transition.subject().clone(),
-                        transition.kind(),
-                        transition.tick(),
-                    )?;
-                }
-            }
-        }
-        Ok(monitor.snapshot().diagnostics().len())
+        Ok(self
+            .parallel_scheduler_livelock_diagnostics(threshold)?
+            .len())
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostics(
+        &self,
+        threshold: u64,
+    ) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+        livelock_diagnostics_from_progress_transitions(
+            threshold,
+            self.parallel_scheduler_progress_transitions(),
+        )
     }
 
     pub fn data_cache_parallel_scheduler_livelock_diagnostic_count(
         &self,
         threshold: u64,
     ) -> Result<usize, ProgressMonitorError> {
-        let mut monitor = ProgressMonitor::with_transition_threshold(threshold)?;
-        for epoch in self.data_cache_parallel_scheduler_epochs() {
-            for transition in epoch.progress_transitions() {
-                monitor.record_transition(
-                    transition.subject().clone(),
-                    transition.kind(),
-                    transition.tick(),
-                )?;
-            }
-        }
-        Ok(monitor.snapshot().diagnostics().len())
+        Ok(self
+            .data_cache_parallel_scheduler_livelock_diagnostics(threshold)?
+            .len())
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostics(
+        &self,
+        threshold: u64,
+    ) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+        livelock_diagnostics_from_progress_transitions(
+            threshold,
+            self.data_cache_parallel_scheduler_progress_transitions(),
+        )
     }
 
     pub fn full_system_livelock_diagnostic_count(
         &self,
         threshold: u64,
     ) -> Result<usize, ProgressMonitorError> {
-        Ok(
-            self.parallel_scheduler_livelock_diagnostic_count(threshold)?
-                + self.data_cache_parallel_scheduler_livelock_diagnostic_count(threshold)?,
+        Ok(self.full_system_livelock_diagnostics(threshold)?.len())
+    }
+
+    pub fn full_system_livelock_diagnostics(
+        &self,
+        threshold: u64,
+    ) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+        livelock_diagnostics_from_progress_transitions(
+            threshold,
+            self.full_system_progress_transitions(),
         )
     }
 
@@ -557,6 +566,21 @@ fn progress_transition_tick_window(
         }
     }
     window
+}
+
+fn livelock_diagnostics_from_progress_transitions(
+    threshold: u64,
+    transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
+) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+    let mut monitor = ProgressMonitor::with_transition_threshold(threshold)?;
+    for transition in transitions {
+        monitor.record_transition(
+            transition.subject().clone(),
+            transition.kind(),
+            transition.tick(),
+        )?;
+    }
+    Ok(monitor.snapshot().diagnostics().to_vec())
 }
 
 fn collect_progress_transition_records(

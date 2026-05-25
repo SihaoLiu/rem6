@@ -129,6 +129,71 @@ fn system_run_reports_scheduler_progress_and_livelock_diagnostics() {
 }
 
 #[test]
+fn system_run_returns_livelock_diagnostic_records_by_scope() {
+    let cpu = PartitionId::new(0);
+    let cache = PartitionId::new(1);
+    let shared_subject = component("shared-progress-loop");
+    let run = RiscvSystemRun::new(
+        vec![cpu_scheduler_turn_at(cpu, 0, shared_subject.clone(), 1)],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 8 },
+    )
+    .with_data_cache_runs(vec![data_cache_run_at(cache, 3, shared_subject.clone(), 1)]);
+
+    let scheduler_diagnostics = run.parallel_scheduler_livelock_diagnostics(1).unwrap();
+    assert_eq!(scheduler_diagnostics.len(), 1);
+    assert_eq!(scheduler_diagnostics[0].subject(), &shared_subject);
+    assert_eq!(scheduler_diagnostics[0].threshold(), 1);
+    assert_eq!(scheduler_diagnostics[0].transition_count(), 1);
+    assert_eq!(
+        scheduler_diagnostics[0].transition_count_by_kind(LivelockTransitionKind::ProtocolRetry),
+        1,
+    );
+    assert_eq!(scheduler_diagnostics[0].first_transition_tick(), 0);
+    assert_eq!(scheduler_diagnostics[0].last_transition_tick(), 0);
+
+    let data_cache_diagnostics = run
+        .data_cache_parallel_scheduler_livelock_diagnostics(1)
+        .unwrap();
+    assert_eq!(data_cache_diagnostics.len(), 1);
+    assert_eq!(data_cache_diagnostics[0].subject(), &shared_subject);
+    assert_eq!(data_cache_diagnostics[0].threshold(), 1);
+    assert_eq!(data_cache_diagnostics[0].transition_count(), 1);
+    assert_eq!(
+        data_cache_diagnostics[0].transition_count_by_kind(LivelockTransitionKind::MessageRetry),
+        1,
+    );
+    assert_eq!(data_cache_diagnostics[0].first_transition_tick(), 3);
+    assert_eq!(data_cache_diagnostics[0].last_transition_tick(), 3);
+
+    assert!(run
+        .parallel_scheduler_livelock_diagnostics(2)
+        .unwrap()
+        .is_empty());
+    assert!(run
+        .data_cache_parallel_scheduler_livelock_diagnostics(2)
+        .unwrap()
+        .is_empty());
+
+    let full_system_diagnostics = run.full_system_livelock_diagnostics(2).unwrap();
+    assert_eq!(full_system_diagnostics.len(), 1);
+    assert_eq!(full_system_diagnostics[0].subject(), &shared_subject);
+    assert_eq!(full_system_diagnostics[0].threshold(), 2);
+    assert_eq!(full_system_diagnostics[0].transition_count(), 2);
+    assert_eq!(
+        full_system_diagnostics[0].transition_count_by_kind(LivelockTransitionKind::ProtocolRetry),
+        1,
+    );
+    assert_eq!(
+        full_system_diagnostics[0].transition_count_by_kind(LivelockTransitionKind::MessageRetry),
+        1,
+    );
+    assert_eq!(full_system_diagnostics[0].first_transition_tick(), 0);
+    assert_eq!(full_system_diagnostics[0].last_transition_tick(), 3);
+    assert_eq!(run.full_system_livelock_diagnostic_count(2).unwrap(), 1);
+}
+
+#[test]
 fn system_run_summarizes_progress_transition_dimensions() {
     let cpu = PartitionId::new(0);
     let cache = PartitionId::new(1);
@@ -545,6 +610,10 @@ fn system_run_rejects_zero_livelock_transition_threshold() {
 
     assert_eq!(
         run.full_system_livelock_diagnostic_count(0),
+        Err(rem6_kernel::ProgressMonitorError::ZeroTransitionThreshold),
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostics(0),
         Err(rem6_kernel::ProgressMonitorError::ZeroTransitionThreshold),
     );
 }
