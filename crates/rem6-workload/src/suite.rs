@@ -218,6 +218,8 @@ pub struct WorkloadSuiteExecutionExpectation {
     worker_count: usize,
     minimum_simultaneous_workers: usize,
     occupancy_tick_requirements: Vec<(usize, Tick)>,
+    minimum_full_occupancy_ticks: Option<Tick>,
+    maximum_underoccupied_ticks: Option<Tick>,
     minimum_parallel_speedup: Option<WorkloadSuiteExecutionRatio>,
     minimum_worker_utilization: Option<WorkloadSuiteExecutionRatio>,
 }
@@ -235,6 +237,8 @@ impl WorkloadSuiteExecutionExpectation {
             worker_count: minimum_simultaneous_workers,
             minimum_simultaneous_workers,
             occupancy_tick_requirements: Vec::new(),
+            minimum_full_occupancy_ticks: None,
+            maximum_underoccupied_ticks: None,
             minimum_parallel_speedup: None,
             minimum_worker_utilization: None,
         })
@@ -262,6 +266,22 @@ impl WorkloadSuiteExecutionExpectation {
                 .occupancy_tick_requirements
                 .insert(index, (worker_count, minimum_ticks)),
         }
+        self
+    }
+
+    pub fn with_minimum_full_occupancy_ticks(mut self, minimum_ticks: Tick) -> Self {
+        self.minimum_full_occupancy_ticks = Some(
+            self.minimum_full_occupancy_ticks
+                .map_or(minimum_ticks, |current| current.max(minimum_ticks)),
+        );
+        self
+    }
+
+    pub fn with_maximum_underoccupied_ticks(mut self, maximum_ticks: Tick) -> Self {
+        self.maximum_underoccupied_ticks = Some(
+            self.maximum_underoccupied_ticks
+                .map_or(maximum_ticks, |current| current.min(maximum_ticks)),
+        );
         self
     }
 
@@ -299,6 +319,14 @@ impl WorkloadSuiteExecutionExpectation {
 
     pub const fn minimum_worker_utilization(&self) -> Option<WorkloadSuiteExecutionRatio> {
         self.minimum_worker_utilization
+    }
+
+    pub const fn minimum_full_occupancy_ticks(&self) -> Option<Tick> {
+        self.minimum_full_occupancy_ticks
+    }
+
+    pub const fn maximum_underoccupied_ticks(&self) -> Option<Tick> {
+        self.maximum_underoccupied_ticks
     }
 
     pub fn occupancy_tick_requirements(&self) -> &[(usize, Tick)] {
@@ -558,6 +586,56 @@ impl WorkloadSuiteExecutionSummary {
         Ok(())
     }
 
+    pub fn full_occupancy_ticks(&self, worker_count: usize) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .filter(|window| window.active_worker_count() == worker_count)
+            .map(WorkloadSuiteExecutionOccupancyWindow::duration_ticks)
+            .sum()
+    }
+
+    pub fn underoccupied_ticks(&self, worker_count: usize) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .filter(|window| window.active_worker_count() < worker_count)
+            .map(WorkloadSuiteExecutionOccupancyWindow::duration_ticks)
+            .sum()
+    }
+
+    pub fn verify_minimum_full_occupancy_ticks(
+        &self,
+        worker_count: usize,
+        minimum_ticks: Tick,
+    ) -> Result<(), WorkloadError> {
+        let actual_ticks = self.full_occupancy_ticks(worker_count);
+        if actual_ticks < minimum_ticks {
+            return Err(
+                WorkloadError::SuiteExecutionFullOccupancyTicksBelowMinimum {
+                    minimum_ticks,
+                    actual_ticks,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub fn verify_maximum_underoccupied_ticks(
+        &self,
+        worker_count: usize,
+        maximum_ticks: Tick,
+    ) -> Result<(), WorkloadError> {
+        let actual_ticks = self.underoccupied_ticks(worker_count);
+        if actual_ticks > maximum_ticks {
+            return Err(
+                WorkloadError::SuiteExecutionUnderoccupiedTicksAboveMaximum {
+                    maximum_ticks,
+                    actual_ticks,
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub fn verify_minimum_simultaneous_workers(
         &self,
         minimum_workers: usize,
@@ -589,6 +667,12 @@ impl WorkloadSuiteExecutionSummary {
         self.verify_minimum_simultaneous_workers(expectation.minimum_simultaneous_workers())?;
         for &(worker_count, minimum_ticks) in expectation.occupancy_tick_requirements() {
             self.verify_minimum_occupancy_ticks_for_worker_count(worker_count, minimum_ticks)?;
+        }
+        if let Some(minimum_ticks) = expectation.minimum_full_occupancy_ticks() {
+            self.verify_minimum_full_occupancy_ticks(expectation.worker_count(), minimum_ticks)?;
+        }
+        if let Some(maximum_ticks) = expectation.maximum_underoccupied_ticks() {
+            self.verify_maximum_underoccupied_ticks(expectation.worker_count(), maximum_ticks)?;
         }
 
         if expectation.minimum_parallel_speedup().is_some()

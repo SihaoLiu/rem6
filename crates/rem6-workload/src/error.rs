@@ -413,6 +413,14 @@ pub enum WorkloadError {
         minimum_ticks: Tick,
         actual_ticks: Tick,
     },
+    SuiteExecutionFullOccupancyTicksBelowMinimum {
+        minimum_ticks: Tick,
+        actual_ticks: Tick,
+    },
+    SuiteExecutionUnderoccupiedTicksAboveMaximum {
+        maximum_ticks: Tick,
+        actual_ticks: Tick,
+    },
     SuitePlannedParallelSpeedupBelowMinimum {
         minimum_numerator: Tick,
         minimum_denominator: Tick,

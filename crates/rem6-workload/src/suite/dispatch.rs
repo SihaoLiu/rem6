@@ -765,6 +765,12 @@ impl WorkloadSuiteDispatchTimeline {
         for &(worker_count, minimum_ticks) in expectation.occupancy_tick_requirements() {
             self.verify_minimum_occupancy_ticks_for_worker_count(worker_count, minimum_ticks)?;
         }
+        if let Some(minimum_ticks) = expectation.minimum_full_occupancy_ticks() {
+            self.verify_minimum_full_occupancy_ticks(minimum_ticks)?;
+        }
+        if let Some(maximum_ticks) = expectation.maximum_underoccupied_ticks() {
+            self.verify_maximum_underoccupied_ticks(maximum_ticks)?;
+        }
 
         if expectation.minimum_parallel_speedup().is_some()
             || expectation.minimum_worker_utilization().is_some()
