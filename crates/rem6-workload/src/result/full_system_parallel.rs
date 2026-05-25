@@ -6,8 +6,12 @@ use rem6_kernel::{
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
     collect_parallel_batch_worker_counts, combined_parallel_batch_active_partition_count,
-    normalize_partition_set, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
+    max_parallel_batch_activity_worker_count, normalize_partition_set,
+    parallel_batch_active_partition_count, parallel_batch_activity_count_at_or_above,
+    parallel_batch_count_for_partition_set, parallel_batch_streak_count_for_partition_set,
+    strongest_parallel_batch_count, total_parallel_batch_activity_worker_count,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
@@ -34,7 +38,13 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {
-        self.scheduler_batch_count() + self.data_cache_parallel_scheduler_batch_count()
+        (self.scheduler_batch_count() + self.data_cache_parallel_scheduler_batch_count()).max(
+            strongest_parallel_batch_count(
+                &[],
+                &[],
+                &self.full_system_parallel_scheduler_batch_partition_streaks,
+            ),
+        )
     }
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
@@ -44,6 +54,10 @@ impl WorkloadParallelExecutionSummary {
                 &self.parallel_scheduler_batch_partition_streaks,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
                 &self.data_cache_parallel_scheduler_batch_partition_streaks,
+            ))
+            .max(parallel_batch_active_partition_count(
+                &[],
+                &self.full_system_parallel_scheduler_batch_partition_streaks,
             ))
             .max(combined_parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
@@ -58,10 +72,21 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_max_workers(&self) -> usize {
         self.max_parallel_scheduler_workers()
             .max(self.data_cache_parallel_scheduler_max_workers())
+            .max(max_parallel_batch_activity_worker_count(
+                &[],
+                &[],
+                &self.full_system_parallel_scheduler_batch_partition_streaks,
+            ))
     }
 
     pub fn full_system_parallel_scheduler_total_workers(&self) -> usize {
-        self.total_parallel_scheduler_workers() + self.data_cache_parallel_scheduler_total_workers()
+        (self.total_parallel_scheduler_workers()
+            + self.data_cache_parallel_scheduler_total_workers())
+        .max(total_parallel_batch_activity_worker_count(
+            &[],
+            &[],
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        ))
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_counts(
@@ -83,8 +108,14 @@ impl WorkloadParallelExecutionSummary {
         &self,
         minimum_worker_count: usize,
     ) -> usize {
-        self.parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
-            + self.data_cache_parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
+        (self.parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
+            + self.data_cache_parallel_scheduler_batch_count_at_or_above(minimum_worker_count))
+        .max(parallel_batch_activity_count_at_or_above(
+            &[],
+            &[],
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+            minimum_worker_count,
+        ))
     }
 
     pub fn full_system_parallel_scheduler_batch_partition_sets(
@@ -106,9 +137,14 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionStreak> {
         collect_parallel_batch_partition_streaks(
-            self.parallel_scheduler_batch_partition_streaks
+            self.full_system_parallel_scheduler_batch_partition_streaks
                 .iter()
                 .cloned()
+                .chain(
+                    self.parallel_scheduler_batch_partition_streaks
+                        .iter()
+                        .cloned(),
+                )
                 .chain(
                     self.data_cache_parallel_scheduler_batch_partition_streaks
                         .iter()
@@ -122,25 +158,23 @@ impl WorkloadParallelExecutionSummary {
         partitions: impl IntoIterator<Item = PartitionId>,
     ) -> usize {
         let partitions = normalize_partition_set(partitions);
-        self.parallel_scheduler_batch_count_for_partition_set(partitions.iter().copied())
+        (self.parallel_scheduler_batch_count_for_partition_set(partitions.iter().copied())
             + self.data_cache_parallel_scheduler_batch_count_for_partition_set(
                 partitions.iter().copied(),
-            )
+            ))
+        .max(parallel_batch_count_for_partition_set(
+            &[],
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+            partitions.iter().copied(),
+        ))
     }
 
     pub fn full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
         &self,
         partitions: impl IntoIterator<Item = PartitionId>,
     ) -> usize {
-        let partitions = normalize_partition_set(partitions);
-        self.parallel_scheduler_max_consecutive_batch_count_for_partition_set(
-            partitions.iter().copied(),
-        )
-        .max(
-            self.data_cache_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
-                partitions.iter().copied(),
-            ),
-        )
+        let streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
+        parallel_batch_streak_count_for_partition_set(&streaks, partitions)
     }
 
     pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {

@@ -977,6 +977,37 @@ fn workload_result_records_parallel_batch_partition_streaks_from_ordered_batches
 }
 
 #[test]
+fn workload_result_records_explicit_full_system_parallel_batch_partition_streaks() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 1),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 1),
+        ])
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cache, cpu], 2),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_streaks(),
+        vec![WorkloadParallelBatchPartitionStreak::new([cpu, cache], 2)],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+            cpu, cache,
+        ]),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache]),
+        2,
+    );
+}
+
+#[test]
 fn workload_result_reports_remote_endpoint_partitions() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_remote_flows([

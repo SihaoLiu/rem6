@@ -404,6 +404,10 @@ The system-run object exposes batch-worker, exact partition-set, and
 same-partition-set streak summaries directly for CPU-scheduler, data-cache
 scheduler, and merged full-system scopes, so simulation diagnostics can inspect
 parallel occupancy before workload replay translates it into manifest evidence.
+Workload results retain explicit merged full-system streak evidence instead of
+reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
+same-partition-set batches that cross subsystem boundaries remain visible to
+manifest checks.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal

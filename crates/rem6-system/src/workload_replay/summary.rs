@@ -1,7 +1,8 @@
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadTopology,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
+    WorkloadParallelExecutionSummary, WorkloadTopology,
 };
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
@@ -138,6 +139,13 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_batches()
                 .into_iter()
                 .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
+        )
+        .with_full_system_parallel_scheduler_batch_partition_streaks(
+            run.full_system_parallel_scheduler_batch_partition_streak_summaries()
+                .into_iter()
+                .map(|(partitions, batch_count)| {
+                    WorkloadParallelBatchPartitionStreak::new(partitions, batch_count)
+                }),
         )
         .with_data_cache_parallel_scheduler_partition_activities(
             run.data_cache_parallel_scheduler_partition_activities(),
@@ -322,6 +330,46 @@ mod tests {
 
     fn empty_coherence_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
         ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new())
+    }
+
+    fn batch_scheduler_turn(
+        partitions: u32,
+        worker_limit: usize,
+        scheduled_partitions: &[PartitionId],
+    ) -> RiscvClusterTurn {
+        let mut scheduler =
+            PartitionedScheduler::with_parallel_worker_limit(partitions, 4, worker_limit).unwrap();
+        for partition in scheduled_partitions {
+            scheduler
+                .schedule_parallel_at(*partition, 0, |_| {})
+                .unwrap();
+        }
+        let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+        RiscvClusterTurn::parallel_scheduler(plan, recorded)
+    }
+
+    fn data_cache_batch_run(
+        partitions: u32,
+        worker_limit: usize,
+        scheduled_partitions: &[PartitionId],
+    ) -> ParallelCoherenceRunSummary {
+        let mut scheduler =
+            PartitionedScheduler::with_parallel_worker_limit(partitions, 4, worker_limit).unwrap();
+        for partition in scheduled_partitions {
+            scheduler
+                .schedule_parallel_at(*partition, 0, |_| {})
+                .unwrap();
+        }
+        ParallelCoherenceRunSummary::new(
+            scheduler.run_until_idle_parallel_recorded().unwrap(),
+            0,
+            0,
+            0,
+            Vec::new(),
+            Vec::new(),
+            empty_coherence_wait_for_graphs(),
+        )
     }
 
     fn qos_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
@@ -509,6 +557,51 @@ mod tests {
         assert_eq!(sends[0].delay(), 4);
         assert_eq!(sends[0].order(), 0);
         assert!(summary.has_full_system_parallel_scheduler_remote_sends());
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_full_system_batch_partition_streaks() {
+        let cpu = PartitionId::new(1);
+        let cache = PartitionId::new(2);
+        let run = RiscvSystemRun::new(
+            vec![batch_scheduler_turn(3, 2, &[cpu, cache])],
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 8 },
+        )
+        .with_data_cache_runs(vec![data_cache_batch_run(3, 2, &[cpu, cache])]);
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(
+            summary.full_system_parallel_scheduler_batch_partition_streaks(),
+            vec![WorkloadParallelBatchPartitionStreak::new([cpu, cache], 2)],
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+                cpu, cache,
+            ]),
+            2,
+        );
     }
 
     #[test]
