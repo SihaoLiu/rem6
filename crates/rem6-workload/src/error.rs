@@ -36,6 +36,7 @@ pub enum WorkloadError {
     Memory(MemoryError),
     EmptyWorkloadId,
     EmptyWorkloadSuiteId,
+    ZeroWorkloadSuiteWorkers,
     EmptyResourceId,
     EmptyRouteId,
     EmptyEndpoint,

@@ -139,18 +139,29 @@ impl WorkloadSuiteBuilder {
 pub struct WorkloadSuiteReplayPlan {
     suite_identity: WorkloadSuiteIdentity,
     plans: Vec<WorkloadReplayPlan>,
+    entries: Vec<WorkloadSuiteReplayEntry>,
 }
 
 impl WorkloadSuiteReplayPlan {
     pub fn from_suite(suite: &WorkloadSuite) -> Result<Self, WorkloadError> {
-        let plans = suite
+        let mut plans = Vec::new();
+        let entries = suite
             .entries()
             .iter()
-            .map(|entry| WorkloadReplayPlan::from_manifest(entry.manifest()))
+            .map(|entry| {
+                let plan = WorkloadReplayPlan::from_manifest(entry.manifest())?;
+                let manifest_identity = plan.manifest_identity();
+                plans.push(plan);
+                Ok(WorkloadSuiteReplayEntry::new(
+                    entry.workload_id().clone(),
+                    manifest_identity,
+                ))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             suite_identity: suite.identity(),
             plans,
+            entries,
         })
     }
 
@@ -158,8 +169,133 @@ impl WorkloadSuiteReplayPlan {
         self.suite_identity.clone()
     }
 
+    pub fn entries(&self) -> &[WorkloadSuiteReplayEntry] {
+        &self.entries
+    }
+
     pub fn plans(&self) -> &[WorkloadReplayPlan] {
         &self.plans
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteReplayEntry {
+    workload_id: WorkloadId,
+    manifest_identity: WorkloadManifestIdentity,
+}
+
+impl WorkloadSuiteReplayEntry {
+    fn new(workload_id: WorkloadId, manifest_identity: WorkloadManifestIdentity) -> Self {
+        Self {
+            workload_id,
+            manifest_identity,
+        }
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchPlan {
+    suite_identity: WorkloadSuiteIdentity,
+    worker_count: usize,
+    records: Vec<WorkloadSuiteDispatchRecord>,
+}
+
+impl WorkloadSuiteDispatchPlan {
+    pub fn from_replay_plan(
+        plan: &WorkloadSuiteReplayPlan,
+        worker_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if worker_count == 0 {
+            return Err(WorkloadError::ZeroWorkloadSuiteWorkers);
+        }
+
+        let records = plan
+            .entries()
+            .iter()
+            .enumerate()
+            .map(|(order, entry)| {
+                WorkloadSuiteDispatchRecord::new(
+                    entry.workload_id().clone(),
+                    entry.manifest_identity(),
+                    order,
+                    order % worker_count,
+                )
+            })
+            .collect();
+
+        Ok(Self {
+            suite_identity: plan.suite_identity(),
+            worker_count,
+            records,
+        })
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub fn active_worker_count(&self) -> usize {
+        self.records
+            .iter()
+            .map(WorkloadSuiteDispatchRecord::worker_index)
+            .max()
+            .map_or(0, |worker| worker + 1)
+    }
+
+    pub fn records(&self) -> &[WorkloadSuiteDispatchRecord] {
+        &self.records
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchRecord {
+    workload_id: WorkloadId,
+    manifest_identity: WorkloadManifestIdentity,
+    dispatch_order: usize,
+    worker_index: usize,
+}
+
+impl WorkloadSuiteDispatchRecord {
+    fn new(
+        workload_id: WorkloadId,
+        manifest_identity: WorkloadManifestIdentity,
+        dispatch_order: usize,
+        worker_index: usize,
+    ) -> Self {
+        Self {
+            workload_id,
+            manifest_identity,
+            dispatch_order,
+            worker_index,
+        }
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+
+    pub const fn dispatch_order(&self) -> usize {
+        self.dispatch_order
+    }
+
+    pub const fn worker_index(&self) -> usize {
+        self.worker_index
     }
 }
 

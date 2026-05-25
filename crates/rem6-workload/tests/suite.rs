@@ -2,8 +2,8 @@ use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteId, WorkloadSuiteReplayPlan,
-    WorkloadSuiteResult,
+    WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchPlan,
+    WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -158,4 +158,72 @@ fn workload_suite_result_verifies_manifest_identities() {
                 && expected == alpha.identity()
                 && actual == beta.identity()
     ));
+}
+
+#[test]
+fn workload_suite_dispatch_plan_assigns_sorted_manifests_to_workers() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("dispatch"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let reordered = WorkloadSuite::builder(suite_id("dispatch"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let reordered_plan = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&reordered).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(plan, reordered_plan);
+    assert_eq!(plan.suite_identity(), suite.identity());
+    assert_eq!(plan.worker_count(), 2);
+    assert_eq!(plan.active_worker_count(), 2);
+    assert_eq!(plan.records().len(), 3);
+    assert_eq!(plan.records()[0].workload_id(), alpha.id());
+    assert_eq!(plan.records()[0].worker_index(), 0);
+    assert_eq!(plan.records()[0].dispatch_order(), 0);
+    assert_eq!(plan.records()[0].manifest_identity(), alpha.identity());
+    assert_eq!(plan.records()[1].workload_id(), beta.id());
+    assert_eq!(plan.records()[1].worker_index(), 1);
+    assert_eq!(plan.records()[1].dispatch_order(), 1);
+    assert_eq!(plan.records()[2].workload_id(), gamma.id());
+    assert_eq!(plan.records()[2].worker_index(), 0);
+    assert_eq!(plan.records()[2].dispatch_order(), 2);
+}
+
+#[test]
+fn workload_suite_dispatch_plan_rejects_zero_workers() {
+    let suite = WorkloadSuite::builder(suite_id("zero-workers"))
+        .add_manifest(manifest("alpha", "sha256:alpha"))
+        .unwrap()
+        .build()
+        .unwrap();
+    let error = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        0,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, WorkloadError::ZeroWorkloadSuiteWorkers));
 }

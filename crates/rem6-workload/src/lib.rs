@@ -76,8 +76,9 @@ pub use result::{
     WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
 };
 pub use suite::{
-    WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteEntry, WorkloadSuiteId,
-    WorkloadSuiteIdentity, WorkloadSuiteReplayPlan, WorkloadSuiteResult, WorkloadSuiteResultEntry,
+    WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord,
+    WorkloadSuiteEntry, WorkloadSuiteId, WorkloadSuiteIdentity, WorkloadSuiteReplayEntry,
+    WorkloadSuiteReplayPlan, WorkloadSuiteResult, WorkloadSuiteResultEntry,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,

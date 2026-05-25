@@ -16,6 +16,9 @@ impl fmt::Display for WorkloadError {
             Self::EmptyWorkloadSuiteId => {
                 write!(formatter, "workload suite id must not be empty")
             }
+            Self::ZeroWorkloadSuiteWorkers => {
+                write!(formatter, "workload suite worker count must be positive")
+            }
             Self::EmptyResourceId => write!(formatter, "resource id must not be empty"),
             Self::EmptyRouteId => write!(formatter, "route id must not be empty"),
             Self::EmptyEndpoint => write!(formatter, "endpoint id must not be empty"),
