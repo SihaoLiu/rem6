@@ -110,6 +110,25 @@ impl RiscvSystemRun {
         collect_batch_worker_count_summaries(self.full_system_parallel_scheduler_batches())
     }
 
+    pub fn parallel_scheduler_batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        batch_count_for_worker_count(self.parallel_scheduler_batches(), worker_count)
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_count_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> usize {
+        batch_count_for_worker_count(self.data_cache_parallel_scheduler_batches(), worker_count)
+    }
+
+    pub fn full_system_parallel_scheduler_batch_count_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> usize {
+        self.parallel_scheduler_batch_count_for_worker_count(worker_count)
+            + self.data_cache_parallel_scheduler_batch_count_for_worker_count(worker_count)
+    }
+
     pub fn parallel_scheduler_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
         batch_count_at_or_above(self.parallel_scheduler_batches(), minimum_worker_count)
     }
@@ -267,6 +286,16 @@ fn batch_count_at_or_above(
     batches
         .into_iter()
         .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .count()
+}
+
+fn batch_count_for_worker_count(
+    batches: impl IntoIterator<Item = ParallelEpochBatchRecord>,
+    worker_count: usize,
+) -> usize {
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() == worker_count)
         .count()
 }
 

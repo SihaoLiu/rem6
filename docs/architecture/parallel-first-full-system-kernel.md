@@ -426,7 +426,8 @@ fine-grained evidence for batch count, dispatch progress, max-worker use,
 thresholded multi-worker batch activity, exact worker-count bucket activity,
 and total-worker activity, so a lower aggregate or worker-count counter cannot
 hide detailed partition-set execution records.
-The system-run object exposes batch-worker, exact partition-set, and
+The system-run object exposes batch-worker summaries, exact worker-count batch
+queries, minimum-worker batch queries, exact partition-set summaries, and
 same-partition-set streak summaries directly for CPU-scheduler, data-cache
 scheduler, and merged full-system scopes, so simulation diagnostics can inspect
 parallel occupancy before workload replay translates it into manifest evidence.

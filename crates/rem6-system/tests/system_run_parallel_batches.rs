@@ -123,6 +123,25 @@ fn system_run_summarizes_parallel_batch_worker_and_partition_sets() {
         run.full_system_parallel_scheduler_batch_worker_count_summaries(),
         vec![(1, 1), (2, 2)],
     );
+    assert_eq!(run.parallel_scheduler_batch_count_for_worker_count(1), 1);
+    assert_eq!(run.parallel_scheduler_batch_count_for_worker_count(2), 1);
+    assert_eq!(run.parallel_scheduler_batch_count_for_worker_count(3), 0);
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_count_for_worker_count(2),
+        1,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_count_for_worker_count(1),
+        1,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_count_for_worker_count(2),
+        2,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_count_for_worker_count(3),
+        0,
+    );
     assert_eq!(run.parallel_scheduler_batch_count_at_or_above(2), 1);
     assert_eq!(
         run.data_cache_parallel_scheduler_batch_count_at_or_above(2),
