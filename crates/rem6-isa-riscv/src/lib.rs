@@ -344,104 +344,54 @@ fn decode_store(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 }
 
 fn decode_atomic(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    match (funct5(raw), funct3(raw), rs2(raw).index()) {
-        (0x02, 0x3, 0) => Ok(RiscvInstruction::LoadReserved {
+    let width = match funct3(raw) {
+        0x2 => MemoryWidth::Word,
+        0x3 => MemoryWidth::Doubleword,
+        _ => return Err(RiscvError::UnknownEncoding { raw }),
+    };
+
+    match (funct5(raw), rs2(raw).index()) {
+        (0x02, 0) => Ok(RiscvInstruction::LoadReserved {
             rd: rd(raw),
             rs1: rs1(raw),
-            width: MemoryWidth::Doubleword,
+            width,
             acquire: aq(raw),
             release: rl(raw),
         }),
-        (0x03, 0x3, _) => Ok(RiscvInstruction::StoreConditional {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x01, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::Swap,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x00, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
+        (0x03, _) => Ok(RiscvInstruction::StoreConditional {
             rd: rd(raw),
             rs1: rs1(raw),
             rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::Add,
+            width,
             acquire: aq(raw),
             release: rl(raw),
         }),
-        (0x04, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::Xor,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x08, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::Or,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x0c, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::And,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x10, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::MinSigned,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x14, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::MaxSigned,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x18, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::MinUnsigned,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x1c, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width: MemoryWidth::Doubleword,
-            op: AtomicMemoryOp::MaxUnsigned,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        _ => Err(RiscvError::UnknownEncoding { raw }),
+        (funct5, _) => atomic_memory_op(funct5)
+            .map(|op| RiscvInstruction::AtomicMemory {
+                rd: rd(raw),
+                rs1: rs1(raw),
+                rs2: rs2(raw),
+                width,
+                op,
+                acquire: aq(raw),
+                release: rl(raw),
+            })
+            .ok_or(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+fn atomic_memory_op(funct5: u32) -> Option<AtomicMemoryOp> {
+    match funct5 {
+        0x00 => Some(AtomicMemoryOp::Add),
+        0x01 => Some(AtomicMemoryOp::Swap),
+        0x04 => Some(AtomicMemoryOp::Xor),
+        0x08 => Some(AtomicMemoryOp::Or),
+        0x0c => Some(AtomicMemoryOp::And),
+        0x10 => Some(AtomicMemoryOp::MinSigned),
+        0x14 => Some(AtomicMemoryOp::MaxSigned),
+        0x18 => Some(AtomicMemoryOp::MinUnsigned),
+        0x1c => Some(AtomicMemoryOp::MaxUnsigned),
+        _ => None,
     }
 }
 

@@ -1689,7 +1689,8 @@ fn record_load_completion(
             state.hart.write(*rd, value);
         }
         MemoryAccessKind::LoadReserved { rd, width, .. } => {
-            let value = load_response_value(data.expect(missing_data), *width, false);
+            let signed = *width == MemoryWidth::Word;
+            let value = load_response_value(data.expect(missing_data), *width, signed);
             state.hart.write(*rd, value);
             state.reservation = Some(RiscvLoadReservation::new(
                 access.physical_address,
@@ -1701,7 +1702,8 @@ fn record_load_completion(
             state.reservation = None;
         }
         MemoryAccessKind::AtomicMemory { rd, width, .. } => {
-            let value = load_response_value(data.expect(missing_data), *width, false);
+            let signed = *width == MemoryWidth::Word;
+            let value = load_response_value(data.expect(missing_data), *width, signed);
             state.hart.write(*rd, value);
         }
         MemoryAccessKind::Store { .. } => {}

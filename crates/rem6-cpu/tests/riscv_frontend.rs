@@ -105,6 +105,11 @@ fn reg(index: u8) -> Register {
 
 type AtomicBinary = fn(u64, u64) -> u64;
 type LogicalAmoCase = (u32, AtomicBinary);
+type WordAmoCase = (u32, u32, u32);
+
+fn sign_extend_word(raw: u32) -> u64 {
+    i64::from(raw as i32) as u64
+}
 
 fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
     CpuCore::new(
@@ -1031,6 +1036,91 @@ fn riscv_core_store_conditional_succeeds_with_matching_reservation() {
 }
 
 #[test]
+fn riscv_core_word_reserved_pair_uses_word_size_and_sign_extends_load() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9008);
+    core.write_register(reg(6), 0x0102_0304_8506_0708);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            atomic_type(0x02, true, false, 0, 2, 0x2, 5),
+            atomic_type(0x03, false, true, 6, 2, 0x2, 7),
+        ],
+        &[(0x9008, vec![0xf0, 0xff, 0xff, 0xff, 0xaa, 0xbb, 0xcc, 0xdd])],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        event.execution().memory_access(),
+        Some(&MemoryAccessKind::LoadReserved {
+            rd: reg(5),
+            address: 0x9008,
+            width: MemoryWidth::Word,
+            acquire: true,
+            release: false,
+        })
+    );
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    assert_eq!(core.read_register(reg(5)), 0xffff_ffff_ffff_fff0);
+    assert_eq!(
+        core.load_reservation(),
+        Some(RiscvLoadReservation::new(
+            Address::new(0x9008),
+            AccessSize::new(4).unwrap()
+        ))
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        event.execution().memory_access(),
+        Some(&MemoryAccessKind::StoreConditional {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Word,
+            value: 0x0102_0304_8506_0708,
+            acquire: false,
+            release: true,
+        })
+    );
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    assert_eq!(core.read_register(reg(7)), 0);
+    assert_eq!(core.load_reservation(), None);
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 8, 42),
+        vec![0x08, 0x07, 0x06, 0x85, 0xaa, 0xbb, 0xcc, 0xdd]
+    );
+}
+
+#[test]
 fn riscv_core_store_conditional_fails_without_matching_reservation() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
@@ -1283,6 +1373,69 @@ fn riscv_core_min_max_amo_ops_write_selected_value_and_return_old_value() {
         assert_eq!(
             read_store_bytes(&store, 0x9008, 8, 47 + index as u64),
             expected.to_le_bytes()
+        );
+        let events = core.data_access_events();
+        assert_eq!(
+            events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+            vec![
+                RiscvDataAccessEventKind::Issued,
+                RiscvDataAccessEventKind::Completed,
+            ]
+        );
+        assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+        assert_eq!(events[1].data(), Some(&old.to_le_bytes()[..]));
+    }
+}
+
+#[test]
+fn riscv_core_word_amo_ops_write_word_and_sign_extend_old_value() {
+    let cases: [WordAmoCase; 9] = [
+        (0x00, 0x20, 0x10),
+        (0x01, 0x0000_0007, 0x0000_0007),
+        (0x04, 0x0000_0007, 0xffff_fff7),
+        (0x08, 0x0000_0007, 0xffff_fff7),
+        (0x0c, 0x0000_0007, 0x0000_0000),
+        (0x10, 0x0000_0007, 0xffff_fff0),
+        (0x14, 0x0000_0007, 0x0000_0007),
+        (0x18, 0x0000_0007, 0x0000_0007),
+        (0x1c, 0x0000_0007, 0xffff_fff0),
+    ];
+
+    for (index, (funct5, operand, expected)) in cases.into_iter().enumerate() {
+        let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+        let core = data_core(fetch_route, data_route, 0x8000);
+        let old = 0xffff_fff0u32;
+        core.write_register(reg(2), 0x9008);
+        core.write_register(reg(6), u64::from(operand));
+        let store = loaded_store_with_data(
+            0x8000,
+            atomic_type(funct5, true, true, 6, 2, 0x2, 7),
+            0x9008,
+            vec![0xf0, 0xff, 0xff, 0xff, 0xaa, 0xbb, 0xcc, 0xdd],
+        );
+
+        fetch_one(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+        core.execute_next_completed_fetch().unwrap().unwrap();
+        issue_one_data_access(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+
+        assert_eq!(core.read_register(reg(7)), sign_extend_word(old));
+        let mut expected_bytes = expected.to_le_bytes().to_vec();
+        expected_bytes.extend([0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(
+            read_store_bytes(&store, 0x9008, 8, 48 + index as u64),
+            expected_bytes
         );
         let events = core.data_access_events();
         assert_eq!(

@@ -465,6 +465,119 @@ fn hart_reports_atomic_min_max_accesses_without_mutating_register() {
 }
 
 #[test]
+fn hart_reports_word_reserved_accesses_without_mutating_register() {
+    let mut hart = RiscvHartState::new(0x8800);
+    hart.write(reg(2), 0x9008);
+    hart.write(reg(6), 0x0102_0304_8506_0708);
+
+    let load_reserved =
+        RiscvInstruction::decode(atomic_type(0x02, true, false, 0, 2, 0x2, 5)).unwrap();
+    assert_eq!(
+        load_reserved,
+        RiscvInstruction::LoadReserved {
+            rd: reg(5),
+            rs1: reg(2),
+            width: MemoryWidth::Word,
+            acquire: true,
+            release: false,
+        }
+    );
+    let load_record = hart.execute(load_reserved).unwrap();
+    assert_eq!(load_record.next_pc(), 0x8804);
+    assert_eq!(
+        load_record.memory_access(),
+        Some(&MemoryAccessKind::LoadReserved {
+            rd: reg(5),
+            address: 0x9008,
+            width: MemoryWidth::Word,
+            acquire: true,
+            release: false,
+        })
+    );
+    assert_eq!(hart.read(reg(5)), 0);
+
+    let store_conditional =
+        RiscvInstruction::decode(atomic_type(0x03, false, true, 6, 2, 0x2, 7)).unwrap();
+    assert_eq!(
+        store_conditional,
+        RiscvInstruction::StoreConditional {
+            rd: reg(7),
+            rs1: reg(2),
+            rs2: reg(6),
+            width: MemoryWidth::Word,
+            acquire: false,
+            release: true,
+        }
+    );
+    let store_record = hart.execute(store_conditional).unwrap();
+    assert_eq!(store_record.next_pc(), 0x8808);
+    assert_eq!(
+        store_record.memory_access(),
+        Some(&MemoryAccessKind::StoreConditional {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Word,
+            value: 0x0102_0304_8506_0708,
+            acquire: false,
+            release: true,
+        })
+    );
+    assert_eq!(hart.read(reg(7)), 0);
+}
+
+#[test]
+fn hart_reports_word_atomic_accesses_without_mutating_register() {
+    let cases = [
+        (0x00, AtomicMemoryOp::Add, 0x8c00),
+        (0x01, AtomicMemoryOp::Swap, 0x9000),
+        (0x04, AtomicMemoryOp::Xor, 0x9400),
+        (0x08, AtomicMemoryOp::Or, 0x9800),
+        (0x0c, AtomicMemoryOp::And, 0x9c00),
+        (0x10, AtomicMemoryOp::MinSigned, 0xa000),
+        (0x14, AtomicMemoryOp::MaxSigned, 0xa400),
+        (0x18, AtomicMemoryOp::MinUnsigned, 0xa800),
+        (0x1c, AtomicMemoryOp::MaxUnsigned, 0xac00),
+    ];
+
+    for (funct5, op, pc) in cases {
+        let mut hart = RiscvHartState::new(pc);
+        hart.write(reg(2), 0x9008);
+        hart.write(reg(6), 0x0102_0304_8506_0708);
+
+        let instruction =
+            RiscvInstruction::decode(atomic_type(funct5, true, true, 6, 2, 0x2, 7)).unwrap();
+        assert_eq!(
+            instruction,
+            RiscvInstruction::AtomicMemory {
+                rd: reg(7),
+                rs1: reg(2),
+                rs2: reg(6),
+                width: MemoryWidth::Word,
+                op,
+                acquire: true,
+                release: true,
+            }
+        );
+
+        let atomic = hart.execute(instruction).unwrap();
+        assert_eq!(atomic.next_pc(), pc + 4);
+        assert_eq!(
+            atomic.memory_access(),
+            Some(&MemoryAccessKind::AtomicMemory {
+                rd: reg(7),
+                address: 0x9008,
+                width: MemoryWidth::Word,
+                op,
+                value: 0x0102_0304_8506_0708,
+                acquire: true,
+                release: true,
+            })
+        );
+        assert_eq!(hart.read(reg(7)), 0);
+    }
+}
+
+#[test]
 fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
     let mut hart = RiscvHartState::new(0x7000);
 
