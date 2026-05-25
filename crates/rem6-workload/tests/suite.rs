@@ -565,6 +565,51 @@ fn workload_suite_dispatch_plan_builds_planned_timeline_from_weighted_estimates(
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_materializes_planned_execution_summary() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-timeline-summary"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap();
+    let timeline = plan.planned_execution_timeline().unwrap();
+
+    let summary = timeline.to_execution_summary().unwrap();
+
+    assert_eq!(summary.suite_identity(), suite.identity());
+    assert_eq!(summary.records().len(), 4);
+    assert_eq!(summary.records()[0].workload_id(), alpha.id());
+    assert_eq!(summary.records()[0].start_tick(), 0);
+    assert_eq!(summary.records()[0].final_tick(), 8);
+    assert_eq!(summary.records()[3].workload_id(), gamma.id());
+    assert_eq!(summary.records()[3].start_tick(), 2);
+    assert_eq!(summary.records()[3].final_tick(), 9);
+    assert_eq!(summary.maximum_simultaneous_workers(), 2);
+    timeline.verify_execution_summary(&summary).unwrap();
+}
+
+#[test]
 fn workload_suite_dispatch_plan_requires_estimates_for_planned_timeline() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");
