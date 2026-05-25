@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -198,6 +198,38 @@ pub(crate) fn parallel_remote_send_count(
         .iter()
         .filter(|send| send.source() == source && send.target() == target)
         .count()
+}
+
+pub(crate) fn collect_parallel_remote_source_partitions(
+    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<PartitionId> {
+    let mut partitions = BTreeSet::new();
+    for flow in flows {
+        if flow.send_count() != 0 {
+            partitions.insert(flow.source());
+        }
+    }
+    for send in sends {
+        partitions.insert(send.source());
+    }
+    partitions.into_iter().collect()
+}
+
+pub(crate) fn collect_parallel_remote_target_partitions(
+    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<PartitionId> {
+    let mut partitions = BTreeSet::new();
+    for flow in flows {
+        if flow.send_count() != 0 {
+            partitions.insert(flow.target());
+        }
+    }
+    for send in sends {
+        partitions.insert(send.target());
+    }
+    partitions.into_iter().collect()
 }
 
 pub(crate) fn collect_parallel_partition_activities(

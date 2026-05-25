@@ -57,8 +57,9 @@ isolated bugs:
   parallel runs also expose remote-send records with source, target, tick, and
   source-local order at batch, epoch, and run scope, source-target flow records
   with counts, first/last delivery ticks, and min/max delay bounds, plus counts
-  at batch, epoch, run, source-partition activity, and target-partition activity
-  scope. RISC-V cluster, coherence, full-system run, and workload-result summaries preserve
+  and unique source/target partition sets at batch, epoch, run,
+  source-partition activity, and target-partition activity scope. RISC-V
+  cluster, coherence, full-system run, and workload-result summaries preserve
   those flow records across epoch merges, and workload-result replay derives route-level flow count,
   first/last delivery tick, and min/max delay evidence from exact remote-send
   records when aggregate flow records are absent or weaker. Workload manifests and replay
@@ -444,6 +445,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   consecutive partition-set streaks, per-partition activity summaries,
   replay-plan
   validation of exact expected remote-flow actual sets and first/last tick windows,
+  remote endpoint source/target partition fan-in and fan-out summaries,
   minimum scheduler epoch progress plus dispatch progress from the strongest
   available aggregate counts, batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
   minimum max-worker use derived from the strongest available aggregate,

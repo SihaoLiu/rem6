@@ -29,6 +29,7 @@ use crate::result_partition_activity::{
 };
 
 mod full_system_parallel;
+mod remote_endpoints;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {

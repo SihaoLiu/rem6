@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::scheduler::{ConservativeRunSummary, PartitionEventId, PartitionId, RunSummary};
 use crate::{
@@ -154,6 +154,22 @@ impl ParallelEpochBatchRecord {
 
     pub fn remote_sends(&self) -> &[ParallelRemoteSendRecord] {
         &self.remote_sends
+    }
+
+    pub fn remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_source_partitions(self.remote_sends.iter())
+    }
+
+    pub fn remote_source_partition_count(&self) -> usize {
+        self.remote_source_partitions().len()
+    }
+
+    pub fn remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_target_partitions(self.remote_sends.iter())
+    }
+
+    pub fn remote_target_partition_count(&self) -> usize {
+        self.remote_target_partitions().len()
     }
 
     pub fn progress_transitions(&self) -> &[ParallelProgressTransitionRecord] {
@@ -916,6 +932,30 @@ impl RecordedRunSummary {
             .collect()
     }
 
+    pub fn remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_source_partitions(
+            self.batches
+                .iter()
+                .flat_map(ParallelEpochBatchRecord::remote_sends),
+        )
+    }
+
+    pub fn remote_source_partition_count(&self) -> usize {
+        self.remote_source_partitions().len()
+    }
+
+    pub fn remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_target_partitions(
+            self.batches
+                .iter()
+                .flat_map(ParallelEpochBatchRecord::remote_sends),
+        )
+    }
+
+    pub fn remote_target_partition_count(&self) -> usize {
+        self.remote_target_partitions().len()
+    }
+
     pub fn remote_flow_count(&self, source: PartitionId, target: PartitionId) -> usize {
         self.batches
             .iter()
@@ -1167,6 +1207,32 @@ impl RecordedConservativeRunSummary {
             .collect()
     }
 
+    pub fn remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_source_partitions(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.batches().iter())
+                .flat_map(ParallelEpochBatchRecord::remote_sends),
+        )
+    }
+
+    pub fn remote_source_partition_count(&self) -> usize {
+        self.remote_source_partitions().len()
+    }
+
+    pub fn remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_target_partitions(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.batches().iter())
+                .flat_map(ParallelEpochBatchRecord::remote_sends),
+        )
+    }
+
+    pub fn remote_target_partition_count(&self) -> usize {
+        self.remote_target_partitions().len()
+    }
+
     pub fn remote_flow_count(&self, source: PartitionId, target: PartitionId) -> usize {
         self.epochs
             .iter()
@@ -1336,4 +1402,28 @@ where
             .or_insert_with(|| ParallelRemoteFlowRecord::from_send(*send));
     }
     flows.into_values().collect()
+}
+
+fn collect_remote_source_partitions<'a, I>(remote_sends: I) -> Vec<PartitionId>
+where
+    I: IntoIterator<Item = &'a ParallelRemoteSendRecord>,
+{
+    remote_sends
+        .into_iter()
+        .map(|send| send.source())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_remote_target_partitions<'a, I>(remote_sends: I) -> Vec<PartitionId>
+where
+    I: IntoIterator<Item = &'a ParallelRemoteSendRecord>,
+{
+    remote_sends
+        .into_iter()
+        .map(|send| send.target())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }

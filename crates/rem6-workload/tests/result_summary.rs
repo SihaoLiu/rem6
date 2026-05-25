@@ -839,6 +839,93 @@ fn workload_result_records_parallel_batch_partition_streaks_from_ordered_batches
 }
 
 #[test]
+fn workload_result_reports_remote_endpoint_partitions() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 2, 3, 7),
+            ParallelRemoteFlowRecord::new(PartitionId::new(1), PartitionId::new(2), 1, 4, 8),
+        ])
+        .with_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(1),
+            PartitionId::new(3),
+            5,
+            11,
+            0,
+        )])
+        .with_data_cache_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(2), 3, 13, 19),
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 1, 17, 23),
+        ])
+        .with_data_cache_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(6),
+            PartitionId::new(5),
+            19,
+            29,
+            0,
+        )]);
+
+    assert_eq!(
+        summary.parallel_scheduler_remote_source_partitions(),
+        vec![PartitionId::new(0), PartitionId::new(1)],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_source_partition_count(),
+        2
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_target_partitions(),
+        vec![PartitionId::new(2), PartitionId::new(3)],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_target_partition_count(),
+        2
+    );
+
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_source_partitions(),
+        vec![PartitionId::new(4), PartitionId::new(6)],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_source_partition_count(),
+        2,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_target_partitions(),
+        vec![PartitionId::new(2), PartitionId::new(5)],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_target_partition_count(),
+        2,
+    );
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_source_partitions(),
+        vec![
+            PartitionId::new(0),
+            PartitionId::new(1),
+            PartitionId::new(4),
+            PartitionId::new(6),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_source_partition_count(),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_target_partitions(),
+        vec![
+            PartitionId::new(2),
+            PartitionId::new(3),
+            PartitionId::new(5)
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_target_partition_count(),
+        3,
+    );
+}
+
+#[test]
 fn workload_result_derives_parallel_activity_from_batch_partition_streaks() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_batch_partition_streak_sequence([
