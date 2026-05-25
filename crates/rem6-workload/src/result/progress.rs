@@ -88,8 +88,35 @@ impl WorkloadParallelExecutionSummary {
         &self.scheduler_livelock_diagnostics
     }
 
+    pub fn parallel_scheduler_livelock_diagnostic_subjects(&self) -> Vec<WaitForNode> {
+        collect_livelock_diagnostic_subjects(&self.scheduler_livelock_diagnostics)
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostics_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Vec<LivelockDiagnostic> {
+        collect_livelock_diagnostics_by_subject(&self.scheduler_livelock_diagnostics, subject)
+    }
+
     pub fn data_cache_parallel_scheduler_livelock_diagnostics(&self) -> &[LivelockDiagnostic] {
         &self.data_cache_parallel_scheduler_livelock_diagnostics
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_subjects(&self) -> Vec<WaitForNode> {
+        collect_livelock_diagnostic_subjects(
+            &self.data_cache_parallel_scheduler_livelock_diagnostics,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostics_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Vec<LivelockDiagnostic> {
+        collect_livelock_diagnostics_by_subject(
+            &self.data_cache_parallel_scheduler_livelock_diagnostics,
+            subject,
+        )
     }
 
     pub fn full_system_livelock_diagnostics(&self) -> Vec<LivelockDiagnostic> {
@@ -101,6 +128,19 @@ impl WorkloadParallelExecutionSummary {
             .chain(&self.data_cache_parallel_scheduler_livelock_diagnostics)
             .cloned()
             .collect()
+    }
+
+    pub fn full_system_livelock_diagnostic_subjects(&self) -> Vec<WaitForNode> {
+        let diagnostics = self.full_system_livelock_diagnostics();
+        collect_livelock_diagnostic_subjects(&diagnostics)
+    }
+
+    pub fn full_system_livelock_diagnostics_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Vec<LivelockDiagnostic> {
+        let diagnostics = self.full_system_livelock_diagnostics();
+        collect_livelock_diagnostics_by_subject(&diagnostics, subject)
     }
 
     pub fn parallel_scheduler_progress_transition_count_by_kind(
@@ -639,5 +679,27 @@ fn collect_progress_transition_subjects<'a>(
         .map(|transition| transition.subject().clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
+        .collect()
+}
+
+fn collect_livelock_diagnostic_subjects<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+) -> Vec<WaitForNode> {
+    diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.subject().clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_livelock_diagnostics_by_subject<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    subject: &WaitForNode,
+) -> Vec<LivelockDiagnostic> {
+    diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.subject() == subject)
+        .cloned()
         .collect()
 }

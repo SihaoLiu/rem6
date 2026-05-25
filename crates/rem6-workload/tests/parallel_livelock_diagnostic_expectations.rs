@@ -163,6 +163,61 @@ fn workload_result_preserves_livelock_diagnostic_records() {
 }
 
 #[test]
+fn workload_result_queries_livelock_diagnostics_by_subject() {
+    let cpu_subject = component("cpu-progress-loop");
+    let cache_subject = component("cache-progress-loop");
+    let missing_subject = component("missing-progress-loop");
+    let scheduler_diagnostic = livelock_diagnostic(
+        cpu_subject.clone(),
+        1,
+        [(LivelockTransitionKind::ProtocolRetry, 0)],
+    );
+    let data_cache_diagnostic = livelock_diagnostic(
+        cache_subject.clone(),
+        1,
+        [(LivelockTransitionKind::MessageRetry, 3)],
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(1, [scheduler_diagnostic.clone()])
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(
+            1,
+            [data_cache_diagnostic.clone()],
+        )
+        .with_full_system_livelock_diagnostic_records([
+            data_cache_diagnostic.clone(),
+            scheduler_diagnostic.clone(),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_subjects(),
+        vec![cpu_subject.clone()],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostic_subjects(),
+        vec![cache_subject.clone()],
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_subjects(),
+        vec![cache_subject.clone(), cpu_subject.clone()],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostics_by_subject(&cpu_subject),
+        vec![scheduler_diagnostic.clone()],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostics_by_subject(&cache_subject),
+        vec![data_cache_diagnostic.clone()],
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostics_by_subject(&cache_subject),
+        vec![data_cache_diagnostic],
+    );
+    assert!(summary
+        .full_system_livelock_diagnostics_by_subject(&missing_subject)
+        .is_empty());
+}
+
+#[test]
 fn workload_manifest_records_livelock_transition_threshold() {
     let thresholded =
         expected_clean_with_livelock_threshold(WorkloadParallelDiagnosticScope::FullSystem, 3);
