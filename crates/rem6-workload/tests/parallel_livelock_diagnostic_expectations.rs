@@ -218,6 +218,58 @@ fn workload_result_queries_livelock_diagnostics_by_subject() {
 }
 
 #[test]
+fn workload_result_summarizes_livelock_diagnostic_subjects() {
+    let shared_subject = component("shared-progress-loop");
+    let queue_subject = component("scheduler-queue-loop");
+    let scheduler_diagnostic = livelock_diagnostic(
+        shared_subject.clone(),
+        2,
+        [
+            (LivelockTransitionKind::ProtocolRetry, 10),
+            (LivelockTransitionKind::ProtocolRetry, 13),
+        ],
+    );
+    let queue_diagnostic = livelock_diagnostic(
+        queue_subject.clone(),
+        1,
+        [(LivelockTransitionKind::QueueRotation, 20)],
+    );
+    let data_cache_diagnostic = livelock_diagnostic(
+        shared_subject.clone(),
+        2,
+        [
+            (LivelockTransitionKind::MessageRetry, 3),
+            (LivelockTransitionKind::ProtocolRetry, 8),
+        ],
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            3,
+            [scheduler_diagnostic.clone(), queue_diagnostic.clone()],
+        )
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(
+            2,
+            [data_cache_diagnostic.clone()],
+        );
+
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_subject_summaries(),
+        vec![
+            (queue_subject.clone(), 1, 1, 20, 20),
+            (shared_subject.clone(), 1, 2, 10, 13),
+        ],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries(),
+        vec![(shared_subject.clone(), 1, 2, 3, 8)],
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_subject_summaries(),
+        vec![(queue_subject, 1, 1, 20, 20), (shared_subject, 2, 4, 3, 13),],
+    );
+}
+
+#[test]
 fn workload_result_summarizes_livelock_diagnostic_transition_kinds() {
     let scheduler_diagnostic = livelock_diagnostic(
         component("cpu-progress-loop"),

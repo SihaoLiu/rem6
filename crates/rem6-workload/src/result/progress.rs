@@ -92,6 +92,12 @@ impl WorkloadParallelExecutionSummary {
         collect_livelock_diagnostic_subjects(&self.scheduler_livelock_diagnostics)
     }
 
+    pub fn parallel_scheduler_livelock_diagnostic_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, u64, Tick, Tick)> {
+        collect_livelock_diagnostic_subject_summaries(&self.scheduler_livelock_diagnostics)
+    }
+
     pub fn parallel_scheduler_livelock_diagnostics_by_subject(
         &self,
         subject: &WaitForNode,
@@ -153,6 +159,14 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn data_cache_parallel_scheduler_livelock_diagnostic_subjects(&self) -> Vec<WaitForNode> {
         collect_livelock_diagnostic_subjects(
+            &self.data_cache_parallel_scheduler_livelock_diagnostics,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, u64, Tick, Tick)> {
+        collect_livelock_diagnostic_subject_summaries(
             &self.data_cache_parallel_scheduler_livelock_diagnostics,
         )
     }
@@ -239,6 +253,13 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_livelock_diagnostic_subjects(&self) -> Vec<WaitForNode> {
         let diagnostics = self.full_system_livelock_diagnostics();
         collect_livelock_diagnostic_subjects(&diagnostics)
+    }
+
+    pub fn full_system_livelock_diagnostic_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, u64, Tick, Tick)> {
+        let diagnostics = self.full_system_livelock_diagnostics();
+        collect_livelock_diagnostic_subject_summaries(&diagnostics)
     }
 
     pub fn full_system_livelock_diagnostics_by_subject(
@@ -845,6 +866,42 @@ fn collect_livelock_diagnostic_subjects<'a>(
         .map(|diagnostic| diagnostic.subject().clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
+        .collect()
+}
+
+fn collect_livelock_diagnostic_subject_summaries<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+) -> Vec<(WaitForNode, usize, u64, Tick, Tick)> {
+    let mut summaries = BTreeMap::<WaitForNode, (usize, u64, Tick, Tick)>::new();
+    for diagnostic in diagnostics {
+        summaries
+            .entry(diagnostic.subject().clone())
+            .and_modify(|summary| {
+                summary.0 += 1;
+                summary.1 += diagnostic.transition_count();
+                summary.2 = summary.2.min(diagnostic.first_transition_tick());
+                summary.3 = summary.3.max(diagnostic.last_transition_tick());
+            })
+            .or_insert((
+                1,
+                diagnostic.transition_count(),
+                diagnostic.first_transition_tick(),
+                diagnostic.last_transition_tick(),
+            ));
+    }
+    summaries
+        .into_iter()
+        .map(
+            |(subject, (diagnostic_count, transition_count, first_tick, last_tick))| {
+                (
+                    subject,
+                    diagnostic_count,
+                    transition_count,
+                    first_tick,
+                    last_tick,
+                )
+            },
+        )
         .collect()
 }
 
