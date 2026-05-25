@@ -2,7 +2,7 @@ use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
     StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatPathError, StatSample, StatSnapshot,
-    StatSnapshotDelta, StatsError, StatsRegistry, StatsResetRecord,
+    StatSnapshotDelta, StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -157,6 +157,54 @@ fn stats_registry_rejects_ambiguous_counter_paths_without_consuming_ids() {
     assert_eq!(
         stats.register_counter("cpu0.cycles", "cycles").unwrap(),
         StatId::new(0)
+    );
+}
+
+#[test]
+fn stats_registry_rejects_ambiguous_counter_units_without_consuming_ids() {
+    let mut stats = StatsRegistry::new();
+
+    assert_eq!(
+        stats.register_counter("cpu0.cycles", "").unwrap_err(),
+        StatsError::InvalidUnit {
+            unit: String::new(),
+            reason: StatUnitError::Empty,
+        },
+    );
+    assert_eq!(
+        stats
+            .register_counter("cpu0.cycles", "cycle count")
+            .unwrap_err(),
+        StatsError::InvalidUnit {
+            unit: "cycle count".to_string(),
+            reason: StatUnitError::InvalidCharacter { character: ' ' },
+        },
+    );
+    assert_eq!(
+        stats
+            .register_counter("cpu0.cycles", "cycle-count")
+            .unwrap_err(),
+        StatsError::InvalidUnit {
+            unit: "cycle-count".to_string(),
+            reason: StatUnitError::InvalidCharacter { character: '-' },
+        },
+    );
+
+    let cycles = stats.register_counter("cpu0.cycles", "Cycle").unwrap();
+    let ipc = stats.register_counter("cpu0.ipc", "(Count/Cycle)").unwrap();
+    assert_eq!(cycles, StatId::new(0));
+    assert_eq!(ipc, StatId::new(1));
+    assert_eq!(
+        stats.snapshot(10),
+        StatSnapshot::new(
+            10,
+            0,
+            0,
+            vec![
+                StatSample::new(cycles, "cpu0.cycles", "Cycle", 0),
+                StatSample::new(ipc, "cpu0.ipc", "(Count/Cycle)", 0),
+            ],
+        ),
     );
 }
 

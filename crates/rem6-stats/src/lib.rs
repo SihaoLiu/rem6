@@ -636,6 +636,23 @@ impl fmt::Display for StatPathError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StatUnitError {
+    Empty,
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for StatUnitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(formatter, "unit must not be empty"),
+            Self::InvalidCharacter { character } => {
+                write!(formatter, "unit contains invalid character {character:?}")
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsRegistry {
     next_id: u64,
     next_dump_id: u64,
@@ -667,11 +684,15 @@ impl StatsRegistry {
         unit: impl Into<String>,
     ) -> Result<StatId, StatsError> {
         let path = path.into();
+        let unit = unit.into();
         if path.is_empty() {
             return Err(StatsError::EmptyPath);
         }
         if let Err(reason) = validate_stat_path(&path) {
             return Err(StatsError::InvalidPath { path, reason });
+        }
+        if let Err(reason) = validate_stat_unit(&unit) {
+            return Err(StatsError::InvalidUnit { unit, reason });
         }
         if self.paths.contains(&path) {
             return Err(StatsError::DuplicatePath { path });
@@ -680,13 +701,7 @@ impl StatsRegistry {
         let id = StatId::new(self.next_id);
         self.next_id += 1;
         self.paths.insert(path.clone());
-        self.descriptors.insert(
-            id,
-            StatDescriptor {
-                path,
-                unit: unit.into(),
-            },
-        );
+        self.descriptors.insert(id, StatDescriptor { path, unit });
         self.counters.insert(id, 0);
         Ok(id)
     }
@@ -818,6 +833,23 @@ fn validate_stat_path(path: &str) -> Result<(), StatPathError> {
     Ok(())
 }
 
+fn validate_stat_unit(unit: &str) -> Result<(), StatUnitError> {
+    if unit.is_empty() {
+        return Err(StatUnitError::Empty);
+    }
+    for character in unit.chars() {
+        if !character.is_ascii_alphanumeric()
+            && character != '_'
+            && character != '/'
+            && character != '('
+            && character != ')'
+        {
+            return Err(StatUnitError::InvalidCharacter { character });
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StatDescriptor {
     path: String,
@@ -830,6 +862,10 @@ pub enum StatsError {
     InvalidPath {
         path: String,
         reason: StatPathError,
+    },
+    InvalidUnit {
+        unit: String,
+        reason: StatUnitError,
     },
     DuplicatePath {
         path: String,
@@ -907,6 +943,9 @@ impl fmt::Display for StatsError {
             Self::EmptyPath => write!(formatter, "stat path must not be empty"),
             Self::InvalidPath { path, reason } => {
                 write!(formatter, "stat path {path} is invalid: {reason}")
+            }
+            Self::InvalidUnit { unit, reason } => {
+                write!(formatter, "stat unit {unit} is invalid: {reason}")
             }
             Self::DuplicatePath { path } => write!(formatter, "stat path already exists: {path}"),
             Self::UnknownStat { stat } => write!(formatter, "unknown stat id {}", stat.get()),
