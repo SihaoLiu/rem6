@@ -368,6 +368,86 @@ fn workload_result_queries_livelock_diagnostics_by_transition_kind() {
 }
 
 #[test]
+fn workload_result_reports_livelock_diagnostic_tick_windows() {
+    let cpu_subject = component("cpu-progress-loop");
+    let queue_subject = component("scheduler-queue-loop");
+    let cache_subject = component("cache-progress-loop");
+    let missing_subject = component("missing-progress-loop");
+    let cpu_diagnostic = livelock_diagnostic(
+        cpu_subject.clone(),
+        2,
+        [
+            (LivelockTransitionKind::ProtocolRetry, 10),
+            (LivelockTransitionKind::ProtocolRetry, 13),
+        ],
+    );
+    let queue_diagnostic = livelock_diagnostic(
+        queue_subject,
+        1,
+        [(LivelockTransitionKind::QueueRotation, 20)],
+    );
+    let data_cache_diagnostic = livelock_diagnostic(
+        cache_subject.clone(),
+        2,
+        [
+            (LivelockTransitionKind::MessageRetry, 3),
+            (LivelockTransitionKind::ProtocolRetry, 8),
+        ],
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            3,
+            [cpu_diagnostic.clone(), queue_diagnostic.clone()],
+        )
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(
+            2,
+            [data_cache_diagnostic.clone()],
+        )
+        .with_full_system_livelock_diagnostic_records([
+            data_cache_diagnostic,
+            cpu_diagnostic,
+            queue_diagnostic,
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_tick_window_by_subject(&cpu_subject),
+        Some((10, 13)),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostic_tick_window_by_subject(
+            &cache_subject,
+        ),
+        Some((3, 8)),
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_tick_window_by_subject(&cache_subject),
+        Some((3, 8)),
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_tick_window_by_subject(&missing_subject),
+        None,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_tick_window_by_transition_kind(
+            LivelockTransitionKind::QueueRotation,
+        ),
+        Some((20, 20)),
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_tick_window_by_transition_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        Some((3, 13)),
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_tick_window_by_transition_kind(
+            LivelockTransitionKind::ResourceArbitration,
+        ),
+        None,
+    );
+}
+
+#[test]
 fn workload_manifest_records_livelock_transition_threshold() {
     let thresholded =
         expected_clean_with_livelock_threshold(WorkloadParallelDiagnosticScope::FullSystem, 3);

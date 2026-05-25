@@ -99,6 +99,15 @@ impl WorkloadParallelExecutionSummary {
         collect_livelock_diagnostics_by_subject(&self.scheduler_livelock_diagnostics, subject)
     }
 
+    pub fn parallel_scheduler_livelock_diagnostic_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        livelock_diagnostic_tick_window(&self.scheduler_livelock_diagnostics, |diagnostic| {
+            diagnostic.subject() == subject
+        })
+    }
+
     pub fn parallel_scheduler_livelock_diagnostic_subjects_by_transition_kind(
         &self,
         kind: LivelockTransitionKind,
@@ -114,6 +123,15 @@ impl WorkloadParallelExecutionSummary {
         kind: LivelockTransitionKind,
     ) -> Vec<LivelockDiagnostic> {
         collect_livelock_diagnostics_by_transition_kind(&self.scheduler_livelock_diagnostics, kind)
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostic_tick_window_by_transition_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        livelock_diagnostic_tick_window(&self.scheduler_livelock_diagnostics, |diagnostic| {
+            diagnostic.transition_count_by_kind(kind) != 0
+        })
     }
 
     pub fn parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
@@ -149,6 +167,16 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        livelock_diagnostic_tick_window(
+            &self.data_cache_parallel_scheduler_livelock_diagnostics,
+            |diagnostic| diagnostic.subject() == subject,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_livelock_diagnostic_subjects_by_transition_kind(
         &self,
         kind: LivelockTransitionKind,
@@ -166,6 +194,16 @@ impl WorkloadParallelExecutionSummary {
         collect_livelock_diagnostics_by_transition_kind(
             &self.data_cache_parallel_scheduler_livelock_diagnostics,
             kind,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_tick_window_by_transition_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        livelock_diagnostic_tick_window(
+            &self.data_cache_parallel_scheduler_livelock_diagnostics,
+            |diagnostic| diagnostic.transition_count_by_kind(kind) != 0,
         )
     }
 
@@ -211,6 +249,14 @@ impl WorkloadParallelExecutionSummary {
         collect_livelock_diagnostics_by_subject(&diagnostics, subject)
     }
 
+    pub fn full_system_livelock_diagnostic_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        let diagnostics = self.full_system_livelock_diagnostics();
+        livelock_diagnostic_tick_window(&diagnostics, |diagnostic| diagnostic.subject() == subject)
+    }
+
     pub fn full_system_livelock_diagnostic_subjects_by_transition_kind(
         &self,
         kind: LivelockTransitionKind,
@@ -225,6 +271,16 @@ impl WorkloadParallelExecutionSummary {
     ) -> Vec<LivelockDiagnostic> {
         let diagnostics = self.full_system_livelock_diagnostics();
         collect_livelock_diagnostics_by_transition_kind(&diagnostics, kind)
+    }
+
+    pub fn full_system_livelock_diagnostic_tick_window_by_transition_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        let diagnostics = self.full_system_livelock_diagnostics();
+        livelock_diagnostic_tick_window(&diagnostics, |diagnostic| {
+            diagnostic.transition_count_by_kind(kind) != 0
+        })
     }
 
     pub fn full_system_livelock_diagnostic_transition_count_by_kind(
@@ -801,6 +857,28 @@ fn collect_livelock_diagnostics_by_subject<'a>(
         .filter(|diagnostic| diagnostic.subject() == subject)
         .cloned()
         .collect()
+}
+
+fn livelock_diagnostic_tick_window<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    mut predicate: impl FnMut(&LivelockDiagnostic) -> bool,
+) -> Option<(Tick, Tick)> {
+    let mut window: Option<(Tick, Tick)> = None;
+    for diagnostic in diagnostics {
+        if predicate(diagnostic) {
+            window = Some(match window {
+                Some((first_tick, last_tick)) => (
+                    first_tick.min(diagnostic.first_transition_tick()),
+                    last_tick.max(diagnostic.last_transition_tick()),
+                ),
+                None => (
+                    diagnostic.first_transition_tick(),
+                    diagnostic.last_transition_tick(),
+                ),
+            });
+        }
+    }
+    window
 }
 
 fn collect_livelock_diagnostic_subjects_by_transition_kind<'a>(
