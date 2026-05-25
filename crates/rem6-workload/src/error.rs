@@ -5,7 +5,8 @@ use rem6_memory::MemoryError;
 
 use crate::{
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadId, WorkloadManifestIdentity,
-    WorkloadParallelBatchScope, WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
     WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
     WorkloadRouteLatency, WorkloadSuiteIdentity,
@@ -998,7 +999,7 @@ pub enum WorkloadError {
         actual_consecutive_batch_count: usize,
     },
     InvalidExpectedParallelBatchTimelineRecord {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchTimelineScope,
         batch_scope: WorkloadParallelBatchScope,
         start_tick: Tick,
         horizon: Tick,
@@ -1006,7 +1007,7 @@ pub enum WorkloadError {
         worker_count: usize,
     },
     DuplicateExpectedParallelBatchTimelineRecord {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchTimelineScope,
         batch_scope: WorkloadParallelBatchScope,
         start_tick: Tick,
         horizon: Tick,
@@ -1014,7 +1015,7 @@ pub enum WorkloadError {
         worker_count: usize,
     },
     MissingParallelBatchTimelineSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchTimelineScope,
         batch_scope: WorkloadParallelBatchScope,
         start_tick: Tick,
         horizon: Tick,
@@ -1022,7 +1023,7 @@ pub enum WorkloadError {
         worker_count: usize,
     },
     ExpectedParallelBatchTimelineRecordMissing {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchTimelineScope,
         batch_scope: WorkloadParallelBatchScope,
         start_tick: Tick,
         horizon: Tick,
@@ -1030,7 +1031,7 @@ pub enum WorkloadError {
         worker_count: usize,
     },
     UnexpectedParallelBatchTimelineRecord {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchTimelineScope,
         batch_scope: WorkloadParallelBatchScope,
         start_tick: Tick,
         horizon: Tick,

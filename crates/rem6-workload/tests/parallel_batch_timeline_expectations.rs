@@ -4,7 +4,7 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchTimelineRecord, WorkloadId,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelExecutionSummary, WorkloadReplayPlan,
     WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
@@ -47,7 +47,7 @@ fn replay_plan() -> WorkloadReplayPlan {
 }
 
 fn expected_timeline(
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchTimelineScope,
     batch_scope: WorkloadParallelBatchScope,
     start_tick: u64,
     horizon: u64,
@@ -84,7 +84,7 @@ fn timeline_record(
 #[test]
 fn workload_manifest_records_parallel_batch_timeline_expectations() {
     let scheduler = expected_timeline(
-        WorkloadParallelRemoteFlowScope::Scheduler,
+        WorkloadParallelBatchTimelineScope::Scheduler,
         WorkloadParallelBatchScope::Scheduler,
         0,
         4,
@@ -92,7 +92,7 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
         2,
     );
     let data_cache = expected_timeline(
-        WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+        WorkloadParallelBatchTimelineScope::DataCacheScheduler,
         WorkloadParallelBatchScope::DataCacheScheduler,
         4,
         8,
@@ -100,7 +100,7 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
         1,
     );
     let full_system_scheduler = expected_timeline(
-        WorkloadParallelRemoteFlowScope::FullSystem,
+        WorkloadParallelBatchTimelineScope::FullSystem,
         WorkloadParallelBatchScope::Scheduler,
         0,
         4,
@@ -108,7 +108,7 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
         2,
     );
     let full_system_data_cache = expected_timeline(
-        WorkloadParallelRemoteFlowScope::FullSystem,
+        WorkloadParallelBatchTimelineScope::FullSystem,
         WorkloadParallelBatchScope::DataCacheScheduler,
         4,
         8,
@@ -142,7 +142,7 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
     );
     assert_eq!(
         scheduler.scope(),
-        WorkloadParallelRemoteFlowScope::Scheduler
+        WorkloadParallelBatchTimelineScope::Scheduler
     );
     assert_eq!(
         scheduler.batch_scope(),
@@ -176,6 +176,85 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
 }
 
 #[test]
+fn workload_replay_plan_checks_dma_scheduler_parallel_batch_timelines_directly() {
+    let gpu_dma = expected_timeline(
+        WorkloadParallelBatchTimelineScope::GpuDmaScheduler,
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        8,
+        12,
+        [partition(3), partition(4)],
+        2,
+    );
+    let accelerator_dma = expected_timeline(
+        WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler,
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+        12,
+        18,
+        [partition(5)],
+        1,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(gpu_dma.clone())
+        .unwrap()
+        .add_expected_parallel_batch_timeline_record(accelerator_dma)
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            8,
+            12,
+            [partition(3), partition(4)],
+            2,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            12,
+            18,
+            [partition(5)],
+            1,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let exact_gpu_plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(gpu_dma)
+        .unwrap();
+    let extra_gpu_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::GpuDmaScheduler,
+                8,
+                12,
+                [partition(3), partition(4)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::GpuDmaScheduler,
+                16,
+                20,
+                [partition(4)],
+                1,
+            ),
+        ]);
+    let extra_gpu = WorkloadResult::new(exact_gpu_plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(extra_gpu_summary);
+
+    assert_eq!(
+        exact_gpu_plan.verify_result(&extra_gpu).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::GpuDmaScheduler,
+            batch_scope: WorkloadParallelBatchScope::GpuDmaScheduler,
+            start_tick: 16,
+            horizon: 20,
+            partitions: vec![4],
+            worker_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-batch-timeline"), boot_image())
@@ -190,7 +269,7 @@ fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations(
             .unwrap()
             .add_required_resource(resource_id("kernel"))
             .add_expected_parallel_batch_timeline_record(expected_timeline(
-                WorkloadParallelRemoteFlowScope::Scheduler,
+                WorkloadParallelBatchTimelineScope::Scheduler,
                 WorkloadParallelBatchScope::Scheduler,
                 4,
                 8,
@@ -206,7 +285,7 @@ fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations(
             .unwrap()
             .add_required_resource(resource_id("kernel"))
             .add_expected_parallel_batch_timeline_record(expected_timeline(
-                WorkloadParallelRemoteFlowScope::Scheduler,
+                WorkloadParallelBatchTimelineScope::Scheduler,
                 WorkloadParallelBatchScope::Scheduler,
                 8,
                 12,
@@ -225,7 +304,7 @@ fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations(
 fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_records() {
     let plan = replay_plan()
         .add_expected_parallel_batch_timeline_record(expected_timeline(
-            WorkloadParallelRemoteFlowScope::Scheduler,
+            WorkloadParallelBatchTimelineScope::Scheduler,
             WorkloadParallelBatchScope::Scheduler,
             0,
             4,
@@ -238,7 +317,7 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelBatchTimelineSummary {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
@@ -260,7 +339,7 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
     assert_eq!(
         plan.verify_result(&wrong).unwrap_err(),
         WorkloadError::ExpectedParallelBatchTimelineRecordMissing {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
@@ -291,7 +370,7 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
     assert_eq!(
         plan.verify_result(&extra).unwrap_err(),
         WorkloadError::UnexpectedParallelBatchTimelineRecord {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 4,
             horizon: 8,
@@ -305,7 +384,7 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
 fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records() {
     let plan = replay_plan()
         .add_expected_parallel_batch_timeline_record(expected_timeline(
-            WorkloadParallelRemoteFlowScope::Scheduler,
+            WorkloadParallelBatchTimelineScope::Scheduler,
             WorkloadParallelBatchScope::Scheduler,
             0,
             4,
@@ -336,7 +415,7 @@ fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records
     assert_eq!(
         plan.verify_result(&duplicate).unwrap_err(),
         WorkloadError::UnexpectedParallelBatchTimelineRecord {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
@@ -349,7 +428,7 @@ fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records
 #[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_records() {
     let zero_worker = WorkloadExpectedParallelBatchTimelineRecord::new(
-        WorkloadParallelRemoteFlowScope::Scheduler,
+        WorkloadParallelBatchTimelineScope::Scheduler,
         WorkloadParallelBatchScope::Scheduler,
         0,
         4,
@@ -359,7 +438,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_rec
     assert_eq!(
         zero_worker.unwrap_err(),
         WorkloadError::InvalidExpectedParallelBatchTimelineRecord {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
@@ -369,7 +448,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_rec
     );
 
     let expected = expected_timeline(
-        WorkloadParallelRemoteFlowScope::Scheduler,
+        WorkloadParallelBatchTimelineScope::Scheduler,
         WorkloadParallelBatchScope::Scheduler,
         0,
         4,
@@ -383,7 +462,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_rec
             .add_expected_parallel_batch_timeline_record(expected)
             .unwrap_err(),
         WorkloadError::DuplicateExpectedParallelBatchTimelineRecord {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,

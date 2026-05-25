@@ -10,15 +10,24 @@ use crate::{
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelProgressTransition,
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
     WorkloadExpectedParallelRemoteSend, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
-    WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
-    WorkloadParallelRemoteTrafficConsistencyMismatch, WorkloadReplayPlan, WorkloadResult,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelDiagnosticScope,
+    WorkloadParallelExecutionSummary, WorkloadParallelProgressTransitionExpectationFailure,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelRemoteTrafficConsistencyMismatch,
+    WorkloadReplayPlan, WorkloadResult,
 };
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 3] = [
     WorkloadParallelRemoteFlowScope::Scheduler,
     WorkloadParallelRemoteFlowScope::DataCacheScheduler,
     WorkloadParallelRemoteFlowScope::FullSystem,
+];
+
+const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 5] = [
+    WorkloadParallelBatchTimelineScope::Scheduler,
+    WorkloadParallelBatchTimelineScope::DataCacheScheduler,
+    WorkloadParallelBatchTimelineScope::GpuDmaScheduler,
+    WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler,
+    WorkloadParallelBatchTimelineScope::FullSystem,
 ];
 
 pub(crate) fn verify_expected_parallel_remote_sends(
@@ -107,7 +116,7 @@ pub(crate) fn verify_expected_parallel_batch_timeline_records(
             });
         }
     }
-    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+    for scope in PARALLEL_BATCH_TIMELINE_SCOPES {
         let expected_for_scope =
             expected_parallel_batch_timeline_records_for_scope(expected_records, scope);
         if expected_for_scope.is_empty() {
@@ -179,7 +188,7 @@ pub(crate) fn verify_expected_parallel_progress_transitions(
 
 fn expected_parallel_batch_timeline_records_for_scope(
     expected_records: &[WorkloadExpectedParallelBatchTimelineRecord],
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchTimelineScope,
 ) -> Vec<WorkloadExpectedParallelBatchTimelineRecord> {
     expected_records
         .iter()

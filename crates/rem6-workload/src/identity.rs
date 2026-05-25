@@ -16,7 +16,8 @@ use crate::{
     WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
     WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadParallelFrontierStage,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
     WorkloadResourceId, WorkloadTopology,
 };
@@ -422,6 +423,10 @@ fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemote
     hash_str(hash, scope.as_str());
 }
 
+fn hash_parallel_batch_timeline_scope(hash: &mut u64, scope: WorkloadParallelBatchTimelineScope) {
+    hash_str(hash, scope.as_str());
+}
+
 fn hash_parallel_frontier_stage(hash: &mut u64, stage: WorkloadParallelFrontierStage) {
     hash_str(hash, stage.as_str());
 }
@@ -542,7 +547,7 @@ fn hash_expected_parallel_batch_timeline_record(
     hash: &mut u64,
     expected: &WorkloadExpectedParallelBatchTimelineRecord,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_timeline_scope(hash, expected.scope());
     hash_str(hash, expected.batch_scope().as_str());
     hash_u64(hash, expected.start_tick());
     hash_u64(hash, expected.horizon());

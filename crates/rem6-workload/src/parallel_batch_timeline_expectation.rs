@@ -5,9 +5,50 @@ use crate::{
     WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope,
 };
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadParallelBatchTimelineScope {
+    Scheduler,
+    DataCacheScheduler,
+    GpuDmaScheduler,
+    AcceleratorDmaScheduler,
+    FullSystem,
+}
+
+impl WorkloadParallelBatchTimelineScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduler => "scheduler",
+            Self::DataCacheScheduler => "data-cache-scheduler",
+            Self::GpuDmaScheduler => "gpu-dma-scheduler",
+            Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::FullSystem => "full-system",
+        }
+    }
+
+    pub(crate) const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Scheduler => 0,
+            Self::DataCacheScheduler => 1,
+            Self::GpuDmaScheduler => 2,
+            Self::AcceleratorDmaScheduler => 3,
+            Self::FullSystem => 4,
+        }
+    }
+}
+
+impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelBatchTimelineScope {
+    fn from(scope: WorkloadParallelRemoteFlowScope) -> Self {
+        match scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => Self::Scheduler,
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => Self::DataCacheScheduler,
+            WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchTimelineRecord {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchTimelineScope,
     batch_scope: WorkloadParallelBatchScope,
     start_tick: Tick,
     horizon: Tick,
@@ -17,13 +58,14 @@ pub struct WorkloadExpectedParallelBatchTimelineRecord {
 
 impl WorkloadExpectedParallelBatchTimelineRecord {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchTimelineScope>,
         batch_scope: WorkloadParallelBatchScope,
         start_tick: Tick,
         horizon: Tick,
         partitions: impl IntoIterator<Item = PartitionId>,
         worker_count: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         let partitions = collect_partition_set(partitions);
         if partitions.is_empty() || worker_count == 0 || horizon < start_tick {
             return Err(WorkloadError::InvalidExpectedParallelBatchTimelineRecord {
@@ -45,7 +87,7 @@ impl WorkloadExpectedParallelBatchTimelineRecord {
         })
     }
 
-    pub const fn scope(&self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(&self) -> WorkloadParallelBatchTimelineScope {
         self.scope
     }
 
@@ -103,17 +145,23 @@ impl WorkloadExpectedParallelBatchTimelineRecord {
 }
 
 pub(crate) fn actual_parallel_batch_timeline_records(
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchTimelineScope,
     summary: &WorkloadParallelExecutionSummary,
 ) -> Vec<WorkloadParallelBatchTimelineRecord> {
     match scope {
-        WorkloadParallelRemoteFlowScope::Scheduler => {
+        WorkloadParallelBatchTimelineScope::Scheduler => {
             summary.parallel_scheduler_batch_timeline().to_vec()
         }
-        WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+        WorkloadParallelBatchTimelineScope::DataCacheScheduler => summary
             .data_cache_parallel_scheduler_batch_timeline()
             .to_vec(),
-        WorkloadParallelRemoteFlowScope::FullSystem => {
+        WorkloadParallelBatchTimelineScope::GpuDmaScheduler => {
+            summary.gpu_dma_scheduler_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler => {
+            summary.accelerator_dma_scheduler_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchTimelineScope::FullSystem => {
             summary.full_system_parallel_scheduler_batch_timeline()
         }
     }

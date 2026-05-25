@@ -453,7 +453,10 @@ counters. The workload full-system scheduler aggregate includes that DMA
 scheduler evidence alongside CPU and data-cache scheduler evidence, so
 heterogeneous parallel work remains visible through the same full-system batch
 timeline, worker-count, max-worker, total-worker, worker-tick, and thresholded
-batch queries used by CPU/cache runs.
+batch queries used by CPU/cache runs. Batch-timeline expectations also expose
+dedicated GPU DMA scheduler and accelerator DMA scheduler scopes, keeping exact
+DMA occupancy checks separate from remote-flow contracts while still allowing
+full-system aggregate checks.
 The full-system batch sequence is merged by worker start tick with deterministic
 tie breakers, which prevents a CPU batch between two data-cache batches from
 being hidden by subsystem-local concatenation when sustained occupancy is
@@ -471,7 +474,8 @@ full-system exact worker-count bucket contracts, duration-weighted worker-count
 tick bucket contracts, minimum-worker duration-weighted tick activity
 contracts, sustained minimum-worker tick-streak contracts, minimum batch
 worker-tick contracts under a declared minimum worker count, and batch timeline
-records. Replay verification rejects
+records. Batch timeline records additionally support direct GPU DMA scheduler
+and accelerator DMA scheduler scopes. Replay verification rejects
 underfilled exact worker buckets, underfilled worker-count tick buckets,
 underfilled minimum-worker tick activity, underfilled sustained minimum-worker
 tick streaks, underfilled thresholded batch worker-ticks, and missing or unexpected

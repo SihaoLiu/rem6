@@ -52,7 +52,9 @@ pub use parallel_batch::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount,
 };
-pub use parallel_batch_timeline_expectation::WorkloadExpectedParallelBatchTimelineRecord;
+pub use parallel_batch_timeline_expectation::{
+    WorkloadExpectedParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
+};
 pub use parallel_batch_worker_count_expectation::{
     WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
     WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
