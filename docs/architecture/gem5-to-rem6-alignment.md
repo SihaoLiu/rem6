@@ -95,10 +95,12 @@ isolated bugs:
   graphs, and run summaries as typed data with tests rather than string-only
   logs or ad hoc probes. Stats reset windows are monotonic: a reset request
   before the previous reset tick is rejected without changing the active epoch
-  or counter values. Stats dumps are registry-owned typed records with stable
-  dump ids and snapshot payloads rather than global output callbacks. Stats
-  deltas are also typed records derived only from snapshots in the same reset
-  scope with nondecreasing tick and counter values.
+  or counter values. Counter paths use a checked dot-separated grammar before
+  registration, preserving gem5's useful stat-name discipline while returning
+  typed errors instead of panicking. Stats dumps are registry-owned typed records
+  with stable dump ids and snapshot payloads rather than global output
+  callbacks. Stats deltas are also typed records derived only from snapshots in
+  the same reset scope with nondecreasing tick and counter values.
 - Simple models are not automatically cheap or transparent. Recent call-stack
   profiling work identifies gem5's layered design as difficult to profile and
   reports TimingSimpleCPU behavior that can be slower than a full out-of-order
@@ -174,7 +176,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | Local files | rem6 owner | Coverage | Alignment target |
 | --- | ---: | --- | --- | --- |
 | `src/arch` | 1187 | `rem6-isa-riscv`, future ISA crates | partial | Keep per-ISA decoding and architectural state as isolated crates. RISC-V exists; ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA support need equivalent crate ownership before claiming parity. |
-| `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. Stats reset requests now reject ticks earlier than the active reset window, typed stats dumps preserve stable ids plus snapshots in registry-owned history, and typed stats deltas reject cross-scope, schema-drifting, time-regressing, or value-regressing snapshots so reset ordering and stat descriptor drift cannot silently corrupt dump scope. |
+| `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. Stats counter paths now reject ambiguous dotted names before registration, stats reset requests reject ticks earlier than the active reset window, typed stats dumps preserve stable ids plus snapshots in registry-owned history, and typed stats deltas reject cross-scope, schema-drifting, time-regressing, or value-regressing snapshots so reset ordering and stat descriptor drift cannot silently corrupt dump scope. |
 | `src/cpu` | 363 | `rem6-cpu`, `rem6-kernel`, `rem6-system` | partial | RISC-V cluster execution exists, RISC-V data access records expose absent memory-route metadata for MMIO accesses as typed optional state instead of panic-only accessors, and CPU cluster parallel epochs retain both initial and final partition frontiers through full-system run summaries. gem5 simple, checker, Minor, O3, branch prediction, KVM-style switching, and traffic testers need typed rem6 equivalents or explicit replacement models. |
 | `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore, typed reset policy, platform/topology attachment, typed RISC-V DTS source emission, binary FDT/DTB emission, RISC-V DTB memory/A1 handoff, typed Linux `/chosen` bootargs and initrd DTB metadata, typed DTB and initrd blob installation for store-backed and DRAM-backed memory, GPU, and accelerator paths exist. PCI, storage, network, virtio, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
@@ -450,8 +452,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   Workload replay QoS tests cover same-tick DRAM
   batching while a data-cache is present, including operation filtering so
   instruction fetches are not misclassified as cache-covered data traffic.
-- Stats tests cover counter reset epochs, typed dump history,
-  schema-and-reset-scope-checked snapshot deltas, and typed probe point,
+- Stats tests cover counter path grammar, counter reset epochs, typed dump
+  history, schema-and-reset-scope-checked snapshot deltas, and typed probe point,
   listener, event, payload, and snapshot records.
 - Timer/MMIO tests cover typed RISC-V CLINT `msip` software interrupts,
   `mtimecmp` timer interrupt scheduling, future-deadline timer deassertion,

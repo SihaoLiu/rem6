@@ -611,6 +611,31 @@ impl StatsResetRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StatPathError {
+    EmptySegment { index: usize },
+    InvalidSegmentStart { segment: String, character: char },
+    InvalidSegmentCharacter { segment: String, character: char },
+}
+
+impl fmt::Display for StatPathError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptySegment { index } => {
+                write!(formatter, "segment {index} must not be empty")
+            }
+            Self::InvalidSegmentStart { segment, character } => write!(
+                formatter,
+                "segment {segment} starts with invalid character {character:?}"
+            ),
+            Self::InvalidSegmentCharacter { segment, character } => write!(
+                formatter,
+                "segment {segment} contains invalid character {character:?}"
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsRegistry {
     next_id: u64,
     next_dump_id: u64,
@@ -644,6 +669,9 @@ impl StatsRegistry {
         let path = path.into();
         if path.is_empty() {
             return Err(StatsError::EmptyPath);
+        }
+        if let Err(reason) = validate_stat_path(&path) {
+            return Err(StatsError::InvalidPath { path, reason });
         }
         if self.paths.contains(&path) {
             return Err(StatsError::DuplicatePath { path });
@@ -766,6 +794,30 @@ impl Default for StatsRegistry {
     }
 }
 
+fn validate_stat_path(path: &str) -> Result<(), StatPathError> {
+    for (index, segment) in path.split('.').enumerate() {
+        let mut chars = segment.chars();
+        let Some(first) = chars.next() else {
+            return Err(StatPathError::EmptySegment { index });
+        };
+        if !first.is_ascii_alphabetic() && first != '_' {
+            return Err(StatPathError::InvalidSegmentStart {
+                segment: segment.to_string(),
+                character: first,
+            });
+        }
+        for character in chars {
+            if !character.is_ascii_alphanumeric() && character != '_' {
+                return Err(StatPathError::InvalidSegmentCharacter {
+                    segment: segment.to_string(),
+                    character,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StatDescriptor {
     path: String,
@@ -775,6 +827,10 @@ struct StatDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatsError {
     EmptyPath,
+    InvalidPath {
+        path: String,
+        reason: StatPathError,
+    },
     DuplicatePath {
         path: String,
     },
@@ -849,6 +905,9 @@ impl fmt::Display for StatsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyPath => write!(formatter, "stat path must not be empty"),
+            Self::InvalidPath { path, reason } => {
+                write!(formatter, "stat path {path} is invalid: {reason}")
+            }
             Self::DuplicatePath { path } => write!(formatter, "stat path already exists: {path}"),
             Self::UnknownStat { stat } => write!(formatter, "unknown stat id {}", stat.get()),
             Self::CounterOverflow { stat } => {

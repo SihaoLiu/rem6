@@ -1,7 +1,7 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatSample, StatSnapshot,
+    StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatPathError, StatSample, StatSnapshot,
     StatSnapshotDelta, StatsError, StatsRegistry, StatsResetRecord,
 };
 
@@ -94,6 +94,69 @@ fn stats_registry_rejects_duplicate_empty_unknown_and_overflowing_counters() {
     assert_eq!(
         stats.increment(insts, 1).unwrap_err(),
         StatsError::CounterOverflow { stat: insts }
+    );
+}
+
+#[test]
+fn stats_registry_rejects_ambiguous_counter_paths_without_consuming_ids() {
+    let mut stats = StatsRegistry::new();
+
+    assert_eq!(
+        stats
+            .register_counter(".cpu0.cycles", "cycles")
+            .unwrap_err(),
+        StatsError::InvalidPath {
+            path: ".cpu0.cycles".to_string(),
+            reason: StatPathError::EmptySegment { index: 0 },
+        },
+    );
+    assert_eq!(
+        stats
+            .register_counter("cpu0..cycles", "cycles")
+            .unwrap_err(),
+        StatsError::InvalidPath {
+            path: "cpu0..cycles".to_string(),
+            reason: StatPathError::EmptySegment { index: 1 },
+        },
+    );
+    assert_eq!(
+        stats.register_counter("0cpu.cycles", "cycles").unwrap_err(),
+        StatsError::InvalidPath {
+            path: "0cpu.cycles".to_string(),
+            reason: StatPathError::InvalidSegmentStart {
+                segment: "0cpu".to_string(),
+                character: '0',
+            },
+        },
+    );
+    assert_eq!(
+        stats
+            .register_counter("cpu-0.cycles", "cycles")
+            .unwrap_err(),
+        StatsError::InvalidPath {
+            path: "cpu-0.cycles".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "cpu-0".to_string(),
+                character: '-',
+            },
+        },
+    );
+    assert_eq!(
+        stats
+            .register_counter("cpu0.cycles ", "cycles")
+            .unwrap_err(),
+        StatsError::InvalidPath {
+            path: "cpu0.cycles ".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "cycles ".to_string(),
+                character: ' ',
+            },
+        },
+    );
+
+    assert_eq!(
+        stats.register_counter("cpu0.cycles", "cycles").unwrap(),
+        StatId::new(0)
     );
 }
 
