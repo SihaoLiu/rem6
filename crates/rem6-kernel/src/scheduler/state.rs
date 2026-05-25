@@ -324,16 +324,28 @@ impl ParallelProgressTransitionRecord {
 pub struct ParallelRemoteSendRecord {
     source: PartitionId,
     target: PartitionId,
-    tick: Tick,
+    source_tick: Tick,
+    delivery_tick: Tick,
     order: u64,
 }
 
 impl ParallelRemoteSendRecord {
     pub const fn new(source: PartitionId, target: PartitionId, tick: Tick, order: u64) -> Self {
+        Self::with_timing(source, target, tick, tick, order)
+    }
+
+    pub const fn with_timing(
+        source: PartitionId,
+        target: PartitionId,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    ) -> Self {
         Self {
             source,
             target,
-            tick,
+            source_tick,
+            delivery_tick,
             order,
         }
     }
@@ -347,7 +359,19 @@ impl ParallelRemoteSendRecord {
     }
 
     pub const fn tick(self) -> Tick {
-        self.tick
+        self.delivery_tick
+    }
+
+    pub const fn source_tick(self) -> Tick {
+        self.source_tick
+    }
+
+    pub const fn delivery_tick(self) -> Tick {
+        self.delivery_tick
+    }
+
+    pub fn delay(self) -> Tick {
+        self.delivery_tick.saturating_sub(self.source_tick)
     }
 
     pub const fn order(self) -> u64 {
@@ -402,7 +426,13 @@ impl ParallelRemoteFlowRecord {
     }
 
     fn from_send(send: ParallelRemoteSendRecord) -> Self {
-        Self::new(send.source(), send.target(), 1, send.tick(), send.tick())
+        Self::new(
+            send.source(),
+            send.target(),
+            1,
+            send.delivery_tick(),
+            send.delivery_tick(),
+        )
     }
 
     fn record_send(&mut self, tick: Tick) {

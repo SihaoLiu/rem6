@@ -348,6 +348,7 @@ The scheduler records:
 - ready partitions selected for dispatch;
 - progress-free transition count before livelock thresholding;
 - event kind, tick, partition, and deterministic local identity;
+- remote send source tick, delivery tick, and explicit delay;
 - errors for serial events inside a parallel epoch;
 - errors for remote delays below lookahead.
 

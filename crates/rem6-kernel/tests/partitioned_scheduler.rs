@@ -1081,6 +1081,29 @@ fn scheduler_recorded_parallel_epoch_reports_remote_send_order() {
 }
 
 #[test]
+fn scheduler_recorded_parallel_epoch_reports_remote_send_source_and_delivery_timing() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source, 3, move |context| {
+            context.schedule_remote_after(target, 6, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let send = epoch.remote_sends()[0];
+
+    assert_eq!(send.source(), source);
+    assert_eq!(send.target(), target);
+    assert_eq!(send.source_tick(), 3);
+    assert_eq!(send.delivery_tick(), 9);
+    assert_eq!(send.delay(), 6);
+    assert_eq!(send.tick(), send.delivery_tick());
+}
+
+#[test]
 fn scheduler_recorded_parallel_runner_reports_remote_flow_matrix() {
     let source0 = PartitionId::new(0);
     let source1 = PartitionId::new(1);

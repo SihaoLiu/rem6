@@ -912,7 +912,13 @@ impl PartitionedScheduler {
         let remote_sends = remote_events
             .iter()
             .map(|event| {
-                ParallelRemoteSendRecord::new(event.source, event.target, event.tick, event.order)
+                ParallelRemoteSendRecord::with_timing(
+                    event.source,
+                    event.target,
+                    event.source_tick,
+                    event.tick,
+                    event.order,
+                )
             })
             .collect();
         let record = ParallelEpochBatchRecord::new(
@@ -1172,6 +1178,7 @@ impl ParallelSchedulerContext<'_> {
         self.remote_events.push(RemoteScheduledEvent {
             source: self.partition,
             target,
+            source_tick: self.now,
             tick,
             order,
             callback: Box::new(callback),
@@ -1209,6 +1216,7 @@ struct ParallelBatchResult {
 struct RemoteScheduledEvent {
     source: PartitionId,
     target: PartitionId,
+    source_tick: Tick,
     tick: Tick,
     order: u64,
     callback: ParallelSchedulerCallback,
