@@ -38,14 +38,27 @@ fn cpu_scheduler_turn_at(
     subject: WaitForNode,
     transition_count: usize,
 ) -> RiscvClusterTurn {
+    cpu_scheduler_turn_at_with_kind(
+        partition,
+        tick,
+        subject,
+        LivelockTransitionKind::ProtocolRetry,
+        transition_count,
+    )
+}
+
+fn cpu_scheduler_turn_at_with_kind(
+    partition: PartitionId,
+    tick: u64,
+    subject: WaitForNode,
+    kind: LivelockTransitionKind,
+    transition_count: usize,
+) -> RiscvClusterTurn {
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
     scheduler
         .schedule_parallel_at(partition, tick, move |context| {
             for _ in 0..transition_count {
-                context.record_progress_transition(
-                    subject.clone(),
-                    LivelockTransitionKind::ProtocolRetry,
-                );
+                context.record_progress_transition(subject.clone(), kind);
             }
         })
         .unwrap();
@@ -68,14 +81,27 @@ fn data_cache_run_at(
     subject: WaitForNode,
     transition_count: usize,
 ) -> ParallelCoherenceRunSummary {
+    data_cache_run_at_with_kind(
+        partition,
+        tick,
+        subject,
+        LivelockTransitionKind::MessageRetry,
+        transition_count,
+    )
+}
+
+fn data_cache_run_at_with_kind(
+    partition: PartitionId,
+    tick: u64,
+    subject: WaitForNode,
+    kind: LivelockTransitionKind,
+    transition_count: usize,
+) -> ParallelCoherenceRunSummary {
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
     scheduler
         .schedule_parallel_at(partition, tick, move |context| {
             for _ in 0..transition_count {
-                context.record_progress_transition(
-                    subject.clone(),
-                    LivelockTransitionKind::MessageRetry,
-                );
+                context.record_progress_transition(subject.clone(), kind);
             }
         })
         .unwrap();
@@ -191,6 +217,76 @@ fn system_run_returns_livelock_diagnostic_records_by_scope() {
     assert_eq!(full_system_diagnostics[0].first_transition_tick(), 0);
     assert_eq!(full_system_diagnostics[0].last_transition_tick(), 3);
     assert_eq!(run.full_system_livelock_diagnostic_count(2).unwrap(), 1);
+}
+
+#[test]
+fn system_run_summarizes_livelock_diagnostic_kind_windows() {
+    let cpu = PartitionId::new(0);
+    let cache = PartitionId::new(1);
+    let shared_subject = component("shared-progress-loop");
+    let cache_subject = component("cache-progress-loop");
+    let run = RiscvSystemRun::new(
+        vec![
+            cpu_scheduler_turn_at_with_kind(
+                cpu,
+                0,
+                shared_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                2,
+            ),
+            cpu_scheduler_turn_at_with_kind(
+                cpu,
+                0,
+                shared_subject.clone(),
+                LivelockTransitionKind::QueueRotation,
+                1,
+            ),
+        ],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 24 },
+    )
+    .with_data_cache_runs(vec![
+        data_cache_run_at_with_kind(
+            cache,
+            3,
+            cache_subject.clone(),
+            LivelockTransitionKind::MessageRetry,
+            2,
+        ),
+        data_cache_run_at_with_kind(
+            cache,
+            8,
+            cache_subject,
+            LivelockTransitionKind::ProtocolRetry,
+            1,
+        ),
+    ]);
+
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(1)
+            .unwrap(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 1, 2, 0, 0),
+            (LivelockTransitionKind::QueueRotation, 1, 1, 0, 0),
+        ],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(1)
+            .unwrap(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 1, 1, 8, 8),
+            (LivelockTransitionKind::MessageRetry, 1, 2, 3, 3),
+        ],
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_transition_kind_window_summaries(1)
+            .unwrap(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 2, 3, 0, 8),
+            (LivelockTransitionKind::QueueRotation, 1, 1, 0, 0),
+            (LivelockTransitionKind::MessageRetry, 1, 2, 3, 3),
+        ],
+    );
 }
 
 #[test]

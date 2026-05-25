@@ -267,12 +267,14 @@ Workload clean-diagnostic expectations may declare the transition threshold; a
 replay summary uses the lowest declared threshold so a stricter diagnostic scope
 cannot be hidden by a looser one. The system-run object exposes CPU-scheduler,
 data-cache scheduler, and merged full-system progress deterministic dimension
-lists, per-dimension record slices, counts, tick windows, and compact summaries
-by transition kind, partition, and subject. Workload result summaries preserve
-the same evidence shape plus threshold-driven livelock diagnostic records,
-counts, subject queries, transition-kind summaries with exact kind tick windows, and kind-filtered
-diagnostic records plus subject summaries and diagnostic tick windows for
-CPU-scheduler, data-cache scheduler, and merged full-system scopes before workload replay translates them into
+lists, per-dimension record slices, counts, tick windows, compact summaries by
+transition kind, partition, and subject, plus threshold-driven livelock
+diagnostic kind-window summaries. Workload result summaries preserve the same
+evidence shape plus threshold-driven livelock diagnostic records, counts,
+subject queries, transition-kind summaries with exact kind tick windows, and
+kind-filtered diagnostic records plus subject summaries and diagnostic tick
+windows for CPU-scheduler, data-cache scheduler, and merged full-system scopes
+before workload replay translates them into
 manifest-verifiable result summaries; clean-diagnostic violations include the
 dirty livelock subjects so a failing replay identifies the stuck component or
 resource. Useful work resets the active window so retry-heavy but productive
