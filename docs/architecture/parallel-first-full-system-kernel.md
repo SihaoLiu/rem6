@@ -408,6 +408,10 @@ Workload results retain explicit merged full-system streak evidence instead of
 reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to
 manifest checks.
+The full-system batch sequence is merged by worker start tick with deterministic
+tie breakers, which prevents a CPU batch between two data-cache batches from
+being hidden by subsystem-local concatenation when sustained occupancy is
+measured.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal

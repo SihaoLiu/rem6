@@ -413,6 +413,13 @@ impl RiscvSystemRun {
     pub fn full_system_parallel_scheduler_batches(&self) -> Vec<ParallelEpochBatchRecord> {
         let mut batches = self.parallel_scheduler_batches();
         batches.extend(self.data_cache_parallel_scheduler_batches());
+        batches.sort_by_key(|batch| {
+            (
+                batch_start_tick(batch),
+                batch.horizon(),
+                batch_partition_key(batch),
+            )
+        });
         batches
     }
 
@@ -758,6 +765,24 @@ fn merge_partition_activity(
                 .max(activity.max_pending_events()),
         ),
     );
+}
+
+fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch
+        .workers()
+        .iter()
+        .map(|worker| worker.start_tick())
+        .min()
+        .unwrap_or_else(|| batch.horizon())
+}
+
+fn batch_partition_key(batch: &ParallelEpochBatchRecord) -> Vec<PartitionId> {
+    batch
+        .worker_partitions()
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn oldest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {

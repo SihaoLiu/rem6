@@ -24,6 +24,32 @@ fn cpu_scheduler_turn(
     RiscvClusterTurn::parallel_scheduler(plan, recorded)
 }
 
+fn cpu_scheduler_turns_at(
+    partitions: u32,
+    worker_limit: usize,
+    scheduled_tick: u64,
+    scheduled_partitions: &[PartitionId],
+) -> Vec<RiscvClusterTurn> {
+    let mut scheduler =
+        PartitionedScheduler::with_parallel_worker_limit(partitions, 4, worker_limit).unwrap();
+    for partition in scheduled_partitions {
+        scheduler
+            .schedule_parallel_at(*partition, scheduled_tick, |_| {})
+            .unwrap();
+    }
+    let mut turns = Vec::new();
+    while let Some(plan) = scheduler.plan_next_parallel_epoch().unwrap() {
+        let before = scheduler.now();
+        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+        let summary = recorded.summary();
+        turns.push(RiscvClusterTurn::parallel_scheduler(plan, recorded));
+        if summary.final_tick() == before && summary.executed_events() == 0 {
+            break;
+        }
+    }
+    turns
+}
+
 fn data_cache_run(
     partitions: u32,
     worker_limit: usize,
@@ -35,6 +61,32 @@ fn data_cache_run(
         scheduler
             .schedule_parallel_at(*partition, 0, |_| {})
             .unwrap();
+    }
+    ParallelCoherenceRunSummary::new(
+        scheduler.run_until_idle_parallel_recorded().unwrap(),
+        0,
+        0,
+        0,
+        Vec::new(),
+        Vec::new(),
+        empty_wait_for_graphs(),
+    )
+}
+
+fn data_cache_runs_at_ticks(
+    partitions: u32,
+    worker_limit: usize,
+    scheduled_ticks: &[u64],
+    scheduled_partitions: &[PartitionId],
+) -> ParallelCoherenceRunSummary {
+    let mut scheduler =
+        PartitionedScheduler::with_parallel_worker_limit(partitions, 4, worker_limit).unwrap();
+    for tick in scheduled_ticks {
+        for partition in scheduled_partitions {
+            scheduler
+                .schedule_parallel_at(*partition, *tick, |_| {})
+                .unwrap();
+        }
     }
     ParallelCoherenceRunSummary::new(
         scheduler.run_until_idle_parallel_recorded().unwrap(),
@@ -158,5 +210,34 @@ fn full_system_batch_streaks_cross_cpu_and_data_cache_batch_boundaries() {
             cpu1, cache,
         ]),
         2,
+    );
+}
+
+#[test]
+fn full_system_batch_streaks_follow_batch_start_ticks_across_scopes() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let run = RiscvSystemRun::new(
+        cpu_scheduler_turns_at(3, 1, 10, &[cache]),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 24 },
+    )
+    .with_data_cache_runs(vec![data_cache_runs_at_ticks(
+        3,
+        2,
+        &[0, 20],
+        &[cpu0, cpu1],
+    )]);
+
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_partition_streak_summaries(),
+        vec![(vec![cpu0, cpu1], 1), (vec![cache], 1)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+            cpu0, cpu1,
+        ]),
+        1,
     );
 }
