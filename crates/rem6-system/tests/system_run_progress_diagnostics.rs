@@ -100,6 +100,60 @@ fn system_run_reports_scheduler_progress_and_livelock_diagnostics() {
 }
 
 #[test]
+fn system_run_summarizes_progress_transition_dimensions() {
+    let cpu = PartitionId::new(0);
+    let cache = PartitionId::new(1);
+    let cpu_subject = component("cpu-scheduler");
+    let cache_subject = component("data-cache-scheduler");
+    let run = RiscvSystemRun::new(
+        vec![cpu_scheduler_turn(cpu, cpu_subject.clone(), 3)],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 8 },
+    )
+    .with_data_cache_runs(vec![data_cache_run(cache, cache_subject.clone(), 2)]);
+
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_kind_summaries(),
+        vec![(LivelockTransitionKind::ProtocolRetry, 3, 0, 0)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_partition_summaries(),
+        vec![(cpu, 3, 0, 0)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_subject_summaries(),
+        vec![(cpu_subject.clone(), 3, 0, 0)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_kind_summaries(),
+        vec![(LivelockTransitionKind::MessageRetry, 2, 0, 0)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_partition_summaries(),
+        vec![(cache, 2, 0, 0)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_subject_summaries(),
+        vec![(cache_subject.clone(), 2, 0, 0)],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_kind_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 3, 0, 0),
+            (LivelockTransitionKind::MessageRetry, 2, 0, 0),
+        ],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_partition_summaries(),
+        vec![(cpu, 3, 0, 0), (cache, 2, 0, 0)],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_subject_summaries(),
+        vec![(cpu_subject, 3, 0, 0), (cache_subject, 2, 0, 0)],
+    );
+}
+
+#[test]
 fn system_run_rejects_zero_livelock_transition_threshold() {
     let run = RiscvSystemRun::new(
         Vec::new(),
