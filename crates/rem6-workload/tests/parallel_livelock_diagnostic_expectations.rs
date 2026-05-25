@@ -1,4 +1,5 @@
 use rem6_boot::BootImage;
+use rem6_kernel::{LivelockDiagnostic, LivelockTransitionKind, ProgressMonitor, WaitForNode};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedCleanParallelDiagnostics, WorkloadId,
@@ -18,6 +19,24 @@ fn boot_image() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), vec![0x13, 0x05, 0x00, 0x00])
         .unwrap()
+}
+
+fn component(name: &str) -> WaitForNode {
+    WaitForNode::component(name).unwrap()
+}
+
+fn livelock_diagnostic(
+    subject: WaitForNode,
+    threshold: u64,
+    transitions: impl IntoIterator<Item = (LivelockTransitionKind, u64)>,
+) -> LivelockDiagnostic {
+    let mut monitor = ProgressMonitor::with_transition_threshold(threshold).unwrap();
+    for (kind, tick) in transitions {
+        monitor
+            .record_transition(subject.clone(), kind, tick)
+            .unwrap();
+    }
+    monitor.diagnostic(&subject).unwrap()
 }
 
 fn kernel_resource() -> WorkloadResource {
@@ -92,6 +111,55 @@ fn workload_result_records_parallel_livelock_diagnostics() {
     assert!(!productive_retry_summary.has_parallel_scheduler_livelock_diagnostics());
     assert!(!productive_retry_summary.has_data_cache_parallel_scheduler_livelock_diagnostics());
     assert!(!productive_retry_summary.has_full_system_diagnostics());
+}
+
+#[test]
+fn workload_result_preserves_livelock_diagnostic_records() {
+    let shared_subject = component("shared-progress-loop");
+    let scheduler_diagnostic = livelock_diagnostic(
+        shared_subject.clone(),
+        1,
+        [(LivelockTransitionKind::ProtocolRetry, 0)],
+    );
+    let data_cache_diagnostic = livelock_diagnostic(
+        shared_subject.clone(),
+        1,
+        [(LivelockTransitionKind::MessageRetry, 3)],
+    );
+    let full_system_diagnostic = livelock_diagnostic(
+        shared_subject.clone(),
+        2,
+        [
+            (LivelockTransitionKind::ProtocolRetry, 0),
+            (LivelockTransitionKind::MessageRetry, 3),
+        ],
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(1, [scheduler_diagnostic.clone()])
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(
+            1,
+            [data_cache_diagnostic.clone()],
+        )
+        .with_full_system_livelock_diagnostic_records([full_system_diagnostic.clone()]);
+
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostics(),
+        &[scheduler_diagnostic],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostics(),
+        &[data_cache_diagnostic],
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostics(),
+        vec![full_system_diagnostic],
+    );
+    assert_eq!(summary.parallel_scheduler_livelock_diagnostic_count(), 1);
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostic_count(),
+        1,
+    );
+    assert_eq!(summary.full_system_livelock_diagnostic_count(), 1);
 }
 
 #[test]

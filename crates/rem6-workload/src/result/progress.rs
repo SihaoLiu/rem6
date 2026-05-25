@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
-    LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId, Tick, WaitForNode,
+    LivelockDiagnostic, LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId,
+    Tick, WaitForNode,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -35,8 +36,71 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_parallel_scheduler_livelock_diagnostic_records(
+        mut self,
+        progress_transition_count: usize,
+        diagnostics: impl IntoIterator<Item = LivelockDiagnostic>,
+    ) -> Self {
+        self.scheduler_progress_transition_count = self
+            .scheduler_progress_transition_count
+            .max(progress_transition_count);
+        self.scheduler_livelock_diagnostics = diagnostics.into_iter().collect();
+        self.scheduler_livelock_diagnostic_count = self
+            .scheduler_livelock_diagnostic_count
+            .max(self.scheduler_livelock_diagnostics.len());
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_livelock_diagnostic_records(
+        mut self,
+        progress_transition_count: usize,
+        diagnostics: impl IntoIterator<Item = LivelockDiagnostic>,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_progress_transition_count = self
+            .data_cache_parallel_scheduler_progress_transition_count
+            .max(progress_transition_count);
+        self.data_cache_parallel_scheduler_livelock_diagnostics = diagnostics.into_iter().collect();
+        self.data_cache_parallel_scheduler_livelock_diagnostic_count = self
+            .data_cache_parallel_scheduler_livelock_diagnostic_count
+            .max(
+                self.data_cache_parallel_scheduler_livelock_diagnostics
+                    .len(),
+            );
+        self
+    }
+
+    pub fn with_full_system_livelock_diagnostic_records(
+        mut self,
+        diagnostics: impl IntoIterator<Item = LivelockDiagnostic>,
+    ) -> Self {
+        self.merged_full_system_livelock_diagnostics = diagnostics.into_iter().collect();
+        self.merged_full_system_livelock_diagnostic_count =
+            self.merged_full_system_livelock_diagnostics.len();
+        self.has_merged_full_system_livelock_diagnostic_count = true;
+        self
+    }
+
     pub fn parallel_scheduler_progress_transitions(&self) -> &[ParallelProgressTransitionRecord] {
         &self.parallel_scheduler_progress_transitions
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostics(&self) -> &[LivelockDiagnostic] {
+        &self.scheduler_livelock_diagnostics
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostics(&self) -> &[LivelockDiagnostic] {
+        &self.data_cache_parallel_scheduler_livelock_diagnostics
+    }
+
+    pub fn full_system_livelock_diagnostics(&self) -> Vec<LivelockDiagnostic> {
+        if self.has_merged_full_system_livelock_diagnostic_count {
+            return self.merged_full_system_livelock_diagnostics.clone();
+        }
+        self.scheduler_livelock_diagnostics
+            .iter()
+            .chain(&self.data_cache_parallel_scheduler_livelock_diagnostics)
+            .cloned()
+            .collect()
     }
 
     pub fn parallel_scheduler_progress_transition_count_by_kind(

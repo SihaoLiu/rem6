@@ -28,18 +28,18 @@ pub(super) fn parallel_execution_summary(
     let scheduler_progress_transition_count = run.parallel_scheduler_progress_transition_count();
     let data_cache_scheduler_progress_transition_count =
         run.data_cache_parallel_scheduler_progress_transition_count();
-    let scheduler_livelock_diagnostic_count = livelock_transition_threshold
+    let scheduler_livelock_diagnostics = livelock_transition_threshold
+        .and_then(|threshold| run.parallel_scheduler_livelock_diagnostics(threshold).ok())
+        .unwrap_or_default();
+    let data_cache_scheduler_livelock_diagnostics = livelock_transition_threshold
         .and_then(|threshold| {
-            run.parallel_scheduler_livelock_diagnostic_count(threshold)
+            run.data_cache_parallel_scheduler_livelock_diagnostics(threshold)
                 .ok()
         })
-        .unwrap_or(0);
-    let data_cache_scheduler_livelock_diagnostic_count = livelock_transition_threshold
-        .and_then(|threshold| {
-            run.data_cache_parallel_scheduler_livelock_diagnostic_count(threshold)
-                .ok()
-        })
-        .unwrap_or(0);
+        .unwrap_or_default();
+    let full_system_livelock_diagnostics = livelock_transition_threshold
+        .and_then(|threshold| run.full_system_livelock_diagnostics(threshold).ok())
+        .unwrap_or_default();
     let riscv_fetch_issue_count = cpu_activities
         .values()
         .map(|activity| activity.fetch_issue_count())
@@ -68,9 +68,9 @@ pub(super) fn parallel_execution_summary(
             run.max_parallel_scheduler_workers(),
         )
         .with_scheduler_worker_count(scheduler.total_parallel_workers())
-        .with_parallel_scheduler_livelock_diagnostics(
+        .with_parallel_scheduler_livelock_diagnostic_records(
             scheduler_progress_transition_count,
-            scheduler_livelock_diagnostic_count,
+            scheduler_livelock_diagnostics,
         )
         .with_parallel_scheduler_progress_transitions(run.parallel_scheduler_progress_transitions())
         .with_parallel_scheduler_batch_worker_counts(
@@ -117,9 +117,9 @@ pub(super) fn parallel_execution_summary(
             run.active_data_cache_parallel_scheduler_partition_count(),
         )
         .with_data_cache_parallel_worker_count(run.data_cache_parallel_scheduler_total_workers())
-        .with_data_cache_parallel_scheduler_livelock_diagnostics(
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(
             data_cache_scheduler_progress_transition_count,
-            data_cache_scheduler_livelock_diagnostic_count,
+            data_cache_scheduler_livelock_diagnostics,
         )
         .with_data_cache_parallel_scheduler_progress_transitions(
             run.data_cache_parallel_scheduler_progress_transitions(),
@@ -155,6 +155,7 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_initial_frontiers(),
             run.data_cache_parallel_scheduler_final_frontiers(),
         )
+        .with_full_system_livelock_diagnostic_records(full_system_livelock_diagnostics)
         .with_data_cache_run_attribution(
             run.attributed_data_cache_parallel_run_count(),
             run.unattributed_data_cache_parallel_run_count(),
@@ -659,6 +660,79 @@ mod tests {
     }
 
     #[test]
+    fn parallel_execution_summary_preserves_livelock_diagnostic_records() {
+        let cpu = PartitionId::new(0);
+        let data_cache = PartitionId::new(1);
+        let shared_subject = component_wait_node("shared-progress-loop");
+        let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+        let scheduler_subject = shared_subject.clone();
+        scheduler
+            .schedule_parallel_at(cpu, 0, move |context| {
+                context.record_progress_transition(
+                    scheduler_subject.clone(),
+                    LivelockTransitionKind::ProtocolRetry,
+                );
+            })
+            .unwrap();
+        let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+        let run = RiscvSystemRun::new(
+            vec![RiscvClusterTurn::parallel_scheduler(plan, recorded)],
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 8 },
+        )
+        .with_data_cache_runs(vec![data_cache_run_with_repeated_progress_for_subject(
+            data_cache,
+            3,
+            shared_subject.clone(),
+            1,
+        )]);
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            Some(2),
+        );
+
+        assert!(summary.parallel_scheduler_livelock_diagnostics().is_empty());
+        assert!(summary
+            .data_cache_parallel_scheduler_livelock_diagnostics()
+            .is_empty());
+        let diagnostics = summary.full_system_livelock_diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].subject(), &shared_subject);
+        assert_eq!(diagnostics[0].threshold(), 2);
+        assert_eq!(diagnostics[0].transition_count(), 2);
+        assert_eq!(
+            diagnostics[0].transition_count_by_kind(LivelockTransitionKind::ProtocolRetry),
+            1,
+        );
+        assert_eq!(
+            diagnostics[0].transition_count_by_kind(LivelockTransitionKind::MessageRetry),
+            1,
+        );
+        assert_eq!(diagnostics[0].first_transition_tick(), 0);
+        assert_eq!(diagnostics[0].last_transition_tick(), 3);
+        assert_eq!(summary.full_system_livelock_diagnostic_count(), 1);
+    }
+
+    #[test]
     fn parallel_execution_summary_preserves_cross_subsystem_deadlocks() {
         let packet = transaction_wait_node("fabric.packet.42");
         let line = resource_wait_node("cache.0.line.4000");
@@ -787,10 +861,23 @@ mod tests {
         partition: PartitionId,
         transition_count: usize,
     ) -> ParallelCoherenceRunSummary {
+        data_cache_run_with_repeated_progress_for_subject(
+            partition,
+            0,
+            component_wait_node("data-cache-scheduler"),
+            transition_count,
+        )
+    }
+
+    fn data_cache_run_with_repeated_progress_for_subject(
+        partition: PartitionId,
+        tick: u64,
+        subject: WaitForNode,
+        transition_count: usize,
+    ) -> ParallelCoherenceRunSummary {
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
-        let subject = component_wait_node("data-cache-scheduler");
         scheduler
-            .schedule_parallel_at(partition, 0, move |context| {
+            .schedule_parallel_at(partition, tick, move |context| {
                 for _ in 0..transition_count {
                     context.record_progress_transition(
                         subject.clone(),

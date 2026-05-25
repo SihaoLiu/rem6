@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
-    ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
+    LivelockDiagnostic, ParallelPartitionActivity, ParallelProgressTransitionRecord,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
 };
 
 use crate::parallel_batch::{
@@ -155,6 +155,7 @@ pub struct WorkloadParallelExecutionSummary {
     total_parallel_scheduler_workers: usize,
     scheduler_progress_transition_count: usize,
     scheduler_livelock_diagnostic_count: usize,
+    scheduler_livelock_diagnostics: Vec<LivelockDiagnostic>,
     parallel_scheduler_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
@@ -196,6 +197,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
+    data_cache_parallel_scheduler_livelock_diagnostics: Vec<LivelockDiagnostic>,
     data_cache_parallel_scheduler_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     active_fabric_lane_count: usize,
     fabric_transfer_count: usize,
@@ -227,6 +229,9 @@ pub struct WorkloadParallelExecutionSummary {
     dram_deadlock_diagnostic_count: usize,
     merged_resource_deadlock_diagnostic_count: usize,
     merged_full_system_deadlock_diagnostic_count: usize,
+    merged_full_system_livelock_diagnostic_count: usize,
+    has_merged_full_system_livelock_diagnostic_count: bool,
+    merged_full_system_livelock_diagnostics: Vec<LivelockDiagnostic>,
     gpu_kernel_launch_count: usize,
     gpu_trace_event_count: usize,
     gpu_workgroup_completion_count: usize,
@@ -1556,8 +1561,12 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub const fn full_system_livelock_diagnostic_count(&self) -> usize {
-        self.scheduler_livelock_diagnostic_count
-            + self.data_cache_parallel_scheduler_livelock_diagnostic_count
+        if self.has_merged_full_system_livelock_diagnostic_count {
+            self.merged_full_system_livelock_diagnostic_count
+        } else {
+            self.scheduler_livelock_diagnostic_count
+                + self.data_cache_parallel_scheduler_livelock_diagnostic_count
+        }
     }
 
     pub const fn has_full_system_diagnostics(&self) -> bool {
