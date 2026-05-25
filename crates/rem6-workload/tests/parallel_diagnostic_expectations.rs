@@ -162,6 +162,7 @@ fn workload_replay_plan_rejects_missing_or_dirty_parallel_diagnostics() {
             scope: WorkloadParallelDiagnosticScope::FullSystem,
             wait_for_edge_count: 5,
             deadlock_diagnostic_count: 5,
+            livelock_diagnostic_count: 0,
         },
     );
 }

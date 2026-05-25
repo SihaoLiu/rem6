@@ -16,12 +16,17 @@ pub(crate) fn verify_expected_clean_parallel_diagnostics(
     };
 
     for expected in expected_diagnostics {
-        let (wait_for_edge_count, deadlock_diagnostic_count) = expected.actual_counts(summary);
-        if wait_for_edge_count != 0 || deadlock_diagnostic_count != 0 {
+        let (wait_for_edge_count, deadlock_diagnostic_count, livelock_diagnostic_count) =
+            expected.actual_counts(summary);
+        if wait_for_edge_count != 0
+            || deadlock_diagnostic_count != 0
+            || livelock_diagnostic_count != 0
+        {
             return Err(WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
                 scope: expected.scope(),
                 wait_for_edge_count,
                 deadlock_diagnostic_count,
+                livelock_diagnostic_count,
             });
         }
     }

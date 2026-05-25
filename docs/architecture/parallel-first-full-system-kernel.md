@@ -264,10 +264,11 @@ Tests for each integration layer should cover both outcomes:
 - useful work clears the active progress-free transition window;
 - unrelated dependencies remain in the graph when one resource resolves.
 
-Run summaries should include wait-for diagnostics only when useful. A normal
-completed run can report zero remaining edges. A stopped, timed-out, or
-diagnostic run should expose the graph snapshot or the bounded diagnostic that
-explains why forward movement stopped.
+Run summaries should include wait-for, deadlock, and livelock diagnostics only
+when useful. A normal completed run can report zero remaining edges and zero
+livelock diagnostics. A stopped, timed-out, or diagnostic run should expose the
+graph snapshot or the bounded diagnostic that explains why forward movement
+stopped.
 
 The policy applies to CPU, GPU, accelerator, DMA, interrupt, timer, and host
 traffic. Heterogeneous models must not bypass it by reporting only device-local

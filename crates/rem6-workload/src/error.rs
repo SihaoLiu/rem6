@@ -610,6 +610,7 @@ pub enum WorkloadError {
         scope: WorkloadParallelDiagnosticScope,
         wait_for_edge_count: usize,
         deadlock_diagnostic_count: usize,
+        livelock_diagnostic_count: usize,
     },
 }
 
@@ -1567,9 +1568,10 @@ impl fmt::Display for WorkloadError {
                 scope,
                 wait_for_edge_count,
                 deadlock_diagnostic_count,
+                livelock_diagnostic_count,
             } => write!(
                 formatter,
-                "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges and {deadlock_diagnostic_count} deadlock diagnostics",
+                "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges, {deadlock_diagnostic_count} deadlock diagnostics, and {livelock_diagnostic_count} livelock diagnostics",
                 scope.as_str()
             ),
         }

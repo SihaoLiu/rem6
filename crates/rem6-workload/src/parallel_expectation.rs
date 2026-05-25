@@ -168,27 +168,32 @@ impl WorkloadExpectedCleanParallelDiagnostics {
     pub(crate) const fn actual_counts(
         self,
         summary: &WorkloadParallelExecutionSummary,
-    ) -> (usize, usize) {
+    ) -> (usize, usize, usize) {
         match self.scope {
             WorkloadParallelDiagnosticScope::Resource => (
                 summary.resource_wait_for_edge_count(),
                 summary.resource_deadlock_diagnostic_count(),
+                0,
             ),
             WorkloadParallelDiagnosticScope::DataCache => (
                 summary.data_cache_wait_for_edge_count(),
                 summary.data_cache_deadlock_diagnostic_count(),
+                summary.data_cache_parallel_scheduler_livelock_diagnostic_count(),
             ),
             WorkloadParallelDiagnosticScope::Compute => (
                 summary.compute_wait_for_edge_count(),
                 summary.compute_deadlock_diagnostic_count(),
+                0,
             ),
             WorkloadParallelDiagnosticScope::Dma => (
                 summary.dma_wait_for_edge_count(),
                 summary.dma_deadlock_diagnostic_count(),
+                0,
             ),
             WorkloadParallelDiagnosticScope::FullSystem => (
                 summary.full_system_wait_for_edge_count(),
                 summary.full_system_deadlock_diagnostic_count(),
+                summary.full_system_livelock_diagnostic_count(),
             ),
         }
     }

@@ -133,6 +133,8 @@ pub struct WorkloadParallelExecutionSummary {
     active_scheduler_partition_count: usize,
     max_parallel_scheduler_workers: usize,
     total_parallel_scheduler_workers: usize,
+    scheduler_progress_transition_count: usize,
+    scheduler_livelock_diagnostic_count: usize,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     parallel_scheduler_batch_partition_streaks: Vec<WorkloadParallelBatchPartitionStreak>,
@@ -165,6 +167,8 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
     data_cache_wait_for_edge_count: usize,
     data_cache_deadlock_diagnostic_count: usize,
+    data_cache_parallel_scheduler_progress_transition_count: usize,
+    data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
     active_fabric_lane_count: usize,
     fabric_transfer_count: usize,
     fabric_byte_count: u64,
@@ -306,6 +310,16 @@ impl WorkloadParallelExecutionSummary {
         self.parallel_scheduler_partition_activities =
             collect_parallel_partition_activities(activities);
         self.active_scheduler_partition_count = self.parallel_scheduler_partition_activities.len();
+        self
+    }
+
+    pub const fn with_parallel_scheduler_livelock_diagnostics(
+        mut self,
+        progress_transition_count: usize,
+        livelock_diagnostic_count: usize,
+    ) -> Self {
+        self.scheduler_progress_transition_count = progress_transition_count;
+        self.scheduler_livelock_diagnostic_count = livelock_diagnostic_count;
         self
     }
 
@@ -475,6 +489,16 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.data_cache_wait_for_edge_count = wait_for_edge_count;
         self.data_cache_deadlock_diagnostic_count = deadlock_diagnostic_count;
+        self
+    }
+
+    pub const fn with_data_cache_parallel_scheduler_livelock_diagnostics(
+        mut self,
+        progress_transition_count: usize,
+        livelock_diagnostic_count: usize,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_progress_transition_count = progress_transition_count;
+        self.data_cache_parallel_scheduler_livelock_diagnostic_count = livelock_diagnostic_count;
         self
     }
 
@@ -678,6 +702,18 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn total_parallel_scheduler_workers(&self) -> usize {
         self.total_parallel_scheduler_workers
+    }
+
+    pub const fn parallel_scheduler_progress_transition_count(&self) -> usize {
+        self.scheduler_progress_transition_count
+    }
+
+    pub const fn parallel_scheduler_livelock_diagnostic_count(&self) -> usize {
+        self.scheduler_livelock_diagnostic_count
+    }
+
+    pub const fn has_parallel_scheduler_livelock_diagnostics(&self) -> bool {
+        self.scheduler_livelock_diagnostic_count != 0
     }
 
     pub fn parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
@@ -960,8 +996,22 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_deadlock_diagnostic_count
     }
 
+    pub const fn data_cache_parallel_scheduler_progress_transition_count(&self) -> usize {
+        self.data_cache_parallel_scheduler_progress_transition_count
+    }
+
+    pub const fn data_cache_parallel_scheduler_livelock_diagnostic_count(&self) -> usize {
+        self.data_cache_parallel_scheduler_livelock_diagnostic_count
+    }
+
+    pub const fn has_data_cache_parallel_scheduler_livelock_diagnostics(&self) -> bool {
+        self.data_cache_parallel_scheduler_livelock_diagnostic_count != 0
+    }
+
     pub const fn has_data_cache_diagnostics(&self) -> bool {
-        self.data_cache_wait_for_edge_count != 0 || self.data_cache_deadlock_diagnostic_count != 0
+        self.data_cache_wait_for_edge_count != 0
+            || self.data_cache_deadlock_diagnostic_count != 0
+            || self.has_data_cache_parallel_scheduler_livelock_diagnostics()
     }
 
     pub const fn fabric_wait_for_edge_count(&self) -> usize {
@@ -1172,11 +1222,22 @@ impl WorkloadParallelExecutionSummary {
             + self.dma_deadlock_diagnostic_count()
     }
 
+    pub const fn full_system_progress_transition_count(&self) -> usize {
+        self.scheduler_progress_transition_count
+            + self.data_cache_parallel_scheduler_progress_transition_count
+    }
+
+    pub const fn full_system_livelock_diagnostic_count(&self) -> usize {
+        self.scheduler_livelock_diagnostic_count
+            + self.data_cache_parallel_scheduler_livelock_diagnostic_count
+    }
+
     pub const fn has_full_system_diagnostics(&self) -> bool {
         self.has_resource_diagnostics()
             || self.has_data_cache_diagnostics()
             || self.has_compute_diagnostics()
             || self.has_dma_diagnostics()
+            || self.full_system_livelock_diagnostic_count() != 0
     }
 
     pub const fn gpu_kernel_launch_count(&self) -> usize {
