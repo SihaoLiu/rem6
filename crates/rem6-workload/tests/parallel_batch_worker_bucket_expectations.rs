@@ -2,10 +2,12 @@ use rem6_boot::BootImage;
 use rem6_kernel::PartitionId;
 use rem6_memory::Address;
 use rem6_workload::{
-    WorkloadError, WorkloadExpectedParallelBatchWorkerBucket, WorkloadId,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadError, WorkloadExpectedParallelBatchWorkerBucket,
+    WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadId, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -50,6 +52,24 @@ fn expected_bucket(
 ) -> WorkloadExpectedParallelBatchWorkerBucket {
     WorkloadExpectedParallelBatchWorkerBucket::new(scope, worker_count, minimum_batch_count)
         .unwrap()
+}
+
+fn expected_tick_bucket(
+    scope: WorkloadParallelRemoteFlowScope,
+    worker_count: usize,
+    minimum_ticks: u64,
+) -> WorkloadExpectedParallelBatchWorkerTickBucket {
+    WorkloadExpectedParallelBatchWorkerTickBucket::new(scope, worker_count, minimum_ticks).unwrap()
+}
+
+fn timeline_record(
+    scope: WorkloadParallelBatchScope,
+    start_tick: u64,
+    horizon: u64,
+    partitions: impl IntoIterator<Item = PartitionId>,
+    worker_count: usize,
+) -> WorkloadParallelBatchTimelineRecord {
+    WorkloadParallelBatchTimelineRecord::new(scope, start_tick, horizon, partitions, worker_count)
 }
 
 fn partition(index: u32) -> PartitionId {
@@ -273,6 +293,226 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_bucke
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerBucket {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            worker_count: 2,
+        },
+    );
+}
+
+#[test]
+fn workload_manifest_records_parallel_batch_worker_tick_bucket_expectations() {
+    let scheduler_bucket = expected_tick_bucket(WorkloadParallelRemoteFlowScope::Scheduler, 2, 8);
+    let data_cache_bucket =
+        expected_tick_bucket(WorkloadParallelRemoteFlowScope::DataCacheScheduler, 3, 4);
+    let full_system_bucket =
+        expected_tick_bucket(WorkloadParallelRemoteFlowScope::FullSystem, 2, 12);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-worker-tick-bucket"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_bucket(full_system_bucket)
+            .unwrap()
+            .add_expected_parallel_batch_worker_tick_bucket(data_cache_bucket)
+            .unwrap()
+            .add_expected_parallel_batch_worker_tick_bucket(scheduler_bucket)
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_eq!(
+        manifest.expected_parallel_batch_worker_tick_buckets(),
+        &[scheduler_bucket, data_cache_bucket, full_system_bucket],
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_parallel_batch_worker_tick_buckets(),
+        manifest.expected_parallel_batch_worker_tick_buckets(),
+    );
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                5,
+                [partition(0), partition(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                5,
+                8,
+                [partition(2), partition(3)],
+                2,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                10,
+                14,
+                [partition(4), partition(5), partition(6)],
+                3,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                14,
+                18,
+                [partition(7), partition(8)],
+                2,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_parallel_batch_worker_tick_buckets() {
+    let base =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-bucket"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let scheduler =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-bucket"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                2,
+                8,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let stronger_scheduler =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-bucket"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                2,
+                9,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let wider_scheduler =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-bucket"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                3,
+                8,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_ne!(base.identity(), scheduler.identity());
+    assert_ne!(scheduler.identity(), stronger_scheduler.identity());
+    assert_ne!(scheduler.identity(), wider_scheduler.identity());
+}
+
+#[test]
+fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tick_buckets() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            12,
+        ))
+        .unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::MissingParallelBatchWorkerTickBucketSummary {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            worker_count: 2,
+            minimum_ticks: 12,
+        },
+    );
+
+    let underfilled_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            5,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            5,
+            9,
+            [partition(2), partition(3), partition(4)],
+            3,
+        )]);
+    let underfilled = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underfilled_summary);
+    assert_eq!(
+        plan.verify_result(&underfilled).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchWorkerTickBucketBelowMinimum {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            worker_count: 2,
+            minimum_ticks: 12,
+            actual_ticks: 5,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_buckets() {
+    assert_eq!(
+        WorkloadExpectedParallelBatchWorkerTickBucket::new(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            1,
+            8,
+        )
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelBatchWorkerTickBucket {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            worker_count: 1,
+        },
+    );
+    assert_eq!(
+        WorkloadExpectedParallelBatchWorkerTickBucket::new(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            2,
+            0,
+        )
+        .unwrap_err(),
+        WorkloadError::ZeroExpectedParallelBatchWorkerTickBucket {
+            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            worker_count: 2,
+        },
+    );
+
+    let duplicate = replay_plan()
+        .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            8,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            9,
+        ))
+        .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateExpectedParallelBatchWorkerTickBucket {
             scope: WorkloadParallelRemoteFlowScope::Scheduler,
             worker_count: 2,
         },

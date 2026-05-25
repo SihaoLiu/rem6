@@ -1067,6 +1067,39 @@ pub(crate) fn verify_expected_parallel_batch_worker_buckets(
     Ok(())
 }
 
+pub(crate) fn verify_expected_parallel_batch_worker_tick_buckets(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_buckets = plan.expected_parallel_batch_worker_tick_buckets();
+    if expected_buckets.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_buckets[0];
+        return Err(WorkloadError::MissingParallelBatchWorkerTickBucketSummary {
+            scope: expected.scope(),
+            worker_count: expected.worker_count(),
+            minimum_ticks: expected.minimum_ticks(),
+        });
+    };
+
+    for expected in expected_buckets {
+        let actual_ticks = expected.actual_ticks(summary);
+        if actual_ticks < expected.minimum_ticks() {
+            return Err(
+                WorkloadError::ExpectedParallelBatchWorkerTickBucketBelowMinimum {
+                    scope: expected.scope(),
+                    worker_count: expected.worker_count(),
+                    minimum_ticks: expected.minimum_ticks(),
+                    actual_ticks,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_batch_partition_sets(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

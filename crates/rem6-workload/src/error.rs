@@ -859,6 +859,29 @@ pub enum WorkloadError {
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
+    InvalidExpectedParallelBatchWorkerTickBucket {
+        scope: WorkloadParallelRemoteFlowScope,
+        worker_count: usize,
+    },
+    ZeroExpectedParallelBatchWorkerTickBucket {
+        scope: WorkloadParallelRemoteFlowScope,
+        worker_count: usize,
+    },
+    DuplicateExpectedParallelBatchWorkerTickBucket {
+        scope: WorkloadParallelRemoteFlowScope,
+        worker_count: usize,
+    },
+    MissingParallelBatchWorkerTickBucketSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        worker_count: usize,
+        minimum_ticks: Tick,
+    },
+    ExpectedParallelBatchWorkerTickBucketBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        worker_count: usize,
+        minimum_ticks: Tick,
+        actual_ticks: Tick,
+    },
     InvalidExpectedParallelBatchPartitionSet {
         scope: WorkloadParallelRemoteFlowScope,
         partitions: Vec<u32>,

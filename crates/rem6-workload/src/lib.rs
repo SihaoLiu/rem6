@@ -10,6 +10,7 @@ mod error_support;
 mod heterogeneous;
 mod host_event;
 mod identity;
+mod manifest_identity;
 mod manifest_parallel_frontier;
 mod manifest_progress;
 mod manifest_remote_endpoints;
@@ -44,13 +45,16 @@ pub use host_event::{
     WorkloadStatsScope,
 };
 use identity::{manifest_identity, ManifestIdentityInput};
+pub use manifest_identity::WorkloadManifestIdentity;
 pub use parallel_batch::{
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount,
 };
 pub use parallel_batch_timeline_expectation::WorkloadExpectedParallelBatchTimelineRecord;
-pub use parallel_batch_worker_count_expectation::WorkloadExpectedParallelBatchWorkerBucket;
+pub use parallel_batch_worker_count_expectation::{
+    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickBucket,
+};
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
@@ -265,19 +269,6 @@ impl WorkloadBootSegment {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct WorkloadManifestIdentity(String);
-
-impl WorkloadManifestIdentity {
-    fn new(hash: u64) -> Self {
-        Self(format!("wl-{hash:016x}"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadManifest {
     id: WorkloadId,
@@ -305,6 +296,7 @@ pub struct WorkloadManifest {
     expected_parallel_scheduler_idle_bounds: Vec<WorkloadExpectedParallelSchedulerIdleBound>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_worker_buckets: Vec<WorkloadExpectedParallelBatchWorkerBucket>,
+    expected_parallel_batch_worker_tick_buckets: Vec<WorkloadExpectedParallelBatchWorkerTickBucket>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -480,6 +472,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_scheduler_idle_bounds: Vec<WorkloadExpectedParallelSchedulerIdleBound>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_worker_buckets: Vec<WorkloadExpectedParallelBatchWorkerBucket>,
+    expected_parallel_batch_worker_tick_buckets: Vec<WorkloadExpectedParallelBatchWorkerTickBucket>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -517,6 +510,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_scheduler_idle_bounds: Vec::new(),
             expected_parallel_batch_activity: Vec::new(),
             expected_parallel_batch_worker_buckets: Vec::new(),
+            expected_parallel_batch_worker_tick_buckets: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_batch_timeline_records: Vec::new(),
@@ -921,6 +915,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_scheduler_idle_bounds: &self.expected_parallel_scheduler_idle_bounds,
             expected_parallel_batch_activity: &self.expected_parallel_batch_activity,
             expected_parallel_batch_worker_buckets: &self.expected_parallel_batch_worker_buckets,
+            expected_parallel_batch_worker_tick_buckets: &self
+                .expected_parallel_batch_worker_tick_buckets,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
                 .expected_parallel_batch_partition_streaks,
@@ -959,6 +955,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_scheduler_idle_bounds: self.expected_parallel_scheduler_idle_bounds,
             expected_parallel_batch_activity: self.expected_parallel_batch_activity,
             expected_parallel_batch_worker_buckets: self.expected_parallel_batch_worker_buckets,
+            expected_parallel_batch_worker_tick_buckets: self
+                .expected_parallel_batch_worker_tick_buckets,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
                 .expected_parallel_batch_partition_streaks,
@@ -1003,6 +1001,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_scheduler_idle_bounds: Vec<WorkloadExpectedParallelSchedulerIdleBound>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_worker_buckets: Vec<WorkloadExpectedParallelBatchWorkerBucket>,
+    expected_parallel_batch_worker_tick_buckets: Vec<WorkloadExpectedParallelBatchWorkerTickBucket>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -1068,6 +1067,9 @@ impl WorkloadReplayPlan {
             expected_parallel_batch_activity: manifest.expected_parallel_batch_activity().to_vec(),
             expected_parallel_batch_worker_buckets: manifest
                 .expected_parallel_batch_worker_buckets()
+                .to_vec(),
+            expected_parallel_batch_worker_tick_buckets: manifest
+                .expected_parallel_batch_worker_tick_buckets()
                 .to_vec(),
             expected_parallel_batch_partition_sets: manifest
                 .expected_parallel_batch_partition_sets()
@@ -1514,6 +1516,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_scheduler_idle_bounds(self, result)?;
         replay_verify::verify_expected_parallel_batch_activity(self, result)?;
         replay_verify::verify_expected_parallel_batch_worker_buckets(self, result)?;
+        replay_verify::verify_expected_parallel_batch_worker_tick_buckets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         replay_verify::verify_expected_parallel_batch_timeline_records(self, result)?;

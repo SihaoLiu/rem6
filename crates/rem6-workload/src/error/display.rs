@@ -1096,6 +1096,49 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch worker-count bucket {worker_count} to reach at least {minimum_batch_count} batches, got {actual_batch_count}",
                 scope.as_str()
             ),
+            Self::InvalidExpectedParallelBatchWorkerTickBucket {
+                scope,
+                worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick bucket must require at least 2 workers, got {worker_count}",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedParallelBatchWorkerTickBucket {
+                scope,
+                worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick bucket {worker_count} must require positive ticks",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelBatchWorkerTickBucket {
+                scope,
+                worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick bucket {worker_count} is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelBatchWorkerTickBucketSummary {
+                scope,
+                worker_count,
+                minimum_ticks,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch worker-count tick bucket {worker_count} with at least {minimum_ticks} ticks",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelBatchWorkerTickBucketBelowMinimum {
+                scope,
+                worker_count,
+                minimum_ticks,
+                actual_ticks,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick bucket {worker_count} to reach at least {minimum_ticks} ticks, got {actual_ticks}",
+                scope.as_str()
+            ),
             Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
                 formatter,
                 "expected {} batch partition set {} must include at least 2 partitions",

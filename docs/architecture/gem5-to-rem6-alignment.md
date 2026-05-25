@@ -461,8 +461,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   full-system deadlock diagnostic counts, batch counts derived from the
   strongest available aggregate, worker-count, exact partition-set, or streak evidence,
   exact worker-count bucket counts derived from the strongest available
-  worker-count, exact partition-set, or streak evidence, manifest-verifiable
-  exact worker-count bucket contracts,
+  worker-count, exact partition-set, or streak evidence, duration-weighted
+  worker-count tick bucket counts derived from exact batch timeline evidence,
+  manifest-verifiable exact worker-count bucket contracts,
+  manifest-verifiable duration-weighted worker-count tick bucket contracts,
   total-worker counts derived from the
   strongest available aggregate, batch-histogram, exact partition-set, streak, or per-partition worker evidence, exact batch
   partition-set histograms, maximum
