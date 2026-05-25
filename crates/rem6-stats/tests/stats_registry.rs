@@ -2,7 +2,7 @@ use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
     StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatPathError, StatSample, StatSnapshot,
-    StatSnapshotDelta, StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
+    StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -206,6 +206,55 @@ fn stats_registry_rejects_ambiguous_counter_units_without_consuming_ids() {
             ],
         ),
     );
+}
+
+#[test]
+fn stats_registry_records_structured_counter_units_without_consuming_ids_on_bad_rates() {
+    let mut stats = StatsRegistry::new();
+
+    assert_eq!(
+        stats
+            .register_counter("cpu0.ipc", "Count/Cycle")
+            .unwrap_err(),
+        StatsError::InvalidUnit {
+            unit: "Count/Cycle".to_string(),
+            reason: StatUnitError::TrailingInput {
+                index: 5,
+                character: '/',
+            },
+        },
+    );
+    assert_eq!(
+        stats.register_counter("cpu0.ipc", "(Count/)").unwrap_err(),
+        StatsError::InvalidUnit {
+            unit: "(Count/)".to_string(),
+            reason: StatUnitError::ExpectedTerm { index: 7 },
+        },
+    );
+    assert_eq!(
+        stats
+            .register_counter("cpu0.ipc", "(Count/Cycle")
+            .unwrap_err(),
+        StatsError::InvalidUnit {
+            unit: "(Count/Cycle".to_string(),
+            reason: StatUnitError::ExpectedRateTerminator { index: 12 },
+        },
+    );
+
+    let nested_rate = StatUnit::rate(
+        StatUnit::rate(StatUnit::bit(), StatUnit::second()),
+        StatUnit::rate(StatUnit::count(), StatUnit::cycle()),
+    );
+    let bandwidth_per_ipc = stats
+        .register_counter_with_unit("cpu0.bandwidth_per_ipc", nested_rate.clone())
+        .unwrap();
+    assert_eq!(bandwidth_per_ipc, StatId::new(0));
+
+    let snapshot = stats.snapshot(10);
+    let sample = &snapshot.samples()[0];
+    assert_eq!(sample.id(), bandwidth_per_ipc);
+    assert_eq!(sample.unit(), nested_rate.as_str());
+    assert_eq!(sample.stat_unit(), &nested_rate);
 }
 
 #[test]
