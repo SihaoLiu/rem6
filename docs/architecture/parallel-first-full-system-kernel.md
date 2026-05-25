@@ -354,6 +354,9 @@ paths should call the parallel APIs and record the parallel run summary. CPU
 cluster and full-system run records must preserve both the initial and final
 frontiers for each recorded parallel epoch, so higher layers can verify how far
 each partition advanced instead of inferring it from aggregate counts.
+Data-cache and coherence run summaries follow the same rule, and workload
+result summaries must retain those frontiers separately from aggregate worker
+and batch counts.
 
 ## Message Model
 

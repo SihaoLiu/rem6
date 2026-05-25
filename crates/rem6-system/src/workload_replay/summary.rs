@@ -143,6 +143,10 @@ pub(super) fn parallel_execution_summary(
         .with_data_cache_parallel_scheduler_remote_flows(
             run.data_cache_parallel_scheduler_remote_flows(),
         )
+        .with_data_cache_parallel_scheduler_frontiers(
+            run.data_cache_parallel_scheduler_initial_frontiers(),
+            run.data_cache_parallel_scheduler_final_frontiers(),
+        )
         .with_data_cache_run_attribution(
             run.attributed_data_cache_parallel_run_count(),
             run.unattributed_data_cache_parallel_run_count(),
@@ -671,6 +675,51 @@ mod tests {
         assert_eq!(summary.full_system_wait_for_edge_count(), 2);
         assert_eq!(summary.full_system_deadlock_diagnostic_count(), 1);
         assert!(summary.has_full_system_diagnostics());
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_data_cache_scheduler_frontiers() {
+        let data_cache_run = data_cache_run_with_progress(PartitionId::new(2));
+        let run = RiscvSystemRun::new(
+            Vec::new(),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 9 },
+        )
+        .with_data_cache_runs(vec![data_cache_run]);
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(
+            summary.data_cache_parallel_scheduler_initial_frontiers(),
+            run.data_cache_parallel_scheduler_initial_frontiers()
+                .as_slice(),
+        );
+        assert_eq!(
+            summary.data_cache_parallel_scheduler_final_frontiers(),
+            run.data_cache_parallel_scheduler_final_frontiers()
+                .as_slice(),
+        );
     }
 
     fn data_cache_run_with_progress(partition: PartitionId) -> ParallelCoherenceRunSummary {

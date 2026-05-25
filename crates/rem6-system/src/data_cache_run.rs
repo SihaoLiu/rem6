@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_coherence::{ParallelCoherenceRunHistory, ParallelCoherenceRunSummary};
 use rem6_kernel::{
     DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelPartitionActivity,
-    ParallelRemoteFlowRecord, ParallelRunProfile, PartitionId, RecordedRunSummary,
-    SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind, WaitForNode,
+    ParallelRemoteFlowRecord, ParallelRunProfile, PartitionFrontier, PartitionId,
+    RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind, WaitForNode,
 };
 
 use crate::RiscvSystemRun;
@@ -167,6 +167,20 @@ impl RiscvSystemRun {
         self.data_cache_runs
             .iter()
             .flat_map(ParallelCoherenceRunSummary::parallel_worker_partitions)
+            .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_initial_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.data_cache_runs
+            .iter()
+            .flat_map(ParallelCoherenceRunSummary::initial_frontiers)
+            .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_final_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.data_cache_runs
+            .iter()
+            .flat_map(ParallelCoherenceRunSummary::final_frontiers)
             .collect()
     }
 

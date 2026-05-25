@@ -13,6 +13,11 @@ use crate::parallel_batch::{
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
     WorkloadParallelBatchWorkerCount,
 };
+use crate::result_collect::{
+    collect_parallel_partition_activities, collect_parallel_remote_flows,
+    collect_partition_frontiers, collect_priority_summaries, collect_requestor_summaries,
+    parallel_remote_flow_count,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
@@ -166,6 +171,8 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
     data_cache_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
+    data_cache_parallel_scheduler_initial_frontiers: Vec<PartitionFrontier>,
+    data_cache_parallel_scheduler_final_frontiers: Vec<PartitionFrontier>,
     attributed_data_cache_parallel_run_count: usize,
     unattributed_data_cache_parallel_run_count: usize,
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
@@ -456,6 +463,18 @@ impl WorkloadParallelExecutionSummary {
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
     ) -> Self {
         self.data_cache_parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_frontiers(
+        mut self,
+        initial_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+        final_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_initial_frontiers =
+            collect_partition_frontiers(initial_frontiers);
+        self.data_cache_parallel_scheduler_final_frontiers =
+            collect_partition_frontiers(final_frontiers);
         self
     }
 
@@ -987,6 +1006,31 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_data_cache_parallel_scheduler_remote_flows(&self) -> bool {
         !self.data_cache_parallel_scheduler_remote_flows.is_empty()
+    }
+
+    pub fn data_cache_parallel_scheduler_initial_frontiers(&self) -> &[PartitionFrontier] {
+        &self.data_cache_parallel_scheduler_initial_frontiers
+    }
+
+    pub fn data_cache_parallel_scheduler_final_frontiers(&self) -> &[PartitionFrontier] {
+        &self.data_cache_parallel_scheduler_final_frontiers
+    }
+
+    pub fn data_cache_parallel_scheduler_initial_frontier_count(&self) -> usize {
+        self.data_cache_parallel_scheduler_initial_frontiers.len()
+    }
+
+    pub fn data_cache_parallel_scheduler_final_frontier_count(&self) -> usize {
+        self.data_cache_parallel_scheduler_final_frontiers.len()
+    }
+
+    pub fn has_data_cache_parallel_scheduler_frontiers(&self) -> bool {
+        !self
+            .data_cache_parallel_scheduler_initial_frontiers
+            .is_empty()
+            || !self
+                .data_cache_parallel_scheduler_final_frontiers
+                .is_empty()
     }
 
     pub const fn attributed_data_cache_parallel_run_count(&self) -> usize {
@@ -1653,127 +1697,4 @@ impl WorkloadParallelExecutionSummary {
                 .data_cache_parallel_scheduler_batch_partition_streaks
                 .is_empty()
     }
-}
-
-fn collect_priority_summaries(
-    summaries: impl IntoIterator<Item = WorkloadDramQosPrioritySummary>,
-) -> Vec<WorkloadDramQosPrioritySummary> {
-    let mut by_priority = BTreeMap::<QosPriority, (usize, u64)>::new();
-    for summary in summaries {
-        if summary.is_empty() {
-            continue;
-        }
-        let entry = by_priority.entry(summary.priority()).or_default();
-        entry.0 += summary.access_count();
-        entry.1 += summary.byte_count();
-    }
-    by_priority
-        .into_iter()
-        .map(|(priority, (access_count, byte_count))| {
-            WorkloadDramQosPrioritySummary::new(priority, access_count, byte_count)
-        })
-        .collect()
-}
-
-fn collect_parallel_remote_flows(
-    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
-) -> Vec<ParallelRemoteFlowRecord> {
-    let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
-    for flow in flows {
-        if flow.send_count() == 0 {
-            continue;
-        }
-        by_route
-            .entry((flow.source(), flow.target()))
-            .and_modify(|stored| {
-                *stored = ParallelRemoteFlowRecord::new(
-                    stored.source(),
-                    stored.target(),
-                    stored.send_count() + flow.send_count(),
-                    stored.first_tick().min(flow.first_tick()),
-                    stored.last_tick().max(flow.last_tick()),
-                );
-            })
-            .or_insert(flow);
-    }
-    by_route.into_values().collect()
-}
-
-fn collect_partition_frontiers(
-    frontiers: impl IntoIterator<Item = PartitionFrontier>,
-) -> Vec<PartitionFrontier> {
-    let mut frontiers: Vec<_> = frontiers.into_iter().collect();
-    frontiers.sort_by_key(|frontier| {
-        (
-            frontier.partition(),
-            frontier.now(),
-            frontier.safe_until(),
-            frontier.next_tick(),
-            frontier.pending_events(),
-        )
-    });
-    frontiers
-}
-
-fn parallel_remote_flow_count(
-    flows: &[ParallelRemoteFlowRecord],
-    source: PartitionId,
-    target: PartitionId,
-) -> usize {
-    flows
-        .iter()
-        .find(|flow| flow.source() == source && flow.target() == target)
-        .map(|flow| flow.send_count())
-        .unwrap_or(0)
-}
-
-fn collect_parallel_partition_activities(
-    activities: impl IntoIterator<Item = (PartitionId, ParallelPartitionActivity)>,
-) -> Vec<(PartitionId, ParallelPartitionActivity)> {
-    let mut by_partition = BTreeMap::new();
-    for (partition, activity) in activities {
-        if !activity.has_activity() {
-            continue;
-        }
-        by_partition
-            .entry(partition)
-            .and_modify(|stored: &mut ParallelPartitionActivity| {
-                *stored = merge_parallel_partition_activity(*stored, activity);
-            })
-            .or_insert(activity);
-    }
-    by_partition.into_iter().collect()
-}
-
-fn merge_parallel_partition_activity(
-    left: ParallelPartitionActivity,
-    right: ParallelPartitionActivity,
-) -> ParallelPartitionActivity {
-    ParallelPartitionActivity::with_remote_counts(
-        left.worker_count() + right.worker_count(),
-        left.dispatch_count() + right.dispatch_count(),
-        left.remote_send_count() + right.remote_send_count(),
-        left.remote_receive_count() + right.remote_receive_count(),
-        left.max_pending_events().max(right.max_pending_events()),
-    )
-}
-
-fn collect_requestor_summaries(
-    summaries: impl IntoIterator<Item = WorkloadDramQosRequestorSummary>,
-) -> Vec<WorkloadDramQosRequestorSummary> {
-    let mut by_requestor = BTreeMap::<QosRequestorId, (usize, u64)>::new();
-    for summary in summaries {
-        if summary.is_empty() {
-            continue;
-        }
-        let entry = by_requestor.entry(summary.requestor()).or_default();
-        entry.0 += summary.access_count();
-        entry.1 += summary.byte_count();
-    }
-    by_requestor
-        .into_iter()
-        .map(|(requestor, (access_count, byte_count))| {
-            WorkloadDramQosRequestorSummary::new(requestor, access_count, byte_count)
-        })
-        .collect()
 }

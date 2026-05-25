@@ -15,6 +15,7 @@ mod qos;
 mod replay_verify;
 mod resource_payload;
 mod result;
+mod result_collect;
 mod topology;
 mod workload_result;
 

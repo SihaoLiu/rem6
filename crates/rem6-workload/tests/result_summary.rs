@@ -96,6 +96,16 @@ fn workload_result_records_parallel_execution_summary() {
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 7, 19, 23),
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 1, 13, 29),
         ])
+        .with_data_cache_parallel_scheduler_frontiers(
+            [PartitionFrontier::new(
+                PartitionId::new(4),
+                13,
+                21,
+                Some(19),
+                2,
+            )],
+            [PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0)],
+        )
         .with_data_cache_run_attribution(6, 1)
         .with_data_cache_protocol_counts([
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
@@ -261,6 +271,29 @@ fn workload_result_records_parallel_execution_summary() {
         8,
     );
     assert!(summary.has_data_cache_parallel_scheduler_remote_flows());
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_initial_frontiers(),
+        &[PartitionFrontier::new(
+            PartitionId::new(4),
+            13,
+            21,
+            Some(19),
+            2,
+        )],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_final_frontiers(),
+        &[PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0,)],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_initial_frontier_count(),
+        1
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_final_frontier_count(),
+        1
+    );
+    assert!(summary.has_data_cache_parallel_scheduler_frontiers());
     assert_eq!(summary.attributed_data_cache_parallel_run_count(), 6);
     assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 1);
     assert_eq!(
