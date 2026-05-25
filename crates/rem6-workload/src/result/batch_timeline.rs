@@ -4,13 +4,14 @@ use crate::parallel_batch::{
     collect_parallel_batch_partition_sets_from_timeline,
     collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_timeline,
     collect_parallel_batch_worker_count_tick_summaries,
-    collect_parallel_batch_worker_counts_from_timeline,
-    parallel_batch_longest_tick_streak_at_or_above, parallel_batch_ticks_at_or_above,
-    parallel_batch_ticks_for_worker_count, parallel_batch_worker_ticks,
-    parallel_batch_worker_ticks_at_or_above, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord,
+    collect_parallel_batch_worker_counts_from_timeline, parallel_batch_count_for_partition_set,
+    parallel_batch_longest_tick_streak_at_or_above, parallel_batch_streak_count_for_partition_set,
+    parallel_batch_ticks_at_or_above, parallel_batch_ticks_for_worker_count,
+    parallel_batch_worker_ticks, parallel_batch_worker_ticks_at_or_above,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
 };
-use rem6_kernel::Tick;
+use rem6_kernel::{PartitionId, Tick};
 
 use super::WorkloadParallelExecutionSummary;
 
@@ -112,6 +113,52 @@ impl WorkloadParallelExecutionSummary {
                     .iter()
                     .cloned(),
             ),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_batch_partition_sets(&self) -> Vec<WorkloadParallelBatchPartitionSet> {
+        collect_parallel_batch_partition_sets_from_timeline(&self.gpu_dma_scheduler_batch_timeline)
+    }
+
+    pub fn accelerator_dma_scheduler_batch_partition_sets(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionSet> {
+        collect_parallel_batch_partition_sets_from_timeline(
+            &self.accelerator_dma_scheduler_batch_timeline,
+        )
+    }
+
+    pub fn dma_scheduler_batch_partition_sets(&self) -> Vec<WorkloadParallelBatchPartitionSet> {
+        let gpu_sets = self.gpu_dma_scheduler_batch_partition_sets();
+        let accelerator_sets = self.accelerator_dma_scheduler_batch_partition_sets();
+        crate::parallel_batch::collect_parallel_batch_partition_sets(
+            gpu_sets.into_iter().chain(accelerator_sets),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_batch_partition_streaks(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionStreak> {
+        collect_parallel_batch_partition_streaks_from_timeline(
+            &self.gpu_dma_scheduler_batch_timeline,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_batch_partition_streaks(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionStreak> {
+        collect_parallel_batch_partition_streaks_from_timeline(
+            &self.accelerator_dma_scheduler_batch_timeline,
+        )
+    }
+
+    pub fn dma_scheduler_batch_partition_streaks(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionStreak> {
+        let gpu_streaks = self.gpu_dma_scheduler_batch_partition_streaks();
+        let accelerator_streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        crate::parallel_batch::collect_parallel_batch_partition_streaks(
+            gpu_streaks.into_iter().chain(accelerator_streaks),
         )
     }
 
@@ -262,6 +309,40 @@ impl WorkloadParallelExecutionSummary {
             &self.accelerator_dma_scheduler_batch_timeline,
             minimum_worker_count,
         )
+    }
+
+    pub fn gpu_dma_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let sets = self.gpu_dma_scheduler_batch_partition_sets();
+        let streaks = self.gpu_dma_scheduler_batch_partition_streaks();
+        parallel_batch_count_for_partition_set(&sets, &streaks, partitions)
+    }
+
+    pub fn accelerator_dma_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let sets = self.accelerator_dma_scheduler_batch_partition_sets();
+        let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        parallel_batch_count_for_partition_set(&sets, &streaks, partitions)
+    }
+
+    pub fn gpu_dma_scheduler_max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let streaks = self.gpu_dma_scheduler_batch_partition_streaks();
+        parallel_batch_streak_count_for_partition_set(&streaks, partitions)
+    }
+
+    pub fn accelerator_dma_scheduler_max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        parallel_batch_streak_count_for_partition_set(&streaks, partitions)
     }
 
     pub fn full_system_parallel_scheduler_batch_ticks_for_worker_count(

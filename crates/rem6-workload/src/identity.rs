@@ -17,9 +17,10 @@ use crate::{
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
     WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
     WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResource,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
+    WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -431,6 +432,10 @@ fn hash_parallel_batch_worker_scope(hash: &mut u64, scope: WorkloadParallelBatch
     hash_str(hash, scope.as_str());
 }
 
+fn hash_parallel_batch_partition_scope(hash: &mut u64, scope: WorkloadParallelBatchPartitionScope) {
+    hash_str(hash, scope.as_str());
+}
+
 fn hash_parallel_frontier_stage(hash: &mut u64, stage: WorkloadParallelFrontierStage) {
     hash_str(hash, stage.as_str());
 }
@@ -527,7 +532,7 @@ fn hash_expected_parallel_batch_partition_set(
     hash: &mut u64,
     expected: &WorkloadExpectedParallelBatchPartitionSet,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_partition_scope(hash, expected.scope());
     hash_u64(hash, expected.partitions().len() as u64);
     for partition in expected.partitions() {
         hash_u64(hash, u64::from(partition.index()));
@@ -539,7 +544,7 @@ fn hash_expected_parallel_batch_partition_streak(
     hash: &mut u64,
     expected: &WorkloadExpectedParallelBatchPartitionStreak,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_partition_scope(hash, expected.scope());
     hash_u64(hash, expected.partitions().len() as u64);
     for partition in expected.partitions() {
         hash_u64(hash, u64::from(partition.index()));

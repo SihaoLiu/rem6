@@ -601,20 +601,6 @@ pub(crate) fn parallel_batch_active_partition_count(
     partitions.len()
 }
 
-pub(crate) fn combined_parallel_batch_active_partition_count(
-    left: &[WorkloadParallelBatchPartitionSet],
-    left_streaks: &[WorkloadParallelBatchPartitionStreak],
-    right: &[WorkloadParallelBatchPartitionSet],
-    right_streaks: &[WorkloadParallelBatchPartitionStreak],
-) -> usize {
-    let mut partitions = BTreeSet::new();
-    collect_parallel_batch_active_partitions(&mut partitions, left);
-    collect_parallel_batch_streak_active_partitions(&mut partitions, left_streaks);
-    collect_parallel_batch_active_partitions(&mut partitions, right);
-    collect_parallel_batch_streak_active_partitions(&mut partitions, right_streaks);
-    partitions.len()
-}
-
 pub(crate) fn parallel_batch_partition_activity_for_partition(
     sets: &[WorkloadParallelBatchPartitionSet],
     partition: PartitionId,

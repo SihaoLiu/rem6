@@ -5,13 +5,12 @@ use rem6_kernel::{
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
-    collect_parallel_batch_worker_counts, combined_parallel_batch_active_partition_count,
-    max_parallel_batch_activity_worker_count, normalize_partition_set,
-    parallel_batch_active_partition_count, parallel_batch_activity_count_at_or_above,
-    parallel_batch_count_for_partition_set, parallel_batch_streak_count_for_partition_set,
-    strongest_parallel_batch_count, total_parallel_batch_activity_worker_count,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchWorkerCount,
+    collect_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
+    normalize_partition_set, parallel_batch_active_partition_count,
+    parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
+    parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
+    total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
@@ -53,16 +52,12 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
+        let batch_partition_sets = self.full_system_parallel_scheduler_batch_partition_sets();
+        let batch_partition_streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
         self.active_full_system_parallel_scheduler_partition_count
-            .max(combined_parallel_batch_active_partition_count(
-                &self.parallel_scheduler_batch_partition_sets,
-                &self.parallel_scheduler_batch_partition_streaks,
-                &self.data_cache_parallel_scheduler_batch_partition_sets,
-                &self.data_cache_parallel_scheduler_batch_partition_streaks,
-            ))
             .max(parallel_batch_active_partition_count(
-                &[],
-                &self.full_system_parallel_scheduler_batch_partition_streaks,
+                &batch_partition_sets,
+                &batch_partition_streaks,
             ))
             .max(combined_parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
@@ -138,7 +133,8 @@ impl WorkloadParallelExecutionSummary {
                     self.data_cache_parallel_scheduler_batch_partition_sets
                         .iter()
                         .cloned(),
-                ),
+                )
+                .chain(self.dma_scheduler_batch_partition_sets()),
         )
     }
 
@@ -158,7 +154,8 @@ impl WorkloadParallelExecutionSummary {
                     self.data_cache_parallel_scheduler_batch_partition_streaks
                         .iter()
                         .cloned(),
-                ),
+                )
+                .chain(self.dma_scheduler_batch_partition_streaks()),
         )
     }
 
@@ -171,6 +168,14 @@ impl WorkloadParallelExecutionSummary {
             + self.data_cache_parallel_scheduler_batch_count_for_partition_set(
                 partitions.iter().copied(),
             ))
+        .saturating_add(
+            self.gpu_dma_scheduler_batch_count_for_partition_set(partitions.iter().copied()),
+        )
+        .saturating_add(
+            self.accelerator_dma_scheduler_batch_count_for_partition_set(
+                partitions.iter().copied(),
+            ),
+        )
         .max(parallel_batch_count_for_partition_set(
             &[],
             &self.full_system_parallel_scheduler_batch_partition_streaks,

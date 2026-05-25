@@ -932,16 +932,37 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         5,
     );
     assert_eq!(
+        summary.gpu_dma_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu0, cpu1, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu0, cache], 1),
+        ],
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_batch_partition_sets(),
+        vec![WorkloadParallelBatchPartitionSet::new([cpu1, cache], 1)],
+    );
+    assert_eq!(
+        summary.dma_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu0, cpu1, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu0, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu1, cache], 1),
+        ],
+    );
+    assert_eq!(
         summary.full_system_parallel_scheduler_batch_partition_sets(),
         vec![
             WorkloadParallelBatchPartitionSet::new([cpu0, cpu1], 1),
-            WorkloadParallelBatchPartitionSet::new([cpu1, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu0, cpu1, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu0, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu1, cache], 2),
             WorkloadParallelBatchPartitionSet::new([cache], 1),
         ],
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu1, cache]),
-        1,
+        2,
     );
     assert!(summary.has_full_system_parallel_scheduler_work());
 }

@@ -5,11 +5,12 @@ use rem6_memory::MemoryError;
 
 use crate::{
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadId, WorkloadManifestIdentity,
-    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelDiagnosticScope,
-    WorkloadParallelFrontierStage, WorkloadParallelProgressTransitionExpectationError,
-    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency, WorkloadSuiteIdentity,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
+    WorkloadRouteLatency, WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -953,47 +954,47 @@ pub enum WorkloadError {
         actual_worker_ticks: Tick,
     },
     InvalidExpectedParallelBatchPartitionSet {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
     ZeroExpectedParallelBatchPartitionSetCount {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
     DuplicateExpectedParallelBatchPartitionSet {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
     MissingParallelBatchPartitionSetSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
         minimum_batch_count: usize,
     },
     ExpectedParallelBatchPartitionSetBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
     InvalidExpectedParallelBatchPartitionStreak {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
     ZeroExpectedParallelBatchPartitionStreakCount {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
     DuplicateExpectedParallelBatchPartitionStreak {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
     MissingParallelBatchPartitionStreakSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
         minimum_consecutive_batch_count: usize,
     },
     ExpectedParallelBatchPartitionStreakBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
         minimum_consecutive_batch_count: usize,
         actual_consecutive_batch_count: usize,

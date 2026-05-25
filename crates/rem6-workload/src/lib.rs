@@ -16,6 +16,7 @@ mod manifest_progress;
 mod manifest_remote_endpoints;
 mod manifest_remote_traffic;
 mod parallel_batch;
+mod parallel_batch_partition_expectation;
 mod parallel_batch_timeline_expectation;
 mod parallel_batch_worker_count_expectation;
 mod parallel_expectation;
@@ -52,6 +53,10 @@ pub use parallel_batch::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount,
 };
+pub use parallel_batch_partition_expectation::{
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadParallelBatchPartitionScope,
+};
 pub use parallel_batch_timeline_expectation::{
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
 };
@@ -63,7 +68,6 @@ pub use parallel_batch_worker_count_expectation::{
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
     WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
     WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
