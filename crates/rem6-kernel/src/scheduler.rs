@@ -1203,6 +1203,8 @@ fn run_parallel_partition(
                 };
             }
             PartitionEventCallback::Parallel(callback) => {
+                let rollback_next_id = queue.next_id;
+                let rollback_next_order = queue.next_order;
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     let mut context = ParallelSchedulerContext {
                         queue: &mut queue,
@@ -1216,6 +1218,7 @@ fn run_parallel_partition(
                     callback(&mut context);
                 }));
                 if result.is_err() {
+                    queue.rollback_scheduled_events(rollback_next_id, rollback_next_order);
                     return ParallelPartitionResult {
                         index,
                         queue,
@@ -1274,6 +1277,17 @@ impl PartitionQueue {
 
     fn pop_next(&mut self) -> Option<PartitionEvent> {
         self.pending.pop()
+    }
+
+    fn rollback_scheduled_events(&mut self, next_id: u64, next_order: u64) {
+        self.next_id = next_id;
+        self.next_order = next_order;
+        let pending = mem::take(&mut self.pending)
+            .into_vec()
+            .into_iter()
+            .filter(|event| event.id.local() < next_id && event.order < next_order)
+            .collect();
+        self.pending = pending;
     }
 
     fn first_serial_tick_at_or_before(&self, horizon: Tick) -> Option<Tick> {

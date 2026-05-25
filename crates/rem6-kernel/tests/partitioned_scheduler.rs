@@ -1250,6 +1250,32 @@ fn scheduler_parallel_worker_panic_updates_global_time_to_executed_tick() {
 }
 
 #[test]
+fn scheduler_parallel_worker_panic_discards_local_events_from_panicked_callback() {
+    let core = PartitionId::new(0);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    scheduler
+        .schedule_parallel_at(core, 1, |context| {
+            context.schedule_local_after(1, |_| {}).unwrap();
+            panic!("worker panic sentinel");
+        })
+        .unwrap();
+    let future = scheduler.schedule_parallel_at(core, 5, |_| {}).unwrap();
+
+    assert_eq!(
+        scheduler.run_next_epoch_parallel_recorded().unwrap_err(),
+        SchedulerError::ParallelWorkerPanicked { partition: core }
+    );
+    let snapshot = scheduler.snapshot();
+    let pending = snapshot.partitions()[core.index() as usize].pending_events();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id(), future);
+    assert_eq!(pending[0].tick(), 5);
+    assert_eq!(pending[0].order(), 1);
+    assert_eq!(pending[0].kind(), ScheduledEventKind::Parallel);
+}
+
+#[test]
 fn scheduler_min_delay_constructor_keeps_unbounded_worker_limit() {
     let scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
