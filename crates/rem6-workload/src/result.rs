@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId,
+    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
+    ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
 };
 
 use crate::parallel_batch::{
@@ -29,6 +29,7 @@ use crate::result_partition_activity::{
 };
 
 mod full_system_parallel;
+mod progress;
 mod remote_endpoints;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -154,6 +155,7 @@ pub struct WorkloadParallelExecutionSummary {
     total_parallel_scheduler_workers: usize,
     scheduler_progress_transition_count: usize,
     scheduler_livelock_diagnostic_count: usize,
+    parallel_scheduler_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     parallel_scheduler_batch_partition_streaks: Vec<WorkloadParallelBatchPartitionStreak>,
@@ -194,6 +196,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
+    data_cache_parallel_scheduler_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     active_fabric_lane_count: usize,
     fabric_transfer_count: usize,
     fabric_byte_count: u64,
@@ -358,12 +361,13 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
-    pub const fn with_parallel_scheduler_livelock_diagnostics(
+    pub fn with_parallel_scheduler_livelock_diagnostics(
         mut self,
         progress_transition_count: usize,
         livelock_diagnostic_count: usize,
     ) -> Self {
-        self.scheduler_progress_transition_count = progress_transition_count;
+        self.scheduler_progress_transition_count =
+            progress_transition_count.max(self.parallel_scheduler_progress_transitions.len());
         self.scheduler_livelock_diagnostic_count = livelock_diagnostic_count;
         self
     }
@@ -557,12 +561,16 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
-    pub const fn with_data_cache_parallel_scheduler_livelock_diagnostics(
+    pub fn with_data_cache_parallel_scheduler_livelock_diagnostics(
         mut self,
         progress_transition_count: usize,
         livelock_diagnostic_count: usize,
     ) -> Self {
-        self.data_cache_parallel_scheduler_progress_transition_count = progress_transition_count;
+        self.data_cache_parallel_scheduler_progress_transition_count = progress_transition_count
+            .max(
+                self.data_cache_parallel_scheduler_progress_transitions
+                    .len(),
+            );
         self.data_cache_parallel_scheduler_livelock_diagnostic_count = livelock_diagnostic_count;
         self
     }

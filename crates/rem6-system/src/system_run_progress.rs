@@ -1,4 +1,4 @@
-use rem6_kernel::{ProgressMonitor, ProgressMonitorError};
+use rem6_kernel::{ParallelProgressTransitionRecord, ProgressMonitor, ProgressMonitorError};
 
 use crate::RiscvSystemRun;
 
@@ -26,6 +26,37 @@ impl RiscvSystemRun {
     pub fn full_system_progress_transition_count(&self) -> usize {
         self.parallel_scheduler_progress_transition_count()
             + self.data_cache_parallel_scheduler_progress_transition_count()
+    }
+
+    pub fn parallel_scheduler_progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
+        collect_parallel_progress_transitions(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| {
+                    epoch
+                        .batches()
+                        .iter()
+                        .flat_map(|batch| batch.progress_transitions().iter().cloned())
+                }),
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_progress_transitions(
+        &self,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_parallel_progress_transitions(
+            self.data_cache_parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| epoch.progress_transitions()),
+        )
+    }
+
+    pub fn full_system_progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
+        collect_parallel_progress_transitions(
+            self.parallel_scheduler_progress_transitions()
+                .into_iter()
+                .chain(self.data_cache_parallel_scheduler_progress_transitions()),
+        )
     }
 
     pub fn parallel_scheduler_livelock_diagnostic_count(
@@ -94,4 +125,21 @@ impl RiscvSystemRun {
     ) -> Result<bool, ProgressMonitorError> {
         Ok(self.full_system_livelock_diagnostic_count(threshold)? != 0)
     }
+}
+
+fn collect_parallel_progress_transitions<I>(transitions: I) -> Vec<ParallelProgressTransitionRecord>
+where
+    I: IntoIterator<Item = ParallelProgressTransitionRecord>,
+{
+    let mut transitions = transitions.into_iter().collect::<Vec<_>>();
+    transitions.sort_by_key(|transition| {
+        (
+            transition.partition(),
+            transition.tick(),
+            transition.order(),
+            transition.kind(),
+            transition.subject().clone(),
+        )
+    });
+    transitions
 }

@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId,
+    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
+    ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
 };
 
 use crate::{WorkloadDramQosPrioritySummary, WorkloadDramQosRequestorSummary};
@@ -187,6 +187,22 @@ pub(crate) fn collect_parallel_remote_sends(
         )
     });
     sends
+}
+
+pub(crate) fn collect_parallel_progress_transitions(
+    transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
+) -> Vec<ParallelProgressTransitionRecord> {
+    let mut transitions = transitions.into_iter().collect::<Vec<_>>();
+    transitions.sort_by_key(|transition| {
+        (
+            transition.partition(),
+            transition.tick(),
+            transition.order(),
+            transition.kind(),
+            transition.subject().clone(),
+        )
+    });
+    transitions
 }
 
 pub(crate) fn parallel_remote_send_count(

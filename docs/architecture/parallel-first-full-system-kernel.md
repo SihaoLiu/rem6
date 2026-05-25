@@ -348,7 +348,7 @@ The scheduler records:
 - per-partition remote message and progress-transition order cursors in
   scheduler snapshots and checkpoints;
 - ready partitions selected for dispatch;
-- progress-free transition count before livelock thresholding;
+- exact progress-free transition records before livelock thresholding;
 - event kind, tick, partition, and deterministic local identity;
 - remote send source tick, delivery tick, and explicit delay;
 - remote flow count, delivery tick window, and optional min/max delay bounds;

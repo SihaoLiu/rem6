@@ -72,6 +72,7 @@ pub(super) fn parallel_execution_summary(
             scheduler_progress_transition_count,
             scheduler_livelock_diagnostic_count,
         )
+        .with_parallel_scheduler_progress_transitions(run.parallel_scheduler_progress_transitions())
         .with_parallel_scheduler_batch_worker_counts(
             run.parallel_scheduler_batches()
                 .into_iter()
@@ -119,6 +120,9 @@ pub(super) fn parallel_execution_summary(
         .with_data_cache_parallel_scheduler_livelock_diagnostics(
             data_cache_scheduler_progress_transition_count,
             data_cache_scheduler_livelock_diagnostic_count,
+        )
+        .with_data_cache_parallel_scheduler_progress_transitions(
+            run.data_cache_parallel_scheduler_progress_transitions(),
         )
         .with_data_cache_parallel_scheduler_batch_worker_counts(
             run.data_cache_parallel_scheduler_batches()
@@ -564,6 +568,30 @@ mod tests {
         );
         assert!(!summary.has_data_cache_parallel_scheduler_livelock_diagnostics());
         assert_eq!(summary.full_system_progress_transition_count(), 2);
+        let scheduler_transitions = summary.parallel_scheduler_progress_transitions();
+        assert_eq!(scheduler_transitions.len(), 1);
+        assert_eq!(scheduler_transitions[0].partition(), source);
+        assert_eq!(scheduler_transitions[0].tick(), 0);
+        assert_eq!(scheduler_transitions[0].order(), 0);
+        assert_eq!(
+            scheduler_transitions[0].kind(),
+            LivelockTransitionKind::SchedulerEpoch,
+        );
+
+        let data_cache_transitions = summary.data_cache_parallel_scheduler_progress_transitions();
+        assert_eq!(data_cache_transitions.len(), 1);
+        assert_eq!(data_cache_transitions[0].partition(), data_cache);
+        assert_eq!(data_cache_transitions[0].tick(), 0);
+        assert_eq!(data_cache_transitions[0].order(), 0);
+        assert_eq!(
+            data_cache_transitions[0].kind(),
+            LivelockTransitionKind::QueueRotation,
+        );
+
+        let full_system_transitions = summary.full_system_progress_transitions();
+        assert_eq!(full_system_transitions.len(), 2);
+        assert_eq!(full_system_transitions[0], scheduler_transitions[0]);
+        assert_eq!(full_system_transitions[1], data_cache_transitions[0]);
         assert_eq!(summary.full_system_livelock_diagnostic_count(), 0);
         assert!(!summary.has_full_system_diagnostics());
     }
