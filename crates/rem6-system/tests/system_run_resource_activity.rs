@@ -796,6 +796,59 @@ fn system_run_aggregates_data_cache_wait_for_diagnostics() {
 }
 
 #[test]
+fn system_run_reports_cross_subsystem_wait_for_deadlocks() {
+    let packet = wait_node("fabric.packet.42");
+    let line = wait_resource("cache.0.line.4000");
+
+    let mut fabric_graph = WaitForGraph::new();
+    fabric_graph
+        .record_wait(packet.clone(), line.clone(), WaitForEdgeKind::Queue, 5)
+        .unwrap();
+
+    let mut data_cache_remaining = WaitForGraph::new();
+    data_cache_remaining
+        .record_wait(line.clone(), packet.clone(), WaitForEdgeKind::Protocol, 7)
+        .unwrap();
+    let data_cache_run = ParallelCoherenceRunSummary::new(
+        RecordedConservativeRunSummary::empty(9),
+        0,
+        0,
+        0,
+        Vec::new(),
+        Vec::new(),
+        ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), data_cache_remaining),
+    );
+
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 9 },
+    )
+    .with_fabric_wait_for(fabric_graph)
+    .with_data_cache_runs(vec![data_cache_run]);
+
+    assert_eq!(run.fabric_deadlock_diagnostic_count(), 0);
+    assert_eq!(run.data_cache_deadlock_diagnostic_count(), 0);
+    assert_eq!(run.resource_wait_for_edge_count(), 1);
+    assert_eq!(run.full_system_wait_for_edge_count(), 2);
+    assert!(run.has_full_system_wait_for_edges());
+    assert_eq!(
+        run.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        1,
+    );
+    assert_eq!(
+        run.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+        1,
+    );
+    assert_eq!(run.full_system_deadlock_diagnostic_count(), 1);
+    assert!(run.has_full_system_deadlock_diagnostics());
+    let diagnostic = run.full_system_deadlock_diagnostics().remove(0);
+    assert_eq!(diagnostic.edge_count(), 2);
+    assert_eq!(diagnostic.first_observed_tick(), 5);
+    assert_eq!(diagnostic.last_observed_tick(), 7);
+}
+
+#[test]
 fn system_run_tracks_protocol_tagged_data_cache_runs() {
     let msi_run = empty_coherence_run(8);
     let mesi_run = empty_coherence_run(13);

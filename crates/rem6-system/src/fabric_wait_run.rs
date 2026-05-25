@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
     DeadlockDiagnostic, Tick, WaitForEdge, WaitForEdgeKind, WaitForGraph, WaitForNode,
@@ -178,6 +178,88 @@ impl RiscvSystemRun {
     pub fn dram_deadlock_diagnostic_count(&self) -> usize {
         self.dram_deadlock_diagnostics().len()
     }
+
+    pub fn resource_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        let mut edges = self.fabric_wait_for_edges();
+        edges.extend(self.dram_wait_for_edges());
+        edges
+    }
+
+    pub fn resource_wait_for_edge_count(&self) -> usize {
+        self.fabric_wait_for_edge_count() + self.dram_wait_for_edge_count()
+    }
+
+    pub fn has_resource_wait_for_edges(&self) -> bool {
+        self.resource_wait_for_edge_count() != 0
+    }
+
+    pub fn resource_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        blocked_nodes_from_edges(self.resource_wait_for_edges())
+    }
+
+    pub fn resource_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        wait_for_edge_kind_counts(self.resource_wait_for_edges())
+    }
+
+    pub fn resource_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        wait_for_edge_count_by_kind(self.resource_wait_for_edges(), kind)
+    }
+
+    pub fn resource_deadlock_diagnostics(&self) -> Vec<DeadlockDiagnostic> {
+        let mut diagnostics = self.fabric_deadlock_diagnostics();
+        diagnostics.extend(self.dram_deadlock_diagnostics());
+        append_combined_deadlock(&mut diagnostics, self.resource_wait_for_edges());
+        diagnostics
+    }
+
+    pub fn resource_deadlock_diagnostic_count(&self) -> usize {
+        self.resource_deadlock_diagnostics().len()
+    }
+
+    pub fn has_resource_deadlock_diagnostics(&self) -> bool {
+        self.resource_deadlock_diagnostic_count() != 0
+    }
+
+    pub fn full_system_wait_for_edges(&self) -> Vec<WaitForEdge> {
+        let mut edges = self.resource_wait_for_edges();
+        edges.extend(self.data_cache_wait_for_edges());
+        edges
+    }
+
+    pub fn full_system_wait_for_edge_count(&self) -> usize {
+        self.resource_wait_for_edge_count() + self.data_cache_wait_for_edge_count()
+    }
+
+    pub fn has_full_system_wait_for_edges(&self) -> bool {
+        self.full_system_wait_for_edge_count() != 0
+    }
+
+    pub fn full_system_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
+        blocked_nodes_from_edges(self.full_system_wait_for_edges())
+    }
+
+    pub fn full_system_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        wait_for_edge_kind_counts(self.full_system_wait_for_edges())
+    }
+
+    pub fn full_system_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        wait_for_edge_count_by_kind(self.full_system_wait_for_edges(), kind)
+    }
+
+    pub fn full_system_deadlock_diagnostics(&self) -> Vec<DeadlockDiagnostic> {
+        let mut diagnostics = self.resource_deadlock_diagnostics();
+        diagnostics.extend(self.data_cache_deadlock_diagnostics());
+        append_combined_deadlock(&mut diagnostics, self.full_system_wait_for_edges());
+        diagnostics
+    }
+
+    pub fn full_system_deadlock_diagnostic_count(&self) -> usize {
+        self.full_system_deadlock_diagnostics().len()
+    }
+
+    pub fn has_full_system_deadlock_diagnostics(&self) -> bool {
+        self.full_system_deadlock_diagnostic_count() != 0
+    }
 }
 
 fn oldest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {
@@ -190,4 +272,73 @@ fn newest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {
     edges
         .into_iter()
         .max_by_key(|edge| (edge.last_observed_tick(), edge.first_observed_tick()))
+}
+
+fn blocked_nodes_from_edges(edges: Vec<WaitForEdge>) -> Vec<WaitForNode> {
+    edges
+        .into_iter()
+        .map(|edge| edge.source().clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn wait_for_edge_kind_counts(edges: Vec<WaitForEdge>) -> BTreeMap<WaitForEdgeKind, usize> {
+    let mut counts = BTreeMap::new();
+    for edge in edges {
+        *counts.entry(edge.kind()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn wait_for_edge_count_by_kind(edges: Vec<WaitForEdge>, kind: WaitForEdgeKind) -> usize {
+    edges.into_iter().filter(|edge| edge.kind() == kind).count()
+}
+
+fn append_combined_deadlock(diagnostics: &mut Vec<DeadlockDiagnostic>, edges: Vec<WaitForEdge>) {
+    let graph = graph_from_edges(edges);
+    let Some(diagnostic) = graph.deadlock_diagnostic() else {
+        return;
+    };
+    if diagnostics
+        .iter()
+        .all(|existing| diagnostic_edge_key_set(existing) != diagnostic_edge_key_set(&diagnostic))
+    {
+        diagnostics.push(diagnostic);
+    }
+}
+
+fn graph_from_edges(edges: Vec<WaitForEdge>) -> WaitForGraph {
+    let mut graph = WaitForGraph::new();
+    for edge in edges {
+        graph
+            .record_wait(
+                edge.source().clone(),
+                edge.target().clone(),
+                edge.kind(),
+                edge.first_observed_tick(),
+            )
+            .expect("existing wait-for edge is valid");
+        if edge.last_observed_tick() != edge.first_observed_tick() {
+            graph
+                .record_wait(
+                    edge.source().clone(),
+                    edge.target().clone(),
+                    edge.kind(),
+                    edge.last_observed_tick(),
+                )
+                .expect("existing wait-for edge is valid");
+        }
+    }
+    graph
+}
+
+fn diagnostic_edge_key_set(
+    diagnostic: &DeadlockDiagnostic,
+) -> BTreeSet<(WaitForNode, WaitForNode, WaitForEdgeKind)> {
+    diagnostic
+        .cycle_edges()
+        .iter()
+        .map(|edge| (edge.source().clone(), edge.target().clone(), edge.kind()))
+        .collect()
 }

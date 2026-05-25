@@ -291,7 +291,9 @@ The policy applies to CPU, GPU, accelerator, DMA, interrupt, timer, and host
 traffic. Heterogeneous models must not bypass it by reporting only device-local
 busy flags. If a device engine blocks on memory, credits, command queue space,
 or host action, that dependency belongs in the same wait-for vocabulary as CPU
-coherence traffic.
+coherence traffic. System-run diagnostics merge fabric, DRAM, and data-cache
+wait-for edges before checking full-system deadlocks, so a cycle that spans two
+subsystems is not hidden by clean per-subsystem graphs.
 
 ## Workspace Responsibilities
 
