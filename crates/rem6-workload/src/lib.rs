@@ -9,6 +9,7 @@ mod error;
 mod heterogeneous;
 mod host_event;
 mod identity;
+mod manifest_parallel_frontier;
 mod parallel_batch;
 mod parallel_expectation;
 mod qos;
@@ -42,11 +43,12 @@ pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
+    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
@@ -271,6 +273,7 @@ pub struct WorkloadManifest {
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
+    expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
     identity: WorkloadManifestIdentity,
@@ -440,6 +443,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
+    expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
@@ -468,6 +472,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             expected_parallel_partition_activity: Vec::new(),
+            expected_parallel_frontiers: Vec::new(),
             expected_resource_activity: Vec::new(),
             checkpoint_lineage: None,
         }
@@ -879,6 +884,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_batch_partition_streaks,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
+            expected_parallel_frontiers: &self.expected_parallel_frontiers,
             expected_resource_activity: &self.expected_resource_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
         });
@@ -906,6 +912,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_batch_partition_streaks,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
+            expected_parallel_frontiers: self.expected_parallel_frontiers,
             expected_resource_activity: self.expected_resource_activity,
             checkpoint_lineage: self.checkpoint_lineage,
             identity,
@@ -939,6 +946,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
+    expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
@@ -990,6 +998,7 @@ impl WorkloadReplayPlan {
             expected_parallel_partition_activity: manifest
                 .expected_parallel_partition_activity()
                 .to_vec(),
+            expected_parallel_frontiers: manifest.expected_parallel_frontiers().to_vec(),
             expected_resource_activity: manifest.expected_resource_activity().to_vec(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
@@ -1438,6 +1447,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
+        replay_verify::verify_expected_parallel_frontiers(self, result)?;
         replay_verify::verify_expected_resource_activity(self, result)?;
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
         Ok(())

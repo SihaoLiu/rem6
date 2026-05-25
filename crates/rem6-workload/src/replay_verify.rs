@@ -325,3 +325,43 @@ pub(crate) fn verify_expected_parallel_scheduler_idle_bounds(
     }
     Ok(())
 }
+
+pub(crate) fn verify_expected_parallel_frontiers(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_frontiers = plan.expected_parallel_frontiers();
+    if expected_frontiers.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_frontiers[0];
+        return Err(WorkloadError::MissingParallelFrontierSummary {
+            scope: expected.scope(),
+            stage: expected.stage(),
+            partition: expected.partition().index(),
+            minimum_now: expected.minimum_now(),
+            minimum_safe_until: expected.minimum_safe_until(),
+        });
+    };
+
+    for expected in expected_frontiers {
+        let actual = expected.actual_frontier(summary);
+        let actual_now = actual.map(|frontier| frontier.now());
+        let actual_safe_until = actual.map(|frontier| frontier.safe_until());
+        if actual_now.unwrap_or(0) < expected.minimum_now()
+            || actual_safe_until.unwrap_or(0) < expected.minimum_safe_until()
+        {
+            return Err(WorkloadError::ExpectedParallelFrontierBelowMinimum {
+                scope: expected.scope(),
+                stage: expected.stage(),
+                partition: expected.partition().index(),
+                minimum_now: expected.minimum_now(),
+                actual_now,
+                minimum_safe_until: expected.minimum_safe_until(),
+                actual_safe_until,
+            });
+        }
+    }
+    Ok(())
+}

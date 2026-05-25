@@ -8,9 +8,9 @@ use rem6_memory::MemoryError;
 
 use crate::{
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
-    WorkloadRouteLatency,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -473,6 +473,32 @@ pub enum WorkloadError {
         scope: WorkloadParallelRemoteFlowScope,
         maximum_empty_epoch_count: usize,
         actual_empty_epoch_count: usize,
+    },
+    ZeroExpectedParallelFrontier {
+        scope: WorkloadParallelRemoteFlowScope,
+        stage: WorkloadParallelFrontierStage,
+        partition: u32,
+    },
+    DuplicateExpectedParallelFrontier {
+        scope: WorkloadParallelRemoteFlowScope,
+        stage: WorkloadParallelFrontierStage,
+        partition: u32,
+    },
+    MissingParallelFrontierSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        stage: WorkloadParallelFrontierStage,
+        partition: u32,
+        minimum_now: Tick,
+        minimum_safe_until: Tick,
+    },
+    ExpectedParallelFrontierBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        stage: WorkloadParallelFrontierStage,
+        partition: u32,
+        minimum_now: Tick,
+        actual_now: Option<Tick>,
+        minimum_safe_until: Tick,
+        actual_safe_until: Option<Tick>,
     },
     InvalidExpectedParallelBatchWorkerCount {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1348,6 +1374,60 @@ impl fmt::Display for WorkloadError {
                 "expected {} scheduler idle bound to allow at most {maximum_empty_epoch_count} empty epochs, got {actual_empty_epoch_count}",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelFrontier {
+                scope,
+                stage,
+                partition,
+            } => write!(
+                formatter,
+                "expected {} {} frontier for partition {partition} must require positive time",
+                scope.as_str(),
+                stage.as_str()
+            ),
+            Self::DuplicateExpectedParallelFrontier {
+                scope,
+                stage,
+                partition,
+            } => write!(
+                formatter,
+                "expected {} {} frontier for partition {partition} is already declared",
+                scope.as_str(),
+                stage.as_str()
+            ),
+            Self::MissingParallelFrontierSummary {
+                scope,
+                stage,
+                partition,
+                minimum_now,
+                minimum_safe_until,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} {} frontier on partition {partition} with now at least {minimum_now} and safe-until at least {minimum_safe_until}",
+                scope.as_str(),
+                stage.as_str()
+            ),
+            Self::ExpectedParallelFrontierBelowMinimum {
+                scope,
+                stage,
+                partition,
+                minimum_now,
+                actual_now,
+                minimum_safe_until,
+                actual_safe_until,
+            } => {
+                let actual_now = actual_now
+                    .map(|tick| tick.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let actual_safe_until = actual_safe_until
+                    .map(|tick| tick.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                write!(
+                    formatter,
+                    "expected {} {} frontier on partition {partition} to reach now {minimum_now} and safe-until {minimum_safe_until}, got now {actual_now} and safe-until {actual_safe_until}",
+                    scope.as_str(),
+                    stage.as_str()
+                )
+            }
             Self::InvalidExpectedParallelBatchWorkerCount {
                 scope,
                 minimum_worker_count,

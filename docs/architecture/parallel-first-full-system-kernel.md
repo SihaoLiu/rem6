@@ -82,7 +82,7 @@ backed by tests, traces, or explicit runtime records.
 
 | gem5 pressure | rem6 countermeasure | Required evidence |
 | --- | --- | --- |
-| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order. |
+| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require per-partition initial or final frontier minima. |
 | Parallel extensions are added around an older serial core. | Every core, cache, directory bank, NoC tile, memory channel, GPU unit, and accelerator engine has partition ownership. | Topology tests reject components without a partition and run summaries report active partitions. |
 | Classic cache and Ruby coherence stacks are split. | Memory, cache, coherence, NoC, and DRAM use one transaction and message vocabulary. | Cross-crate tests move CPU, GPU, and DMA traffic through the same transport path, and workload replay manifests can require attributed data-cache runs with no unattributed bridge activity, internally consistent data-cache run accounting, and recorded MSI/MESI/MOESI/CHI data-cache protocol runs. |
 | Ruby protocols encode topology and protocol behavior together. | Protocol crates own state machines; topology and transport crates own placement and routing. | Protocol tests run without topology, and topology tests swap protocol backends without changing routes. |
@@ -360,7 +360,9 @@ result summaries must retain those frontiers separately from aggregate worker
 and batch counts. Workload result summaries also expose aggregate full-system
 frontier views so verification can reason about the combined CPU and
 data-cache/coherence conservative horizon without discarding per-subsystem
-records.
+records. Workload manifests may declare required initial or final frontier
+minima for specific partitions and scopes, turning conservative-frontier
+progress into a replay contract rather than an informal trace inspection.
 
 ## Message Model
 

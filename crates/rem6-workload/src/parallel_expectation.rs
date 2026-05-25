@@ -1,4 +1,6 @@
-use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+};
 
 use crate::{WorkloadDataCacheProtocol, WorkloadError, WorkloadParallelExecutionSummary};
 
@@ -23,6 +25,28 @@ impl WorkloadParallelRemoteFlowScope {
             Self::Scheduler => 0,
             Self::DataCacheScheduler => 1,
             Self::FullSystem => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadParallelFrontierStage {
+    Initial,
+    Final,
+}
+
+impl WorkloadParallelFrontierStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Initial => "initial",
+            Self::Final => "final",
+        }
+    }
+
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Initial => 0,
+            Self::Final => 1,
         }
     }
 }
@@ -81,6 +105,156 @@ impl WorkloadResourceActivityScope {
             Self::Resource => 2,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelFrontier {
+    scope: WorkloadParallelRemoteFlowScope,
+    stage: WorkloadParallelFrontierStage,
+    partition: PartitionId,
+    minimum_now: u64,
+    minimum_safe_until: u64,
+}
+
+impl WorkloadExpectedParallelFrontier {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        stage: WorkloadParallelFrontierStage,
+        partition: PartitionId,
+        minimum_now: u64,
+        minimum_safe_until: u64,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_now == 0 && minimum_safe_until == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelFrontier {
+                scope,
+                stage,
+                partition: partition.index(),
+            });
+        }
+        Ok(Self {
+            scope,
+            stage,
+            partition,
+            minimum_now,
+            minimum_safe_until,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn stage(self) -> WorkloadParallelFrontierStage {
+        self.stage
+    }
+
+    pub const fn partition(self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn minimum_now(self) -> u64 {
+        self.minimum_now
+    }
+
+    pub const fn minimum_safe_until(self) -> u64 {
+        self.minimum_safe_until
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, u8, u32) {
+        (
+            self.scope.sort_rank(),
+            self.stage.sort_rank(),
+            self.partition.index(),
+        )
+    }
+
+    pub(crate) fn actual_frontier(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<PartitionFrontier> {
+        match (self.scope, self.stage) {
+            (
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                WorkloadParallelFrontierStage::Initial,
+            ) => find_frontier(
+                summary
+                    .parallel_scheduler_initial_frontiers()
+                    .iter()
+                    .copied(),
+                self.partition,
+            ),
+            (WorkloadParallelRemoteFlowScope::Scheduler, WorkloadParallelFrontierStage::Final) => {
+                find_frontier(
+                    summary.parallel_scheduler_final_frontiers().iter().copied(),
+                    self.partition,
+                )
+            }
+            (
+                WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+                WorkloadParallelFrontierStage::Initial,
+            ) => find_frontier(
+                summary
+                    .data_cache_parallel_scheduler_initial_frontiers()
+                    .iter()
+                    .copied(),
+                self.partition,
+            ),
+            (
+                WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+                WorkloadParallelFrontierStage::Final,
+            ) => find_frontier(
+                summary
+                    .data_cache_parallel_scheduler_final_frontiers()
+                    .iter()
+                    .copied(),
+                self.partition,
+            ),
+            (
+                WorkloadParallelRemoteFlowScope::FullSystem,
+                WorkloadParallelFrontierStage::Initial,
+            ) => find_frontier(
+                summary.full_system_parallel_scheduler_initial_frontiers(),
+                self.partition,
+            ),
+            (WorkloadParallelRemoteFlowScope::FullSystem, WorkloadParallelFrontierStage::Final) => {
+                find_frontier(
+                    summary.full_system_parallel_scheduler_final_frontiers(),
+                    self.partition,
+                )
+            }
+        }
+    }
+}
+
+fn find_frontier<I>(frontiers: I, partition: PartitionId) -> Option<PartitionFrontier>
+where
+    I: IntoIterator<Item = PartitionFrontier>,
+{
+    frontiers.into_iter().fold(None, |stored, frontier| {
+        if frontier.partition() != partition {
+            return stored;
+        }
+        Some(match stored {
+            Some(stored) => conservative_frontier(stored, frontier),
+            None => frontier,
+        })
+    })
+}
+
+fn conservative_frontier(left: PartitionFrontier, right: PartitionFrontier) -> PartitionFrontier {
+    let next_tick = match (left.next_tick(), right.next_tick()) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    };
+    PartitionFrontier::new(
+        left.partition(),
+        left.now().min(right.now()),
+        left.safe_until().min(right.safe_until()),
+        next_tick,
+        left.pending_events().max(right.pending_events()),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

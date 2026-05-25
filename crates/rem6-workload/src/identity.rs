@@ -5,13 +5,14 @@ use crate::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelRemoteFlowScope, WorkloadResource,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
+    WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -48,6 +49,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_parallel_partition_use: &'a [WorkloadExpectedParallelPartitionUse],
     pub(crate) expected_parallel_partition_activity:
         &'a [WorkloadExpectedParallelPartitionActivity],
+    pub(crate) expected_parallel_frontiers: &'a [WorkloadExpectedParallelFrontier],
     pub(crate) expected_resource_activity: &'a [WorkloadExpectedResourceActivity],
     pub(crate) checkpoint_lineage: Option<&'a CheckpointLineage>,
 }
@@ -167,6 +169,10 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     for expected in input.expected_parallel_partition_activity {
         hash_expected_parallel_partition_activity(&mut hash, *expected);
     }
+    hash_u64(&mut hash, input.expected_parallel_frontiers.len() as u64);
+    for expected in input.expected_parallel_frontiers {
+        hash_expected_parallel_frontier(&mut hash, *expected);
+    }
     hash_u64(&mut hash, input.expected_resource_activity.len() as u64);
     for expected in input.expected_resource_activity {
         hash_expected_resource_activity(&mut hash, *expected);
@@ -235,6 +241,10 @@ fn hash_expected_parallel_remote_flow_timing(
 
 fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {
     hash_str(hash, scope.as_str());
+}
+
+fn hash_parallel_frontier_stage(hash: &mut u64, stage: WorkloadParallelFrontierStage) {
+    hash_str(hash, stage.as_str());
 }
 
 fn hash_resource_activity_scope(hash: &mut u64, scope: WorkloadResourceActivityScope) {
@@ -322,6 +332,14 @@ fn hash_expected_parallel_partition_activity(
     hash_u64(hash, expected.minimum_dispatch_count() as u64);
     hash_u64(hash, expected.minimum_remote_send_count() as u64);
     hash_u64(hash, expected.minimum_remote_receive_count() as u64);
+}
+
+fn hash_expected_parallel_frontier(hash: &mut u64, expected: WorkloadExpectedParallelFrontier) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_frontier_stage(hash, expected.stage());
+    hash_u64(hash, u64::from(expected.partition().index()));
+    hash_u64(hash, expected.minimum_now());
+    hash_u64(hash, expected.minimum_safe_until());
 }
 
 fn hash_expected_resource_activity(hash: &mut u64, expected: WorkloadExpectedResourceActivity) {
