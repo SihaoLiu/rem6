@@ -91,6 +91,7 @@ pub struct ParallelEpochBatchRecord {
     horizon: Tick,
     workers: Vec<ParallelWorkerRecord>,
     dispatches: Vec<SchedulerDispatchRecord>,
+    remote_send_count: usize,
 }
 
 impl ParallelEpochBatchRecord {
@@ -98,11 +99,13 @@ impl ParallelEpochBatchRecord {
         horizon: Tick,
         workers: Vec<ParallelWorkerRecord>,
         dispatches: Vec<SchedulerDispatchRecord>,
+        remote_send_count: usize,
     ) -> Self {
         Self {
             horizon,
             workers,
             dispatches,
+            remote_send_count,
         }
     }
 
@@ -137,6 +140,10 @@ impl ParallelEpochBatchRecord {
 
     pub fn dispatch_count(&self) -> usize {
         self.dispatches.len()
+    }
+
+    pub fn remote_send_count(&self) -> usize {
+        self.remote_send_count
     }
 
     pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
@@ -518,6 +525,13 @@ impl RecordedRunSummary {
         self.profile.dispatch_count()
     }
 
+    pub fn remote_send_count(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::remote_send_count)
+            .sum()
+    }
+
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
     }
@@ -710,6 +724,13 @@ impl RecordedConservativeRunSummary {
 
     pub fn dispatch_count(&self) -> usize {
         self.profile.dispatch_count()
+    }
+
+    pub fn remote_send_count(&self) -> usize {
+        self.epochs
+            .iter()
+            .map(RecordedRunSummary::remote_send_count)
+            .sum()
     }
 
     pub fn batch_count(&self) -> usize {

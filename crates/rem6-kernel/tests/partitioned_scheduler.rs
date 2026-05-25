@@ -572,11 +572,15 @@ fn scheduler_parallel_runner_executes_epochs_until_idle() {
         })
         .unwrap();
 
-    let summary = scheduler.run_until_idle_parallel().unwrap();
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let summary = run.summary();
 
     assert_eq!(summary.epochs(), 1);
     assert_eq!(summary.executed_events(), 2);
     assert_eq!(summary.final_tick(), 2);
+    assert_eq!(run.remote_send_count(), 1);
+    assert_eq!(run.epochs()[0].remote_send_count(), 1);
+    assert_eq!(run.batches()[0].remote_send_count(), 1);
     assert!(scheduler.is_idle());
     assert_eq!(
         observed.lock().unwrap().as_slice(),
@@ -865,6 +869,7 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     assert_eq!(epoch.summary().final_tick(), 4);
     assert_eq!(epoch.dispatch_count(), 4);
     assert_eq!(epoch.batch_count(), 2);
+    assert_eq!(epoch.remote_send_count(), 2);
     assert_eq!(epoch.empty_epoch_count(), 0);
     assert!(!epoch.is_empty_epoch());
     assert_eq!(epoch.max_parallel_workers(), 2);
@@ -880,6 +885,7 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     assert_eq!(batches.len(), 2);
     assert_eq!(batches[0].horizon(), 4);
     assert_eq!(batches[0].worker_count(), 2);
+    assert_eq!(batches[0].remote_send_count(), 2);
     assert!(batches[0].contains_worker(core0));
     assert!(batches[0].contains_worker(core1));
     assert!(!batches[0].contains_worker(memory));
@@ -927,6 +933,7 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
 
     assert_eq!(batches[1].horizon(), 4);
     assert_eq!(batches[1].worker_count(), 1);
+    assert_eq!(batches[1].remote_send_count(), 0);
     assert_eq!(batches[1].worker_partitions(), vec![memory]);
     assert_eq!(batches[1].workers()[0].partition(), memory);
     assert_eq!(batches[1].workers()[0].start_tick(), 0);
@@ -1013,6 +1020,7 @@ fn scheduler_recorded_parallel_runner_accumulates_profile() {
     assert_eq!(run.empty_epoch_count(), 0);
     assert_eq!(run.dispatch_count(), 4);
     assert_eq!(run.batch_count(), 2);
+    assert_eq!(run.remote_send_count(), 0);
     assert_eq!(run.max_parallel_workers(), 2);
     assert_eq!(run.total_parallel_workers(), 4);
     assert_eq!(run.profile(), ParallelRunProfile::new(1, 0, 2, 4, 4, 2));

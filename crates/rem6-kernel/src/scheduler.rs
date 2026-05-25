@@ -890,7 +890,12 @@ impl PartitionedScheduler {
         }
 
         dispatches.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
-        let record = ParallelEpochBatchRecord::new(horizon, workers, dispatches.clone());
+        let record = ParallelEpochBatchRecord::new(
+            horizon,
+            workers,
+            dispatches.clone(),
+            remote_events.len(),
+        );
 
         Ok(ParallelBatchResult {
             executed_events,
