@@ -107,7 +107,7 @@ impl WorkloadParallelRemoteFlowScope {
         }
     }
 
-    const fn sort_rank(self) -> u8 {
+    pub(crate) const fn sort_rank(self) -> u8 {
         match self {
             Self::Scheduler => 0,
             Self::DataCacheScheduler => 1,
@@ -1646,7 +1646,6 @@ impl WorkloadExpectedParallelBatchPartitionStreak {
         }
     }
 }
-
 fn collect_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {
     let mut partitions = partitions.into_iter().collect::<Vec<_>>();
     partitions.sort_unstable();

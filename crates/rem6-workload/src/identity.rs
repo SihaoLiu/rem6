@@ -5,17 +5,17 @@ use crate::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
-    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
-    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelFrontier,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -59,6 +59,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelBatchPartitionSet],
     pub(crate) expected_parallel_batch_partition_streaks:
         &'a [WorkloadExpectedParallelBatchPartitionStreak],
+    pub(crate) expected_parallel_batch_timeline_records:
+        &'a [WorkloadExpectedParallelBatchTimelineRecord],
     pub(crate) expected_parallel_partition_use: &'a [WorkloadExpectedParallelPartitionUse],
     pub(crate) expected_parallel_partition_activity:
         &'a [WorkloadExpectedParallelPartitionActivity],
@@ -206,6 +208,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_batch_partition_streaks {
         hash_expected_parallel_batch_partition_streak(&mut hash, expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_batch_timeline_records.len() as u64,
+    );
+    for expected in input.expected_parallel_batch_timeline_records {
+        hash_expected_parallel_batch_timeline_record(&mut hash, expected);
     }
     hash_u64(
         &mut hash,
@@ -434,6 +443,21 @@ fn hash_expected_parallel_batch_partition_streak(
         hash_u64(hash, u64::from(partition.index()));
     }
     hash_u64(hash, expected.minimum_consecutive_batch_count() as u64);
+}
+
+fn hash_expected_parallel_batch_timeline_record(
+    hash: &mut u64,
+    expected: &WorkloadExpectedParallelBatchTimelineRecord,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_str(hash, expected.batch_scope().as_str());
+    hash_u64(hash, expected.start_tick());
+    hash_u64(hash, expected.horizon());
+    hash_u64(hash, expected.partitions().len() as u64);
+    for partition in expected.partitions() {
+        hash_u64(hash, u64::from(partition.index()));
+    }
+    hash_u64(hash, expected.worker_count() as u64);
 }
 
 fn hash_expected_parallel_partition_use(

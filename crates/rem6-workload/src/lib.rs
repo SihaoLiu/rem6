@@ -15,6 +15,7 @@ mod manifest_progress;
 mod manifest_remote_endpoints;
 mod manifest_remote_traffic;
 mod parallel_batch;
+mod parallel_batch_timeline_expectation;
 mod parallel_expectation;
 mod qos;
 mod replay_verify;
@@ -45,6 +46,7 @@ pub use parallel_batch::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount,
 };
+pub use parallel_batch_timeline_expectation::WorkloadExpectedParallelBatchTimelineRecord;
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
@@ -289,6 +291,7 @@ pub struct WorkloadManifest {
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
+    expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
@@ -401,6 +404,12 @@ impl WorkloadManifest {
         &self.expected_parallel_batch_partition_streaks
     }
 
+    pub fn expected_parallel_batch_timeline_records(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchTimelineRecord] {
+        &self.expected_parallel_batch_timeline_records
+    }
+
     pub fn expected_parallel_partition_use(&self) -> &[WorkloadExpectedParallelPartitionUse] {
         &self.expected_parallel_partition_use
     }
@@ -456,6 +465,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
+    expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
@@ -491,6 +501,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_activity: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
+            expected_parallel_batch_timeline_records: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             expected_parallel_partition_activity: Vec::new(),
             expected_parallel_frontiers: Vec::new(),
@@ -674,6 +685,32 @@ impl WorkloadManifestBuilder {
             .push(expected);
         self.expected_parallel_batch_partition_streaks
             .sort_by_key(|streak| streak.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_batch_timeline_record(
+        mut self,
+        expected: WorkloadExpectedParallelBatchTimelineRecord,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_timeline_records
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelBatchTimelineRecord {
+                    scope: expected.scope(),
+                    batch_scope: expected.batch_scope(),
+                    start_tick: expected.start_tick(),
+                    horizon: expected.horizon(),
+                    partitions: expected.partition_indexes(),
+                    worker_count: expected.worker_count(),
+                },
+            );
+        }
+        self.expected_parallel_batch_timeline_records.push(expected);
+        self.expected_parallel_batch_timeline_records
+            .sort_by_key(|record| record.sort_key());
         Ok(self)
     }
 
@@ -868,6 +905,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
                 .expected_parallel_batch_partition_streaks,
+            expected_parallel_batch_timeline_records: &self
+                .expected_parallel_batch_timeline_records,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
             expected_parallel_frontiers: &self.expected_parallel_frontiers,
@@ -903,6 +942,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
                 .expected_parallel_batch_partition_streaks,
+            expected_parallel_batch_timeline_records: self.expected_parallel_batch_timeline_records,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
             expected_parallel_frontiers: self.expected_parallel_frontiers,
@@ -944,6 +984,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
+    expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
@@ -1009,6 +1050,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_batch_partition_streaks: manifest
                 .expected_parallel_batch_partition_streaks()
+                .to_vec(),
+            expected_parallel_batch_timeline_records: manifest
+                .expected_parallel_batch_timeline_records()
                 .to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
             expected_parallel_partition_activity: manifest
@@ -1282,6 +1326,38 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_batch_partition_streaks
     }
 
+    pub fn add_expected_parallel_batch_timeline_record(
+        mut self,
+        expected: WorkloadExpectedParallelBatchTimelineRecord,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_timeline_records
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelBatchTimelineRecord {
+                    scope: expected.scope(),
+                    batch_scope: expected.batch_scope(),
+                    start_tick: expected.start_tick(),
+                    horizon: expected.horizon(),
+                    partitions: expected.partition_indexes(),
+                    worker_count: expected.worker_count(),
+                },
+            );
+        }
+        self.expected_parallel_batch_timeline_records.push(expected);
+        self.expected_parallel_batch_timeline_records
+            .sort_by_key(|record| record.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_batch_timeline_records(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchTimelineRecord] {
+        &self.expected_parallel_batch_timeline_records
+    }
+
     pub fn add_expected_parallel_partition_use(
         mut self,
         expected: WorkloadExpectedParallelPartitionUse,
@@ -1415,6 +1491,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_batch_activity(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
+        replay_verify::verify_expected_parallel_batch_timeline_records(self, result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
         replay_verify::verify_expected_parallel_frontiers(self, result)?;

@@ -6,8 +6,10 @@ use rem6_kernel::{
 };
 
 use crate::{
-    WorkloadError, WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    parallel_batch_timeline_expectation::actual_parallel_batch_timeline_records, WorkloadError,
+    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelProgressTransition,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
     WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
     WorkloadParallelRemoteTrafficConsistencyMismatch, WorkloadReplayPlan, WorkloadResult,
@@ -73,6 +75,65 @@ pub(crate) fn verify_expected_parallel_remote_sends(
     Ok(())
 }
 
+pub(crate) fn verify_expected_parallel_batch_timeline_records(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_records = plan.expected_parallel_batch_timeline_records();
+    if expected_records.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = &expected_records[0];
+        return Err(WorkloadError::MissingParallelBatchTimelineSummary {
+            scope: expected.scope(),
+            batch_scope: expected.batch_scope(),
+            start_tick: expected.start_tick(),
+            horizon: expected.horizon(),
+            partitions: expected.partition_indexes(),
+            worker_count: expected.worker_count(),
+        });
+    };
+
+    for expected in expected_records {
+        if expected.actual_record(summary).is_none() {
+            return Err(WorkloadError::ExpectedParallelBatchTimelineRecordMissing {
+                scope: expected.scope(),
+                batch_scope: expected.batch_scope(),
+                start_tick: expected.start_tick(),
+                horizon: expected.horizon(),
+                partitions: expected.partition_indexes(),
+                worker_count: expected.worker_count(),
+            });
+        }
+    }
+    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+        let expected_for_scope =
+            expected_parallel_batch_timeline_records_for_scope(expected_records, scope);
+        if expected_for_scope.is_empty() {
+            continue;
+        }
+        let actual_for_scope = actual_parallel_batch_timeline_records(scope, summary);
+        if let Some(actual) =
+            unexpected_parallel_batch_timeline_record(&expected_for_scope, &actual_for_scope)
+        {
+            return Err(WorkloadError::UnexpectedParallelBatchTimelineRecord {
+                scope,
+                batch_scope: actual.scope(),
+                start_tick: actual.start_tick(),
+                horizon: actual.horizon(),
+                partitions: actual
+                    .partitions()
+                    .iter()
+                    .map(|partition| partition.index())
+                    .collect(),
+                worker_count: actual.worker_count(),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_progress_transitions(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
@@ -114,6 +175,31 @@ pub(crate) fn verify_expected_parallel_progress_transitions(
         }
     }
     Ok(())
+}
+
+fn expected_parallel_batch_timeline_records_for_scope(
+    expected_records: &[WorkloadExpectedParallelBatchTimelineRecord],
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<WorkloadExpectedParallelBatchTimelineRecord> {
+    expected_records
+        .iter()
+        .filter(|expected| expected.scope() == scope)
+        .cloned()
+        .collect()
+}
+
+fn unexpected_parallel_batch_timeline_record(
+    expected_records: &[WorkloadExpectedParallelBatchTimelineRecord],
+    actual_records: &[WorkloadParallelBatchTimelineRecord],
+) -> Option<WorkloadParallelBatchTimelineRecord> {
+    actual_records
+        .iter()
+        .find(|actual| {
+            !expected_records
+                .iter()
+                .any(|expected| expected.matches_record(actual))
+        })
+        .cloned()
 }
 
 fn expected_parallel_progress_transitions_for_scope(

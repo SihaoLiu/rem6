@@ -419,7 +419,10 @@ compressed into histograms or streak summaries.
 Workload result summaries preserve the same scoped timeline records and derive
 batch histograms, partition-set summaries, and streak evidence from them, so
 replay output keeps the precise occupancy evidence behind each compressed
-parallel summary.
+parallel summary. Workload manifests may now declare exact scheduler,
+data-cache scheduler, or full-system batch timeline records, and replay
+verification rejects missing or unexpected records instead of accepting only
+aggregate occupancy evidence.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal

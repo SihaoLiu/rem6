@@ -16,7 +16,7 @@ impl WorkloadParallelBatchScope {
         }
     }
 
-    const fn sort_rank(self) -> u8 {
+    pub(crate) const fn sort_rank(self) -> u8 {
         match self {
             Self::Scheduler => 0,
             Self::DataCacheScheduler => 1,
