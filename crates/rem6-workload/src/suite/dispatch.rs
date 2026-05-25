@@ -552,6 +552,62 @@ impl WorkloadSuiteDispatchTimeline {
             .collect()
     }
 
+    pub fn occupancy_active_worker_ticks(&self) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .map(WorkloadSuiteDispatchOccupancyWindow::active_worker_ticks)
+            .sum()
+    }
+
+    pub fn occupancy_idle_worker_ticks(&self) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .map(WorkloadSuiteDispatchOccupancyWindow::idle_worker_ticks)
+            .sum()
+    }
+
+    pub fn occupancy_worker_capacity_ticks(&self) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .map(|window| {
+                window
+                    .duration_ticks()
+                    .saturating_mul(self.worker_count() as Tick)
+            })
+            .sum()
+    }
+
+    pub fn full_occupancy_ticks(&self) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .filter(|window| window.active_worker_count() == self.worker_count())
+            .map(WorkloadSuiteDispatchOccupancyWindow::duration_ticks)
+            .sum()
+    }
+
+    pub fn underoccupied_ticks(&self) -> Tick {
+        self.occupancy_windows()
+            .iter()
+            .filter(|window| window.active_worker_count() < self.worker_count())
+            .map(WorkloadSuiteDispatchOccupancyWindow::duration_ticks)
+            .sum()
+    }
+
+    pub fn minimum_occupancy_worker_count(&self) -> Option<usize> {
+        self.occupancy_windows()
+            .iter()
+            .map(WorkloadSuiteDispatchOccupancyWindow::active_worker_count)
+            .min()
+    }
+
+    pub fn occupancy_utilization_ratio(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        WorkloadSuiteExecutionRatio::new(
+            self.occupancy_active_worker_ticks(),
+            self.occupancy_worker_capacity_ticks(),
+        )
+        .ok()
+    }
+
     pub fn to_execution_summary(&self) -> Result<WorkloadSuiteExecutionSummary, WorkloadError> {
         let mut summary = WorkloadSuiteExecutionSummary::new(self.suite_identity());
         for entry in &self.entries {

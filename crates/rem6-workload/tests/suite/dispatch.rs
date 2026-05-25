@@ -654,6 +654,73 @@ fn workload_suite_dispatch_timeline_reports_planned_occupancy_windows() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_summarizes_planned_occupancy_metrics() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-occupancy-metrics"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    let utilization = timeline.occupancy_utilization_ratio().unwrap();
+
+    assert_eq!(timeline.occupancy_active_worker_ticks(), 17);
+    assert_eq!(timeline.occupancy_worker_capacity_ticks(), 18);
+    assert_eq!(timeline.occupancy_idle_worker_ticks(), 1);
+    assert_eq!(timeline.full_occupancy_ticks(), 8);
+    assert_eq!(timeline.underoccupied_ticks(), 1);
+    assert_eq!(timeline.minimum_occupancy_worker_count(), Some(1));
+    assert_eq!(utilization.numerator(), 17);
+    assert_eq!(utilization.denominator(), 18);
+
+    let single_suite = WorkloadSuite::builder(suite_id("planned-occupancy-metrics-unused"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let single_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&single_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+    let single_utilization = single_timeline.occupancy_utilization_ratio().unwrap();
+
+    assert_eq!(single_timeline.occupancy_active_worker_ticks(), 10);
+    assert_eq!(single_timeline.occupancy_worker_capacity_ticks(), 20);
+    assert_eq!(single_timeline.occupancy_idle_worker_ticks(), 10);
+    assert_eq!(single_timeline.full_occupancy_ticks(), 0);
+    assert_eq!(single_timeline.underoccupied_ticks(), 10);
+    assert_eq!(single_timeline.minimum_occupancy_worker_count(), Some(1));
+    assert_eq!(single_utilization.numerator(), 10);
+    assert_eq!(single_utilization.denominator(), 20);
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_accepts_planned_execution_expectation() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");
