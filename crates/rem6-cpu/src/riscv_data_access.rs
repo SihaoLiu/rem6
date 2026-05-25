@@ -138,7 +138,9 @@ impl RiscvDataAccessRecord {
             MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
                 MemoryOperation::ReadShared
             }
-            MemoryAccessKind::StoreConditional { .. } => MemoryOperation::Atomic,
+            MemoryAccessKind::StoreConditional { .. } | MemoryAccessKind::AtomicMemory { .. } => {
+                MemoryOperation::Atomic
+            }
             MemoryAccessKind::Store { .. } => MemoryOperation::Write,
         }
     }

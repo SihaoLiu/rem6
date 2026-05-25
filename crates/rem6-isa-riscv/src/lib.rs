@@ -47,6 +47,11 @@ pub enum MemoryWidth {
     Doubleword,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AtomicMemoryOp {
+    Swap,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemoryAccessKind {
     Load {
@@ -66,6 +71,15 @@ pub enum MemoryAccessKind {
         rd: Register,
         address: u64,
         width: MemoryWidth,
+        value: u64,
+        acquire: bool,
+        release: bool,
+    },
+    AtomicMemory {
+        rd: Register,
+        address: u64,
+        width: MemoryWidth,
+        op: AtomicMemoryOp,
         value: u64,
         acquire: bool,
         release: bool,
@@ -172,6 +186,15 @@ pub enum RiscvInstruction {
         rs1: Register,
         rs2: Register,
         width: MemoryWidth,
+        acquire: bool,
+        release: bool,
+    },
+    AtomicMemory {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+        width: MemoryWidth,
+        op: AtomicMemoryOp,
         acquire: bool,
         release: bool,
     },
@@ -326,6 +349,15 @@ fn decode_atomic(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
             rs2: rs2(raw),
             width: MemoryWidth::Doubleword,
+            acquire: aq(raw),
+            release: rl(raw),
+        }),
+        (0x01, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            width: MemoryWidth::Doubleword,
+            op: AtomicMemoryOp::Swap,
             acquire: aq(raw),
             release: rl(raw),
         }),
@@ -562,6 +594,25 @@ impl RiscvHartState {
                     rd,
                     address: self.read(rs1),
                     width,
+                    value: self.read(rs2),
+                    acquire,
+                    release,
+                });
+            }
+            RiscvInstruction::AtomicMemory {
+                rd,
+                rs1,
+                rs2,
+                width,
+                op,
+                acquire,
+                release,
+            } => {
+                memory_access = Some(MemoryAccessKind::AtomicMemory {
+                    rd,
+                    address: self.read(rs1),
+                    width,
+                    op,
                     value: self.read(rs2),
                     acquire,
                     release,

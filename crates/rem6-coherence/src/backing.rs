@@ -62,9 +62,14 @@ impl LineBackingStore {
             MemoryOperation::Upgrade => {
                 MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
             }
-            MemoryOperation::Write | MemoryOperation::Atomic => {
+            MemoryOperation::Write => {
                 self.apply_write(request)?;
                 MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
+            }
+            MemoryOperation::Atomic => {
+                let data = self.read_slice(request)?;
+                self.apply_write(request)?;
+                MemoryResponse::completed(request, Some(data)).map_err(HarnessError::Memory)
             }
             MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty => {
                 self.replace_line(request)?;
@@ -102,6 +107,18 @@ impl LineBackingStore {
         }
 
         Ok(())
+    }
+
+    fn read_slice(&self, request: &MemoryRequest) -> Result<Vec<u8>, HarnessError> {
+        let offset = request.line_offset() as usize;
+        let end = offset + request.size().bytes() as usize;
+        if end > self.data.len() {
+            return Err(HarnessError::LineDataSizeMismatch {
+                expected: self.layout.bytes(),
+                actual: end as u64,
+            });
+        }
+        Ok(self.data[offset..end].to_vec())
     }
 
     fn replace_line(&mut self, request: &MemoryRequest) -> Result<(), HarnessError> {

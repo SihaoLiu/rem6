@@ -20,6 +20,19 @@ fn controller() -> MsiCacheController {
     MsiCacheController::new(AgentId::new(10), layout(), Address::new(0x1000))
 }
 
+fn atomic(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn controller_read_miss_fetches_line_and_completes_original_request() {
     let mut controller = controller();
@@ -118,6 +131,42 @@ fn controller_write_miss_fetches_unique_line_then_acks_store() {
         hit.target_outcome(),
         Some(&TargetOutcome::Respond(
             MemoryResponse::completed(&read_back, Some(vec![0xaa, 0xbb])).unwrap()
+        ))
+    );
+}
+
+#[test]
+fn controller_atomic_hit_returns_old_bytes_and_updates_modified_line() {
+    let mut controller = controller();
+    controller.install_modified((0..64).collect()).unwrap();
+    let request = atomic(
+        24,
+        0x1008,
+        vec![0xaa, 0xbb, 0xcc, 0xdd],
+        ByteMask::from_bits(vec![true, false, true, false]).unwrap(),
+    );
+
+    let result = controller.accept_cpu_request(request.clone()).unwrap();
+
+    assert_eq!(result.kind(), CacheControllerResultKind::Hit);
+    assert_eq!(
+        result.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&request, Some(vec![8, 9, 10, 11])).unwrap()
+        ))
+    );
+    let read_back = MemoryRequest::read_shared(
+        request_id(25),
+        Address::new(0x1008),
+        AccessSize::new(4).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let hit = controller.accept_cpu_request(read_back.clone()).unwrap();
+    assert_eq!(
+        hit.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&read_back, Some(vec![0xaa, 9, 0xcc, 11])).unwrap()
         ))
     );
 }

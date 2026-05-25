@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
-    Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvError, RiscvExecutionRecord,
-    RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvError,
+    RiscvExecutionRecord, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -289,6 +289,44 @@ fn hart_reports_store_conditional_access_without_mutating_register() {
             width: MemoryWidth::Doubleword,
             value: 0x0102_0304_0506_0708,
             acquire: false,
+            release: true,
+        })
+    );
+    assert_eq!(hart.read(reg(7)), 0);
+}
+
+#[test]
+fn hart_reports_atomic_swap_access_without_mutating_register() {
+    let mut hart = RiscvHartState::new(0x6400);
+    hart.write(reg(2), 0x9008);
+    hart.write(reg(6), 0x0102_0304_0506_0708);
+
+    let instruction =
+        RiscvInstruction::decode(atomic_type(0x01, true, true, 6, 2, 0x3, 7)).unwrap();
+    assert_eq!(
+        instruction,
+        RiscvInstruction::AtomicMemory {
+            rd: reg(7),
+            rs1: reg(2),
+            rs2: reg(6),
+            width: MemoryWidth::Doubleword,
+            op: AtomicMemoryOp::Swap,
+            acquire: true,
+            release: true,
+        }
+    );
+
+    let atomic = hart.execute(instruction).unwrap();
+    assert_eq!(atomic.next_pc(), 0x6404);
+    assert_eq!(
+        atomic.memory_access(),
+        Some(&MemoryAccessKind::AtomicMemory {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            op: AtomicMemoryOp::Swap,
+            value: 0x0102_0304_0506_0708,
+            acquire: true,
             release: true,
         })
     );

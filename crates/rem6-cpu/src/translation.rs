@@ -17,6 +17,7 @@ pub enum CpuTranslatedMemoryOperation {
     InstructionFetch,
     Read,
     Write,
+    Atomic,
 }
 
 impl CpuTranslatedMemoryOperation {
@@ -25,6 +26,7 @@ impl CpuTranslatedMemoryOperation {
             Self::InstructionFetch => TranslationAccessKind::InstructionFetch,
             Self::Read => TranslationAccessKind::Load,
             Self::Write => TranslationAccessKind::Store,
+            Self::Atomic => TranslationAccessKind::Atomic,
         }
     }
 
@@ -33,6 +35,7 @@ impl CpuTranslatedMemoryOperation {
             Self::InstructionFetch => MemoryOperation::InstructionFetch,
             Self::Read => MemoryOperation::ReadShared,
             Self::Write => MemoryOperation::Write,
+            Self::Atomic => MemoryOperation::Atomic,
         }
     }
 }
@@ -119,6 +122,30 @@ impl CpuTranslationRequest {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn atomic(
+        translation_id: TranslationRequestId,
+        memory_request_id: MemoryRequestId,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+        virtual_address: Address,
+        size: AccessSize,
+        write_data: Vec<u8>,
+        byte_mask: ByteMask,
+    ) -> Result<Self, CpuTranslationFrontendError> {
+        Self::new(
+            translation_id,
+            memory_request_id,
+            route,
+            endpoint,
+            virtual_address,
+            size,
+            CpuTranslatedMemoryOperation::Atomic,
+            Some(write_data),
+            Some(byte_mask),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn new(
         translation_id: TranslationRequestId,
         memory_request_id: MemoryRequestId,
@@ -132,7 +159,7 @@ impl CpuTranslationRequest {
     ) -> Result<Self, CpuTranslationFrontendError> {
         AddressRange::new(virtual_address, size).map_err(CpuTranslationFrontendError::Memory)?;
         match operation {
-            CpuTranslatedMemoryOperation::Write => {
+            CpuTranslatedMemoryOperation::Write | CpuTranslatedMemoryOperation::Atomic => {
                 let data =
                     write_data
                         .as_ref()
@@ -317,6 +344,23 @@ impl CpuTranslatedMemoryRequest {
                 line_layout,
             )
             .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::Atomic => MemoryRequest::atomic(
+                self.request.memory_request_id,
+                self.physical_address,
+                self.request.size,
+                self.request.write_data.clone().ok_or(
+                    CpuTranslationFrontendError::MissingWriteData {
+                        request: self.request.memory_request_id,
+                    },
+                )?,
+                self.request.byte_mask.clone().ok_or(
+                    CpuTranslationFrontendError::MissingByteMask {
+                        request: self.request.memory_request_id,
+                    },
+                )?,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
         }
     }
 }
@@ -427,6 +471,23 @@ impl CpuTranslatedMemorySegment {
             )
             .map_err(CpuTranslationFrontendError::Memory),
             CpuTranslatedMemoryOperation::Write => MemoryRequest::write(
+                request_id,
+                self.physical_address,
+                self.size,
+                self.write_data
+                    .clone()
+                    .ok_or(CpuTranslationFrontendError::MissingWriteData {
+                        request: self.memory_request_id,
+                    })?,
+                self.byte_mask
+                    .clone()
+                    .ok_or(CpuTranslationFrontendError::MissingByteMask {
+                        request: self.memory_request_id,
+                    })?,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::Atomic => MemoryRequest::atomic(
                 request_id,
                 self.physical_address,
                 self.size,

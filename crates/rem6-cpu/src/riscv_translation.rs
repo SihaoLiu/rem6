@@ -576,7 +576,19 @@ fn cpu_translation_request(
             )
         }
         rem6_isa_riscv::MemoryAccessKind::StoreConditional { address, value, .. } => {
-            CpuTranslationRequest::store(
+            CpuTranslationRequest::atomic(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                Address::new(*address),
+                size,
+                store_bytes(*value, size),
+                ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            )
+        }
+        rem6_isa_riscv::MemoryAccessKind::AtomicMemory { address, value, .. } => {
+            CpuTranslationRequest::atomic(
                 translation_id,
                 memory_request_id,
                 data.route(),

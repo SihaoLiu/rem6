@@ -473,14 +473,14 @@ impl LineMemoryStore {
                 let data = self.read_slice(request)?;
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
-            MemoryOperation::Write | MemoryOperation::Atomic => {
+            MemoryOperation::Write => {
                 self.apply_write(request)?;
-                if request.returns_data() {
-                    let data = self.read_slice(request)?;
-                    MemoryResponse::completed(request, Some(data)).map(Some)
-                } else {
-                    MemoryResponse::completed(request, None).map(Some)
-                }
+                MemoryResponse::completed(request, None).map(Some)
+            }
+            MemoryOperation::Atomic => {
+                let data = self.read_slice(request)?;
+                self.apply_write(request)?;
+                MemoryResponse::completed(request, Some(data)).map(Some)
             }
             MemoryOperation::Upgrade | MemoryOperation::Invalidate => {
                 self.require_line(request.line_address())?;

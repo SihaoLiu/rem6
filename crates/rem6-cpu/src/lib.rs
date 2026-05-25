@@ -1537,7 +1537,8 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-            MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::atomic(
+            MemoryAccessKind::StoreConditional { value, .. }
+            | MemoryAccessKind::AtomicMemory { value, .. } => MemoryRequest::atomic(
                 self.request_id,
                 self.physical_address,
                 self.size,
@@ -1680,6 +1681,10 @@ fn record_load_completion(
             state.hart.write(*rd, 0);
             state.reservation = None;
         }
+        MemoryAccessKind::AtomicMemory { rd, width, .. } => {
+            let value = load_response_value(data.expect(missing_data), *width, false);
+            state.hart.write(*rd, value);
+        }
         MemoryAccessKind::Store { .. } => {}
     }
 }
@@ -1689,6 +1694,7 @@ fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
         MemoryAccessKind::Load { width, .. }
         | MemoryAccessKind::LoadReserved { width, .. }
         | MemoryAccessKind::StoreConditional { width, .. }
+        | MemoryAccessKind::AtomicMemory { width, .. }
         | MemoryAccessKind::Store { width, .. } => *width,
     }
 }
@@ -1698,6 +1704,7 @@ fn access_address(access: &MemoryAccessKind) -> u64 {
         MemoryAccessKind::Load { address, .. }
         | MemoryAccessKind::LoadReserved { address, .. }
         | MemoryAccessKind::StoreConditional { address, .. }
+        | MemoryAccessKind::AtomicMemory { address, .. }
         | MemoryAccessKind::Store { address, .. } => *address,
     }
 }
@@ -1725,6 +1732,9 @@ fn mmio_request(
     match access {
         MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
             MmioRequest::read(mmio_request_id(request), address, size).map_err(RiscvCpuError::Mmio)
+        }
+        MemoryAccessKind::AtomicMemory { .. } => {
+            Err(RiscvCpuError::UnsupportedMmioAtomic { request, address })
         }
         MemoryAccessKind::Store { value, .. }
         | MemoryAccessKind::StoreConditional { value, .. } => MmioRequest::write(

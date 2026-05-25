@@ -546,6 +546,13 @@ impl ChiCacheController {
         &mut self,
         request: &MemoryRequest,
     ) -> Result<MemoryResponse, ChiCacheControllerError> {
+        if request.operation() == MemoryOperation::Atomic {
+            let data = self.read_slice(request)?;
+            self.apply_store(request)?;
+            return MemoryResponse::completed(request, Some(data))
+                .map_err(ChiCacheControllerError::Memory);
+        }
+
         if request.carries_data() {
             self.apply_store(request)?;
             return MemoryResponse::completed(request, None)

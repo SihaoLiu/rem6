@@ -38,6 +38,19 @@ fn write(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryRe
     .unwrap()
 }
 
+fn atomic(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn line_store_serves_reads_from_independent_lines() {
     let mut store = LineMemoryStore::new(layout());
@@ -76,6 +89,29 @@ fn line_store_applies_masked_writes_and_reports_completed_response() {
 
     assert_eq!(response.status(), ResponseStatus::Completed);
     assert_eq!(response.data(), None);
+    assert_eq!(
+        &store.line_data(Address::new(0x1000)).unwrap()[0..8],
+        &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]
+    );
+}
+
+#[test]
+fn line_store_atomic_returns_old_bytes_before_applying_masked_write() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x00))
+        .unwrap();
+    let request = atomic(
+        4,
+        0x1002,
+        vec![0xaa, 0xbb, 0xcc, 0xdd],
+        ByteMask::from_bits(vec![true, false, true, false]).unwrap(),
+    );
+
+    let response = store.respond(&request).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), Some(&[2, 3, 4, 5][..]));
     assert_eq!(
         &store.line_data(Address::new(0x1000)).unwrap()[0..8],
         &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]

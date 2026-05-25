@@ -186,6 +186,10 @@ pub enum RiscvCpuError {
         expected: PartitionId,
         actual: PartitionId,
     },
+    UnsupportedMmioAtomic {
+        request: MemoryRequestId,
+        address: Address,
+    },
     DataTranslation(CpuTranslationFrontendError),
     DataTranslationFault {
         fetch: MemoryRequestId,
@@ -278,6 +282,13 @@ impl fmt::Display for RiscvCpuError {
                 "MMIO data route starts on partition {} but CPU partition is {}",
                 actual.index(),
                 expected.index()
+            ),
+            Self::UnsupportedMmioAtomic { request, address } => write!(
+                formatter,
+                "MMIO data request {} from agent {} at {:#x} cannot provide atomic old-value response data",
+                request.sequence(),
+                request.agent().get(),
+                address.get()
             ),
             Self::DataTranslation(error) => write!(formatter, "{error}"),
             Self::DataTranslationFault { fetch, fault } => write!(
