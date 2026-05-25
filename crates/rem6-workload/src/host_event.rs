@@ -86,6 +86,7 @@ pub struct WorkloadHostActionSummary {
     checkpoint_count: usize,
     checkpoint_restore_count: usize,
     execution_mode_switch_count: usize,
+    guest_host_call_count: usize,
     stop_count: usize,
 }
 
@@ -118,6 +119,11 @@ impl WorkloadHostActionSummary {
     pub fn record_execution_mode_switch(&mut self) {
         self.total_action_count += 1;
         self.execution_mode_switch_count += 1;
+    }
+
+    pub fn record_guest_host_call(&mut self) {
+        self.total_action_count += 1;
+        self.guest_host_call_count += 1;
     }
 
     pub fn record_stop(&mut self) {
@@ -153,6 +159,10 @@ impl WorkloadHostActionSummary {
         self.execution_mode_switch_count
     }
 
+    pub const fn guest_host_call_count(&self) -> usize {
+        self.guest_host_call_count
+    }
+
     pub const fn stop_count(&self) -> usize {
         self.stop_count
     }
@@ -179,6 +189,11 @@ pub enum HostEventIntent {
     SwitchExecutionMode {
         target: String,
         mode: WorkloadExecutionMode,
+    },
+    GuestHostCall {
+        selector: u64,
+        arguments: Vec<u64>,
+        payload: Vec<u8>,
     },
     Checkpoint {
         label: String,
@@ -241,16 +256,17 @@ impl CheckpointLineage {
 
 pub(crate) fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
     let (rank, label) = match event.intent() {
-        HostEventIntent::RoiBegin { label } => (0, label.as_str()),
-        HostEventIntent::RoiEnd { label } => (1, label.as_str()),
-        HostEventIntent::StatsReset { label } => (2, label.as_str()),
-        HostEventIntent::StatsDump { label } => (3, label.as_str()),
-        HostEventIntent::SwitchExecutionMode { target, .. } => (4, target.as_str()),
-        HostEventIntent::Checkpoint { label } => (5, label.as_str()),
-        HostEventIntent::RestoreCheckpoint { label } => (6, label.as_str()),
-        HostEventIntent::Stop { reason } => (7, reason.as_str()),
+        HostEventIntent::RoiBegin { label } => (0, label.clone()),
+        HostEventIntent::RoiEnd { label } => (1, label.clone()),
+        HostEventIntent::StatsReset { label } => (2, label.clone()),
+        HostEventIntent::StatsDump { label } => (3, label.clone()),
+        HostEventIntent::SwitchExecutionMode { target, .. } => (4, target.clone()),
+        HostEventIntent::GuestHostCall { selector, .. } => (5, selector.to_string()),
+        HostEventIntent::Checkpoint { label } => (6, label.clone()),
+        HostEventIntent::RestoreCheckpoint { label } => (7, label.clone()),
+        HostEventIntent::Stop { reason } => (8, reason.clone()),
     };
-    (event.tick(), rank, label.to_string())
+    (event.tick(), rank, label)
 }
 
 pub(crate) fn planned_checkpoint_labels(events: &[WorkloadHostEvent]) -> Vec<String> {

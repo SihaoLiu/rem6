@@ -1209,19 +1209,52 @@ fn workload_result_records_host_action_summary() {
     summary.record_stats_dump();
     summary.record_checkpoint();
     summary.record_execution_mode_switch();
+    summary.record_guest_host_call();
     summary.record_stop();
 
     let result =
         WorkloadResult::new(manifest.identity(), 96).with_host_action_summary(summary.clone());
 
     assert_eq!(result.host_action_summary(), Some(&summary));
-    assert_eq!(summary.total_action_count(), 5);
+    assert_eq!(summary.total_action_count(), 6);
     assert_eq!(summary.stats_reset_count(), 1);
     assert_eq!(summary.stats_dump_count(), 1);
     assert_eq!(summary.checkpoint_count(), 1);
     assert_eq!(summary.execution_mode_switch_count(), 1);
+    assert_eq!(summary.guest_host_call_count(), 1);
     assert_eq!(summary.stop_count(), 1);
     assert!(summary.has_host_actions());
+}
+
+#[test]
+fn workload_manifest_records_guest_host_call_events() {
+    let manifest = WorkloadManifest::builder(id("guest-host-call-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            32,
+            HostEventIntent::GuestHostCall {
+                selector: 0x42,
+                arguments: vec![7, 9],
+                payload: vec![1, 3, 5],
+            },
+        ))
+        .build()
+        .unwrap();
+
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    assert_eq!(plan.host_events().len(), 1);
+    assert_eq!(plan.host_events()[0].tick(), 32);
+    assert_eq!(
+        plan.host_events()[0].intent(),
+        &HostEventIntent::GuestHostCall {
+            selector: 0x42,
+            arguments: vec![7, 9],
+            payload: vec![1, 3, 5],
+        },
+    );
 }
 
 #[test]

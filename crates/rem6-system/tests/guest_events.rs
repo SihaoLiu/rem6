@@ -259,6 +259,88 @@ fn guest_event_channel_rejects_zero_host_latency() {
 }
 
 #[test]
+fn guest_host_call_records_typed_outcome_without_stopping() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(31);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(guest, 5, move |context| {
+            port.emit(
+                context,
+                GuestEvent::new(
+                    GuestEventId::new(80),
+                    source,
+                    GuestEventKind::GuestHostCall {
+                        selector: 0x1000,
+                        arguments: vec![1, 2, 3],
+                        payload: vec![0xaa, 0xbb],
+                    },
+                ),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert_eq!(summary.final_tick(), 7);
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[GuestEventDelivery::new(
+            7,
+            guest,
+            host,
+            GuestEvent::new(
+                GuestEventId::new(80),
+                source,
+                GuestEventKind::GuestHostCall {
+                    selector: 0x1000,
+                    arguments: vec![1, 2, 3],
+                    payload: vec![0xaa, 0xbb],
+                },
+            ),
+        )]
+    );
+    assert_eq!(
+        controller.run().action_records(),
+        &[HostActionRecord::new(
+            7,
+            guest,
+            host,
+            GuestEventId::new(80),
+            source,
+            HostAction::RecordGuestHostCall {
+                selector: 0x1000,
+                arguments: vec![1, 2, 3],
+                payload: vec![0xaa, 0xbb],
+            },
+        )]
+    );
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[SystemActionOutcome::GuestHostCall {
+            tick: 7,
+            event: GuestEventId::new(80),
+            source,
+            selector: 0x1000,
+            arguments: vec![1, 2, 3],
+            payload: vec![0xaa, 0xbb],
+        }]
+    );
+    assert_eq!(controller.run().stop_request(), None);
+}
+
+#[test]
 fn host_event_policy_maps_structured_events_to_actions() {
     let policy = HostEventPolicy;
 

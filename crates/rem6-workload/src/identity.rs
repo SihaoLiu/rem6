@@ -840,6 +840,22 @@ fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
             hash_str(hash, target);
             hash_str(hash, mode.as_str());
         }
+        HostEventIntent::GuestHostCall {
+            selector,
+            arguments,
+            payload,
+        } => {
+            hash_str(hash, "guest_host_call");
+            hash_u64(hash, *selector);
+            hash_u64(hash, arguments.len() as u64);
+            for argument in arguments {
+                hash_u64(hash, *argument);
+            }
+            hash_u64(hash, payload.len() as u64);
+            for byte in payload {
+                hash_u64(hash, u64::from(*byte));
+            }
+        }
         HostEventIntent::Checkpoint { label } => {
             hash_str(hash, "checkpoint");
             hash_str(hash, label);

@@ -29,6 +29,14 @@ pub enum SystemActionOutcome {
         source: GuestSourceId,
         command: String,
     },
+    GuestHostCall {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        selector: u64,
+        arguments: Vec<u64>,
+        payload: Vec<u8>,
+    },
     StatsReset(StatsResetRecord),
     StatsDump(StatDumpRecord),
     Checkpoint {
@@ -677,6 +685,18 @@ impl SystemActionExecutor {
                 event: record.event(),
                 source: record.source(),
                 command: command.clone(),
+            }),
+            HostAction::RecordGuestHostCall {
+                selector,
+                arguments,
+                payload,
+            } => Ok(SystemActionOutcome::GuestHostCall {
+                tick: record.tick(),
+                event: record.event(),
+                source: record.source(),
+                selector: *selector,
+                arguments: arguments.clone(),
+                payload: payload.clone(),
             }),
             HostAction::ResetStats => self
                 .stats

@@ -973,6 +973,30 @@ fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_planned_guest_host_call() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-guest-host-call"), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::GuestHostCall {
+                selector: 0x900,
+                arguments: vec![11, 13],
+                payload: vec![2, 4, 6],
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
 #[test]
 fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     let manifest = replay_manifest();
@@ -1387,6 +1411,40 @@ fn workload_replay_executes_planned_host_actions() {
             && *mode == ExecutionMode::Functional
             && *stats_epoch == 1
             && *stats_reset_tick == 1
+    )));
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_records_planned_guest_host_calls() {
+    let manifest = replay_manifest_with_planned_guest_host_call();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    let mut host_summary = WorkloadHostActionSummary::default();
+    host_summary.record_guest_host_call();
+    host_summary.record_stop();
+    host_summary.record_stop();
+    assert_eq!(outcome.result().host_action_summary(), Some(&host_summary));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::GuestHostCall {
+            tick,
+            event,
+            source,
+            selector,
+            arguments,
+            payload,
+        } if *tick == 1
+            && event.get() == 10_001
+            && source.get() == 51
+            && *selector == 0x900
+            && arguments == &vec![11, 13]
+            && payload == &vec![2, 4, 6]
     )));
     plan.verify_result(outcome.result()).unwrap();
 }

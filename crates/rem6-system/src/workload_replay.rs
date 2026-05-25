@@ -1301,6 +1301,9 @@ impl RiscvWorkloadReplay {
                 SystemActionOutcome::InjectedCommand { .. } => {
                     host_action_summary.record_injected_command();
                 }
+                SystemActionOutcome::GuestHostCall { .. } => {
+                    host_action_summary.record_guest_host_call();
+                }
                 SystemActionOutcome::StatsReset(_) => {
                     host_action_summary.record_stats_reset();
                 }
@@ -1454,6 +1457,15 @@ fn planned_host_guest_event(
                 mode: workload_execution_mode(mode),
             }
         }
+        HostEventIntent::GuestHostCall {
+            selector,
+            arguments,
+            payload,
+        } => GuestEventKind::GuestHostCall {
+            selector: *selector,
+            arguments: arguments.clone(),
+            payload: payload.clone(),
+        },
         HostEventIntent::Checkpoint { label } => GuestEventKind::Checkpoint {
             label: label.clone(),
         },
