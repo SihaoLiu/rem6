@@ -239,14 +239,16 @@ pub struct ParallelRemoteSendRecord {
     source: PartitionId,
     target: PartitionId,
     tick: Tick,
+    order: u64,
 }
 
 impl ParallelRemoteSendRecord {
-    pub const fn new(source: PartitionId, target: PartitionId, tick: Tick) -> Self {
+    pub const fn new(source: PartitionId, target: PartitionId, tick: Tick, order: u64) -> Self {
         Self {
             source,
             target,
             tick,
+            order,
         }
     }
 
@@ -260,6 +262,10 @@ impl ParallelRemoteSendRecord {
 
     pub const fn tick(self) -> Tick {
         self.tick
+    }
+
+    pub const fn order(self) -> u64 {
+        self.order
     }
 }
 

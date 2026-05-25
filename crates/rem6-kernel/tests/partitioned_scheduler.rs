@@ -987,6 +987,33 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
 }
 
 #[test]
+fn scheduler_recorded_parallel_epoch_reports_remote_send_order() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let sends = epoch.batches()[0].remote_sends();
+
+    assert_eq!(sends.len(), 2);
+    assert_eq!(sends[0].source(), source);
+    assert_eq!(sends[0].target(), target);
+    assert_eq!(sends[0].tick(), 4);
+    assert_eq!(sends[0].order(), 0);
+    assert_eq!(sends[1].source(), source);
+    assert_eq!(sends[1].target(), target);
+    assert_eq!(sends[1].tick(), 4);
+    assert_eq!(sends[1].order(), 1);
+}
+
+#[test]
 fn scheduler_recorded_parallel_epoch_reports_empty_batches_without_ready_workers() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
