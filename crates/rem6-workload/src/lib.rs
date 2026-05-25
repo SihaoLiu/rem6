@@ -79,7 +79,7 @@ pub use suite::{
     WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord,
     WorkloadSuiteEntry, WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary,
     WorkloadSuiteId, WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan,
-    WorkloadSuiteResult, WorkloadSuiteResultEntry,
+    WorkloadSuiteResult, WorkloadSuiteResultEntry, WorkloadSuiteWorkerExecutionSummary,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,

@@ -69,8 +69,10 @@ The following public sources shape this design:
   multiple workloads as reproducibility problems. rem6 treats typed guest-host
   calls and manifest-declared guest-host responses as normal host-control
   traffic, and treats workload suites, dispatch records, and execution
-  summaries as deterministic manifest data, so custom monitor/control events
-  and multi-workload orchestration do not need ad hoc external scripts:
+  summaries derived from per-workload results, and worker-level suite
+  completion summaries as deterministic manifest data, so custom
+  monitor/control events and multi-workload orchestration do not need ad hoc
+  external scripts:
   <https://arxiv.org/abs/2512.13479>
 - Recent gem5 call-stack profiling work identifies layered runtime complexity
   and hard-to-pinpoint coherence deadlock and livelock:
@@ -99,7 +101,7 @@ backed by tests, traces, or explicit runtime records.
 | Checkpoint correctness depends on a specific protocol flush path. | Checkpointing snapshots partition state, pending events, stores, directories, caches, and devices through protocol-neutral traits. | Checkpoint tests cover MSI, MESI, MOESI, CPU, GPU, accelerator, fabric, and memory state. |
 | KVM, fast-forwarding, and model switching are external workflow choices. | Execution modes are modeled as host-controlled runtime actions with explicit statistics scope. | Host-control tests show ROI, switch, and statistics actions as traceable events. |
 | Front-end speculation can hide predictor state and unwind behavior. | Branch predictors, GShare predictors, BiMode predictors, Tournament predictors, loop predictors, TAGE predictors, LTAGE predictors, TAGE-SC-L predictors, standalone multiperspective perceptron predictors, statistical correctors, branch-target buffers, indirect target predictors, and return stacks are per-model typed state with explicit prediction, lookup, update, replacement, speculative history, repair, and snapshot records. | Predictor tests assert counter training, GShare PC-history indexing, BiMode choice and selected-array training, Tournament local/global/choice training, loop trip-count learning, LTAGE loop override and repair, TAGE-SC-L SC override and ordered training, multiperspective perceptron 8KB profile shape, filter transitions, per-CPU histories, adaptive training, statistical-corrector GEHL override and repair, TAGE folded-history indexing and provider selection, target lookup, deterministic target replacement, indirect path history, return-stack operations, speculation commit, speculation repair, restore behavior, and incompatible snapshot rejection. |
-| Full-system experiments need external scripts and fragile artifacts. | Workload manifests, resources, host events, checkpoints, and result metadata are first-class rem6 data. | Manifest tests reconstruct runs from recorded metadata and reject missing inputs. |
+| Full-system experiments need external scripts and fragile artifacts. | Workload manifests, resources, host events, checkpoints, suite dispatch plans, suite execution summaries, worker completion summaries, and result metadata are first-class rem6 data. | Manifest and suite tests reconstruct runs from recorded metadata, derive suite execution evidence from dispatch plans plus per-workload results, summarize worker completions, and reject missing inputs. |
 | Profiling often observes the simulator indirectly. | Run summaries expose scheduler, fabric, DRAM, coherence, device, host, and trace activity from the runtime. | System tests assert resource profiles match per-component activity counts, and workload manifests can require fabric, DRAM, or aggregate resource activity minima. |
 
 ## Non-Negotiable Invariants

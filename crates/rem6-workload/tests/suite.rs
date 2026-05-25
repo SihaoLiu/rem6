@@ -259,6 +259,167 @@ fn workload_suite_execution_summary_verifies_dispatch_records() {
 }
 
 #[test]
+fn workload_suite_execution_summary_derives_from_dispatch_results() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-results"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let results = WorkloadSuiteResult::new(suite.identity())
+        .add_result(beta.id().clone(), WorkloadResult::new(beta.identity(), 30))
+        .unwrap()
+        .add_result(
+            gamma.id().clone(),
+            WorkloadResult::new(gamma.identity(), 40),
+        )
+        .unwrap()
+        .add_result(
+            alpha.id().clone(),
+            WorkloadResult::new(alpha.identity(), 20),
+        )
+        .unwrap();
+
+    let summary =
+        WorkloadSuiteExecutionSummary::from_dispatch_results(&dispatch, &results).unwrap();
+
+    assert_eq!(summary.suite_identity(), suite.identity());
+    assert_eq!(summary.records()[0].workload_id(), alpha.id());
+    assert_eq!(summary.records()[0].worker_index(), 0);
+    assert_eq!(summary.records()[0].dispatch_order(), 0);
+    assert_eq!(summary.records()[0].final_tick(), 20);
+    assert_eq!(summary.records()[1].workload_id(), beta.id());
+    assert_eq!(summary.records()[1].worker_index(), 1);
+    assert_eq!(summary.records()[1].dispatch_order(), 1);
+    assert_eq!(summary.records()[1].final_tick(), 30);
+    assert_eq!(summary.records()[2].workload_id(), gamma.id());
+    assert_eq!(summary.records()[2].worker_index(), 0);
+    assert_eq!(summary.records()[2].dispatch_order(), 2);
+    assert_eq!(summary.records()[2].final_tick(), 40);
+    assert_eq!(summary.maximum_final_tick(), Some(40));
+    summary.verify_against_dispatch(&dispatch).unwrap();
+
+    let workers = summary.worker_summaries();
+    assert_eq!(workers.len(), 2);
+    assert_eq!(workers[0].worker_index(), 0);
+    assert_eq!(workers[0].completion_count(), 2);
+    assert_eq!(workers[0].first_dispatch_order(), Some(0));
+    assert_eq!(workers[0].last_dispatch_order(), Some(2));
+    assert_eq!(workers[0].maximum_final_tick(), Some(40));
+    assert_eq!(workers[1].worker_index(), 1);
+    assert_eq!(workers[1].completion_count(), 1);
+    assert_eq!(workers[1].first_dispatch_order(), Some(1));
+    assert_eq!(workers[1].last_dispatch_order(), Some(1));
+    assert_eq!(workers[1].maximum_final_tick(), Some(30));
+    assert_eq!(
+        summary.worker_summary(0).unwrap().maximum_final_tick(),
+        Some(40)
+    );
+    assert!(summary.worker_summary(2).is_none());
+}
+
+#[test]
+fn workload_suite_execution_summary_rejects_result_dispatch_drift() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-result-drift"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let other_suite = WorkloadSuite::builder(suite_id("other-execution-results"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    let mismatched_suite = WorkloadSuiteResult::new(other_suite.identity())
+        .add_result(
+            alpha.id().clone(),
+            WorkloadResult::new(alpha.identity(), 20),
+        )
+        .unwrap()
+        .add_result(beta.id().clone(), WorkloadResult::new(beta.identity(), 30))
+        .unwrap();
+    let error = WorkloadSuiteExecutionSummary::from_dispatch_results(&dispatch, &mismatched_suite)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        WorkloadError::WorkloadSuiteIdentityMismatch { expected, actual }
+            if expected == suite.identity() && actual == other_suite.identity()
+    ));
+
+    let missing = WorkloadSuiteResult::new(suite.identity())
+        .add_result(
+            alpha.id().clone(),
+            WorkloadResult::new(alpha.identity(), 20),
+        )
+        .unwrap();
+    let error =
+        WorkloadSuiteExecutionSummary::from_dispatch_results(&dispatch, &missing).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkloadError::MissingSuiteWorkloadResult { workload } if workload == *beta.id()
+    ));
+
+    let unexpected = WorkloadSuiteResult::new(suite.identity())
+        .add_result(
+            alpha.id().clone(),
+            WorkloadResult::new(alpha.identity(), 20),
+        )
+        .unwrap()
+        .add_result(beta.id().clone(), WorkloadResult::new(beta.identity(), 30))
+        .unwrap()
+        .add_result(
+            gamma.id().clone(),
+            WorkloadResult::new(gamma.identity(), 40),
+        )
+        .unwrap();
+    let error =
+        WorkloadSuiteExecutionSummary::from_dispatch_results(&dispatch, &unexpected).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkloadError::UnexpectedSuiteWorkloadResult { workload } if workload == *gamma.id()
+    ));
+
+    let drifted = WorkloadSuiteResult::new(suite.identity())
+        .add_result(alpha.id().clone(), WorkloadResult::new(beta.identity(), 20))
+        .unwrap()
+        .add_result(beta.id().clone(), WorkloadResult::new(beta.identity(), 30))
+        .unwrap();
+    let error =
+        WorkloadSuiteExecutionSummary::from_dispatch_results(&dispatch, &drifted).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkloadError::SuiteWorkloadResultManifestMismatch { workload, expected, actual }
+            if workload == *alpha.id()
+                && expected == alpha.identity()
+                && actual == beta.identity()
+    ));
+}
+
+#[test]
 fn workload_suite_execution_summary_rejects_dispatch_drift() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

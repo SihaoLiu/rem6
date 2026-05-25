@@ -343,6 +343,61 @@ impl WorkloadSuiteExecutionSummary {
         Ok(self)
     }
 
+    pub fn from_dispatch_results(
+        dispatch: &WorkloadSuiteDispatchPlan,
+        results: &WorkloadSuiteResult,
+    ) -> Result<Self, WorkloadError> {
+        let expected_suite_identity = dispatch.suite_identity();
+        if results.suite_identity() != expected_suite_identity {
+            return Err(WorkloadError::WorkloadSuiteIdentityMismatch {
+                expected: expected_suite_identity,
+                actual: results.suite_identity(),
+            });
+        }
+
+        let mut expected_records = BTreeMap::new();
+        for record in dispatch.records() {
+            expected_records.insert(record.workload_id().clone(), record);
+        }
+
+        let mut actual_results = BTreeMap::new();
+        for entry in results.results() {
+            if !expected_records.contains_key(entry.workload_id()) {
+                return Err(WorkloadError::UnexpectedSuiteWorkloadResult {
+                    workload: entry.workload_id().clone(),
+                });
+            }
+            actual_results.insert(entry.workload_id().clone(), entry.result());
+        }
+
+        let mut summary = Self::new(dispatch.suite_identity());
+        for record in dispatch.records() {
+            let Some(result) = actual_results.get(record.workload_id()) else {
+                return Err(WorkloadError::MissingSuiteWorkloadResult {
+                    workload: record.workload_id().clone(),
+                });
+            };
+            let actual_identity = result.manifest_identity();
+            let expected_identity = record.manifest_identity();
+            if actual_identity != expected_identity {
+                return Err(WorkloadError::SuiteWorkloadResultManifestMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected_identity,
+                    actual: actual_identity,
+                });
+            }
+            summary = summary.add_completion(
+                record.workload_id().clone(),
+                expected_identity,
+                record.dispatch_order(),
+                record.worker_index(),
+                result.final_tick(),
+            )?;
+        }
+
+        Ok(summary)
+    }
+
     pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
         self.suite_identity.clone()
     }
@@ -356,6 +411,37 @@ impl WorkloadSuiteExecutionSummary {
             .iter()
             .map(WorkloadSuiteExecutionRecord::final_tick)
             .max()
+    }
+
+    pub fn worker_summaries(&self) -> Vec<WorkloadSuiteWorkerExecutionSummary> {
+        let mut summaries = BTreeMap::new();
+        for record in &self.records {
+            summaries
+                .entry(record.worker_index())
+                .and_modify(|summary: &mut WorkloadSuiteWorkerExecutionSummary| {
+                    summary.include(record);
+                })
+                .or_insert_with(|| WorkloadSuiteWorkerExecutionSummary::from_record(record));
+        }
+        summaries.into_values().collect()
+    }
+
+    pub fn worker_summary(
+        &self,
+        worker_index: usize,
+    ) -> Option<WorkloadSuiteWorkerExecutionSummary> {
+        let mut summary: Option<WorkloadSuiteWorkerExecutionSummary> = None;
+        for record in self
+            .records
+            .iter()
+            .filter(|record| record.worker_index() == worker_index)
+        {
+            match &mut summary {
+                Some(summary) => summary.include(record),
+                None => summary = Some(WorkloadSuiteWorkerExecutionSummary::from_record(record)),
+            }
+        }
+        summary
     }
 
     pub fn verify_against_dispatch(
@@ -417,6 +503,69 @@ impl WorkloadSuiteExecutionSummary {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteWorkerExecutionSummary {
+    worker_index: usize,
+    completion_count: usize,
+    first_dispatch_order: Option<usize>,
+    last_dispatch_order: Option<usize>,
+    maximum_final_tick: Option<u64>,
+}
+
+impl WorkloadSuiteWorkerExecutionSummary {
+    fn from_record(record: &WorkloadSuiteExecutionRecord) -> Self {
+        Self {
+            worker_index: record.worker_index(),
+            completion_count: 1,
+            first_dispatch_order: Some(record.dispatch_order()),
+            last_dispatch_order: Some(record.dispatch_order()),
+            maximum_final_tick: Some(record.final_tick()),
+        }
+    }
+
+    fn include(&mut self, record: &WorkloadSuiteExecutionRecord) {
+        self.completion_count += 1;
+        self.first_dispatch_order = Some(
+            self.first_dispatch_order
+                .map_or(record.dispatch_order(), |first| {
+                    first.min(record.dispatch_order())
+                }),
+        );
+        self.last_dispatch_order = Some(
+            self.last_dispatch_order
+                .map_or(record.dispatch_order(), |last| {
+                    last.max(record.dispatch_order())
+                }),
+        );
+        self.maximum_final_tick = Some(
+            self.maximum_final_tick
+                .map_or(record.final_tick(), |maximum| {
+                    maximum.max(record.final_tick())
+                }),
+        );
+    }
+
+    pub const fn worker_index(&self) -> usize {
+        self.worker_index
+    }
+
+    pub const fn completion_count(&self) -> usize {
+        self.completion_count
+    }
+
+    pub const fn first_dispatch_order(&self) -> Option<usize> {
+        self.first_dispatch_order
+    }
+
+    pub const fn last_dispatch_order(&self) -> Option<usize> {
+        self.last_dispatch_order
+    }
+
+    pub const fn maximum_final_tick(&self) -> Option<u64> {
+        self.maximum_final_tick
     }
 }
 
