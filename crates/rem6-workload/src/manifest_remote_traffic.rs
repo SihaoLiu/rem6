@@ -1,5 +1,6 @@
 use crate::{
-    WorkloadError, WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteFlow,
+    WorkloadError, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteFlow,
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
     WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadManifest, WorkloadManifestBuilder,
     WorkloadReplayPlan,
@@ -14,6 +15,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedParallelRemoteDelayFloor] {
         &self.expected_parallel_remote_delay_floors
+    }
+
+    pub fn expected_parallel_remote_delay_ceilings(
+        &self,
+    ) -> &[WorkloadExpectedParallelRemoteDelayCeiling] {
+        &self.expected_parallel_remote_delay_ceilings
     }
 
     pub fn expected_parallel_remote_traffic_consistency(
@@ -71,6 +78,25 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_remote_delay_floors.push(expected);
         self.expected_parallel_remote_delay_floors
             .sort_by_key(|floor| floor.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_remote_delay_ceiling(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteDelayCeiling,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_delay_ceilings
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteDelayCeiling {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_remote_delay_ceilings.push(expected);
+        self.expected_parallel_remote_delay_ceilings
+            .sort_by_key(|ceiling| ceiling.sort_key());
         Ok(self)
     }
 
@@ -191,6 +217,31 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedParallelRemoteDelayFloor] {
         &self.expected_parallel_remote_delay_floors
+    }
+
+    pub fn add_expected_parallel_remote_delay_ceiling(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteDelayCeiling,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_delay_ceilings
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteDelayCeiling {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_remote_delay_ceilings.push(expected);
+        self.expected_parallel_remote_delay_ceilings
+            .sort_by_key(|ceiling| ceiling.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_remote_delay_ceilings(
+        &self,
+    ) -> &[WorkloadExpectedParallelRemoteDelayCeiling] {
+        &self.expected_parallel_remote_delay_ceilings
     }
 
     pub fn add_expected_parallel_remote_traffic_consistency(

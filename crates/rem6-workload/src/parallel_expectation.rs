@@ -663,6 +663,33 @@ impl WorkloadExpectedParallelRemoteDelayFloor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelRemoteDelayCeiling {
+    scope: WorkloadParallelRemoteFlowScope,
+    maximum_delay: u64,
+}
+
+impl WorkloadExpectedParallelRemoteDelayCeiling {
+    pub const fn new(scope: WorkloadParallelRemoteFlowScope, maximum_delay: u64) -> Self {
+        Self {
+            scope,
+            maximum_delay,
+        }
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn maximum_delay(self) -> u64 {
+        self.maximum_delay
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelRemoteTrafficConsistency {
     scope: WorkloadParallelRemoteFlowScope,
 }

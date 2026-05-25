@@ -431,6 +431,9 @@ pub enum WorkloadError {
     DuplicateExpectedParallelRemoteDelayFloor {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    DuplicateExpectedParallelRemoteDelayCeiling {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
     DuplicateExpectedParallelRemoteTrafficConsistency {
         scope: WorkloadParallelRemoteFlowScope,
     },
@@ -448,12 +451,33 @@ pub enum WorkloadError {
         target: u32,
         minimum_delay: Tick,
     },
+    MissingParallelRemoteDelayCeilingSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        maximum_delay: Tick,
+    },
+    MissingParallelRemoteDelayCeilingEvidence {
+        scope: WorkloadParallelRemoteFlowScope,
+        maximum_delay: Tick,
+    },
+    MissingParallelRemoteFlowMaximumDelayEvidence {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        maximum_delay: Tick,
+    },
     ExpectedParallelRemoteDelayBelowFloor {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
         target: u32,
         minimum_delay: Tick,
         actual_minimum_delay: Tick,
+    },
+    ExpectedParallelRemoteDelayAboveCeiling {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        maximum_delay: Tick,
+        actual_maximum_delay: Tick,
     },
     MissingParallelRemoteTrafficConsistencySummary {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1264,11 +1288,16 @@ impl fmt::Display for WorkloadError {
             }
             Self::ZeroExpectedParallelRemoteDelayFloor { .. }
             | Self::DuplicateExpectedParallelRemoteDelayFloor { .. }
+            | Self::DuplicateExpectedParallelRemoteDelayCeiling { .. }
             | Self::DuplicateExpectedParallelRemoteTrafficConsistency { .. }
             | Self::MissingParallelRemoteDelayFloorSummary { .. }
             | Self::MissingParallelRemoteDelayEvidence { .. }
             | Self::MissingParallelRemoteFlowDelayEvidence { .. }
             | Self::ExpectedParallelRemoteDelayBelowFloor { .. }
+            | Self::MissingParallelRemoteDelayCeilingSummary { .. }
+            | Self::MissingParallelRemoteDelayCeilingEvidence { .. }
+            | Self::MissingParallelRemoteFlowMaximumDelayEvidence { .. }
+            | Self::ExpectedParallelRemoteDelayAboveCeiling { .. }
             | Self::MissingParallelRemoteTrafficConsistencySummary { .. }
             | Self::ParallelRemoteTrafficConsistencyMismatch(_)
             | Self::InvalidExpectedParallelRemoteFlowTimingWindow { .. }

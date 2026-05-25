@@ -254,6 +254,55 @@ pub(crate) fn verify_expected_parallel_remote_delay_floors(
     Ok(())
 }
 
+pub(crate) fn verify_expected_parallel_remote_delay_ceilings(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_ceilings = plan.expected_parallel_remote_delay_ceilings();
+    if expected_ceilings.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_ceilings[0];
+        return Err(WorkloadError::MissingParallelRemoteDelayCeilingSummary {
+            scope: expected.scope(),
+            maximum_delay: expected.maximum_delay(),
+        });
+    };
+
+    for expected in expected_ceilings {
+        let flows = actual_parallel_remote_flows_for_scope(summary, expected.scope());
+        if flows.is_empty() {
+            return Err(WorkloadError::MissingParallelRemoteDelayCeilingEvidence {
+                scope: expected.scope(),
+                maximum_delay: expected.maximum_delay(),
+            });
+        }
+        for flow in flows {
+            let Some(actual_maximum_delay) = flow.maximum_delay() else {
+                return Err(
+                    WorkloadError::MissingParallelRemoteFlowMaximumDelayEvidence {
+                        scope: expected.scope(),
+                        source: flow.source().index(),
+                        target: flow.target().index(),
+                        maximum_delay: expected.maximum_delay(),
+                    },
+                );
+            };
+            if actual_maximum_delay > expected.maximum_delay() {
+                return Err(WorkloadError::ExpectedParallelRemoteDelayAboveCeiling {
+                    scope: expected.scope(),
+                    source: flow.source().index(),
+                    target: flow.target().index(),
+                    maximum_delay: expected.maximum_delay(),
+                    actual_maximum_delay,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

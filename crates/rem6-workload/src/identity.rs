@@ -6,15 +6,15 @@ use crate::{
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -38,6 +38,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_parallel_remote_endpoints: &'a [WorkloadExpectedParallelRemoteEndpoints],
     pub(crate) expected_parallel_remote_delay_floors:
         &'a [WorkloadExpectedParallelRemoteDelayFloor],
+    pub(crate) expected_parallel_remote_delay_ceilings:
+        &'a [WorkloadExpectedParallelRemoteDelayCeiling],
     pub(crate) expected_parallel_remote_traffic_consistency:
         &'a [WorkloadExpectedParallelRemoteTrafficConsistency],
     pub(crate) expected_parallel_remote_sends: &'a [WorkloadExpectedParallelRemoteSend],
@@ -123,6 +125,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_remote_delay_floors {
         hash_expected_parallel_remote_delay_floor(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_remote_delay_ceilings.len() as u64,
+    );
+    for expected in input.expected_parallel_remote_delay_ceilings {
+        hash_expected_parallel_remote_delay_ceiling(&mut hash, *expected);
     }
     hash_u64(
         &mut hash,
@@ -281,6 +290,14 @@ fn hash_expected_parallel_remote_delay_floor(
 ) {
     hash_parallel_remote_flow_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_delay());
+}
+
+fn hash_expected_parallel_remote_delay_ceiling(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelRemoteDelayCeiling,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, expected.maximum_delay());
 }
 
 fn hash_expected_parallel_remote_traffic_consistency(

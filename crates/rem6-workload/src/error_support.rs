@@ -183,6 +183,11 @@ pub(crate) fn format_remote_delay_error(
             "expected {} remote delay floor is already declared",
             scope.as_str()
         ),
+        WorkloadError::DuplicateExpectedParallelRemoteDelayCeiling { scope } => write!(
+            formatter,
+            "expected {} remote delay ceiling is already declared",
+            scope.as_str()
+        ),
         WorkloadError::DuplicateExpectedParallelRemoteTrafficConsistency { scope } => write!(
             formatter,
             "expected {} remote traffic consistency is already declared",
@@ -223,6 +228,43 @@ pub(crate) fn format_remote_delay_error(
         } => write!(
             formatter,
             "expected {} remote flow {source}->{target} minimum delay at least {minimum_delay}, got {actual_minimum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteDelayCeilingSummary {
+            scope,
+            maximum_delay,
+        } => write!(
+            formatter,
+            "missing parallel summary for expected {} remote delay ceiling at most {maximum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteDelayCeilingEvidence {
+            scope,
+            maximum_delay,
+        } => write!(
+            formatter,
+            "missing remote delay evidence for expected {} remote delay ceiling at most {maximum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteFlowMaximumDelayEvidence {
+            scope,
+            source,
+            target,
+            maximum_delay,
+        } => write!(
+            formatter,
+            "missing maximum delay evidence for expected {} remote flow {source}->{target} delay at most {maximum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::ExpectedParallelRemoteDelayAboveCeiling {
+            scope,
+            source,
+            target,
+            maximum_delay,
+            actual_maximum_delay,
+        } => write!(
+            formatter,
+            "expected {} remote flow {source}->{target} maximum delay at most {maximum_delay}, got {actual_maximum_delay}",
             scope.as_str()
         ),
         WorkloadError::MissingParallelRemoteTrafficConsistencySummary { scope } => write!(
