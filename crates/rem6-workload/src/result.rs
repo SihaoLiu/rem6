@@ -197,6 +197,8 @@ pub struct WorkloadParallelExecutionSummary {
     dram_qos_requestor_summaries: Vec<WorkloadDramQosRequestorSummary>,
     dram_wait_for_edge_count: usize,
     dram_deadlock_diagnostic_count: usize,
+    merged_resource_deadlock_diagnostic_count: usize,
+    merged_full_system_deadlock_diagnostic_count: usize,
     gpu_kernel_launch_count: usize,
     gpu_trace_event_count: usize,
     gpu_workgroup_completion_count: usize,
@@ -581,6 +583,22 @@ impl WorkloadParallelExecutionSummary {
         self.fabric_deadlock_diagnostic_count = fabric_deadlock_diagnostic_count;
         self.dram_wait_for_edge_count = dram_wait_for_edge_count;
         self.dram_deadlock_diagnostic_count = dram_deadlock_diagnostic_count;
+        self
+    }
+
+    pub const fn with_merged_resource_deadlock_diagnostics(
+        mut self,
+        deadlock_diagnostic_count: usize,
+    ) -> Self {
+        self.merged_resource_deadlock_diagnostic_count = deadlock_diagnostic_count;
+        self
+    }
+
+    pub const fn with_merged_full_system_deadlock_diagnostics(
+        mut self,
+        deadlock_diagnostic_count: usize,
+    ) -> Self {
+        self.merged_full_system_deadlock_diagnostic_count = deadlock_diagnostic_count;
         self
     }
 
@@ -1193,11 +1211,21 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub const fn resource_deadlock_diagnostic_count(&self) -> usize {
-        self.fabric_deadlock_diagnostic_count + self.dram_deadlock_diagnostic_count
+        if self.merged_resource_deadlock_diagnostic_count == 0 {
+            self.fabric_deadlock_diagnostic_count + self.dram_deadlock_diagnostic_count
+        } else {
+            self.merged_resource_deadlock_diagnostic_count
+        }
+    }
+
+    pub const fn merged_resource_deadlock_diagnostic_count(&self) -> usize {
+        self.merged_resource_deadlock_diagnostic_count
     }
 
     pub const fn has_resource_diagnostics(&self) -> bool {
-        self.has_fabric_diagnostics() || self.has_dram_diagnostics()
+        self.has_fabric_diagnostics()
+            || self.has_dram_diagnostics()
+            || self.merged_resource_deadlock_diagnostic_count != 0
     }
 
     pub const fn resource_activity_count(&self) -> usize {
@@ -1216,10 +1244,20 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub const fn full_system_deadlock_diagnostic_count(&self) -> usize {
-        self.resource_deadlock_diagnostic_count()
-            + self.data_cache_deadlock_diagnostic_count
-            + self.compute_deadlock_diagnostic_count()
-            + self.dma_deadlock_diagnostic_count()
+        if self.merged_full_system_deadlock_diagnostic_count == 0 {
+            self.resource_deadlock_diagnostic_count()
+                + self.data_cache_deadlock_diagnostic_count
+                + self.compute_deadlock_diagnostic_count()
+                + self.dma_deadlock_diagnostic_count()
+        } else {
+            self.merged_full_system_deadlock_diagnostic_count
+                + self.compute_deadlock_diagnostic_count()
+                + self.dma_deadlock_diagnostic_count()
+        }
+    }
+
+    pub const fn merged_full_system_deadlock_diagnostic_count(&self) -> usize {
+        self.merged_full_system_deadlock_diagnostic_count
     }
 
     pub const fn full_system_progress_transition_count(&self) -> usize {

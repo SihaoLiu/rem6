@@ -152,6 +152,7 @@ fn workload_replay_plan_rejects_missing_or_dirty_parallel_diagnostics() {
     let dirty_summary = WorkloadParallelExecutionSummary::default()
         .with_data_cache_diagnostics(2, 0)
         .with_resource_diagnostics(0, 1, 0, 0)
+        .with_merged_full_system_deadlock_diagnostics(6)
         .with_gpu_compute_diagnostics(3, 0)
         .with_accelerator_dma_diagnostics(0, 4);
     let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
@@ -161,7 +162,7 @@ fn workload_replay_plan_rejects_missing_or_dirty_parallel_diagnostics() {
         WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
             scope: WorkloadParallelDiagnosticScope::FullSystem,
             wait_for_edge_count: 5,
-            deadlock_diagnostic_count: 5,
+            deadlock_diagnostic_count: 10,
             livelock_diagnostic_count: 0,
         },
     );

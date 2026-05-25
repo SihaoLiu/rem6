@@ -293,7 +293,10 @@ busy flags. If a device engine blocks on memory, credits, command queue space,
 or host action, that dependency belongs in the same wait-for vocabulary as CPU
 coherence traffic. System-run diagnostics merge fabric, DRAM, and data-cache
 wait-for edges before checking full-system deadlocks, so a cycle that spans two
-subsystems is not hidden by clean per-subsystem graphs.
+subsystems is not hidden by clean per-subsystem graphs. Workload-result
+summaries carry the merged resource and full-system deadlock counts forward so
+manifest clean-diagnostic checks see the same cross-subsystem cycles as the
+system run.
 
 ## Workspace Responsibilities
 

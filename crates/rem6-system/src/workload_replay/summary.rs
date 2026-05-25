@@ -203,6 +203,8 @@ pub(super) fn parallel_execution_summary(
             run.dram_wait_for_edge_count(),
             run.dram_deadlock_diagnostic_count(),
         )
+        .with_merged_resource_deadlock_diagnostics(run.resource_deadlock_diagnostic_count())
+        .with_merged_full_system_deadlock_diagnostics(run.full_system_deadlock_diagnostic_count())
         .with_gpu_compute_counts(
             activities.gpu.kernel_launch_count,
             activities.gpu.trace_event_count,
@@ -261,7 +263,8 @@ mod tests {
     };
     use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
     use rem6_kernel::{
-        LivelockTransitionKind, PartitionId, PartitionedScheduler, WaitForGraph, WaitForNode,
+        LivelockTransitionKind, PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForGraph,
+        WaitForNode,
     };
     use rem6_memory::{
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -290,6 +293,14 @@ mod tests {
 
     fn component_wait_node(name: &str) -> WaitForNode {
         WaitForNode::component(name).unwrap()
+    }
+
+    fn transaction_wait_node(name: &str) -> WaitForNode {
+        WaitForNode::transaction(name).unwrap()
+    }
+
+    fn resource_wait_node(name: &str) -> WaitForNode {
+        WaitForNode::resource(name).unwrap()
     }
 
     fn empty_coherence_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
@@ -587,6 +598,66 @@ mod tests {
         );
         assert_eq!(summary.full_system_progress_transition_count(), 4);
         assert_eq!(summary.full_system_livelock_diagnostic_count(), 2);
+        assert!(summary.has_full_system_diagnostics());
+    }
+
+    #[test]
+    fn parallel_execution_summary_preserves_cross_subsystem_deadlocks() {
+        let packet = transaction_wait_node("fabric.packet.42");
+        let line = resource_wait_node("cache.0.line.4000");
+        let mut fabric_wait_for = WaitForGraph::new();
+        fabric_wait_for
+            .record_wait(packet.clone(), line.clone(), WaitForEdgeKind::Queue, 5)
+            .unwrap();
+        let mut data_cache_wait_for = WaitForGraph::new();
+        data_cache_wait_for
+            .record_wait(line, packet, WaitForEdgeKind::Protocol, 7)
+            .unwrap();
+        let data_cache_run = ParallelCoherenceRunSummary::new(
+            rem6_kernel::RecordedConservativeRunSummary::empty(9),
+            0,
+            0,
+            0,
+            Vec::new(),
+            Vec::new(),
+            ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), data_cache_wait_for),
+        );
+        let run = RiscvSystemRun::new(
+            Vec::new(),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 9 },
+        )
+        .with_fabric_wait_for(fabric_wait_for)
+        .with_data_cache_runs(vec![data_cache_run]);
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+        assert_eq!(run.full_system_deadlock_diagnostic_count(), 1);
+
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(summary.resource_deadlock_diagnostic_count(), 0);
+        assert_eq!(summary.data_cache_deadlock_diagnostic_count(), 0);
+        assert_eq!(summary.full_system_wait_for_edge_count(), 2);
+        assert_eq!(summary.full_system_deadlock_diagnostic_count(), 1);
         assert!(summary.has_full_system_diagnostics());
     }
 
