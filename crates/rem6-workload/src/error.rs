@@ -370,6 +370,18 @@ pub enum WorkloadError {
         worker_capacity_ticks: Tick,
         serial_completion_ticks: Tick,
     },
+    SuiteParallelSpeedupBelowMinimum {
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+        actual_numerator: Tick,
+        actual_denominator: Tick,
+    },
+    SuiteWorkerUtilizationBelowMinimum {
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+        actual_numerator: Tick,
+        actual_denominator: Tick,
+    },
     ZeroSuiteExecutionRatioDenominator,
     StatsAfterFinalTick {
         stats_tick: Tick,

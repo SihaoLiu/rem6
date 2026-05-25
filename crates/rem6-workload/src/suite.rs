@@ -276,7 +276,11 @@ impl WorkloadSuiteDispatchPlan {
                 },
             );
         }
-        WorkloadSuiteExecutionExpectation::new(self.suite_identity(), minimum_simultaneous_workers)
+        Ok(WorkloadSuiteExecutionExpectation::new(
+            self.suite_identity(),
+            minimum_simultaneous_workers,
+        )?
+        .for_worker_count(self.worker_count()))
     }
 }
 
@@ -323,7 +327,10 @@ impl WorkloadSuiteDispatchRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadSuiteExecutionExpectation {
     suite_identity: WorkloadSuiteIdentity,
+    worker_count: usize,
     minimum_simultaneous_workers: usize,
+    minimum_parallel_speedup: Option<WorkloadSuiteExecutionRatio>,
+    minimum_worker_utilization: Option<WorkloadSuiteExecutionRatio>,
 }
 
 impl WorkloadSuiteExecutionExpectation {
@@ -336,16 +343,52 @@ impl WorkloadSuiteExecutionExpectation {
         }
         Ok(Self {
             suite_identity,
+            worker_count: minimum_simultaneous_workers,
             minimum_simultaneous_workers,
+            minimum_parallel_speedup: None,
+            minimum_worker_utilization: None,
         })
+    }
+
+    fn for_worker_count(mut self, worker_count: usize) -> Self {
+        self.worker_count = worker_count;
+        self
+    }
+
+    pub fn with_minimum_parallel_speedup(
+        mut self,
+        minimum_parallel_speedup: WorkloadSuiteExecutionRatio,
+    ) -> Self {
+        self.minimum_parallel_speedup = Some(minimum_parallel_speedup);
+        self
+    }
+
+    pub fn with_minimum_worker_utilization(
+        mut self,
+        minimum_worker_utilization: WorkloadSuiteExecutionRatio,
+    ) -> Self {
+        self.minimum_worker_utilization = Some(minimum_worker_utilization);
+        self
     }
 
     pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
         self.suite_identity.clone()
     }
 
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
     pub const fn minimum_simultaneous_workers(&self) -> usize {
         self.minimum_simultaneous_workers
+    }
+
+    pub const fn minimum_parallel_speedup(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        self.minimum_parallel_speedup
+    }
+
+    pub const fn minimum_worker_utilization(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        self.minimum_worker_utilization
     }
 }
 
@@ -560,7 +603,49 @@ impl WorkloadSuiteExecutionSummary {
                 actual: self.suite_identity.clone(),
             });
         }
-        self.verify_minimum_simultaneous_workers(expectation.minimum_simultaneous_workers())
+        self.verify_minimum_simultaneous_workers(expectation.minimum_simultaneous_workers())?;
+
+        if expectation.minimum_parallel_speedup().is_some()
+            || expectation.minimum_worker_utilization().is_some()
+        {
+            let efficiency = self.execution_efficiency(expectation.worker_count())?;
+            if let Some(minimum_speedup) = expectation.minimum_parallel_speedup() {
+                let actual_speedup =
+                    efficiency
+                        .parallel_speedup_ratio()
+                        .unwrap_or(WorkloadSuiteExecutionRatio {
+                            numerator: 0,
+                            denominator: 1,
+                        });
+                if !actual_speedup.meets_or_exceeds(minimum_speedup) {
+                    return Err(WorkloadError::SuiteParallelSpeedupBelowMinimum {
+                        minimum_numerator: minimum_speedup.numerator(),
+                        minimum_denominator: minimum_speedup.denominator(),
+                        actual_numerator: actual_speedup.numerator(),
+                        actual_denominator: actual_speedup.denominator(),
+                    });
+                }
+            }
+            if let Some(minimum_utilization) = expectation.minimum_worker_utilization() {
+                let actual_utilization =
+                    efficiency
+                        .worker_utilization_ratio()
+                        .unwrap_or(WorkloadSuiteExecutionRatio {
+                            numerator: 0,
+                            denominator: 1,
+                        });
+                if !actual_utilization.meets_or_exceeds(minimum_utilization) {
+                    return Err(WorkloadError::SuiteWorkerUtilizationBelowMinimum {
+                        minimum_numerator: minimum_utilization.numerator(),
+                        minimum_denominator: minimum_utilization.denominator(),
+                        actual_numerator: actual_utilization.numerator(),
+                        actual_denominator: actual_utilization.denominator(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn execution_efficiency(
@@ -796,6 +881,11 @@ impl WorkloadSuiteExecutionRatio {
 
     pub const fn denominator(&self) -> Tick {
         self.denominator
+    }
+
+    pub fn meets_or_exceeds(&self, minimum: Self) -> bool {
+        u128::from(self.numerator) * u128::from(minimum.denominator)
+            >= u128::from(minimum.numerator) * u128::from(self.denominator)
     }
 
     fn new(numerator: Tick, denominator: Tick) -> Result<Self, WorkloadError> {

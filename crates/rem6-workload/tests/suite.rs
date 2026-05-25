@@ -548,6 +548,124 @@ fn workload_suite_execution_summary_rejects_invalid_efficiency_capacity() {
 }
 
 #[test]
+fn workload_suite_execution_expectation_requires_efficiency_thresholds() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("efficiency-thresholds"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let minimum_speedup = WorkloadSuiteExecutionEfficiency::ratio(3, 2).unwrap();
+    let minimum_utilization = WorkloadSuiteExecutionEfficiency::ratio(3, 4).unwrap();
+    let expectation = dispatch
+        .execution_expectation(2)
+        .unwrap()
+        .with_minimum_parallel_speedup(minimum_speedup)
+        .with_minimum_worker_utilization(minimum_utilization);
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 40)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 20, 50)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 45, 60)
+        .unwrap();
+    let efficiency = summary.execution_efficiency(2).unwrap();
+
+    assert_eq!(expectation.worker_count(), 2);
+    assert_eq!(
+        expectation.minimum_parallel_speedup(),
+        Some(minimum_speedup)
+    );
+    assert_eq!(
+        expectation.minimum_worker_utilization(),
+        Some(minimum_utilization)
+    );
+    assert!(efficiency
+        .parallel_speedup_ratio()
+        .unwrap()
+        .meets_or_exceeds(minimum_speedup));
+    assert!(efficiency
+        .worker_utilization_ratio()
+        .unwrap()
+        .meets_or_exceeds(minimum_utilization));
+    summary.verify_against_expectation(&expectation).unwrap();
+}
+
+#[test]
+fn workload_suite_execution_expectation_rejects_underperforming_efficiency() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("underperforming-efficiency"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 0, 50)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 50, 100)
+        .unwrap();
+
+    let speedup_error = summary
+        .verify_against_expectation(
+            &dispatch
+                .execution_expectation(1)
+                .unwrap()
+                .with_minimum_parallel_speedup(
+                    WorkloadSuiteExecutionEfficiency::ratio(3, 2).unwrap(),
+                ),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        speedup_error,
+        WorkloadError::SuiteParallelSpeedupBelowMinimum {
+            minimum_numerator: 3,
+            minimum_denominator: 2,
+            actual_numerator: 100,
+            actual_denominator: 100
+        }
+    ));
+
+    let utilization_error = summary
+        .verify_against_expectation(
+            &dispatch
+                .execution_expectation(1)
+                .unwrap()
+                .with_minimum_worker_utilization(
+                    WorkloadSuiteExecutionEfficiency::ratio(3, 4).unwrap(),
+                ),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        utilization_error,
+        WorkloadError::SuiteWorkerUtilizationBelowMinimum {
+            minimum_numerator: 3,
+            minimum_denominator: 4,
+            actual_numerator: 100,
+            actual_denominator: 200
+        }
+    ));
+}
+
+#[test]
 fn workload_suite_dispatch_plan_declares_execution_parallelism_expectation() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

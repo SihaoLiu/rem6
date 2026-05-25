@@ -538,6 +538,24 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite execution capacity {worker_capacity_ticks} is below serial completion ticks {serial_completion_ticks}"
             ),
+            Self::SuiteParallelSpeedupBelowMinimum {
+                minimum_numerator,
+                minimum_denominator,
+                actual_numerator,
+                actual_denominator,
+            } => write!(
+                formatter,
+                "workload suite execution speedup {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
+            ),
+            Self::SuiteWorkerUtilizationBelowMinimum {
+                minimum_numerator,
+                minimum_denominator,
+                actual_numerator,
+                actual_denominator,
+            } => write!(
+                formatter,
+                "workload suite worker utilization {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
+            ),
             Self::ZeroSuiteExecutionRatioDenominator => write!(
                 formatter,
                 "workload suite execution ratio denominator must be positive"
