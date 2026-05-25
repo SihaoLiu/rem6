@@ -18,9 +18,18 @@ fn cpu_scheduler_turn(
     subject: WaitForNode,
     transition_count: usize,
 ) -> RiscvClusterTurn {
+    cpu_scheduler_turn_at(partition, 0, subject, transition_count)
+}
+
+fn cpu_scheduler_turn_at(
+    partition: PartitionId,
+    tick: u64,
+    subject: WaitForNode,
+    transition_count: usize,
+) -> RiscvClusterTurn {
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
     scheduler
-        .schedule_parallel_at(partition, 0, move |context| {
+        .schedule_parallel_at(partition, tick, move |context| {
             for _ in 0..transition_count {
                 context.record_progress_transition(
                     subject.clone(),
@@ -39,9 +48,18 @@ fn data_cache_run(
     subject: WaitForNode,
     transition_count: usize,
 ) -> ParallelCoherenceRunSummary {
+    data_cache_run_at(partition, 0, subject, transition_count)
+}
+
+fn data_cache_run_at(
+    partition: PartitionId,
+    tick: u64,
+    subject: WaitForNode,
+    transition_count: usize,
+) -> ParallelCoherenceRunSummary {
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
     scheduler
-        .schedule_parallel_at(partition, 0, move |context| {
+        .schedule_parallel_at(partition, tick, move |context| {
             for _ in 0..transition_count {
                 context.record_progress_transition(
                     subject.clone(),
@@ -150,6 +168,125 @@ fn system_run_summarizes_progress_transition_dimensions() {
     assert_eq!(
         run.full_system_progress_transition_subject_summaries(),
         vec![(cpu_subject, 3, 0, 0), (cache_subject, 2, 0, 0)],
+    );
+}
+
+#[test]
+fn system_run_reports_progress_transition_counts_and_windows_by_dimension() {
+    let cpu = PartitionId::new(0);
+    let cache = PartitionId::new(1);
+    let cpu_subject = component("cpu-scheduler");
+    let cache_subject = component("data-cache-scheduler");
+    let missing_subject = component("missing-scheduler");
+    let run = RiscvSystemRun::new(
+        vec![cpu_scheduler_turn_at(cpu, 0, cpu_subject.clone(), 2)],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 8 },
+    )
+    .with_data_cache_runs(vec![
+        data_cache_run_at(cache, 3, cache_subject.clone(), 2),
+        data_cache_run_at(cache, 6, cache_subject.clone(), 1),
+    ]);
+
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        2,
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_tick_window_by_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        Some((0, 0)),
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_count_by_partition(cpu),
+        2,
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_tick_window_by_partition(cpu),
+        Some((0, 0)),
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_count_by_subject(&cpu_subject),
+        2,
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_tick_window_by_subject(&cpu_subject),
+        Some((0, 0)),
+    );
+
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::MessageRetry,
+        ),
+        3,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_tick_window_by_kind(
+            LivelockTransitionKind::MessageRetry,
+        ),
+        Some((3, 6)),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_count_by_partition(cache),
+        3,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_tick_window_by_partition(cache),
+        Some((3, 6)),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_count_by_subject(&cache_subject),
+        3,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_tick_window_by_subject(
+            &cache_subject
+        ),
+        Some((3, 6)),
+    );
+
+    assert_eq!(
+        run.full_system_progress_transition_count_by_kind(LivelockTransitionKind::ProtocolRetry),
+        2,
+    );
+    assert_eq!(
+        run.full_system_progress_transition_count_by_partition(cache),
+        3,
+    );
+    assert_eq!(
+        run.full_system_progress_transition_count_by_subject(&cache_subject),
+        3,
+    );
+    assert_eq!(
+        run.full_system_progress_transition_tick_window_by_kind(
+            LivelockTransitionKind::ProtocolRetry
+        ),
+        Some((0, 0)),
+    );
+    assert_eq!(
+        run.full_system_progress_transition_tick_window_by_kind(
+            LivelockTransitionKind::MessageRetry
+        ),
+        Some((3, 6)),
+    );
+    assert_eq!(
+        run.full_system_progress_transition_tick_window_by_partition(cache),
+        Some((3, 6)),
+    );
+    assert_eq!(
+        run.full_system_progress_transition_tick_window_by_subject(&cache_subject),
+        Some((3, 6)),
+    );
+    assert_eq!(
+        run.full_system_progress_transition_count_by_subject(&missing_subject),
+        0,
+    );
+    assert_eq!(
+        run.full_system_progress_transition_tick_window_by_subject(&missing_subject),
+        None,
     );
 }
 
