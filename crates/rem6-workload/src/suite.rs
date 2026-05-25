@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use rem6_kernel::Tick;
+
 use crate::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadManifestIdentity, WorkloadReplayPlan,
     WorkloadResult,
@@ -314,13 +316,39 @@ impl WorkloadSuiteExecutionSummary {
     }
 
     pub fn add_completion(
-        mut self,
+        self,
         workload_id: WorkloadId,
         manifest_identity: WorkloadManifestIdentity,
         dispatch_order: usize,
         worker_index: usize,
         final_tick: u64,
     ) -> Result<Self, WorkloadError> {
+        self.add_timed_completion(
+            workload_id,
+            manifest_identity,
+            dispatch_order,
+            worker_index,
+            0,
+            final_tick,
+        )
+    }
+
+    pub fn add_timed_completion(
+        mut self,
+        workload_id: WorkloadId,
+        manifest_identity: WorkloadManifestIdentity,
+        dispatch_order: usize,
+        worker_index: usize,
+        start_tick: Tick,
+        final_tick: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if start_tick > final_tick {
+            return Err(WorkloadError::SuiteDispatchCompletionWindowInvalid {
+                workload: workload_id,
+                start_tick,
+                final_tick,
+            });
+        }
         if self
             .records
             .iter()
@@ -336,6 +364,7 @@ impl WorkloadSuiteExecutionSummary {
             manifest_identity,
             dispatch_order,
             worker_index,
+            start_tick,
             final_tick,
         ));
         self.records
@@ -386,11 +415,12 @@ impl WorkloadSuiteExecutionSummary {
                     actual: actual_identity,
                 });
             }
-            summary = summary.add_completion(
+            summary = summary.add_timed_completion(
                 record.workload_id().clone(),
                 expected_identity,
                 record.dispatch_order(),
                 record.worker_index(),
+                0,
                 result.final_tick(),
             )?;
         }
@@ -406,11 +436,52 @@ impl WorkloadSuiteExecutionSummary {
         &self.records
     }
 
-    pub fn maximum_final_tick(&self) -> Option<u64> {
+    pub fn minimum_start_tick(&self) -> Option<Tick> {
+        self.records
+            .iter()
+            .map(WorkloadSuiteExecutionRecord::start_tick)
+            .min()
+    }
+
+    pub fn maximum_final_tick(&self) -> Option<Tick> {
         self.records
             .iter()
             .map(WorkloadSuiteExecutionRecord::final_tick)
             .max()
+    }
+
+    pub fn total_completion_ticks(&self) -> Tick {
+        self.records
+            .iter()
+            .map(WorkloadSuiteExecutionRecord::duration_ticks)
+            .sum()
+    }
+
+    pub fn maximum_simultaneous_workers(&self) -> usize {
+        let mut ticks = self
+            .records
+            .iter()
+            .flat_map(|record| [record.start_tick(), record.final_tick()])
+            .collect::<Vec<_>>();
+        ticks.sort_unstable();
+        ticks.dedup();
+
+        ticks
+            .into_iter()
+            .map(|tick| {
+                self.records
+                    .iter()
+                    .filter(|record| record.start_tick() <= tick && tick < record.final_tick())
+                    .map(WorkloadSuiteExecutionRecord::worker_index)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn has_parallel_worker_overlap(&self) -> bool {
+        self.maximum_simultaneous_workers() > 1
     }
 
     pub fn worker_summaries(&self) -> Vec<WorkloadSuiteWorkerExecutionSummary> {
@@ -512,7 +583,10 @@ pub struct WorkloadSuiteWorkerExecutionSummary {
     completion_count: usize,
     first_dispatch_order: Option<usize>,
     last_dispatch_order: Option<usize>,
-    maximum_final_tick: Option<u64>,
+    first_start_tick: Option<Tick>,
+    last_final_tick: Option<Tick>,
+    total_completion_ticks: Tick,
+    maximum_final_tick: Option<Tick>,
 }
 
 impl WorkloadSuiteWorkerExecutionSummary {
@@ -522,6 +596,9 @@ impl WorkloadSuiteWorkerExecutionSummary {
             completion_count: 1,
             first_dispatch_order: Some(record.dispatch_order()),
             last_dispatch_order: Some(record.dispatch_order()),
+            first_start_tick: Some(record.start_tick()),
+            last_final_tick: Some(record.final_tick()),
+            total_completion_ticks: record.duration_ticks(),
             maximum_final_tick: Some(record.final_tick()),
         }
     }
@@ -540,6 +617,15 @@ impl WorkloadSuiteWorkerExecutionSummary {
                     last.max(record.dispatch_order())
                 }),
         );
+        self.first_start_tick = Some(
+            self.first_start_tick
+                .map_or(record.start_tick(), |first| first.min(record.start_tick())),
+        );
+        self.last_final_tick = Some(
+            self.last_final_tick
+                .map_or(record.final_tick(), |last| last.max(record.final_tick())),
+        );
+        self.total_completion_ticks += record.duration_ticks();
         self.maximum_final_tick = Some(
             self.maximum_final_tick
                 .map_or(record.final_tick(), |maximum| {
@@ -564,7 +650,26 @@ impl WorkloadSuiteWorkerExecutionSummary {
         self.last_dispatch_order
     }
 
-    pub const fn maximum_final_tick(&self) -> Option<u64> {
+    pub const fn first_start_tick(&self) -> Option<Tick> {
+        self.first_start_tick
+    }
+
+    pub const fn last_final_tick(&self) -> Option<Tick> {
+        self.last_final_tick
+    }
+
+    pub const fn total_completion_ticks(&self) -> Tick {
+        self.total_completion_ticks
+    }
+
+    pub const fn busy_tick_span(&self) -> Option<Tick> {
+        match (self.first_start_tick, self.last_final_tick) {
+            (Some(first), Some(last)) => Some(last - first),
+            _ => None,
+        }
+    }
+
+    pub const fn maximum_final_tick(&self) -> Option<Tick> {
         self.maximum_final_tick
     }
 }
@@ -575,7 +680,8 @@ pub struct WorkloadSuiteExecutionRecord {
     manifest_identity: WorkloadManifestIdentity,
     dispatch_order: usize,
     worker_index: usize,
-    final_tick: u64,
+    start_tick: Tick,
+    final_tick: Tick,
 }
 
 impl WorkloadSuiteExecutionRecord {
@@ -584,13 +690,15 @@ impl WorkloadSuiteExecutionRecord {
         manifest_identity: WorkloadManifestIdentity,
         dispatch_order: usize,
         worker_index: usize,
-        final_tick: u64,
+        start_tick: Tick,
+        final_tick: Tick,
     ) -> Self {
         Self {
             workload_id,
             manifest_identity,
             dispatch_order,
             worker_index,
+            start_tick,
             final_tick,
         }
     }
@@ -611,8 +719,16 @@ impl WorkloadSuiteExecutionRecord {
         self.worker_index
     }
 
-    pub const fn final_tick(&self) -> u64 {
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn final_tick(&self) -> Tick {
         self.final_tick
+    }
+
+    pub const fn duration_ticks(&self) -> Tick {
+        self.final_tick - self.start_tick
     }
 }
 

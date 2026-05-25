@@ -330,6 +330,78 @@ fn workload_suite_execution_summary_derives_from_dispatch_results() {
 }
 
 #[test]
+fn workload_suite_execution_summary_records_parallel_windows() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-windows"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 40)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 20, 50)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 45, 60)
+        .unwrap();
+
+    assert_eq!(summary.minimum_start_tick(), Some(10));
+    assert_eq!(summary.maximum_final_tick(), Some(60));
+    assert_eq!(summary.total_completion_ticks(), 75);
+    assert_eq!(summary.maximum_simultaneous_workers(), 2);
+    assert!(summary.has_parallel_worker_overlap());
+    assert_eq!(summary.records()[0].start_tick(), 10);
+    assert_eq!(summary.records()[0].duration_ticks(), 30);
+    summary.verify_against_dispatch(&dispatch).unwrap();
+
+    let worker_zero = summary.worker_summary(0).unwrap();
+    assert_eq!(worker_zero.first_start_tick(), Some(10));
+    assert_eq!(worker_zero.last_final_tick(), Some(60));
+    assert_eq!(worker_zero.total_completion_ticks(), 45);
+    assert_eq!(worker_zero.busy_tick_span(), Some(50));
+
+    let worker_one = summary.worker_summary(1).unwrap();
+    assert_eq!(worker_one.first_start_tick(), Some(20));
+    assert_eq!(worker_one.last_final_tick(), Some(50));
+    assert_eq!(worker_one.total_completion_ticks(), 30);
+    assert_eq!(worker_one.busy_tick_span(), Some(30));
+}
+
+#[test]
+fn workload_suite_execution_summary_rejects_invalid_windows() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let suite = WorkloadSuite::builder(suite_id("bad-window"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let error = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 30, 20)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::SuiteDispatchCompletionWindowInvalid {
+            workload,
+            start_tick: 30,
+            final_tick: 20
+        } if workload == *alpha.id()
+    ));
+}
+
+#[test]
 fn workload_suite_execution_summary_rejects_result_dispatch_drift() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

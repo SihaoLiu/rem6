@@ -497,6 +497,15 @@ impl fmt::Display for WorkloadError {
                 "workload suite execution for {} used worker {actual}, expected {expected}",
                 workload.as_str()
             ),
+            Self::SuiteDispatchCompletionWindowInvalid {
+                workload,
+                start_tick,
+                final_tick,
+            } => write!(
+                formatter,
+                "workload suite execution for {} has start tick {start_tick} after final tick {final_tick}",
+                workload.as_str()
+            ),
             Self::StatsAfterFinalTick {
                 stats_tick,
                 final_tick,

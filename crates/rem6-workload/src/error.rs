@@ -348,6 +348,11 @@ pub enum WorkloadError {
         expected: usize,
         actual: usize,
     },
+    SuiteDispatchCompletionWindowInvalid {
+        workload: WorkloadId,
+        start_tick: Tick,
+        final_tick: Tick,
+    },
     StatsAfterFinalTick {
         stats_tick: Tick,
         final_tick: Tick,
