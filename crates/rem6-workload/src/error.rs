@@ -1,7 +1,447 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::WorkloadError;
+use rem6_boot::BootError;
+use rem6_fabric::{QosPriority, QosRequestorId};
+use rem6_kernel::Tick;
+use rem6_memory::MemoryError;
+
+use crate::{
+    WorkloadExecutionMode, WorkloadManifestIdentity, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
+    WorkloadRouteLatency,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkloadError {
+    Boot(BootError),
+    Memory(MemoryError),
+    EmptyWorkloadId,
+    EmptyResourceId,
+    EmptyRouteId,
+    EmptyEndpoint,
+    EmptyResourceDigest {
+        resource: WorkloadResourceId,
+    },
+    EmptyResourceLocator {
+        resource: WorkloadResourceId,
+    },
+    DuplicateResource {
+        resource: WorkloadResourceId,
+    },
+    MissingRequiredResource {
+        resource: WorkloadResourceId,
+    },
+    DuplicateResourcePayload {
+        resource: WorkloadResourceId,
+    },
+    MissingResourcePayload {
+        resource: WorkloadResourceId,
+    },
+    UnexpectedResourcePayload {
+        resource: WorkloadResourceId,
+    },
+    ResourcePayloadDigestMismatch {
+        resource: WorkloadResourceId,
+        expected: String,
+        actual: String,
+    },
+    ResourcePayloadSizeMismatch {
+        resource: WorkloadResourceId,
+        expected_bytes: usize,
+        actual_bytes: usize,
+    },
+    ResourceKindMismatch {
+        resource: WorkloadResourceId,
+        expected: WorkloadResourceKind,
+        actual: WorkloadResourceKind,
+    },
+    ZeroHostLatency,
+    ZeroLineBytes {
+        target: u32,
+    },
+    MemoryProfileTargetMismatch {
+        target: u32,
+        profile_target: u32,
+    },
+    MemoryProfileLineSizeMismatch {
+        target: u32,
+        line_bytes: u64,
+        profile_line_bytes: u64,
+    },
+    MemoryProfileGeometryLineSizeMismatch {
+        target: u32,
+        layout_line_bytes: u64,
+        geometry_line_bytes: u64,
+    },
+    ZeroRouteLatency {
+        route: WorkloadRouteId,
+        latency: WorkloadRouteLatency,
+    },
+    EmptyMemoryRoutePath {
+        route: WorkloadRouteId,
+    },
+    ZeroRouteHopLatency {
+        endpoint: String,
+        latency: WorkloadRouteLatency,
+    },
+    EmptyFabricLink,
+    ZeroFabricBandwidth {
+        link: String,
+    },
+    ZeroFabricCreditDepth {
+        link: String,
+    },
+    ZeroTopologyPartitions,
+    ZeroMinRemoteDelay,
+    ZeroParallelWorkerLimit,
+    PartitionOutOfRange {
+        partition: u32,
+        partition_count: u32,
+    },
+    DuplicateMemoryTarget {
+        target: u32,
+    },
+    MissingMemoryTarget {
+        target: u32,
+    },
+    DuplicateRoute {
+        route: WorkloadRouteId,
+    },
+    DuplicateRiscvCore {
+        cpu: u32,
+    },
+    MissingCoreFetchRoute {
+        cpu: u32,
+        route: WorkloadRouteId,
+    },
+    CoreFetchRouteSourceMismatch {
+        cpu: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    CoreFetchRouteEndpointMismatch {
+        cpu: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    MissingCoreDataRoute {
+        cpu: u32,
+        route: WorkloadRouteId,
+    },
+    CoreDataRouteSourceMismatch {
+        cpu: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    CoreDataRouteEndpointMismatch {
+        cpu: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    MissingDataCacheBackingRoute {
+        route: WorkloadRouteId,
+    },
+    DataCacheBackingRouteSourceMismatch {
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    DataCacheBackingRouteEndpointMismatch {
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    ZeroGpuComputeUnits {
+        device: u32,
+    },
+    ZeroGpuWaveSlots {
+        device: u32,
+    },
+    DuplicateGpuDevice {
+        device: u32,
+    },
+    MissingGpuCommandRoute {
+        device: u32,
+        route: WorkloadRouteId,
+    },
+    GpuCommandRouteTargetMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    GpuCommandRouteEndpointMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    MissingGpuDevice {
+        device: u32,
+    },
+    ZeroGpuKernelWorkgroups {
+        device: u32,
+        kernel: u64,
+    },
+    ZeroGpuKernelLatency {
+        device: u32,
+        kernel: u64,
+    },
+    ZeroGpuDmaBytes {
+        device: u32,
+        transfer: u64,
+    },
+    MissingGpuDmaRoute {
+        device: u32,
+        route: WorkloadRouteId,
+    },
+    GpuDmaRouteSourceMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    GpuDmaRouteEndpointMismatch {
+        device: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    ZeroAcceleratorLanes {
+        engine: u32,
+    },
+    DuplicateAcceleratorDevice {
+        engine: u32,
+    },
+    MissingAcceleratorCommandRoute {
+        engine: u32,
+        route: WorkloadRouteId,
+    },
+    AcceleratorCommandRouteTargetMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    AcceleratorCommandRouteEndpointMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    MissingAcceleratorDevice {
+        engine: u32,
+    },
+    ZeroAcceleratorExecutionLatency {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorGpuWorkgroups {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorNpuTiles {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorDmaBytes {
+        engine: u32,
+        command: u64,
+    },
+    ZeroAcceleratorDmaCopyBytes {
+        engine: u32,
+        transfer: u64,
+    },
+    MissingAcceleratorDmaRoute {
+        engine: u32,
+        route: WorkloadRouteId,
+    },
+    AcceleratorDmaRouteSourceMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    AcceleratorDmaRouteEndpointMismatch {
+        engine: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+    ZeroQosPriorityLevels,
+    QosPriorityOutOfRange {
+        priority: QosPriority,
+        priority_levels: u8,
+    },
+    DuplicateQosRequestorPriority {
+        requestor: QosRequestorId,
+    },
+    ManifestIdentityMismatch {
+        expected: WorkloadManifestIdentity,
+        actual: WorkloadManifestIdentity,
+    },
+    StatsAfterFinalTick {
+        stats_tick: Tick,
+        final_tick: Tick,
+    },
+    PlannedHostEventAfterFinalTick {
+        event_tick: Tick,
+        final_tick: Tick,
+    },
+    MissingCheckpointLabel {
+        label: String,
+    },
+    UnexpectedCheckpointLabel {
+        label: String,
+    },
+    MissingCheckpointRestoreLabel {
+        label: String,
+    },
+    UnexpectedCheckpointRestoreLabel {
+        label: String,
+    },
+    MissingExecutionModeSwitch {
+        tick: Tick,
+        target: String,
+        mode: WorkloadExecutionMode,
+    },
+    UnexpectedExecutionModeSwitch {
+        tick: Tick,
+        target: String,
+        mode: WorkloadExecutionMode,
+    },
+    StopReasonMismatch {
+        expected: String,
+        actual: Option<String>,
+    },
+    UnexpectedStopReason {
+        actual: String,
+    },
+    ZeroExpectedParallelRemoteFlowCount {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
+    DuplicateExpectedParallelRemoteFlow {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
+    MissingParallelExecutionSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+    },
+    ExpectedParallelRemoteFlowCountMismatch {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+        actual_send_count: usize,
+    },
+    InvalidExpectedParallelRemoteFlowTimingWindow {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
+    DuplicateExpectedParallelRemoteFlowTiming {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
+    MissingParallelRemoteFlowTimingSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+        expected_first_tick: Tick,
+        expected_last_tick: Tick,
+    },
+    ExpectedParallelRemoteFlowTimingMismatch {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+        actual_send_count: usize,
+        expected_first_tick: Tick,
+        actual_first_tick: Option<Tick>,
+        expected_last_tick: Tick,
+        actual_last_tick: Option<Tick>,
+    },
+    ZeroExpectedParallelWorkerCount {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelWorkerUse {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    MissingParallelWorkerSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_max_workers: usize,
+    },
+    ExpectedParallelWorkerCountBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_max_workers: usize,
+        actual_max_workers: usize,
+    },
+    ZeroExpectedParallelPartitionCount {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelPartitionUse {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    ZeroExpectedParallelPartitionActivity {
+        scope: WorkloadParallelRemoteFlowScope,
+        partition: u32,
+    },
+    DuplicateExpectedParallelPartitionActivity {
+        scope: WorkloadParallelRemoteFlowScope,
+        partition: u32,
+    },
+    MissingParallelPartitionSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_active_partitions: usize,
+    },
+    ExpectedParallelPartitionCountBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_active_partitions: usize,
+        actual_active_partitions: usize,
+    },
+    MissingParallelPartitionActivitySummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        partition: u32,
+    },
+    ExpectedParallelPartitionActivityBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        partition: u32,
+        minimum_worker_count: usize,
+        actual_worker_count: usize,
+        minimum_dispatch_count: usize,
+        actual_dispatch_count: usize,
+        minimum_remote_send_count: usize,
+        actual_remote_send_count: usize,
+        minimum_remote_receive_count: usize,
+        actual_remote_receive_count: usize,
+    },
+    DuplicateExpectedCleanParallelDiagnostics {
+        scope: WorkloadParallelDiagnosticScope,
+    },
+    MissingParallelDiagnosticSummary {
+        scope: WorkloadParallelDiagnosticScope,
+    },
+    ExpectedCleanParallelDiagnosticsViolation {
+        scope: WorkloadParallelDiagnosticScope,
+        wait_for_edge_count: usize,
+        deadlock_diagnostic_count: usize,
+    },
+}
 
 impl fmt::Display for WorkloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -598,6 +1038,16 @@ impl fmt::Display for WorkloadError {
                 "expected {} partition use is already declared",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelPartitionActivity { scope, partition } => write!(
+                formatter,
+                "expected {} partition {partition} activity must require at least one positive activity count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelPartitionActivity { scope, partition } => write!(
+                formatter,
+                "expected {} partition {partition} activity is already declared",
+                scope.as_str()
+            ),
             Self::MissingParallelPartitionSummary {
                 scope,
                 minimum_active_partitions,
@@ -613,6 +1063,27 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} partition use to reach at least {minimum_active_partitions} active partitions, got {actual_active_partitions}",
+                scope.as_str()
+            ),
+            Self::MissingParallelPartitionActivitySummary { scope, partition } => write!(
+                formatter,
+                "missing parallel summary for expected {} partition {partition} activity",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelPartitionActivityBelowMinimum {
+                scope,
+                partition,
+                minimum_worker_count,
+                actual_worker_count,
+                minimum_dispatch_count,
+                actual_dispatch_count,
+                minimum_remote_send_count,
+                actual_remote_send_count,
+                minimum_remote_receive_count,
+                actual_remote_receive_count,
+            } => write!(
+                formatter,
+                "expected {} partition {partition} activity to reach workers {minimum_worker_count}, dispatches {minimum_dispatch_count}, remote sends {minimum_remote_send_count}, and remote receives {minimum_remote_receive_count}; got workers {actual_worker_count}, dispatches {actual_dispatch_count}, remote sends {actual_remote_send_count}, and remote receives {actual_remote_receive_count}",
                 scope.as_str()
             ),
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(

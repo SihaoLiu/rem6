@@ -1,4 +1,4 @@
-use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
 
 use crate::{WorkloadError, WorkloadParallelExecutionSummary};
 
@@ -336,6 +336,91 @@ impl WorkloadExpectedParallelWorkerUse {
             }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_max_workers()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelPartitionActivity {
+    scope: WorkloadParallelRemoteFlowScope,
+    partition: PartitionId,
+    minimum_worker_count: usize,
+    minimum_dispatch_count: usize,
+    minimum_remote_send_count: usize,
+    minimum_remote_receive_count: usize,
+}
+
+impl WorkloadExpectedParallelPartitionActivity {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        partition: PartitionId,
+        minimum_worker_count: usize,
+        minimum_dispatch_count: usize,
+        minimum_remote_send_count: usize,
+        minimum_remote_receive_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_worker_count == 0
+            && minimum_dispatch_count == 0
+            && minimum_remote_send_count == 0
+            && minimum_remote_receive_count == 0
+        {
+            return Err(WorkloadError::ZeroExpectedParallelPartitionActivity {
+                scope,
+                partition: partition.index(),
+            });
+        }
+        Ok(Self {
+            scope,
+            partition,
+            minimum_worker_count,
+            minimum_dispatch_count,
+            minimum_remote_send_count,
+            minimum_remote_receive_count,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn partition(self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn minimum_worker_count(self) -> usize {
+        self.minimum_worker_count
+    }
+
+    pub const fn minimum_dispatch_count(self) -> usize {
+        self.minimum_dispatch_count
+    }
+
+    pub const fn minimum_remote_send_count(self) -> usize {
+        self.minimum_remote_send_count
+    }
+
+    pub const fn minimum_remote_receive_count(self) -> usize {
+        self.minimum_remote_receive_count
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, u32) {
+        (self.scope.sort_rank(), self.partition.index())
+    }
+
+    pub(crate) fn actual_activity(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<ParallelPartitionActivity> {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.parallel_scheduler_partition_activity(self.partition)
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_partition_activity(self.partition)
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_partition_activity(self.partition)
             }
         }
     }

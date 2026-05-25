@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
-use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
@@ -123,6 +123,7 @@ pub struct WorkloadParallelExecutionSummary {
     scheduler_batch_count: usize,
     active_scheduler_partition_count: usize,
     max_parallel_scheduler_workers: usize,
+    parallel_scheduler_partition_activities: Vec<(PartitionId, ParallelPartitionActivity)>,
     parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     riscv_core_count: usize,
     active_riscv_core_count: usize,
@@ -137,6 +138,8 @@ pub struct WorkloadParallelExecutionSummary {
     active_data_cache_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_max_workers: usize,
     active_full_system_parallel_scheduler_partition_count: usize,
+    data_cache_parallel_scheduler_partition_activities:
+        Vec<(PartitionId, ParallelPartitionActivity)>,
     data_cache_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     attributed_data_cache_parallel_run_count: usize,
     unattributed_data_cache_parallel_run_count: usize,
@@ -228,6 +231,16 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_parallel_scheduler_partition_activities(
+        mut self,
+        activities: impl IntoIterator<Item = (PartitionId, ParallelPartitionActivity)>,
+    ) -> Self {
+        self.parallel_scheduler_partition_activities =
+            collect_parallel_partition_activities(activities);
+        self.active_scheduler_partition_count = self.parallel_scheduler_partition_activities.len();
+        self
+    }
+
     pub const fn with_riscv_core_counts(
         mut self,
         core_count: usize,
@@ -283,6 +296,18 @@ impl WorkloadParallelExecutionSummary {
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
     ) -> Self {
         self.data_cache_parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_partition_activities(
+        mut self,
+        activities: impl IntoIterator<Item = (PartitionId, ParallelPartitionActivity)>,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_partition_activities =
+            collect_parallel_partition_activities(activities);
+        self.active_data_cache_parallel_scheduler_partition_count = self
+            .data_cache_parallel_scheduler_partition_activities
+            .len();
         self
     }
 
@@ -525,6 +550,22 @@ impl WorkloadParallelExecutionSummary {
         &self.parallel_scheduler_remote_flows
     }
 
+    pub fn parallel_scheduler_partition_activities(
+        &self,
+    ) -> &[(PartitionId, ParallelPartitionActivity)] {
+        &self.parallel_scheduler_partition_activities
+    }
+
+    pub fn parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.parallel_scheduler_partition_activities
+            .iter()
+            .find(|(existing, _)| *existing == partition)
+            .map(|(_, activity)| *activity)
+    }
+
     pub fn parallel_scheduler_remote_flow_count(
         &self,
         source: PartitionId,
@@ -594,6 +635,22 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn data_cache_parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
         &self.data_cache_parallel_scheduler_remote_flows
+    }
+
+    pub fn data_cache_parallel_scheduler_partition_activities(
+        &self,
+    ) -> &[(PartitionId, ParallelPartitionActivity)] {
+        &self.data_cache_parallel_scheduler_partition_activities
+    }
+
+    pub fn data_cache_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.data_cache_parallel_scheduler_partition_activities
+            .iter()
+            .find(|(existing, _)| *existing == partition)
+            .map(|(_, activity)| *activity)
     }
 
     pub fn data_cache_parallel_scheduler_remote_flow_count(
@@ -1076,6 +1133,31 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn full_system_parallel_scheduler_partition_activities(
+        &self,
+    ) -> Vec<(PartitionId, ParallelPartitionActivity)> {
+        collect_parallel_partition_activities(
+            self.parallel_scheduler_partition_activities
+                .iter()
+                .copied()
+                .chain(
+                    self.data_cache_parallel_scheduler_partition_activities
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        self.full_system_parallel_scheduler_partition_activities()
+            .into_iter()
+            .find(|(existing, _)| *existing == partition)
+            .map(|(_, activity)| activity)
+    }
+
     pub fn full_system_parallel_scheduler_remote_flow_count(
         &self,
         source: PartitionId,
@@ -1161,6 +1243,37 @@ fn parallel_remote_flow_count(
         .find(|flow| flow.source() == source && flow.target() == target)
         .map(|flow| flow.send_count())
         .unwrap_or(0)
+}
+
+fn collect_parallel_partition_activities(
+    activities: impl IntoIterator<Item = (PartitionId, ParallelPartitionActivity)>,
+) -> Vec<(PartitionId, ParallelPartitionActivity)> {
+    let mut by_partition = BTreeMap::new();
+    for (partition, activity) in activities {
+        if !activity.has_activity() {
+            continue;
+        }
+        by_partition
+            .entry(partition)
+            .and_modify(|stored: &mut ParallelPartitionActivity| {
+                *stored = merge_parallel_partition_activity(*stored, activity);
+            })
+            .or_insert(activity);
+    }
+    by_partition.into_iter().collect()
+}
+
+fn merge_parallel_partition_activity(
+    left: ParallelPartitionActivity,
+    right: ParallelPartitionActivity,
+) -> ParallelPartitionActivity {
+    ParallelPartitionActivity::with_remote_counts(
+        left.worker_count() + right.worker_count(),
+        left.dispatch_count() + right.dispatch_count(),
+        left.remote_send_count() + right.remote_send_count(),
+        left.remote_receive_count() + right.remote_receive_count(),
+        left.max_pending_events().max(right.max_pending_events()),
+    )
 }
 
 fn collect_requestor_summaries(

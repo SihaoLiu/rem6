@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_boot::{BootError, BootImage};
-use rem6_fabric::{QosPriority, QosRequestorId};
+use rem6_boot::BootImage;
 use rem6_kernel::Tick;
-use rem6_memory::{Address, AddressRange, MemoryError};
+use rem6_memory::{Address, AddressRange};
 use rem6_stats::StatSnapshot;
 
 mod boot_handoff;
@@ -18,6 +17,7 @@ mod result;
 mod topology;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
+pub use error::WorkloadError;
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
@@ -32,10 +32,10 @@ pub use host_event::{
 };
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_expectation::{
-    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
-    WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerUse,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -249,6 +249,7 @@ pub struct WorkloadManifest {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
+    expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
     identity: WorkloadManifestIdentity,
 }
@@ -327,6 +328,12 @@ impl WorkloadManifest {
         &self.expected_parallel_partition_use
     }
 
+    pub fn expected_parallel_partition_activity(
+        &self,
+    ) -> &[WorkloadExpectedParallelPartitionActivity] {
+        &self.expected_parallel_partition_activity
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -354,6 +361,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
+    expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -372,6 +380,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
+            expected_parallel_partition_activity: Vec::new(),
             checkpoint_lineage: None,
         }
     }
@@ -460,6 +469,26 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_worker_use.push(expected);
         self.expected_parallel_worker_use
             .sort_by_key(|worker_use| worker_use.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_partition_activity(
+        mut self,
+        expected: WorkloadExpectedParallelPartitionActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_partition_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelPartitionActivity {
+                scope: expected.scope(),
+                partition: expected.partition().index(),
+            });
+        }
+        self.expected_parallel_partition_activity.push(expected);
+        self.expected_parallel_partition_activity
+            .sort_by_key(|activity| activity.sort_key());
         Ok(self)
     }
 
@@ -583,6 +612,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
+            expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
         });
 
@@ -599,6 +629,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
+            expected_parallel_partition_activity: self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage,
             identity,
         })
@@ -622,6 +653,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
+    expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -647,6 +679,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
+            expected_parallel_partition_activity: manifest
+                .expected_parallel_partition_activity()
+                .to_vec(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
         })
@@ -819,6 +854,32 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_partition_use
     }
 
+    pub fn add_expected_parallel_partition_activity(
+        mut self,
+        expected: WorkloadExpectedParallelPartitionActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_partition_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelPartitionActivity {
+                scope: expected.scope(),
+                partition: expected.partition().index(),
+            });
+        }
+        self.expected_parallel_partition_activity.push(expected);
+        self.expected_parallel_partition_activity
+            .sort_by_key(|activity| activity.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_partition_activity(
+        &self,
+    ) -> &[WorkloadExpectedParallelPartitionActivity] {
+        &self.expected_parallel_partition_activity
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -841,6 +902,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_remote_flow_timings(result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_partition_use(result)?;
+        self.verify_expected_parallel_partition_activity(result)?;
         self.verify_expected_clean_parallel_diagnostics(result)?;
         Ok(())
     }
@@ -1103,6 +1165,57 @@ impl WorkloadReplayPlan {
         Ok(())
     }
 
+    fn verify_expected_parallel_partition_activity(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_partition_activity.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_parallel_partition_activity[0];
+            return Err(WorkloadError::MissingParallelPartitionActivitySummary {
+                scope: expected.scope(),
+                partition: expected.partition().index(),
+            });
+        };
+
+        for expected in &self.expected_parallel_partition_activity {
+            let actual = expected.actual_activity(summary);
+            let actual_worker_count = actual.map(|activity| activity.worker_count()).unwrap_or(0);
+            let actual_dispatch_count = actual
+                .map(|activity| activity.dispatch_count())
+                .unwrap_or(0);
+            let actual_remote_send_count = actual
+                .map(|activity| activity.remote_send_count())
+                .unwrap_or(0);
+            let actual_remote_receive_count = actual
+                .map(|activity| activity.remote_receive_count())
+                .unwrap_or(0);
+            if actual_worker_count < expected.minimum_worker_count()
+                || actual_dispatch_count < expected.minimum_dispatch_count()
+                || actual_remote_send_count < expected.minimum_remote_send_count()
+                || actual_remote_receive_count < expected.minimum_remote_receive_count()
+            {
+                return Err(
+                    WorkloadError::ExpectedParallelPartitionActivityBelowMinimum {
+                        scope: expected.scope(),
+                        partition: expected.partition().index(),
+                        minimum_worker_count: expected.minimum_worker_count(),
+                        actual_worker_count,
+                        minimum_dispatch_count: expected.minimum_dispatch_count(),
+                        actual_dispatch_count,
+                        minimum_remote_send_count: expected.minimum_remote_send_count(),
+                        actual_remote_send_count,
+                        minimum_remote_receive_count: expected.minimum_remote_receive_count(),
+                        actual_remote_receive_count,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn verify_expected_clean_parallel_diagnostics(
         &self,
         result: &WorkloadResult,
@@ -1280,411 +1393,4 @@ impl WorkloadResult {
             final_tick: self.final_tick,
         })
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkloadError {
-    Boot(BootError),
-    Memory(MemoryError),
-    EmptyWorkloadId,
-    EmptyResourceId,
-    EmptyRouteId,
-    EmptyEndpoint,
-    EmptyResourceDigest {
-        resource: WorkloadResourceId,
-    },
-    EmptyResourceLocator {
-        resource: WorkloadResourceId,
-    },
-    DuplicateResource {
-        resource: WorkloadResourceId,
-    },
-    MissingRequiredResource {
-        resource: WorkloadResourceId,
-    },
-    DuplicateResourcePayload {
-        resource: WorkloadResourceId,
-    },
-    MissingResourcePayload {
-        resource: WorkloadResourceId,
-    },
-    UnexpectedResourcePayload {
-        resource: WorkloadResourceId,
-    },
-    ResourcePayloadDigestMismatch {
-        resource: WorkloadResourceId,
-        expected: String,
-        actual: String,
-    },
-    ResourcePayloadSizeMismatch {
-        resource: WorkloadResourceId,
-        expected_bytes: usize,
-        actual_bytes: usize,
-    },
-    ResourceKindMismatch {
-        resource: WorkloadResourceId,
-        expected: WorkloadResourceKind,
-        actual: WorkloadResourceKind,
-    },
-    ZeroHostLatency,
-    ZeroLineBytes {
-        target: u32,
-    },
-    MemoryProfileTargetMismatch {
-        target: u32,
-        profile_target: u32,
-    },
-    MemoryProfileLineSizeMismatch {
-        target: u32,
-        line_bytes: u64,
-        profile_line_bytes: u64,
-    },
-    MemoryProfileGeometryLineSizeMismatch {
-        target: u32,
-        layout_line_bytes: u64,
-        geometry_line_bytes: u64,
-    },
-    ZeroRouteLatency {
-        route: WorkloadRouteId,
-        latency: WorkloadRouteLatency,
-    },
-    EmptyMemoryRoutePath {
-        route: WorkloadRouteId,
-    },
-    ZeroRouteHopLatency {
-        endpoint: String,
-        latency: WorkloadRouteLatency,
-    },
-    EmptyFabricLink,
-    ZeroFabricBandwidth {
-        link: String,
-    },
-    ZeroFabricCreditDepth {
-        link: String,
-    },
-    ZeroTopologyPartitions,
-    ZeroMinRemoteDelay,
-    ZeroParallelWorkerLimit,
-    PartitionOutOfRange {
-        partition: u32,
-        partition_count: u32,
-    },
-    DuplicateMemoryTarget {
-        target: u32,
-    },
-    MissingMemoryTarget {
-        target: u32,
-    },
-    DuplicateRoute {
-        route: WorkloadRouteId,
-    },
-    DuplicateRiscvCore {
-        cpu: u32,
-    },
-    MissingCoreFetchRoute {
-        cpu: u32,
-        route: WorkloadRouteId,
-    },
-    CoreFetchRouteSourceMismatch {
-        cpu: u32,
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    CoreFetchRouteEndpointMismatch {
-        cpu: u32,
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    MissingCoreDataRoute {
-        cpu: u32,
-        route: WorkloadRouteId,
-    },
-    CoreDataRouteSourceMismatch {
-        cpu: u32,
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    CoreDataRouteEndpointMismatch {
-        cpu: u32,
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    MissingDataCacheBackingRoute {
-        route: WorkloadRouteId,
-    },
-    DataCacheBackingRouteSourceMismatch {
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    DataCacheBackingRouteEndpointMismatch {
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    ZeroGpuComputeUnits {
-        device: u32,
-    },
-    ZeroGpuWaveSlots {
-        device: u32,
-    },
-    DuplicateGpuDevice {
-        device: u32,
-    },
-    MissingGpuCommandRoute {
-        device: u32,
-        route: WorkloadRouteId,
-    },
-    GpuCommandRouteTargetMismatch {
-        device: u32,
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    GpuCommandRouteEndpointMismatch {
-        device: u32,
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    MissingGpuDevice {
-        device: u32,
-    },
-    ZeroGpuKernelWorkgroups {
-        device: u32,
-        kernel: u64,
-    },
-    ZeroGpuKernelLatency {
-        device: u32,
-        kernel: u64,
-    },
-    ZeroGpuDmaBytes {
-        device: u32,
-        transfer: u64,
-    },
-    MissingGpuDmaRoute {
-        device: u32,
-        route: WorkloadRouteId,
-    },
-    GpuDmaRouteSourceMismatch {
-        device: u32,
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    GpuDmaRouteEndpointMismatch {
-        device: u32,
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    ZeroAcceleratorLanes {
-        engine: u32,
-    },
-    DuplicateAcceleratorDevice {
-        engine: u32,
-    },
-    MissingAcceleratorCommandRoute {
-        engine: u32,
-        route: WorkloadRouteId,
-    },
-    AcceleratorCommandRouteTargetMismatch {
-        engine: u32,
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    AcceleratorCommandRouteEndpointMismatch {
-        engine: u32,
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    MissingAcceleratorDevice {
-        engine: u32,
-    },
-    ZeroAcceleratorExecutionLatency {
-        engine: u32,
-        command: u64,
-    },
-    ZeroAcceleratorGpuWorkgroups {
-        engine: u32,
-        command: u64,
-    },
-    ZeroAcceleratorNpuTiles {
-        engine: u32,
-        command: u64,
-    },
-    ZeroAcceleratorDmaBytes {
-        engine: u32,
-        command: u64,
-    },
-    ZeroAcceleratorDmaCopyBytes {
-        engine: u32,
-        transfer: u64,
-    },
-    MissingAcceleratorDmaRoute {
-        engine: u32,
-        route: WorkloadRouteId,
-    },
-    AcceleratorDmaRouteSourceMismatch {
-        engine: u32,
-        route: WorkloadRouteId,
-        expected: u32,
-        actual: u32,
-    },
-    AcceleratorDmaRouteEndpointMismatch {
-        engine: u32,
-        route: WorkloadRouteId,
-        expected: String,
-        actual: String,
-    },
-    ZeroQosPriorityLevels,
-    QosPriorityOutOfRange {
-        priority: QosPriority,
-        priority_levels: u8,
-    },
-    DuplicateQosRequestorPriority {
-        requestor: QosRequestorId,
-    },
-    ManifestIdentityMismatch {
-        expected: WorkloadManifestIdentity,
-        actual: WorkloadManifestIdentity,
-    },
-    StatsAfterFinalTick {
-        stats_tick: Tick,
-        final_tick: Tick,
-    },
-    PlannedHostEventAfterFinalTick {
-        event_tick: Tick,
-        final_tick: Tick,
-    },
-    MissingCheckpointLabel {
-        label: String,
-    },
-    UnexpectedCheckpointLabel {
-        label: String,
-    },
-    MissingCheckpointRestoreLabel {
-        label: String,
-    },
-    UnexpectedCheckpointRestoreLabel {
-        label: String,
-    },
-    MissingExecutionModeSwitch {
-        tick: Tick,
-        target: String,
-        mode: WorkloadExecutionMode,
-    },
-    UnexpectedExecutionModeSwitch {
-        tick: Tick,
-        target: String,
-        mode: WorkloadExecutionMode,
-    },
-    StopReasonMismatch {
-        expected: String,
-        actual: Option<String>,
-    },
-    UnexpectedStopReason {
-        actual: String,
-    },
-    ZeroExpectedParallelRemoteFlowCount {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-    },
-    DuplicateExpectedParallelRemoteFlow {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-    },
-    MissingParallelExecutionSummary {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-        expected_send_count: usize,
-    },
-    ExpectedParallelRemoteFlowCountMismatch {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-        expected_send_count: usize,
-        actual_send_count: usize,
-    },
-    InvalidExpectedParallelRemoteFlowTimingWindow {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-        first_tick: Tick,
-        last_tick: Tick,
-    },
-    DuplicateExpectedParallelRemoteFlowTiming {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-    },
-    MissingParallelRemoteFlowTimingSummary {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-        expected_send_count: usize,
-        expected_first_tick: Tick,
-        expected_last_tick: Tick,
-    },
-    ExpectedParallelRemoteFlowTimingMismatch {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-        expected_send_count: usize,
-        actual_send_count: usize,
-        expected_first_tick: Tick,
-        actual_first_tick: Option<Tick>,
-        expected_last_tick: Tick,
-        actual_last_tick: Option<Tick>,
-    },
-    ZeroExpectedParallelWorkerCount {
-        scope: WorkloadParallelRemoteFlowScope,
-    },
-    DuplicateExpectedParallelWorkerUse {
-        scope: WorkloadParallelRemoteFlowScope,
-    },
-    MissingParallelWorkerSummary {
-        scope: WorkloadParallelRemoteFlowScope,
-        minimum_max_workers: usize,
-    },
-    ExpectedParallelWorkerCountBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
-        minimum_max_workers: usize,
-        actual_max_workers: usize,
-    },
-    ZeroExpectedParallelPartitionCount {
-        scope: WorkloadParallelRemoteFlowScope,
-    },
-    DuplicateExpectedParallelPartitionUse {
-        scope: WorkloadParallelRemoteFlowScope,
-    },
-    MissingParallelPartitionSummary {
-        scope: WorkloadParallelRemoteFlowScope,
-        minimum_active_partitions: usize,
-    },
-    ExpectedParallelPartitionCountBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
-        minimum_active_partitions: usize,
-        actual_active_partitions: usize,
-    },
-    DuplicateExpectedCleanParallelDiagnostics {
-        scope: WorkloadParallelDiagnosticScope,
-    },
-    MissingParallelDiagnosticSummary {
-        scope: WorkloadParallelDiagnosticScope,
-    },
-    ExpectedCleanParallelDiagnosticsViolation {
-        scope: WorkloadParallelDiagnosticScope,
-        wait_for_edge_count: usize,
-        deadlock_diagnostic_count: usize,
-    },
 }
