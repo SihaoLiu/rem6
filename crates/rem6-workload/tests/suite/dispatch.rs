@@ -557,6 +557,103 @@ fn workload_suite_dispatch_timeline_reports_planned_worker_idle_ticks() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_reports_planned_occupancy_windows() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-occupancy"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    let windows = timeline.occupancy_windows();
+
+    assert_eq!(windows.len(), 4);
+    assert_eq!(windows[0].start_tick(), 0);
+    assert_eq!(windows[0].final_tick(), 1);
+    assert_eq!(windows[0].duration_ticks(), 1);
+    assert_eq!(windows[0].active_worker_count(), 2);
+    assert_eq!(windows[0].idle_worker_count(), 0);
+    assert_eq!(windows[0].active_worker_ticks(), 2);
+    assert_eq!(windows[0].idle_worker_ticks(), 0);
+    assert_eq!(windows[1].start_tick(), 1);
+    assert_eq!(windows[1].final_tick(), 2);
+    assert_eq!(windows[1].active_worker_count(), 2);
+    assert_eq!(windows[1].idle_worker_count(), 0);
+    assert_eq!(windows[2].start_tick(), 2);
+    assert_eq!(windows[2].final_tick(), 8);
+    assert_eq!(windows[2].duration_ticks(), 6);
+    assert_eq!(windows[2].active_worker_count(), 2);
+    assert_eq!(windows[2].idle_worker_count(), 0);
+    assert_eq!(windows[2].active_worker_ticks(), 12);
+    assert_eq!(windows[2].idle_worker_ticks(), 0);
+    assert_eq!(windows[3].start_tick(), 8);
+    assert_eq!(windows[3].final_tick(), 9);
+    assert_eq!(windows[3].active_worker_count(), 1);
+    assert_eq!(windows[3].idle_worker_count(), 1);
+    assert_eq!(windows[3].active_worker_ticks(), 1);
+    assert_eq!(windows[3].idle_worker_ticks(), 1);
+
+    let total_active_ticks: u64 = windows
+        .iter()
+        .map(|window| window.active_worker_ticks())
+        .sum();
+    let total_idle_ticks: u64 = windows
+        .iter()
+        .map(|window| window.idle_worker_ticks())
+        .sum();
+    assert_eq!(total_active_ticks, timeline.total_estimated_ticks());
+    assert_eq!(
+        total_idle_ticks,
+        timeline.total_worker_idle_ticks().unwrap()
+    );
+
+    let single_suite = WorkloadSuite::builder(suite_id("planned-occupancy-unused"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let single_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&single_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+    let single_windows = single_timeline.occupancy_windows();
+
+    assert_eq!(single_windows.len(), 1);
+    assert_eq!(single_windows[0].start_tick(), 0);
+    assert_eq!(single_windows[0].final_tick(), 10);
+    assert_eq!(single_windows[0].active_worker_count(), 1);
+    assert_eq!(single_windows[0].idle_worker_count(), 1);
+    assert_eq!(single_windows[0].active_worker_ticks(), 10);
+    assert_eq!(single_windows[0].idle_worker_ticks(), 10);
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_accepts_planned_execution_expectation() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

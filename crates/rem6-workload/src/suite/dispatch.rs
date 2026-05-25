@@ -515,6 +515,43 @@ impl WorkloadSuiteDispatchTimeline {
             .unwrap_or(0)
     }
 
+    pub fn occupancy_windows(&self) -> Vec<WorkloadSuiteDispatchOccupancyWindow> {
+        let mut ticks = self
+            .entries
+            .iter()
+            .flat_map(|entry| [entry.planned_start_tick(), entry.planned_final_tick()])
+            .collect::<Vec<_>>();
+        ticks.sort_unstable();
+        ticks.dedup();
+
+        ticks
+            .windows(2)
+            .filter_map(|window| {
+                let start_tick = window[0];
+                let final_tick = window[1];
+                if start_tick == final_tick {
+                    return None;
+                }
+                let active_worker_count = self
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.planned_start_tick() < final_tick
+                            && start_tick < entry.planned_final_tick()
+                    })
+                    .map(WorkloadSuiteDispatchTimelineEntry::worker_index)
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                Some(WorkloadSuiteDispatchOccupancyWindow::new(
+                    start_tick,
+                    final_tick,
+                    self.worker_count(),
+                    active_worker_count,
+                ))
+            })
+            .collect()
+    }
+
     pub fn to_execution_summary(&self) -> Result<WorkloadSuiteExecutionSummary, WorkloadError> {
         let mut summary = WorkloadSuiteExecutionSummary::new(self.suite_identity());
         for entry in &self.entries {
@@ -705,6 +742,62 @@ impl WorkloadSuiteDispatchTimeline {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchOccupancyWindow {
+    start_tick: Tick,
+    final_tick: Tick,
+    duration_ticks: Tick,
+    active_worker_count: usize,
+    idle_worker_count: usize,
+}
+
+impl WorkloadSuiteDispatchOccupancyWindow {
+    fn new(
+        start_tick: Tick,
+        final_tick: Tick,
+        worker_count: usize,
+        active_worker_count: usize,
+    ) -> Self {
+        Self {
+            start_tick,
+            final_tick,
+            duration_ticks: final_tick.saturating_sub(start_tick),
+            active_worker_count,
+            idle_worker_count: worker_count.saturating_sub(active_worker_count),
+        }
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn final_tick(&self) -> Tick {
+        self.final_tick
+    }
+
+    pub const fn duration_ticks(&self) -> Tick {
+        self.duration_ticks
+    }
+
+    pub const fn active_worker_count(&self) -> usize {
+        self.active_worker_count
+    }
+
+    pub const fn idle_worker_count(&self) -> usize {
+        self.idle_worker_count
+    }
+
+    pub fn active_worker_ticks(&self) -> Tick {
+        self.duration_ticks
+            .saturating_mul(self.active_worker_count as Tick)
+    }
+
+    pub fn idle_worker_ticks(&self) -> Tick {
+        self.duration_ticks
+            .saturating_mul(self.idle_worker_count as Tick)
     }
 }
 

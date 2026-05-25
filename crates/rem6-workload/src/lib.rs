@@ -77,9 +77,10 @@ pub use result::{
 };
 pub use suite::{
     WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchLoadExpectation,
-    WorkloadSuiteDispatchLoadSummary, WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord,
-    WorkloadSuiteDispatchTimeline, WorkloadSuiteDispatchTimelineEntry, WorkloadSuiteDispatchWeight,
-    WorkloadSuiteEntry, WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
+    WorkloadSuiteDispatchLoadSummary, WorkloadSuiteDispatchOccupancyWindow,
+    WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord, WorkloadSuiteDispatchTimeline,
+    WorkloadSuiteDispatchTimelineEntry, WorkloadSuiteDispatchWeight, WorkloadSuiteEntry,
+    WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
     WorkloadSuiteExecutionRatio, WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary,
     WorkloadSuiteId, WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan,
     WorkloadSuiteResult, WorkloadSuiteResultEntry, WorkloadSuiteWorkerDispatchLoad,

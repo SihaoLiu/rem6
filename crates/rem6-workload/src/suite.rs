@@ -11,8 +11,8 @@ mod dispatch;
 
 pub use dispatch::{
     WorkloadSuiteDispatchLoadExpectation, WorkloadSuiteDispatchLoadSummary,
-    WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord, WorkloadSuiteDispatchTimeline,
-    WorkloadSuiteDispatchTimelineEntry, WorkloadSuiteDispatchWeight,
+    WorkloadSuiteDispatchOccupancyWindow, WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord,
+    WorkloadSuiteDispatchTimeline, WorkloadSuiteDispatchTimelineEntry, WorkloadSuiteDispatchWeight,
     WorkloadSuiteWorkerDispatchLoad,
 };
 
