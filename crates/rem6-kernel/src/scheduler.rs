@@ -12,9 +12,10 @@ mod state;
 
 pub use state::{
     EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
-    ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier,
-    PartitionSnapshot, PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary,
-    RecordedRunSummary, ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord,
+    PartitionFrontier, PartitionSnapshot, PendingEventSnapshot, ReadyPartition,
+    RecordedConservativeRunSummary, RecordedRunSummary, ScheduledEventKind,
+    SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

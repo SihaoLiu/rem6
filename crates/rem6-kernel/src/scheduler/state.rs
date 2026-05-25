@@ -157,6 +157,17 @@ impl ParallelEpochBatchRecord {
             .count()
     }
 
+    pub fn remote_flow_count(&self, source: PartitionId, target: PartitionId) -> usize {
+        self.remote_sends
+            .iter()
+            .filter(|record| record.source() == source && record.target() == target)
+            .count()
+    }
+
+    pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flows(&self.remote_sends)
+    }
+
     pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
         self.dispatches
             .iter()
@@ -266,6 +277,63 @@ impl ParallelRemoteSendRecord {
 
     pub const fn order(self) -> u64 {
         self.order
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ParallelRemoteFlowRecord {
+    source: PartitionId,
+    target: PartitionId,
+    send_count: usize,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl ParallelRemoteFlowRecord {
+    pub const fn new(
+        source: PartitionId,
+        target: PartitionId,
+        send_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            send_count,
+            first_tick,
+            last_tick,
+        }
+    }
+
+    pub const fn source(self) -> PartitionId {
+        self.source
+    }
+
+    pub const fn target(self) -> PartitionId {
+        self.target
+    }
+
+    pub const fn send_count(self) -> usize {
+        self.send_count
+    }
+
+    pub const fn first_tick(self) -> Tick {
+        self.first_tick
+    }
+
+    pub const fn last_tick(self) -> Tick {
+        self.last_tick
+    }
+
+    fn from_send(send: ParallelRemoteSendRecord) -> Self {
+        Self::new(send.source(), send.target(), 1, send.tick(), send.tick())
+    }
+
+    fn record_send(&mut self, tick: Tick) {
+        self.send_count += 1;
+        self.first_tick = self.first_tick.min(tick);
+        self.last_tick = self.last_tick.max(tick);
     }
 }
 
@@ -635,6 +703,21 @@ impl RecordedRunSummary {
             .collect()
     }
 
+    pub fn remote_flow_count(&self, source: PartitionId, target: PartitionId) -> usize {
+        self.batches
+            .iter()
+            .map(|batch| batch.remote_flow_count(source, target))
+            .sum()
+    }
+
+    pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flows(
+            self.batches
+                .iter()
+                .flat_map(ParallelEpochBatchRecord::remote_sends),
+        )
+    }
+
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
     }
@@ -843,6 +926,22 @@ impl RecordedConservativeRunSummary {
             .collect()
     }
 
+    pub fn remote_flow_count(&self, source: PartitionId, target: PartitionId) -> usize {
+        self.epochs
+            .iter()
+            .map(|epoch| epoch.remote_flow_count(source, target))
+            .sum()
+    }
+
+    pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flows(self.epochs.iter().flat_map(|epoch| {
+            epoch
+                .batches()
+                .iter()
+                .flat_map(ParallelEpochBatchRecord::remote_sends)
+        }))
+    }
+
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
     }
@@ -936,4 +1035,18 @@ fn merge_parallel_partition_activities(
             .and_modify(|stored| *stored = stored.merge(activity))
             .or_insert(activity);
     }
+}
+
+fn collect_parallel_remote_flows<'a, I>(remote_sends: I) -> Vec<ParallelRemoteFlowRecord>
+where
+    I: IntoIterator<Item = &'a ParallelRemoteSendRecord>,
+{
+    let mut flows: BTreeMap<(PartitionId, PartitionId), ParallelRemoteFlowRecord> = BTreeMap::new();
+    for send in remote_sends {
+        flows
+            .entry((send.source(), send.target()))
+            .and_modify(|flow| flow.record_send(send.tick()))
+            .or_insert_with(|| ParallelRemoteFlowRecord::from_send(*send));
+    }
+    flows.into_values().collect()
 }

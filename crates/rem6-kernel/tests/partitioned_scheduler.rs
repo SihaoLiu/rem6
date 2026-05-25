@@ -1035,6 +1035,58 @@ fn scheduler_recorded_parallel_epoch_reports_remote_send_order() {
 }
 
 #[test]
+fn scheduler_recorded_parallel_runner_reports_remote_flow_matrix() {
+    let source0 = PartitionId::new(0);
+    let source1 = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+    let io = PartitionId::new(3);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source0, 0, move |context| {
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+            context.schedule_remote_after(io, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(source1, 0, move |context| {
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let epoch = &run.epochs()[0];
+    let batch = &epoch.batches()[0];
+
+    assert_eq!(batch.remote_flow_count(source0, memory), 2);
+    assert_eq!(batch.remote_flow_count(source1, memory), 1);
+    assert_eq!(batch.remote_flow_count(source0, io), 1);
+    assert_eq!(batch.remote_flow_count(memory, source0), 0);
+
+    let flows = batch.remote_flows();
+    assert_eq!(flows.len(), 3);
+    assert_eq!(flows[0].source(), source0);
+    assert_eq!(flows[0].target(), memory);
+    assert_eq!(flows[0].send_count(), 2);
+    assert_eq!(flows[0].first_tick(), 4);
+    assert_eq!(flows[0].last_tick(), 4);
+    assert_eq!(flows[1].source(), source0);
+    assert_eq!(flows[1].target(), io);
+    assert_eq!(flows[1].send_count(), 1);
+    assert_eq!(flows[2].source(), source1);
+    assert_eq!(flows[2].target(), memory);
+    assert_eq!(flows[2].send_count(), 1);
+
+    assert_eq!(epoch.remote_flow_count(source0, memory), 2);
+    assert_eq!(epoch.remote_flow_count(source1, memory), 1);
+    assert_eq!(epoch.remote_flows(), flows);
+    assert_eq!(run.remote_flow_count(source0, memory), 2);
+    assert_eq!(run.remote_flow_count(source1, memory), 1);
+    assert_eq!(run.remote_flows(), flows);
+}
+
+#[test]
 fn scheduler_recorded_parallel_epoch_reports_empty_batches_without_ready_workers() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
