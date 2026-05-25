@@ -877,13 +877,16 @@ impl PartitionedScheduler {
 
         let mut executed_events = 0;
         let mut dispatches = Vec::new();
+        let mut latest_partition_tick = self.now;
         for result in results {
             executed_events += result.executed_events;
             dispatches.extend(result.dispatches);
+            latest_partition_tick = latest_partition_tick.max(result.queue.now);
             self.partitions[result.index] = result.queue;
         }
 
         if let Some(error) = first_error {
+            self.now = latest_partition_tick;
             return Err(error);
         }
 

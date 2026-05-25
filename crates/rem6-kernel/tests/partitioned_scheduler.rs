@@ -1231,6 +1231,25 @@ fn scheduler_parallel_worker_panic_preserves_future_partition_events() {
 }
 
 #[test]
+fn scheduler_parallel_worker_panic_updates_global_time_to_executed_tick() {
+    let core = PartitionId::new(0);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    scheduler
+        .schedule_parallel_at(core, 2, |_| panic!("worker panic sentinel"))
+        .unwrap();
+    scheduler.schedule_parallel_at(core, 5, |_| {}).unwrap();
+
+    assert_eq!(
+        scheduler.run_next_epoch_parallel_recorded().unwrap_err(),
+        SchedulerError::ParallelWorkerPanicked { partition: core }
+    );
+    assert_eq!(scheduler.partition_now(core).unwrap(), 2);
+    assert_eq!(scheduler.now(), 2);
+    assert_eq!(scheduler.next_pending_tick(core).unwrap(), Some(5));
+}
+
+#[test]
 fn scheduler_min_delay_constructor_keeps_unbounded_worker_limit() {
     let scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
