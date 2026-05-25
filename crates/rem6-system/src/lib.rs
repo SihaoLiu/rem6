@@ -85,6 +85,9 @@ pub use scheduler_checkpoint::{
     SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
     SchedulerCheckpointRecord,
 };
+pub use system_run_parallel_batch::{
+    RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
+};
 pub use timer_checkpoint::{
     TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
 };

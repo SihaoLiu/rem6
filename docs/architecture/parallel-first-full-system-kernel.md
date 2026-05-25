@@ -412,6 +412,10 @@ The full-system batch sequence is merged by worker start tick with deterministic
 tie breakers, which prevents a CPU batch between two data-cache batches from
 being hidden by subsystem-local concatenation when sustained occupancy is
 measured.
+System-run batch timeline records expose the scheduler scope, worker-window
+start tick, conservative horizon, worker count, and normalized partition set, so
+diagnostics can inspect the time-ordered parallel occupancy source before it is
+compressed into histograms or streak summaries.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal

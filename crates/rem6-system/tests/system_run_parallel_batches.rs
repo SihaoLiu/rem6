@@ -1,7 +1,7 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_cpu::RiscvClusterTurn;
 use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForGraph};
-use rem6_system::{RiscvSystemRun, RiscvSystemRunStopReason};
+use rem6_system::{RiscvSystemParallelBatchScope, RiscvSystemRun, RiscvSystemRunStopReason};
 
 fn empty_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
     ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new())
@@ -240,4 +240,63 @@ fn full_system_batch_streaks_follow_batch_start_ticks_across_scopes() {
         ]),
         1,
     );
+}
+
+#[test]
+fn system_run_exposes_scoped_parallel_batch_timeline() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let run = RiscvSystemRun::new(
+        cpu_scheduler_turns_at(3, 1, 10, &[cache]),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 24 },
+    )
+    .with_data_cache_runs(vec![data_cache_runs_at_ticks(
+        3,
+        2,
+        &[0, 20],
+        &[cpu0, cpu1],
+    )]);
+
+    let timeline = run.full_system_parallel_scheduler_batch_timeline();
+    assert_eq!(timeline.len(), 3);
+    assert_eq!(
+        timeline[0].scope(),
+        RiscvSystemParallelBatchScope::DataCacheScheduler
+    );
+    assert_eq!(timeline[0].start_tick(), 0);
+    assert_eq!(timeline[0].horizon(), 4);
+    assert_eq!(timeline[0].worker_count(), 2);
+    assert_eq!(timeline[0].partitions(), &[cpu0, cpu1]);
+    assert_eq!(
+        timeline[1].scope(),
+        RiscvSystemParallelBatchScope::Scheduler
+    );
+    assert_eq!(timeline[1].start_tick(), 8);
+    assert_eq!(timeline[1].horizon(), 12);
+    assert_eq!(timeline[1].worker_count(), 1);
+    assert_eq!(timeline[1].partitions(), &[cache]);
+    assert_eq!(
+        timeline[2].scope(),
+        RiscvSystemParallelBatchScope::DataCacheScheduler
+    );
+    assert_eq!(timeline[2].start_tick(), 16);
+    assert_eq!(timeline[2].horizon(), 20);
+    assert_eq!(timeline[2].worker_count(), 2);
+    assert_eq!(timeline[2].partitions(), &[cpu0, cpu1]);
+
+    let scheduler_timeline = run.parallel_scheduler_batch_timeline();
+    assert_eq!(scheduler_timeline.len(), 1);
+    assert_eq!(
+        scheduler_timeline[0].scope(),
+        RiscvSystemParallelBatchScope::Scheduler
+    );
+    assert_eq!(scheduler_timeline[0].partitions(), &[cache]);
+
+    let data_cache_timeline = run.data_cache_parallel_scheduler_batch_timeline();
+    assert_eq!(data_cache_timeline.len(), 2);
+    assert!(data_cache_timeline
+        .iter()
+        .all(|record| record.scope() == RiscvSystemParallelBatchScope::DataCacheScheduler));
 }

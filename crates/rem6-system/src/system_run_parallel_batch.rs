@@ -1,10 +1,99 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_kernel::{ParallelEpochBatchRecord, PartitionId};
+use rem6_kernel::{ParallelEpochBatchRecord, PartitionId, Tick};
 
 use crate::RiscvSystemRun;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvSystemParallelBatchScope {
+    Scheduler,
+    DataCacheScheduler,
+}
+
+impl RiscvSystemParallelBatchScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduler => "scheduler",
+            Self::DataCacheScheduler => "data-cache-scheduler",
+        }
+    }
+
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Scheduler => 0,
+            Self::DataCacheScheduler => 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSystemParallelBatchTimelineRecord {
+    scope: RiscvSystemParallelBatchScope,
+    start_tick: Tick,
+    horizon: Tick,
+    partitions: Vec<PartitionId>,
+    worker_count: usize,
+}
+
+impl RiscvSystemParallelBatchTimelineRecord {
+    pub fn new(scope: RiscvSystemParallelBatchScope, batch: &ParallelEpochBatchRecord) -> Self {
+        let partitions = normalize_partition_set(batch.worker_partitions());
+        Self {
+            scope,
+            start_tick: batch_start_tick(batch),
+            horizon: batch.horizon(),
+            worker_count: batch.worker_count(),
+            partitions,
+        }
+    }
+
+    pub const fn scope(&self) -> RiscvSystemParallelBatchScope {
+        self.scope
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn horizon(&self) -> Tick {
+        self.horizon
+    }
+
+    pub fn partitions(&self) -> &[PartitionId] {
+        &self.partitions
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+}
+
 impl RiscvSystemRun {
+    pub fn parallel_scheduler_batch_timeline(&self) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+        collect_batch_timeline(
+            RiscvSystemParallelBatchScope::Scheduler,
+            self.parallel_scheduler_batches(),
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_timeline(
+        &self,
+    ) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+        collect_batch_timeline(
+            RiscvSystemParallelBatchScope::DataCacheScheduler,
+            self.data_cache_parallel_scheduler_batches(),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_timeline(
+        &self,
+    ) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+        let mut timeline = self.parallel_scheduler_batch_timeline();
+        timeline.extend(self.data_cache_parallel_scheduler_batch_timeline());
+        sort_batch_timeline(&mut timeline);
+        timeline
+    }
+
     pub fn parallel_scheduler_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
         collect_batch_worker_count_summaries(self.parallel_scheduler_batches())
     }
@@ -135,6 +224,29 @@ impl RiscvSystemRun {
     }
 }
 
+fn collect_batch_timeline(
+    scope: RiscvSystemParallelBatchScope,
+    batches: impl IntoIterator<Item = ParallelEpochBatchRecord>,
+) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+    let mut timeline = batches
+        .into_iter()
+        .map(|batch| RiscvSystemParallelBatchTimelineRecord::new(scope, &batch))
+        .collect::<Vec<_>>();
+    sort_batch_timeline(&mut timeline);
+    timeline
+}
+
+fn sort_batch_timeline(timeline: &mut [RiscvSystemParallelBatchTimelineRecord]) {
+    timeline.sort_by_key(|record| {
+        (
+            record.start_tick(),
+            record.horizon(),
+            record.scope().sort_rank(),
+            record.partitions().to_vec(),
+        )
+    });
+}
+
 fn collect_batch_worker_count_summaries(
     batches: impl IntoIterator<Item = ParallelEpochBatchRecord>,
 ) -> Vec<(usize, usize)> {
@@ -230,6 +342,15 @@ fn flush_partition_streak(
             .and_modify(|stored| *stored = (*stored).max(count))
             .or_insert(count);
     }
+}
+
+fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch
+        .workers()
+        .iter()
+        .map(|worker| worker.start_tick())
+        .min()
+        .unwrap_or_else(|| batch.horizon())
 }
 
 fn normalize_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {
