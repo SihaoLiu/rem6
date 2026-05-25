@@ -687,7 +687,13 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
             empty,
             scheduler_early.clone(),
         ])
-        .with_data_cache_parallel_scheduler_batch_timeline([data_cache.clone()]);
+        .with_data_cache_parallel_scheduler_batch_timeline([data_cache.clone()])
+        .with_gpu_dma_scheduler_counts(1, 2, 2, [(3, 4)])
+        .with_gpu_dma_scheduler_batch_worker_counts([WorkloadParallelBatchWorkerCount::new(3, 2)])
+        .with_accelerator_dma_scheduler_counts(1, 1, 1, [(4, 5)])
+        .with_accelerator_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(4, 1),
+        ]);
 
     assert_eq!(WorkloadParallelBatchScope::Scheduler.as_str(), "scheduler");
     assert_eq!(
@@ -714,15 +720,51 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     assert_eq!(data_cache.duration_ticks(), 4);
     assert_eq!(summary.scheduler_batch_count(), 2);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 1);
-    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 3);
-    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 2);
-    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 5);
+    assert_eq!(summary.gpu_dma_scheduler_batch_count(), 2);
+    assert_eq!(summary.accelerator_dma_scheduler_batch_count(), 1);
+    assert_eq!(summary.dma_scheduler_batch_count(), 3);
+    assert_eq!(summary.dma_scheduler_max_workers(), 4);
+    assert_eq!(summary.dma_scheduler_total_workers(), 10);
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 6);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 4);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 15);
+    assert_eq!(
+        summary.gpu_dma_scheduler_batch_worker_counts(),
+        &[WorkloadParallelBatchWorkerCount::new(3, 2)],
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_batch_worker_counts(),
+        &[WorkloadParallelBatchWorkerCount::new(4, 1)],
+    );
+    assert_eq!(
+        summary.dma_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+            WorkloadParallelBatchWorkerCount::new(4, 1),
+        ],
+    );
+    assert_eq!(summary.dma_scheduler_batch_count_for_worker_count(3), 2,);
+    assert_eq!(summary.dma_scheduler_batch_count_for_worker_count(4), 1,);
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_counts(),
         vec![
             WorkloadParallelBatchWorkerCount::new(1, 1),
             WorkloadParallelBatchWorkerCount::new(2, 2),
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+            WorkloadParallelBatchWorkerCount::new(4, 1),
         ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(3),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(4),
+        1,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_at_or_above(3),
+        3,
     );
     assert_eq!(
         summary.parallel_scheduler_batch_worker_count_tick_summaries(),
@@ -734,7 +776,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
-        vec![(1, 4), (2, 8)],
+        vec![(1, 4), (2, 8), (3, 4), (4, 5)],
     );
     assert_eq!(
         summary.parallel_scheduler_batch_ticks_for_worker_count(1),
@@ -764,19 +806,23 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(3),
-        0,
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(4),
+        5,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_at_or_above(1),
-        12,
+        21,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_at_or_above(2),
-        8,
+        17,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_at_or_above(3),
-        0,
+        9,
     );
     assert_eq!(summary.parallel_scheduler_batch_worker_ticks(), 12);
     assert_eq!(
@@ -785,7 +831,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_ticks(),
-        20
+        52
     );
     assert_eq!(
         summary.parallel_scheduler_batch_worker_ticks_at_or_above(2),
@@ -797,11 +843,15 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(2),
-        16,
+        48,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(3),
-        0,
+        32,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(4),
+        20,
     );
     assert_eq!(
         summary.parallel_scheduler_longest_batch_tick_streak_at_or_above(1),

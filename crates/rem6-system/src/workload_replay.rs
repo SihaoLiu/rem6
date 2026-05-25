@@ -37,8 +37,9 @@ use rem6_transport::{
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
     WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadParallelBatchWorkerCount, WorkloadReplayPlan, WorkloadResolvedResources,
+    WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 mod cache_response;
@@ -82,6 +83,7 @@ struct WorkloadGpuDmaActivity {
     scheduler_epoch_count: usize,
     scheduler_dispatch_count: usize,
     scheduler_batch_count: usize,
+    scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     wait_for_edge_count: usize,
     deadlock_diagnostic_count: usize,
@@ -100,15 +102,30 @@ pub(super) fn merge_dma_scheduler_run(
     epoch_count: &mut usize,
     dispatch_count: &mut usize,
     batch_count: &mut usize,
+    batch_worker_counts: &mut BTreeMap<usize, usize>,
     batch_worker_count_ticks: &mut BTreeMap<usize, Tick>,
 ) {
     *epoch_count += run.epoch_count();
     *dispatch_count += run.dispatch_count();
     *batch_count += run.batch_count();
+    for (worker_count, count) in run.batch_worker_count_summaries() {
+        let stored = batch_worker_counts.entry(worker_count).or_default();
+        *stored = stored.saturating_add(count);
+    }
     for (worker_count, ticks) in run.batch_worker_count_tick_summaries() {
         let stored = batch_worker_count_ticks.entry(worker_count).or_default();
         *stored = stored.saturating_add(ticks);
     }
+}
+
+pub(super) fn dma_scheduler_batch_worker_counts(
+    batch_worker_counts: BTreeMap<usize, usize>,
+) -> Vec<WorkloadParallelBatchWorkerCount> {
+    batch_worker_counts
+        .into_iter()
+        .filter(|(worker_count, count)| *worker_count != 0 && *count != 0)
+        .map(|(worker_count, count)| WorkloadParallelBatchWorkerCount::new(worker_count, count))
+        .collect()
 }
 
 pub(super) fn dma_scheduler_batch_worker_count_ticks(
@@ -871,6 +888,7 @@ impl RiscvWorkloadReplay {
         let mut scheduler_epoch_count = 0;
         let mut scheduler_dispatch_count = 0;
         let mut scheduler_batch_count = 0;
+        let mut scheduler_batch_worker_counts = BTreeMap::<usize, usize>::new();
         let mut scheduler_batch_worker_count_ticks = BTreeMap::<usize, Tick>::new();
         for copy in topology.gpu_dma_copies() {
             let device = GpuDeviceId::new(copy.device());
@@ -903,6 +921,7 @@ impl RiscvWorkloadReplay {
             &mut scheduler_epoch_count,
             &mut scheduler_dispatch_count,
             &mut scheduler_batch_count,
+            &mut scheduler_batch_worker_counts,
             &mut scheduler_batch_worker_count_ticks,
         );
         for copy in topology.gpu_dma_copies() {
@@ -938,6 +957,7 @@ impl RiscvWorkloadReplay {
             &mut scheduler_epoch_count,
             &mut scheduler_dispatch_count,
             &mut scheduler_batch_count,
+            &mut scheduler_batch_worker_counts,
             &mut scheduler_batch_worker_count_ticks,
         );
 
@@ -972,6 +992,9 @@ impl RiscvWorkloadReplay {
             scheduler_epoch_count,
             scheduler_dispatch_count,
             scheduler_batch_count,
+            scheduler_batch_worker_counts: dma_scheduler_batch_worker_counts(
+                scheduler_batch_worker_counts,
+            ),
             scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
                 scheduler_batch_worker_count_ticks,
             ),

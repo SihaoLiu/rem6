@@ -30,7 +30,8 @@ impl WorkloadParallelExecutionSummary {
         worker_count: usize,
     ) -> usize {
         (self.parallel_scheduler_batch_count_for_worker_count(worker_count)
-            + self.data_cache_parallel_scheduler_batch_count_for_worker_count(worker_count))
+            + self.data_cache_parallel_scheduler_batch_count_for_worker_count(worker_count)
+            + self.dma_scheduler_batch_count_for_worker_count(worker_count))
         .max(parallel_batch_activity_count_for_worker_count(
             &[],
             &[],

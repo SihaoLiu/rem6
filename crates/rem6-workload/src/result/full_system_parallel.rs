@@ -77,6 +77,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_max_workers(&self) -> usize {
         self.max_parallel_scheduler_workers()
             .max(self.data_cache_parallel_scheduler_max_workers())
+            .max(self.dma_scheduler_max_workers())
             .max(max_parallel_batch_activity_worker_count(
                 &[],
                 &[],
@@ -86,7 +87,8 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn full_system_parallel_scheduler_total_workers(&self) -> usize {
         (self.total_parallel_scheduler_workers()
-            + self.data_cache_parallel_scheduler_total_workers())
+            + self.data_cache_parallel_scheduler_total_workers()
+            + self.dma_scheduler_total_workers())
         .max(total_parallel_batch_activity_worker_count(
             &[],
             &[],
@@ -105,7 +107,8 @@ impl WorkloadParallelExecutionSummary {
                     self.data_cache_parallel_scheduler_batch_worker_counts
                         .iter()
                         .copied(),
-                ),
+                )
+                .chain(self.dma_scheduler_batch_worker_counts()),
         )
     }
 
@@ -114,7 +117,8 @@ impl WorkloadParallelExecutionSummary {
         minimum_worker_count: usize,
     ) -> usize {
         (self.parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
-            + self.data_cache_parallel_scheduler_batch_count_at_or_above(minimum_worker_count))
+            + self.data_cache_parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
+            + self.dma_scheduler_batch_count_at_or_above(minimum_worker_count))
         .max(parallel_batch_activity_count_at_or_above(
             &[],
             &[],

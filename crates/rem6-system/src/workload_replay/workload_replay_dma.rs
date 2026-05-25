@@ -7,11 +7,15 @@ use rem6_memory::{
     AccessSize, AddressRange, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
 use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport};
-use rem6_workload::{WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadRouteId, WorkloadTopology};
+use rem6_workload::{
+    WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadParallelBatchWorkerCount, WorkloadRouteId,
+    WorkloadTopology,
+};
 
 use super::{
-    cached_memory_response, dma_scheduler_batch_worker_count_ticks, merge_dma_scheduler_run,
-    RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
+    cached_memory_response, dma_scheduler_batch_worker_count_ticks,
+    dma_scheduler_batch_worker_counts, merge_dma_scheduler_run, RiscvWorkloadReplayError,
+    WorkloadDataCacheBackend, WorkloadMemoryBackend,
 };
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, merge_wait_for_graph, WorkloadAcceleratorRuntime,
@@ -25,6 +29,7 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) scheduler_epoch_count: usize,
     pub(super) scheduler_dispatch_count: usize,
     pub(super) scheduler_batch_count: usize,
+    pub(super) scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     pub(super) scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     pub(super) wait_for_edge_count: usize,
     pub(super) deadlock_diagnostic_count: usize,
@@ -62,6 +67,7 @@ pub(super) fn run_accelerator_dma_copies(
     let mut scheduler_epoch_count = 0;
     let mut scheduler_dispatch_count = 0;
     let mut scheduler_batch_count = 0;
+    let mut scheduler_batch_worker_counts = BTreeMap::<usize, usize>::new();
     let mut scheduler_batch_worker_count_ticks = BTreeMap::<usize, Tick>::new();
 
     for copy in topology.accelerator_dma_copies() {
@@ -95,6 +101,7 @@ pub(super) fn run_accelerator_dma_copies(
         &mut scheduler_epoch_count,
         &mut scheduler_dispatch_count,
         &mut scheduler_batch_count,
+        &mut scheduler_batch_worker_counts,
         &mut scheduler_batch_worker_count_ticks,
     );
 
@@ -131,6 +138,7 @@ pub(super) fn run_accelerator_dma_copies(
         &mut scheduler_epoch_count,
         &mut scheduler_dispatch_count,
         &mut scheduler_batch_count,
+        &mut scheduler_batch_worker_counts,
         &mut scheduler_batch_worker_count_ticks,
     );
 
@@ -165,6 +173,9 @@ pub(super) fn run_accelerator_dma_copies(
         scheduler_epoch_count,
         scheduler_dispatch_count,
         scheduler_batch_count,
+        scheduler_batch_worker_counts: dma_scheduler_batch_worker_counts(
+            scheduler_batch_worker_counts,
+        ),
         scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
             scheduler_batch_worker_count_ticks,
         ),

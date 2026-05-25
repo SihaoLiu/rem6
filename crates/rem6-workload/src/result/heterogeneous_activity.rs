@@ -2,6 +2,11 @@ use std::collections::BTreeMap;
 
 use rem6_kernel::Tick;
 
+use crate::parallel_batch::{
+    collect_parallel_batch_worker_counts, max_parallel_batch_worker_count,
+    total_parallel_batch_worker_count, WorkloadParallelBatchWorkerCount,
+};
+
 use super::WorkloadParallelExecutionSummary;
 
 impl WorkloadParallelExecutionSummary {
@@ -20,6 +25,16 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_batch_worker_counts(
+        mut self,
+        counts: impl IntoIterator<Item = WorkloadParallelBatchWorkerCount>,
+    ) -> Self {
+        self.gpu_dma_scheduler_batch_worker_counts = collect_parallel_batch_worker_counts(counts);
+        self.gpu_dma_scheduler_batch_count =
+            total_parallel_batch_count(&self.gpu_dma_scheduler_batch_worker_counts);
+        self
+    }
+
     pub fn with_accelerator_dma_scheduler_counts(
         mut self,
         epoch_count: usize,
@@ -32,6 +47,17 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_scheduler_batch_count = batch_count;
         self.accelerator_dma_scheduler_batch_worker_count_ticks =
             collect_batch_worker_count_ticks(batch_worker_count_ticks);
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_batch_worker_counts(
+        mut self,
+        counts: impl IntoIterator<Item = WorkloadParallelBatchWorkerCount>,
+    ) -> Self {
+        self.accelerator_dma_scheduler_batch_worker_counts =
+            collect_parallel_batch_worker_counts(counts);
+        self.accelerator_dma_scheduler_batch_count =
+            total_parallel_batch_count(&self.accelerator_dma_scheduler_batch_worker_counts);
         self
     }
 
@@ -93,8 +119,33 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_dma_scheduler_batch_count
     }
 
+    pub fn gpu_dma_scheduler_batch_worker_counts(&self) -> &[WorkloadParallelBatchWorkerCount] {
+        &self.gpu_dma_scheduler_batch_worker_counts
+    }
+
     pub fn gpu_dma_scheduler_batch_worker_count_tick_summaries(&self) -> &[(usize, Tick)] {
         &self.gpu_dma_scheduler_batch_worker_count_ticks
+    }
+
+    pub fn gpu_dma_scheduler_batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        batch_count_for_worker_count(&self.gpu_dma_scheduler_batch_worker_counts, worker_count)
+    }
+
+    pub fn gpu_dma_scheduler_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
+        batch_count_at_or_above(
+            &self.gpu_dma_scheduler_batch_worker_counts,
+            minimum_worker_count,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_max_workers(&self) -> usize {
+        max_parallel_batch_worker_count(&self.gpu_dma_scheduler_batch_worker_counts).max(
+            max_batch_worker_count_ticks(&self.gpu_dma_scheduler_batch_worker_count_ticks),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_total_workers(&self) -> usize {
+        total_parallel_batch_worker_count(&self.gpu_dma_scheduler_batch_worker_counts)
     }
 
     pub fn gpu_dma_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
@@ -215,8 +266,44 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_scheduler_batch_count
     }
 
+    pub fn accelerator_dma_scheduler_batch_worker_counts(
+        &self,
+    ) -> &[WorkloadParallelBatchWorkerCount] {
+        &self.accelerator_dma_scheduler_batch_worker_counts
+    }
+
     pub fn accelerator_dma_scheduler_batch_worker_count_tick_summaries(&self) -> &[(usize, Tick)] {
         &self.accelerator_dma_scheduler_batch_worker_count_ticks
+    }
+
+    pub fn accelerator_dma_scheduler_batch_count_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> usize {
+        batch_count_for_worker_count(
+            &self.accelerator_dma_scheduler_batch_worker_counts,
+            worker_count,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_batch_count_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> usize {
+        batch_count_at_or_above(
+            &self.accelerator_dma_scheduler_batch_worker_counts,
+            minimum_worker_count,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_max_workers(&self) -> usize {
+        max_parallel_batch_worker_count(&self.accelerator_dma_scheduler_batch_worker_counts).max(
+            max_batch_worker_count_ticks(&self.accelerator_dma_scheduler_batch_worker_count_ticks),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_total_workers(&self) -> usize {
+        total_parallel_batch_worker_count(&self.accelerator_dma_scheduler_batch_worker_counts)
     }
 
     pub fn accelerator_dma_scheduler_batch_ticks_for_worker_count(
@@ -284,6 +371,39 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_dma_scheduler_batch_count + self.accelerator_dma_scheduler_batch_count
     }
 
+    pub fn dma_scheduler_batch_worker_counts(&self) -> Vec<WorkloadParallelBatchWorkerCount> {
+        collect_parallel_batch_worker_counts(
+            self.gpu_dma_scheduler_batch_worker_counts
+                .iter()
+                .copied()
+                .chain(
+                    self.accelerator_dma_scheduler_batch_worker_counts
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn dma_scheduler_batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        self.gpu_dma_scheduler_batch_count_for_worker_count(worker_count)
+            + self.accelerator_dma_scheduler_batch_count_for_worker_count(worker_count)
+    }
+
+    pub fn dma_scheduler_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
+        self.gpu_dma_scheduler_batch_count_at_or_above(minimum_worker_count)
+            + self.accelerator_dma_scheduler_batch_count_at_or_above(minimum_worker_count)
+    }
+
+    pub fn dma_scheduler_max_workers(&self) -> usize {
+        self.gpu_dma_scheduler_max_workers()
+            .max(self.accelerator_dma_scheduler_max_workers())
+    }
+
+    pub fn dma_scheduler_total_workers(&self) -> usize {
+        self.gpu_dma_scheduler_total_workers()
+            .saturating_add(self.accelerator_dma_scheduler_total_workers())
+    }
+
     pub fn dma_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
         self.gpu_dma_scheduler_batch_ticks_for_worker_count(worker_count)
             .saturating_add(
@@ -346,6 +466,44 @@ fn batch_ticks_for_worker_count(summaries: &[(usize, Tick)], worker_count: usize
         .filter(|(stored_worker_count, _)| *stored_worker_count == worker_count)
         .map(|(_, ticks)| *ticks)
         .fold(0, Tick::saturating_add)
+}
+
+fn batch_count_for_worker_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    worker_count: usize,
+) -> usize {
+    counts
+        .iter()
+        .filter(|count| count.worker_count() == worker_count)
+        .map(WorkloadParallelBatchWorkerCount::batch_count)
+        .sum()
+}
+
+fn batch_count_at_or_above(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    minimum_worker_count: usize,
+) -> usize {
+    counts
+        .iter()
+        .filter(|count| count.worker_count() >= minimum_worker_count)
+        .map(WorkloadParallelBatchWorkerCount::batch_count)
+        .sum()
+}
+
+fn max_batch_worker_count_ticks(summaries: &[(usize, Tick)]) -> usize {
+    summaries
+        .iter()
+        .filter(|(_, ticks)| *ticks != 0)
+        .map(|(worker_count, _)| *worker_count)
+        .max()
+        .unwrap_or(0)
+}
+
+fn total_parallel_batch_count(counts: &[WorkloadParallelBatchWorkerCount]) -> usize {
+    counts
+        .iter()
+        .map(WorkloadParallelBatchWorkerCount::batch_count)
+        .sum()
 }
 
 fn batch_ticks_at_or_above(summaries: &[(usize, Tick)], minimum_worker_count: usize) -> Tick {

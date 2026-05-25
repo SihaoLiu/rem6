@@ -933,6 +933,16 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
         summary.dma_scheduler_batch_count(),
         summary.gpu_dma_scheduler_batch_count() + summary.accelerator_dma_scheduler_batch_count(),
     );
+    assert_eq!(
+        summary.dma_scheduler_total_workers(),
+        summary.gpu_dma_scheduler_total_workers()
+            + summary.accelerator_dma_scheduler_total_workers(),
+    );
+    assert!(
+        summary.dma_scheduler_max_workers() >= summary.gpu_dma_scheduler_max_workers()
+            && summary.dma_scheduler_max_workers()
+                >= summary.accelerator_dma_scheduler_max_workers()
+    );
     assert!(
         summary.gpu_dma_scheduler_batch_worker_ticks()
             >= summary.gpu_dma_scheduler_batch_count() as u64
@@ -951,6 +961,15 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
             >= summary.scheduler_batch_count()
                 + summary.data_cache_parallel_scheduler_batch_count()
                 + summary.dma_scheduler_batch_count()
+    );
+    assert!(
+        summary.full_system_parallel_scheduler_total_workers()
+            >= summary.total_parallel_scheduler_workers()
+                + summary.data_cache_parallel_scheduler_total_workers()
+                + summary.dma_scheduler_total_workers()
+    );
+    assert!(
+        summary.full_system_parallel_scheduler_max_workers() >= summary.dma_scheduler_max_workers()
     );
     assert!(
         summary.full_system_parallel_scheduler_batch_worker_ticks()
