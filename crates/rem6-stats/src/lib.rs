@@ -479,6 +479,19 @@ impl StatSnapshot {
             .iter()
             .map(|sample| (sample.id(), sample))
             .collect::<BTreeMap<_, _>>();
+        let previous_samples = previous
+            .samples
+            .iter()
+            .map(|sample| (sample.id(), sample))
+            .collect::<BTreeMap<_, _>>();
+        for current_stat in current_samples.keys() {
+            if !previous_samples.contains_key(current_stat) {
+                return Err(StatsError::SnapshotDeltaUnexpectedStat {
+                    stat: *current_stat,
+                });
+            }
+        }
+
         let mut deltas = Vec::with_capacity(previous.samples.len());
         for previous_sample in &previous.samples {
             let Some(current_sample) = current_samples.get(&previous_sample.id()) else {
@@ -486,6 +499,17 @@ impl StatSnapshot {
                     stat: previous_sample.id(),
                 });
             };
+            if current_sample.path() != previous_sample.path()
+                || current_sample.unit() != previous_sample.unit()
+            {
+                return Err(StatsError::SnapshotDeltaDescriptorMismatch {
+                    stat: previous_sample.id(),
+                    previous_path: previous_sample.path().to_string(),
+                    current_path: current_sample.path().to_string(),
+                    previous_unit: previous_sample.unit().to_string(),
+                    current_unit: current_sample.unit().to_string(),
+                });
+            }
             if current_sample.value() < previous_sample.value() {
                 return Err(StatsError::SnapshotDeltaValueWentBack {
                     stat: previous_sample.id(),
@@ -711,6 +735,16 @@ pub enum StatsError {
     SnapshotDeltaMissingStat {
         stat: StatId,
     },
+    SnapshotDeltaUnexpectedStat {
+        stat: StatId,
+    },
+    SnapshotDeltaDescriptorMismatch {
+        stat: StatId,
+        previous_path: String,
+        current_path: String,
+        previous_unit: String,
+        current_unit: String,
+    },
     SnapshotDeltaValueWentBack {
         stat: StatId,
         previous: u64,
@@ -776,6 +810,24 @@ impl fmt::Display for StatsError {
             Self::SnapshotDeltaMissingStat { stat } => {
                 write!(formatter, "stat snapshot delta is missing stat {}", stat.get())
             }
+            Self::SnapshotDeltaUnexpectedStat { stat } => {
+                write!(
+                    formatter,
+                    "stat snapshot delta has unexpected stat {}",
+                    stat.get()
+                )
+            }
+            Self::SnapshotDeltaDescriptorMismatch {
+                stat,
+                previous_path,
+                current_path,
+                previous_unit,
+                current_unit,
+            } => write!(
+                formatter,
+                "stat snapshot delta descriptor for stat {} changed from {previous_path} {previous_unit} to {current_path} {current_unit}",
+                stat.get()
+            ),
             Self::SnapshotDeltaValueWentBack {
                 stat,
                 previous,

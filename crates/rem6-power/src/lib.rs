@@ -884,6 +884,16 @@ pub enum PowerError {
     MissingBoundStat {
         stat: rem6_stats::StatId,
     },
+    PowerStatUnexpectedStat {
+        stat: rem6_stats::StatId,
+    },
+    PowerStatDescriptorMismatch {
+        stat: rem6_stats::StatId,
+        previous_path: String,
+        current_path: String,
+        previous_unit: String,
+        current_unit: String,
+    },
     PowerStatSnapshotTimeWentBack {
         previous_tick: Tick,
         current_tick: Tick,
@@ -1002,6 +1012,24 @@ impl fmt::Display for PowerError {
                     stat.get()
                 )
             }
+            Self::PowerStatUnexpectedStat { stat } => {
+                write!(
+                    formatter,
+                    "power stat snapshot contains unexpected stat {}",
+                    stat.get()
+                )
+            }
+            Self::PowerStatDescriptorMismatch {
+                stat,
+                previous_path,
+                current_path,
+                previous_unit,
+                current_unit,
+            } => write!(
+                formatter,
+                "power stat {} descriptor changed from {previous_path} {previous_unit} to {current_path} {current_unit}",
+                stat.get()
+            ),
             Self::PowerStatSnapshotTimeWentBack {
                 previous_tick,
                 current_tick,

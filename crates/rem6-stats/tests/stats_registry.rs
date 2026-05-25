@@ -216,6 +216,81 @@ fn stats_snapshot_delta_rejects_counter_regression() {
 }
 
 #[test]
+fn stats_snapshot_delta_rejects_schema_drift() {
+    let committed = StatId::new(7);
+    let misses = StatId::new(8);
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::new(
+            committed,
+            "cpu0.committed_insts",
+            "count",
+            12,
+        )],
+    );
+
+    let extra_current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![
+            StatSample::new(committed, "cpu0.committed_insts", "count", 15),
+            StatSample::new(misses, "system.l2.misses", "count", 1),
+        ],
+    );
+    assert_eq!(
+        extra_current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaUnexpectedStat { stat: misses },
+    );
+
+    let renamed_current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::new(
+            committed,
+            "cpu0.retired_insts",
+            "count",
+            15,
+        )],
+    );
+    assert_eq!(
+        renamed_current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaDescriptorMismatch {
+            stat: committed,
+            previous_path: "cpu0.committed_insts".to_string(),
+            current_path: "cpu0.retired_insts".to_string(),
+            previous_unit: "count".to_string(),
+            current_unit: "count".to_string(),
+        },
+    );
+
+    let unit_changed_current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::new(
+            committed,
+            "cpu0.committed_insts",
+            "ops",
+            15,
+        )],
+    );
+    assert_eq!(
+        unit_changed_current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaDescriptorMismatch {
+            stat: committed,
+            previous_path: "cpu0.committed_insts".to_string(),
+            current_path: "cpu0.committed_insts".to_string(),
+            previous_unit: "count".to_string(),
+            current_unit: "ops".to_string(),
+        },
+    );
+}
+
+#[test]
 fn probe_registry_records_typed_events_and_listener_state() {
     let mut probes = ProbeRegistry::new();
     let committed = probes.register_point("cpu0", "commit").unwrap();

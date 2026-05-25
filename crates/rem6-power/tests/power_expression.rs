@@ -372,3 +372,75 @@ fn power_expression_inputs_reject_counter_regression_between_stats_snapshots() {
         },
     );
 }
+
+#[test]
+fn power_expression_inputs_reject_stats_delta_schema_drift() {
+    let committed = StatId::new(7);
+    let misses = StatId::new(8);
+    let metric = PowerMetricId::new(3);
+    let bindings =
+        PowerMetricBindings::new(vec![PowerMetricBinding::new(metric, committed)]).unwrap();
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::new(
+            committed,
+            "system.cpu0.committed_ops",
+            "Count",
+            12,
+        )],
+    );
+
+    let extra_current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![
+            StatSample::new(committed, "system.cpu0.committed_ops", "Count", 15),
+            StatSample::new(misses, "system.l2.overall_misses", "Count", 1),
+        ],
+    );
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0,
+            0.7,
+            2.0,
+            &previous,
+            &extra_current,
+            &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatUnexpectedStat { stat: misses },
+    );
+
+    let renamed_current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::new(
+            committed,
+            "system.cpu0.retired_ops",
+            "Count",
+            15,
+        )],
+    );
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0,
+            0.7,
+            2.0,
+            &previous,
+            &renamed_current,
+            &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatDescriptorMismatch {
+            stat: committed,
+            previous_path: "system.cpu0.committed_ops".to_string(),
+            current_path: "system.cpu0.retired_ops".to_string(),
+            previous_unit: "Count".to_string(),
+            current_unit: "Count".to_string(),
+        },
+    );
+}

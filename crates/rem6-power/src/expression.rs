@@ -231,6 +231,22 @@ fn power_error_from_stat_delta(error: StatsError) -> PowerError {
             current,
         },
         StatsError::SnapshotDeltaMissingStat { stat } => PowerError::MissingBoundStat { stat },
+        StatsError::SnapshotDeltaUnexpectedStat { stat } => {
+            PowerError::PowerStatUnexpectedStat { stat }
+        }
+        StatsError::SnapshotDeltaDescriptorMismatch {
+            stat,
+            previous_path,
+            current_path,
+            previous_unit,
+            current_unit,
+        } => PowerError::PowerStatDescriptorMismatch {
+            stat,
+            previous_path,
+            current_path,
+            previous_unit,
+            current_unit,
+        },
         _ => unreachable!("stat snapshot delta returned a non-delta stats error"),
     }
 }
