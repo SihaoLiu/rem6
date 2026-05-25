@@ -14,6 +14,7 @@ use rem6_transport::TargetOutcome;
 mod bank;
 mod chi;
 mod chi_bank;
+mod downstream;
 mod mesi_bank;
 mod moesi;
 mod moesi_bank;
@@ -653,7 +654,7 @@ impl MsiCacheController {
         let line_size =
             AccessSize::new(self.layout.bytes()).map_err(CacheControllerError::Memory)?;
 
-        match (cpu_event(request), before) {
+        let downstream = match (cpu_event(request), before) {
             (MsiEvent::CpuRead, _) => {
                 MemoryRequest::read_shared(id, line_address, line_size, self.layout)
                     .map_err(CacheControllerError::Memory)
@@ -670,7 +671,8 @@ impl MsiCacheController {
                     .map_err(CacheControllerError::Memory)
             }
             _ => unreachable!("only CPU requests create downstream requests"),
-        }
+        }?;
+        Ok(downstream::with_source_ordering(downstream, request))
     }
 
     fn complete_cpu_request(
@@ -1320,7 +1322,7 @@ impl MesiCacheController {
         let line_size =
             AccessSize::new(self.layout.bytes()).map_err(MesiCacheControllerError::Memory)?;
 
-        match (mesi_cpu_event(request), before) {
+        let downstream = match (mesi_cpu_event(request), before) {
             (MesiEvent::CpuRead, _) => {
                 MemoryRequest::read_shared(id, line_address, line_size, self.layout)
                     .map_err(MesiCacheControllerError::Memory)
@@ -1337,7 +1339,8 @@ impl MesiCacheController {
                     .map_err(MesiCacheControllerError::Memory)
             }
             _ => unreachable!("only CPU requests create downstream requests"),
-        }
+        }?;
+        Ok(downstream::with_source_ordering(downstream, request))
     }
 
     fn complete_cpu_request(

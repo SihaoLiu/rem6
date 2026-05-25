@@ -520,7 +520,7 @@ impl ChiCacheController {
         let line_size =
             AccessSize::new(self.layout.bytes()).map_err(ChiCacheControllerError::Memory)?;
 
-        match (chi_cpu_event(request), before) {
+        let downstream = match (chi_cpu_event(request), before) {
             (ChiEvent::CpuRead, _) => {
                 MemoryRequest::read_shared(id, line_address, line_size, self.layout)
                     .map_err(ChiCacheControllerError::Memory)
@@ -539,7 +539,8 @@ impl ChiCacheController {
                     .map_err(ChiCacheControllerError::Memory)
             }
             _ => unreachable!("only CPU requests create downstream requests"),
-        }
+        }?;
+        Ok(crate::downstream::with_source_ordering(downstream, request))
     }
 
     fn complete_cpu_request(

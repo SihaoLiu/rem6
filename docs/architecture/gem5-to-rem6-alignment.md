@@ -285,10 +285,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   coalesced-target and parallel-cycle effective QoS, typed QoS profiles across
   MSHR queues, cache banks, snapshots, and MSI bank harness snapshot restore,
   same-agent acquire/release ordering barriers that constrain ready MSHR
-  eligibility before QoS selection, MSHR-to-transport QoS class export,
-  per-cycle MSI bank run QoS counts by effective requestor and priority,
-  parallel-cycle history counts by effective requestor and priority, and
-  byte-snapshot restore of MSHR queue configuration plus target QoS state.
+  eligibility before QoS selection, MSI/MESI/MOESI/CHI downstream miss request
+  ordering propagation, MSHR-to-transport QoS class export, per-cycle MSI bank
+  run QoS counts by effective requestor and priority, parallel-cycle history
+  counts by effective requestor and priority, and byte-snapshot restore of MSHR
+  queue configuration plus target QoS state.
 - Cache prefetch tests cover tagged next-line candidate generation, DCPT masked
   delta-pair matching with earliest historical replay and snapshot restore, BOP
   best-offset learning with degree candidate metadata, delayed RR training, RR

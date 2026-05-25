@@ -525,7 +525,7 @@ impl MoesiCacheController {
         let line_size =
             AccessSize::new(self.layout.bytes()).map_err(MoesiCacheControllerError::Memory)?;
 
-        match (moesi_cpu_event(request), before) {
+        let downstream = match (moesi_cpu_event(request), before) {
             (MoesiEvent::CpuRead, _) => {
                 MemoryRequest::read_shared(id, line_address, line_size, self.layout)
                     .map_err(MoesiCacheControllerError::Memory)
@@ -544,7 +544,8 @@ impl MoesiCacheController {
                     .map_err(MoesiCacheControllerError::Memory)
             }
             _ => unreachable!("only CPU requests create downstream requests"),
-        }
+        }?;
+        Ok(crate::downstream::with_source_ordering(downstream, request))
     }
 
     fn complete_cpu_request(
