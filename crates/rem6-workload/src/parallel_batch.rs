@@ -1,6 +1,79 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_kernel::{ParallelPartitionActivity, PartitionId};
+use rem6_kernel::{ParallelPartitionActivity, PartitionId, Tick};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadParallelBatchScope {
+    Scheduler,
+    DataCacheScheduler,
+}
+
+impl WorkloadParallelBatchScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduler => "scheduler",
+            Self::DataCacheScheduler => "data-cache-scheduler",
+        }
+    }
+
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Scheduler => 0,
+            Self::DataCacheScheduler => 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadParallelBatchTimelineRecord {
+    scope: WorkloadParallelBatchScope,
+    start_tick: Tick,
+    horizon: Tick,
+    partitions: Vec<PartitionId>,
+    worker_count: usize,
+}
+
+impl WorkloadParallelBatchTimelineRecord {
+    pub fn new(
+        scope: WorkloadParallelBatchScope,
+        start_tick: Tick,
+        horizon: Tick,
+        partitions: impl IntoIterator<Item = PartitionId>,
+        worker_count: usize,
+    ) -> Self {
+        Self {
+            scope,
+            start_tick,
+            horizon,
+            partitions: normalize_partition_set(partitions),
+            worker_count,
+        }
+    }
+
+    pub const fn scope(&self) -> WorkloadParallelBatchScope {
+        self.scope
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn horizon(&self) -> Tick {
+        self.horizon
+    }
+
+    pub fn partitions(&self) -> &[PartitionId] {
+        &self.partitions
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.worker_count == 0 || self.partitions.is_empty()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelBatchWorkerCount {
@@ -112,6 +185,55 @@ pub(crate) fn collect_parallel_batch_worker_counts(
             WorkloadParallelBatchWorkerCount::new(worker_count, batch_count)
         })
         .collect()
+}
+
+pub(crate) fn collect_parallel_batch_timeline(
+    records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+) -> Vec<WorkloadParallelBatchTimelineRecord> {
+    let mut timeline = records
+        .into_iter()
+        .filter(|record| !record.is_empty())
+        .collect::<Vec<_>>();
+    sort_parallel_batch_timeline(&mut timeline);
+    timeline
+}
+
+pub(crate) fn collect_parallel_batch_worker_counts_from_timeline(
+    records: &[WorkloadParallelBatchTimelineRecord],
+) -> Vec<WorkloadParallelBatchWorkerCount> {
+    collect_parallel_batch_worker_counts(
+        records
+            .iter()
+            .map(|record| WorkloadParallelBatchWorkerCount::new(record.worker_count(), 1)),
+    )
+}
+
+pub(crate) fn collect_parallel_batch_partition_sets_from_timeline(
+    records: &[WorkloadParallelBatchTimelineRecord],
+) -> Vec<WorkloadParallelBatchPartitionSet> {
+    collect_parallel_batch_partition_sets(records.iter().map(|record| {
+        WorkloadParallelBatchPartitionSet::new(record.partitions().iter().copied(), 1)
+    }))
+}
+
+pub(crate) fn collect_parallel_batch_partition_streaks_from_timeline(
+    records: &[WorkloadParallelBatchTimelineRecord],
+) -> Vec<WorkloadParallelBatchPartitionStreak> {
+    collect_parallel_batch_partition_streaks_from_sequence(records.iter().map(|record| {
+        WorkloadParallelBatchPartitionSet::new(record.partitions().iter().copied(), 1)
+    }))
+}
+
+fn sort_parallel_batch_timeline(timeline: &mut [WorkloadParallelBatchTimelineRecord]) {
+    timeline.sort_by_key(|record| {
+        (
+            record.start_tick(),
+            record.horizon(),
+            record.scope().sort_rank(),
+            record.partitions().to_vec(),
+            record.worker_count(),
+        )
+    });
 }
 
 pub(crate) fn collect_parallel_batch_partition_sets(

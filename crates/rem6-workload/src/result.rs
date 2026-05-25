@@ -14,7 +14,8 @@ use crate::parallel_batch::{
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
     parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
     total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flow_evidence,
@@ -28,6 +29,7 @@ use crate::result_partition_activity::{
     parallel_partition_worker_count,
 };
 
+mod batch_timeline;
 mod full_system_parallel;
 mod progress;
 mod remote_endpoints;
@@ -157,6 +159,7 @@ pub struct WorkloadParallelExecutionSummary {
     scheduler_livelock_diagnostic_count: usize,
     scheduler_livelock_diagnostics: Vec<LivelockDiagnostic>,
     parallel_scheduler_progress_transitions: Vec<ParallelProgressTransitionRecord>,
+    parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     parallel_scheduler_batch_partition_streaks: Vec<WorkloadParallelBatchPartitionStreak>,
@@ -179,6 +182,7 @@ pub struct WorkloadParallelExecutionSummary {
     active_data_cache_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_max_workers: usize,
     data_cache_parallel_scheduler_total_workers: usize,
+    data_cache_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     data_cache_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     data_cache_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     data_cache_parallel_scheduler_batch_partition_streaks:

@@ -1,13 +1,17 @@
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount,
     WorkloadParallelExecutionSummary, WorkloadTopology,
 };
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
 use crate::workload_replay_heterogeneous::{WorkloadAcceleratorActivity, WorkloadGpuActivity};
-use crate::{RiscvDataCacheProtocol, RiscvSystemRun};
+use crate::{
+    RiscvDataCacheProtocol, RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
+    RiscvSystemRun,
+};
 
 pub(super) struct WorkloadReplayActivityRefs<'a> {
     pub(super) gpu: &'a WorkloadGpuActivity,
@@ -89,6 +93,11 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
         )
+        .with_parallel_scheduler_batch_timeline(
+            run.parallel_scheduler_batch_timeline()
+                .into_iter()
+                .map(workload_parallel_batch_timeline_record),
+        )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_parallel_scheduler_remote_sends(run.parallel_scheduler_remote_sends())
@@ -139,6 +148,11 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_batches()
                 .into_iter()
                 .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
+        )
+        .with_data_cache_parallel_scheduler_batch_timeline(
+            run.data_cache_parallel_scheduler_batch_timeline()
+                .into_iter()
+                .map(workload_parallel_batch_timeline_record),
         )
         .with_full_system_parallel_scheduler_batch_partition_streaks(
             run.full_system_parallel_scheduler_batch_partition_streak_summaries()
@@ -279,6 +293,29 @@ fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDat
     }
 }
 
+fn workload_parallel_batch_timeline_record(
+    record: RiscvSystemParallelBatchTimelineRecord,
+) -> WorkloadParallelBatchTimelineRecord {
+    WorkloadParallelBatchTimelineRecord::new(
+        workload_parallel_batch_scope(record.scope()),
+        record.start_tick(),
+        record.horizon(),
+        record.partitions().iter().copied(),
+        record.worker_count(),
+    )
+}
+
+fn workload_parallel_batch_scope(
+    scope: RiscvSystemParallelBatchScope,
+) -> WorkloadParallelBatchScope {
+    match scope {
+        RiscvSystemParallelBatchScope::Scheduler => WorkloadParallelBatchScope::Scheduler,
+        RiscvSystemParallelBatchScope::DataCacheScheduler => {
+            WorkloadParallelBatchScope::DataCacheScheduler
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
@@ -295,7 +332,10 @@ mod tests {
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
         MemoryTargetId,
     };
-    use rem6_workload::WorkloadParallelBatchPartitionStreak;
+    use rem6_workload::{
+        WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
+        WorkloadParallelBatchTimelineRecord,
+    };
 
     use super::*;
     use crate::workload_replay::{WorkloadGpuDmaActivity, WorkloadReplayActivityRefs};
@@ -337,16 +377,34 @@ mod tests {
         worker_limit: usize,
         scheduled_partitions: &[PartitionId],
     ) -> RiscvClusterTurn {
+        let mut turns = batch_scheduler_turns_at(partitions, worker_limit, 0, scheduled_partitions);
+        turns.remove(0)
+    }
+
+    fn batch_scheduler_turns_at(
+        partitions: u32,
+        worker_limit: usize,
+        tick: u64,
+        scheduled_partitions: &[PartitionId],
+    ) -> Vec<RiscvClusterTurn> {
         let mut scheduler =
             PartitionedScheduler::with_parallel_worker_limit(partitions, 4, worker_limit).unwrap();
         for partition in scheduled_partitions {
             scheduler
-                .schedule_parallel_at(*partition, 0, |_| {})
+                .schedule_parallel_at(*partition, tick, |_| {})
                 .unwrap();
         }
-        let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
-        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
-        RiscvClusterTurn::parallel_scheduler(plan, recorded)
+        let mut turns = Vec::new();
+        while let Some(plan) = scheduler.plan_next_parallel_epoch().unwrap() {
+            let before = scheduler.now();
+            let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+            let summary = recorded.summary();
+            turns.push(RiscvClusterTurn::parallel_scheduler(plan, recorded));
+            if summary.final_tick() == before && summary.executed_events() == 0 {
+                break;
+            }
+        }
+        turns
     }
 
     fn data_cache_batch_run(
@@ -354,11 +412,20 @@ mod tests {
         worker_limit: usize,
         scheduled_partitions: &[PartitionId],
     ) -> ParallelCoherenceRunSummary {
+        data_cache_batch_run_at(partitions, worker_limit, 0, scheduled_partitions)
+    }
+
+    fn data_cache_batch_run_at(
+        partitions: u32,
+        worker_limit: usize,
+        tick: u64,
+        scheduled_partitions: &[PartitionId],
+    ) -> ParallelCoherenceRunSummary {
         let mut scheduler =
             PartitionedScheduler::with_parallel_worker_limit(partitions, 4, worker_limit).unwrap();
         for partition in scheduled_partitions {
             scheduler
-                .schedule_parallel_at(*partition, 0, |_| {})
+                .schedule_parallel_at(*partition, tick, |_| {})
                 .unwrap();
         }
         ParallelCoherenceRunSummary::new(
@@ -601,6 +668,60 @@ mod tests {
                 cpu, cache,
             ]),
             2,
+        );
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_scoped_batch_timeline() {
+        let cpu = PartitionId::new(1);
+        let cache = PartitionId::new(2);
+        let run = RiscvSystemRun::new(
+            batch_scheduler_turns_at(3, 2, 8, &[cache]),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 16 },
+        )
+        .with_data_cache_runs(vec![data_cache_batch_run_at(3, 2, 0, &[cpu, cache])]);
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(
+            summary.full_system_parallel_scheduler_batch_timeline(),
+            vec![
+                WorkloadParallelBatchTimelineRecord::new(
+                    WorkloadParallelBatchScope::DataCacheScheduler,
+                    0,
+                    4,
+                    [cpu, cache],
+                    2,
+                ),
+                WorkloadParallelBatchTimelineRecord::new(
+                    WorkloadParallelBatchScope::Scheduler,
+                    4,
+                    8,
+                    [cache],
+                    1,
+                ),
+            ],
         );
     }
 

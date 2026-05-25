@@ -10,6 +10,7 @@ use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadId, WorkloadManifest,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
@@ -644,6 +645,95 @@ fn workload_result_records_parallel_execution_summary() {
     assert!(summary.has_full_system_parallel_scheduler_work());
     assert!(summary.has_parallel_scheduler_work());
     assert!(summary.has_data_cache_parallel_work());
+}
+
+#[test]
+fn workload_result_records_scoped_parallel_batch_timeline() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let scheduler_early = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [cpu0, cpu1],
+        2,
+    );
+    let scheduler_late = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::Scheduler,
+        8,
+        12,
+        [cache],
+        1,
+    );
+    let data_cache = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::DataCacheScheduler,
+        4,
+        8,
+        [cpu1, cache],
+        2,
+    );
+    let empty = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::Scheduler,
+        12,
+        16,
+        [cpu0],
+        0,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            scheduler_late.clone(),
+            empty,
+            scheduler_early.clone(),
+        ])
+        .with_data_cache_parallel_scheduler_batch_timeline([data_cache.clone()]);
+
+    assert_eq!(WorkloadParallelBatchScope::Scheduler.as_str(), "scheduler");
+    assert_eq!(
+        WorkloadParallelBatchScope::DataCacheScheduler.as_str(),
+        "data-cache-scheduler",
+    );
+    assert_eq!(
+        summary.parallel_scheduler_batch_timeline(),
+        &[scheduler_early.clone(), scheduler_late.clone()],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_timeline(),
+        std::slice::from_ref(&data_cache),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_timeline(),
+        vec![
+            scheduler_early.clone(),
+            data_cache.clone(),
+            scheduler_late.clone()
+        ],
+    );
+    assert_eq!(summary.scheduler_batch_count(), 2);
+    assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 1);
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 3);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 2);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 5);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(1, 1),
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu0, cpu1], 1),
+            WorkloadParallelBatchPartitionSet::new([cpu1, cache], 1),
+            WorkloadParallelBatchPartitionSet::new([cache], 1),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu1, cache]),
+        1,
+    );
+    assert!(summary.has_full_system_parallel_scheduler_work());
 }
 
 #[test]

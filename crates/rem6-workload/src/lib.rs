@@ -42,6 +42,7 @@ pub use host_event::{
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_batch::{
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount,
 };
 pub use parallel_expectation::{

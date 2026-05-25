@@ -416,6 +416,10 @@ System-run batch timeline records expose the scheduler scope, worker-window
 start tick, conservative horizon, worker count, and normalized partition set, so
 diagnostics can inspect the time-ordered parallel occupancy source before it is
 compressed into histograms or streak summaries.
+Workload result summaries preserve the same scoped timeline records and derive
+batch histograms, partition-set summaries, and streak evidence from them, so
+replay output keeps the precise occupancy evidence behind each compressed
+parallel summary.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
