@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
-use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+};
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
@@ -140,6 +142,8 @@ pub struct WorkloadParallelExecutionSummary {
     parallel_scheduler_batch_partition_streaks: Vec<WorkloadParallelBatchPartitionStreak>,
     parallel_scheduler_partition_activities: Vec<(PartitionId, ParallelPartitionActivity)>,
     parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
+    parallel_scheduler_initial_frontiers: Vec<PartitionFrontier>,
+    parallel_scheduler_final_frontiers: Vec<PartitionFrontier>,
     riscv_core_count: usize,
     active_riscv_core_count: usize,
     riscv_fetch_issue_count: usize,
@@ -302,6 +306,16 @@ impl WorkloadParallelExecutionSummary {
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
     ) -> Self {
         self.parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
+    pub fn with_parallel_scheduler_frontiers(
+        mut self,
+        initial_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+        final_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+    ) -> Self {
+        self.parallel_scheduler_initial_frontiers = collect_partition_frontiers(initial_frontiers);
+        self.parallel_scheduler_final_frontiers = collect_partition_frontiers(final_frontiers);
         self
     }
 
@@ -805,6 +819,27 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_parallel_scheduler_remote_flows(&self) -> bool {
         !self.parallel_scheduler_remote_flows.is_empty()
+    }
+
+    pub fn parallel_scheduler_initial_frontiers(&self) -> &[PartitionFrontier] {
+        &self.parallel_scheduler_initial_frontiers
+    }
+
+    pub fn parallel_scheduler_final_frontiers(&self) -> &[PartitionFrontier] {
+        &self.parallel_scheduler_final_frontiers
+    }
+
+    pub fn parallel_scheduler_initial_frontier_count(&self) -> usize {
+        self.parallel_scheduler_initial_frontiers.len()
+    }
+
+    pub fn parallel_scheduler_final_frontier_count(&self) -> usize {
+        self.parallel_scheduler_final_frontiers.len()
+    }
+
+    pub fn has_parallel_scheduler_frontiers(&self) -> bool {
+        !self.parallel_scheduler_initial_frontiers.is_empty()
+            || !self.parallel_scheduler_final_frontiers.is_empty()
     }
 
     pub const fn riscv_core_count(&self) -> usize {
@@ -1662,6 +1697,22 @@ fn collect_parallel_remote_flows(
             .or_insert(flow);
     }
     by_route.into_values().collect()
+}
+
+fn collect_partition_frontiers(
+    frontiers: impl IntoIterator<Item = PartitionFrontier>,
+) -> Vec<PartitionFrontier> {
+    let mut frontiers: Vec<_> = frontiers.into_iter().collect();
+    frontiers.sort_by_key(|frontier| {
+        (
+            frontier.partition(),
+            frontier.now(),
+            frontier.safe_until(),
+            frontier.next_tick(),
+            frontier.pending_events(),
+        )
+    });
+    frontiers
 }
 
 fn parallel_remote_flow_count(

@@ -89,6 +89,10 @@ pub(super) fn parallel_execution_summary(
         )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
+        .with_parallel_scheduler_frontiers(
+            run.parallel_scheduler_frontiers(),
+            run.parallel_scheduler_final_frontiers(),
+        )
         .with_riscv_core_counts(
             topology.riscv_cores().len(),
             cpu_activities.len(),
@@ -431,6 +435,14 @@ mod tests {
         assert_eq!(
             summary.parallel_scheduler_remote_flow_count(source, target),
             1
+        );
+        assert_eq!(
+            summary.parallel_scheduler_initial_frontiers(),
+            run.parallel_scheduler_frontiers().as_slice(),
+        );
+        assert_eq!(
+            summary.parallel_scheduler_final_frontiers(),
+            run.parallel_scheduler_final_frontiers().as_slice(),
         );
         assert_eq!(
             summary.full_system_parallel_scheduler_remote_flow_count(source, target),

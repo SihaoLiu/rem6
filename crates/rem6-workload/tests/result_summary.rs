@@ -1,6 +1,6 @@
 use rem6_boot::BootImage;
 use rem6_fabric::{QosPriority, QosRequestorId};
-use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{ParallelRemoteFlowRecord, PartitionFrontier, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
@@ -61,6 +61,16 @@ fn workload_result_records_parallel_execution_summary() {
             ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 3, 3, 17),
             ParallelRemoteFlowRecord::new(PartitionId::new(1), PartitionId::new(3), 0, 9, 9),
         ])
+        .with_parallel_scheduler_frontiers(
+            [
+                PartitionFrontier::new(PartitionId::new(0), 0, 8, Some(2), 1),
+                PartitionFrontier::new(PartitionId::new(1), 0, 8, Some(4), 1),
+            ],
+            [
+                PartitionFrontier::new(PartitionId::new(0), 8, 16, None, 0),
+                PartitionFrontier::new(PartitionId::new(1), 4, 16, Some(12), 1),
+            ],
+        )
         .with_riscv_core_counts(2, 2, 4, 3, 1, 2)
         .with_data_cache_parallel_counts(7, 9, 11, 13, 3)
         .with_data_cache_parallel_empty_epoch_count(2)
@@ -161,6 +171,23 @@ fn workload_result_records_parallel_execution_summary() {
         0,
     );
     assert!(summary.has_parallel_scheduler_remote_flows());
+    assert_eq!(
+        summary.parallel_scheduler_initial_frontiers(),
+        &[
+            PartitionFrontier::new(PartitionId::new(0), 0, 8, Some(2), 1),
+            PartitionFrontier::new(PartitionId::new(1), 0, 8, Some(4), 1),
+        ],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_final_frontiers(),
+        &[
+            PartitionFrontier::new(PartitionId::new(0), 8, 16, None, 0),
+            PartitionFrontier::new(PartitionId::new(1), 4, 16, Some(12), 1),
+        ],
+    );
+    assert_eq!(summary.parallel_scheduler_initial_frontier_count(), 2);
+    assert_eq!(summary.parallel_scheduler_final_frontier_count(), 2);
+    assert!(summary.has_parallel_scheduler_frontiers());
     assert_eq!(summary.riscv_core_count(), 2);
     assert_eq!(summary.active_riscv_core_count(), 2);
     assert_eq!(summary.riscv_fetch_issue_count(), 4);
