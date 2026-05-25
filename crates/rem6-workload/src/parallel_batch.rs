@@ -213,11 +213,9 @@ pub(crate) fn parallel_batch_activity_count_at_or_above(
     sets: &[WorkloadParallelBatchPartitionSet],
     minimum_worker_count: usize,
 ) -> usize {
-    if counts.is_empty() {
-        parallel_batch_partition_set_count_at_or_above(sets, minimum_worker_count)
-    } else {
-        parallel_batch_count_at_or_above(counts, minimum_worker_count)
-    }
+    parallel_batch_count_at_or_above(counts, minimum_worker_count).max(
+        parallel_batch_partition_set_count_at_or_above(sets, minimum_worker_count),
+    )
 }
 
 fn parallel_batch_partition_set_count_at_or_above(
@@ -244,11 +242,7 @@ pub(crate) fn max_parallel_batch_activity_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
 ) -> usize {
-    if counts.is_empty() {
-        max_parallel_batch_partition_set_worker_count(sets)
-    } else {
-        max_parallel_batch_worker_count(counts)
-    }
+    max_parallel_batch_worker_count(counts).max(max_parallel_batch_partition_set_worker_count(sets))
 }
 
 fn max_parallel_batch_partition_set_worker_count(
@@ -287,11 +281,8 @@ pub(crate) fn total_parallel_batch_activity_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
 ) -> usize {
-    if counts.is_empty() {
-        total_parallel_batch_partition_set_worker_count(sets)
-    } else {
-        total_parallel_batch_worker_count(counts)
-    }
+    total_parallel_batch_worker_count(counts)
+        .max(total_parallel_batch_partition_set_worker_count(sets))
 }
 
 pub(crate) fn parallel_batch_active_partition_count(

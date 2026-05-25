@@ -30,9 +30,9 @@ isolated bugs:
   synchronization and, for timing mode, accepted timing deviation. rem6
   therefore treats partition ownership, lookahead, deterministic merge order,
   per-partition snapshots, scheduler epoch and dispatch progress, bounded
-  empty-epoch exposure, verifiable minimum max-worker use and multi-worker
-  batch activity derived from worker histograms or exact partition-set
-  histograms, exact same-batch
+  empty-epoch exposure, verifiable minimum max-worker use, total-worker use,
+  and multi-worker batch activity derived from the strongest same-scope
+  worker-count or exact partition-set histograms, exact same-batch
   partition-set activity, and sustained same-batch streak activity as core
   kernel contracts.
 - Configuration and experiment reproducibility are too script-dependent in
@@ -424,10 +424,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   validation of exact expected remote-flow counts and first/last tick windows,
   minimum scheduler epoch progress plus dispatch progress from the strongest
   available aggregate counts, batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
-  minimum max-worker use derived from aggregate, worker-count, or exact
-  partition-set evidence, minimum total-worker activity derived from the
-  strongest available aggregate, worker-count, exact partition-set, or per-partition evidence,
-  minimum multi-worker batch activity derived from worker-count or partition-set
+  minimum max-worker use derived from the strongest available aggregate,
+  worker-count, or exact partition-set evidence, minimum total-worker activity
+  derived from the strongest available aggregate, worker-count, exact
+  partition-set, or per-partition evidence, minimum multi-worker batch activity
+  derived from the strongest available worker-count or exact partition-set
   evidence, exact batch partition-set activity,
   sustained same-batch partition-set streak activity, minimum active partition
   counts derived from aggregate, exact partition-set, activity, or remote-flow

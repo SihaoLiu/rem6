@@ -277,6 +277,65 @@ fn workload_replay_plan_derives_max_workers_from_partition_sets() {
 }
 
 #[test]
+fn workload_replay_plan_uses_stronger_max_worker_evidence_than_batch_histograms() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-workers-prefers-stronger-partition-sets"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_worker_use(expected_workers(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_use(expected_workers(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_use(expected_workers(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            5,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_worker_counts([WorkloadParallelBatchWorkerCount::new(2, 3)])
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [partition(0), partition(1), partition(2), partition(3)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    partition(10),
+                    partition(11),
+                    partition(12),
+                    partition(13),
+                    partition(14),
+                ],
+                1,
+            ),
+        ]);
+
+    assert_eq!(summary.max_parallel_scheduler_workers(), 4);
+    assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 5);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 5);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_parallel_worker_expectations() {
     let zero =
         WorkloadExpectedParallelWorkerUse::new(WorkloadParallelRemoteFlowScope::FullSystem, 0)

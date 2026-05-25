@@ -376,8 +376,9 @@ lower-bound evidence and merge by the strongest recorded field instead of by
 addition. Full-system activity only adds after the CPU scheduler and
 data-cache/coherence scheduler have been summarized separately. Workload
 result summary accessors also choose the strongest available aggregate or
-fine-grained evidence for batch count, dispatch progress, and total-worker
-activity, so a lower aggregate counter cannot hide detailed parallel execution
+fine-grained evidence for batch count, dispatch progress, max-worker use,
+thresholded multi-worker batch activity, and total-worker activity, so a lower
+aggregate or worker-count counter cannot hide detailed partition-set execution
 records.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
