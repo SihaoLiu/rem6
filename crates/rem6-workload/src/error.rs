@@ -333,6 +333,14 @@ pub enum WorkloadError {
         source: u32,
         target: u32,
     },
+    DuplicateExpectedParallelRemoteSend {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
     MissingParallelExecutionSummary {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
@@ -345,6 +353,22 @@ pub enum WorkloadError {
         target: u32,
         expected_send_count: usize,
         actual_send_count: usize,
+    },
+    MissingParallelRemoteSendSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
+    ExpectedParallelRemoteSendMissing {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
     },
     InvalidExpectedParallelRemoteFlowTimingWindow {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1141,6 +1165,18 @@ impl fmt::Display for WorkloadError {
                 "expected {} remote flow {source}->{target} is already declared",
                 scope.as_str()
             ),
+            Self::DuplicateExpectedParallelRemoteSend {
+                scope,
+                source,
+                target,
+                source_tick,
+                delivery_tick,
+                order,
+            } => write!(
+                formatter,
+                "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} is already declared",
+                scope.as_str()
+            ),
             Self::MissingParallelExecutionSummary {
                 scope,
                 source,
@@ -1160,6 +1196,30 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} remote flow {source}->{target} to have {expected_send_count} sends, got {actual_send_count}",
+                scope.as_str()
+            ),
+            Self::MissingParallelRemoteSendSummary {
+                scope,
+                source,
+                target,
+                source_tick,
+                delivery_tick,
+                order,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order}",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelRemoteSendMissing {
+                scope,
+                source,
+                target,
+                source_tick,
+                delivery_tick,
+                order,
+            } => write!(
+                formatter,
+                "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} was not recorded",
                 scope.as_str()
             ),
             Self::InvalidExpectedParallelRemoteFlowTimingWindow {

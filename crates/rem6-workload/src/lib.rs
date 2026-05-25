@@ -46,11 +46,11 @@ pub use parallel_expectation::{
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
     WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
-    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -264,6 +264,7 @@ pub struct WorkloadManifest {
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
@@ -352,6 +353,10 @@ impl WorkloadManifest {
         &self.expected_parallel_remote_flows
     }
 
+    pub fn expected_parallel_remote_sends(&self) -> &[WorkloadExpectedParallelRemoteSend] {
+        &self.expected_parallel_remote_sends
+    }
+
     pub fn expected_parallel_remote_flow_timings(
         &self,
     ) -> &[WorkloadExpectedParallelRemoteFlowTiming] {
@@ -434,6 +439,7 @@ pub struct WorkloadManifestBuilder {
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
@@ -463,6 +469,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_protocol_run_counts: Vec::new(),
             expected_data_cache_run_attribution: None,
             expected_parallel_remote_flows: Vec::new(),
+            expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_worker_activity: Vec::new(),
@@ -555,6 +562,30 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_remote_flow_timings.push(expected);
         self.expected_parallel_remote_flow_timings
             .sort_by_key(|timing| timing.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_remote_send(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteSend,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_sends
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteSend {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                source_tick: expected.source_tick(),
+                delivery_tick: expected.delivery_tick(),
+                order: expected.order(),
+            });
+        }
+        self.expected_parallel_remote_sends.push(expected);
+        self.expected_parallel_remote_sends
+            .sort_by_key(|send| send.sort_key());
         Ok(self)
     }
 
@@ -874,6 +905,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
+            expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
@@ -902,6 +934,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
+            expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
@@ -937,6 +970,7 @@ pub struct WorkloadReplayPlan {
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
@@ -975,6 +1009,7 @@ impl WorkloadReplayPlan {
                 .expected_data_cache_run_attribution()
                 .copied(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
+            expected_parallel_remote_sends: manifest.expected_parallel_remote_sends().to_vec(),
             expected_parallel_remote_flow_timings: manifest
                 .expected_parallel_remote_flow_timings()
                 .to_vec(),
@@ -1115,6 +1150,34 @@ impl WorkloadReplayPlan {
 
     pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
         &self.expected_parallel_remote_flows
+    }
+
+    pub fn add_expected_parallel_remote_send(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteSend,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_sends
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteSend {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                source_tick: expected.source_tick(),
+                delivery_tick: expected.delivery_tick(),
+                order: expected.order(),
+            });
+        }
+        self.expected_parallel_remote_sends.push(expected);
+        self.expected_parallel_remote_sends
+            .sort_by_key(|send| send.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_remote_sends(&self) -> &[WorkloadExpectedParallelRemoteSend] {
+        &self.expected_parallel_remote_sends
     }
 
     pub fn add_expected_parallel_worker_use(
@@ -1434,8 +1497,9 @@ impl WorkloadReplayPlan {
         self.verify_checkpoint_restore_labels(result)?;
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
-        self.verify_expected_parallel_remote_flows(result)?;
-        self.verify_expected_parallel_remote_flow_timings(result)?;
+        replay_verify::verify_expected_parallel_remote_flows(self, result)?;
+        replay_verify::verify_expected_parallel_remote_sends(self, result)?;
+        replay_verify::verify_expected_parallel_remote_flow_timings(self, result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;
@@ -1578,85 +1642,6 @@ impl WorkloadReplayPlan {
             expected: expected.clone(),
             actual: result.stop_reason().map(str::to_string),
         })
-    }
-
-    fn verify_expected_parallel_remote_flows(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_parallel_remote_flows.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = self.expected_parallel_remote_flows[0];
-            return Err(WorkloadError::MissingParallelExecutionSummary {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-                expected_send_count: expected.send_count(),
-            });
-        };
-
-        for expected in &self.expected_parallel_remote_flows {
-            let actual_send_count = expected.actual_send_count(summary);
-            if actual_send_count != expected.send_count() {
-                return Err(WorkloadError::ExpectedParallelRemoteFlowCountMismatch {
-                    scope: expected.scope(),
-                    source: expected.source().index(),
-                    target: expected.target().index(),
-                    expected_send_count: expected.send_count(),
-                    actual_send_count,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn verify_expected_parallel_remote_flow_timings(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_parallel_remote_flow_timings.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = self.expected_parallel_remote_flow_timings[0];
-            return Err(WorkloadError::MissingParallelRemoteFlowTimingSummary {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-                expected_send_count: expected.send_count(),
-                expected_first_tick: expected.first_tick(),
-                expected_last_tick: expected.last_tick(),
-            });
-        };
-
-        for expected in &self.expected_parallel_remote_flow_timings {
-            let actual = expected.actual_record(summary);
-            let actual_send_count = actual.map(|record| record.send_count()).unwrap_or(0);
-            let actual_first_tick = actual.map(|record| record.first_tick());
-            let actual_last_tick = actual.map(|record| record.last_tick());
-            if actual_send_count != expected.send_count()
-                || actual_first_tick != Some(expected.first_tick())
-                || actual_last_tick != Some(expected.last_tick())
-            {
-                return Err(WorkloadError::ExpectedParallelRemoteFlowTimingMismatch {
-                    scope: expected.scope(),
-                    source: expected.source().index(),
-                    target: expected.target().index(),
-                    expected_send_count: expected.send_count(),
-                    actual_send_count,
-                    expected_first_tick: expected.first_tick(),
-                    actual_first_tick,
-                    expected_last_tick: expected.last_tick(),
-                    actual_last_tick,
-                });
-            }
-            if let Some(error) = expected.delay_bounds_mismatch(actual) {
-                return Err(error);
-            }
-        }
-        Ok(())
     }
 
     fn verify_expected_parallel_worker_use(

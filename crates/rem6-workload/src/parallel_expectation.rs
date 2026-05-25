@@ -1,5 +1,6 @@
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionFrontier, PartitionId,
 };
 
 use crate::{
@@ -518,6 +519,98 @@ impl WorkloadExpectedParallelRemoteFlow {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelRemoteSend {
+    scope: WorkloadParallelRemoteFlowScope,
+    source: PartitionId,
+    target: PartitionId,
+    source_tick: u64,
+    delivery_tick: u64,
+    order: u64,
+}
+
+impl WorkloadExpectedParallelRemoteSend {
+    pub const fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        source: PartitionId,
+        target: PartitionId,
+        source_tick: u64,
+        delivery_tick: u64,
+        order: u64,
+    ) -> Self {
+        Self {
+            scope,
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            order,
+        }
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn source(self) -> PartitionId {
+        self.source
+    }
+
+    pub const fn target(self) -> PartitionId {
+        self.target
+    }
+
+    pub const fn source_tick(self) -> u64 {
+        self.source_tick
+    }
+
+    pub const fn delivery_tick(self) -> u64 {
+        self.delivery_tick
+    }
+
+    pub fn delay(self) -> u64 {
+        self.delivery_tick.saturating_sub(self.source_tick)
+    }
+
+    pub const fn order(self) -> u64 {
+        self.order
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, u32, u32, u64, u64, u64) {
+        (
+            self.scope.sort_rank(),
+            self.source.index(),
+            self.target.index(),
+            self.source_tick,
+            self.delivery_tick,
+            self.order,
+        )
+    }
+
+    pub(crate) fn actual_record(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<ParallelRemoteSendRecord> {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => find_parallel_remote_send(
+                summary.parallel_scheduler_remote_sends().iter().copied(),
+                self,
+            ),
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => find_parallel_remote_send(
+                summary
+                    .data_cache_parallel_scheduler_remote_sends()
+                    .iter()
+                    .copied(),
+                self,
+            ),
+            WorkloadParallelRemoteFlowScope::FullSystem => find_parallel_remote_send(
+                summary.full_system_parallel_scheduler_remote_sends(),
+                self,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelRemoteFlowTiming {
     scope: WorkloadParallelRemoteFlowScope,
     source: PartitionId,
@@ -724,6 +817,22 @@ where
     flows
         .into_iter()
         .find(|flow| flow.source() == source && flow.target() == target)
+}
+
+fn find_parallel_remote_send<I>(
+    sends: I,
+    expected: WorkloadExpectedParallelRemoteSend,
+) -> Option<ParallelRemoteSendRecord>
+where
+    I: IntoIterator<Item = ParallelRemoteSendRecord>,
+{
+    sends.into_iter().find(|send| {
+        send.source() == expected.source()
+            && send.target() == expected.target()
+            && send.source_tick() == expected.source_tick()
+            && send.delivery_tick() == expected.delivery_tick()
+            && send.order() == expected.order()
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

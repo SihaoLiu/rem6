@@ -1,5 +1,121 @@
 use crate::{WorkloadError, WorkloadReplayPlan, WorkloadResult};
 
+pub(crate) fn verify_expected_parallel_remote_sends(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_sends = plan.expected_parallel_remote_sends();
+    if expected_sends.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_sends[0];
+        return Err(WorkloadError::MissingParallelRemoteSendSummary {
+            scope: expected.scope(),
+            source: expected.source().index(),
+            target: expected.target().index(),
+            source_tick: expected.source_tick(),
+            delivery_tick: expected.delivery_tick(),
+            order: expected.order(),
+        });
+    };
+
+    for expected in expected_sends {
+        if expected.actual_record(summary).is_none() {
+            return Err(WorkloadError::ExpectedParallelRemoteSendMissing {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                source_tick: expected.source_tick(),
+                delivery_tick: expected.delivery_tick(),
+                order: expected.order(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_remote_flows(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_flows = plan.expected_parallel_remote_flows();
+    if expected_flows.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_flows[0];
+        return Err(WorkloadError::MissingParallelExecutionSummary {
+            scope: expected.scope(),
+            source: expected.source().index(),
+            target: expected.target().index(),
+            expected_send_count: expected.send_count(),
+        });
+    };
+
+    for expected in expected_flows {
+        let actual_send_count = expected.actual_send_count(summary);
+        if actual_send_count != expected.send_count() {
+            return Err(WorkloadError::ExpectedParallelRemoteFlowCountMismatch {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                expected_send_count: expected.send_count(),
+                actual_send_count,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_remote_flow_timings(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_timings = plan.expected_parallel_remote_flow_timings();
+    if expected_timings.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_timings[0];
+        return Err(WorkloadError::MissingParallelRemoteFlowTimingSummary {
+            scope: expected.scope(),
+            source: expected.source().index(),
+            target: expected.target().index(),
+            expected_send_count: expected.send_count(),
+            expected_first_tick: expected.first_tick(),
+            expected_last_tick: expected.last_tick(),
+        });
+    };
+
+    for expected in expected_timings {
+        let actual = expected.actual_record(summary);
+        let actual_send_count = actual.map(|record| record.send_count()).unwrap_or(0);
+        let actual_first_tick = actual.map(|record| record.first_tick());
+        let actual_last_tick = actual.map(|record| record.last_tick());
+        if actual_send_count != expected.send_count()
+            || actual_first_tick != Some(expected.first_tick())
+            || actual_last_tick != Some(expected.last_tick())
+        {
+            return Err(WorkloadError::ExpectedParallelRemoteFlowTimingMismatch {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                expected_send_count: expected.send_count(),
+                actual_send_count,
+                expected_first_tick: expected.first_tick(),
+                actual_first_tick,
+                expected_last_tick: expected.last_tick(),
+                actual_last_tick,
+            });
+        }
+        if let Some(error) = expected.delay_bounds_mismatch(actual) {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_clean_parallel_diagnostics(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
