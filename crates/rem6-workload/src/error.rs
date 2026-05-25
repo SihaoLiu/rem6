@@ -533,6 +533,33 @@ impl fmt::Display for WorkloadError {
                 "expected {} worker use to reach at least {minimum_max_workers} workers, got {actual_max_workers}",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelPartitionCount { scope } => write!(
+                formatter,
+                "expected {} partition use must require a positive active partition count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelPartitionUse { scope } => write!(
+                formatter,
+                "expected {} partition use is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelPartitionSummary {
+                scope,
+                minimum_active_partitions,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} partition use with at least {minimum_active_partitions} active partitions",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelPartitionCountBelowMinimum {
+                scope,
+                minimum_active_partitions,
+                actual_active_partitions,
+            } => write!(
+                formatter,
+                "expected {} partition use to reach at least {minimum_active_partitions} active partitions, got {actual_active_partitions}",
+                scope.as_str()
+            ),
         }
     }
 }

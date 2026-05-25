@@ -143,3 +143,53 @@ impl WorkloadExpectedParallelWorkerUse {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelPartitionUse {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_active_partitions: usize,
+}
+
+impl WorkloadExpectedParallelPartitionUse {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_active_partitions: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_active_partitions == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelPartitionCount { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_active_partitions,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_active_partitions(self) -> usize {
+        self.minimum_active_partitions
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) const fn actual_active_partitions(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> usize {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.active_scheduler_partition_count()
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.active_data_cache_parallel_scheduler_partition_count()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.active_full_system_parallel_scheduler_partition_count()
+            }
+        }
+    }
+}

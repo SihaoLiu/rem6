@@ -53,6 +53,8 @@ fn workload_result_records_parallel_execution_summary() {
         ])
         .with_riscv_core_counts(2, 2, 4, 3, 1, 2)
         .with_data_cache_parallel_counts(7, 9, 11, 13, 3)
+        .with_data_cache_parallel_partitions(6)
+        .with_full_system_parallel_partitions(8)
         .with_data_cache_parallel_scheduler_remote_flows([
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 7, 19, 23),
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 1, 13, 29),
@@ -120,7 +122,15 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.data_cache_parallel_scheduler_epoch_count(), 9);
     assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 13);
+    assert_eq!(
+        summary.active_data_cache_parallel_scheduler_partition_count(),
+        6
+    );
     assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
+    assert_eq!(
+        summary.active_full_system_parallel_scheduler_partition_count(),
+        8
+    );
     assert_eq!(
         summary.data_cache_parallel_scheduler_remote_flows(),
         &[ParallelRemoteFlowRecord::new(

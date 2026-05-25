@@ -66,6 +66,12 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_batch_count(),
             run.data_cache_parallel_scheduler_max_workers(),
         )
+        .with_data_cache_parallel_partitions(
+            run.active_data_cache_parallel_scheduler_partition_count(),
+        )
+        .with_full_system_parallel_partitions(
+            run.active_full_system_parallel_scheduler_partition_count(),
+        )
         .with_data_cache_parallel_scheduler_remote_flows(
             run.data_cache_parallel_scheduler_remote_flows(),
         )

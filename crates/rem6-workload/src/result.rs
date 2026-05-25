@@ -134,7 +134,9 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_epoch_count: usize,
     data_cache_parallel_scheduler_dispatch_count: usize,
     data_cache_parallel_scheduler_batch_count: usize,
+    active_data_cache_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_max_workers: usize,
+    active_full_system_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     attributed_data_cache_parallel_run_count: usize,
     unattributed_data_cache_parallel_run_count: usize,
@@ -257,6 +259,22 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_parallel_scheduler_dispatch_count = scheduler_dispatch_count;
         self.data_cache_parallel_scheduler_batch_count = scheduler_batch_count;
         self.data_cache_parallel_scheduler_max_workers = scheduler_max_workers;
+        self
+    }
+
+    pub const fn with_data_cache_parallel_partitions(
+        mut self,
+        active_partition_count: usize,
+    ) -> Self {
+        self.active_data_cache_parallel_scheduler_partition_count = active_partition_count;
+        self
+    }
+
+    pub const fn with_full_system_parallel_partitions(
+        mut self,
+        active_partition_count: usize,
+    ) -> Self {
+        self.active_full_system_parallel_scheduler_partition_count = active_partition_count;
         self
     }
 
@@ -564,6 +582,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn data_cache_parallel_scheduler_batch_count(&self) -> usize {
         self.data_cache_parallel_scheduler_batch_count
+    }
+
+    pub const fn active_data_cache_parallel_scheduler_partition_count(&self) -> usize {
+        self.active_data_cache_parallel_scheduler_partition_count
     }
 
     pub const fn data_cache_parallel_scheduler_max_workers(&self) -> usize {
@@ -1030,6 +1052,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn full_system_parallel_scheduler_batch_count(&self) -> usize {
         self.scheduler_batch_count + self.data_cache_parallel_scheduler_batch_count
+    }
+
+    pub const fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
+        self.active_full_system_parallel_scheduler_partition_count
     }
 
     pub const fn full_system_parallel_scheduler_max_workers(&self) -> usize {
