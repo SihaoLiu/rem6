@@ -4,10 +4,11 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{
-    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity, ParallelRunProfile,
-    ParallelSchedulerContext, ParallelWorkerRecord, PartitionFrontier, PartitionId,
-    PartitionedScheduler, ReadyPartition, RecordedRunSummary, RunSummary, ScheduledEventKind,
-    SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
+    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
+    ParallelRemoteFlowRecord, ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord,
+    PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition, RecordedRunSummary,
+    RunSummary, ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord, SchedulerError,
+    Tick,
 };
 use rem6_memory::{AccessSize, Address, AgentId, TranslationPageMap};
 use rem6_mmio::MmioBus;
@@ -16,6 +17,7 @@ use rem6_transport::{
     TransportEndpointId,
 };
 
+use crate::parallel_flow::merge_parallel_remote_flow_records;
 use crate::riscv_activity::{drive_action_partition, RiscvCoreDriveActivity};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
@@ -1265,6 +1267,7 @@ pub struct RiscvClusterSchedulerEpoch {
     summary: RunSummary,
     dispatches: Vec<SchedulerDispatchRecord>,
     batches: Vec<ParallelEpochBatchRecord>,
+    remote_flows: Vec<ParallelRemoteFlowRecord>,
     profile: ParallelRunProfile,
     partition_activities: BTreeMap<PartitionId, ParallelPartitionActivity>,
 }
@@ -1273,11 +1276,13 @@ impl RiscvClusterSchedulerEpoch {
     pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
         let profile = recorded.profile();
         let partition_activities = recorded.partition_activities();
+        let remote_flows = recorded.remote_flows();
         Self {
             plan,
             summary: recorded.summary(),
             dispatches: recorded.dispatches().to_vec(),
             batches: recorded.batches().to_vec(),
+            remote_flows,
             profile,
             partition_activities,
         }
@@ -1376,6 +1381,18 @@ impl RiscvClusterSchedulerEpoch {
             .iter()
             .flat_map(ParallelEpochBatchRecord::worker_partitions)
             .collect()
+    }
+
+    pub fn remote_flow_count(&self, source: PartitionId, target: PartitionId) -> usize {
+        self.remote_flows
+            .iter()
+            .filter(|flow| flow.source() == source && flow.target() == target)
+            .map(|flow| flow.send_count())
+            .sum()
+    }
+
+    pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        self.remote_flows.clone()
     }
 
     pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
@@ -1542,6 +1559,25 @@ impl RiscvClusterRun {
             .into_iter()
             .flat_map(RiscvClusterSchedulerEpoch::parallel_worker_partitions)
             .collect()
+    }
+
+    pub fn parallel_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.remote_flow_count(source, target))
+            .sum()
+    }
+
+    pub fn parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        merge_parallel_remote_flow_records(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(RiscvClusterSchedulerEpoch::remote_flows),
+        )
     }
 
     pub fn max_parallel_scheduler_workers(&self) -> usize {

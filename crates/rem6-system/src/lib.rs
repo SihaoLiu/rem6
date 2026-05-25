@@ -37,6 +37,7 @@ mod riscv_run_activity;
 mod riscv_run_translation;
 mod scheduler_checkpoint;
 mod system_run_qos;
+mod system_run_remote_flow;
 mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;

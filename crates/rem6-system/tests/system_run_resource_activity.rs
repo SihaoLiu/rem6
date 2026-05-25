@@ -2,15 +2,17 @@ use rem6_boot::BootImage;
 use rem6_coherence::{
     ParallelCoherenceRunHistory, ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
 };
-use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
+use rem6_cpu::{
+    CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvClusterTurn, RiscvCoreTopologyConfig,
+};
 use rem6_dram::{
     DramActivityProfile, DramGeometry, DramMemoryTechnology, DramTargetActivity, DramTiming,
     ExternalMemoryProfile,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{
-    ClockDomain, ParallelRunProfile, PartitionId, RecordedConservativeRunSummary, WaitForEdgeKind,
-    WaitForGraph, WaitForNode,
+    ClockDomain, ParallelRunProfile, PartitionId, PartitionedScheduler,
+    RecordedConservativeRunSummary, WaitForEdgeKind, WaitForGraph, WaitForNode,
 };
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
@@ -303,6 +305,29 @@ fn empty_coherence_run(final_tick: u64) -> ParallelCoherenceRunSummary {
     )
 }
 
+fn coherence_run_with_remote_flow(
+    source: PartitionId,
+    target: PartitionId,
+) -> ParallelCoherenceRunSummary {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(5, 4, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    ParallelCoherenceRunSummary::new(
+        scheduler.run_until_idle_parallel_recorded().unwrap(),
+        0,
+        0,
+        0,
+        Vec::new(),
+        Vec::new(),
+        ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new()),
+    )
+}
+
 fn split_dram_config() -> RiscvTopologyDramConfig {
     dram_config()
         .add_target(
@@ -367,6 +392,14 @@ fn system_run_starts_without_resource_activity() {
     assert!(run
         .data_cache_parallel_scheduler_partition_activities()
         .is_empty());
+    assert!(run.data_cache_parallel_scheduler_remote_flows().is_empty());
+    assert_eq!(
+        run.data_cache_parallel_scheduler_remote_flow_count(
+            PartitionId::new(0),
+            PartitionId::new(1)
+        ),
+        0
+    );
     assert_eq!(
         run.active_data_cache_parallel_scheduler_partition_count(),
         0
@@ -421,6 +454,14 @@ fn system_run_starts_without_resource_activity() {
     assert!(run
         .full_system_parallel_scheduler_partition_activities()
         .is_empty());
+    assert!(run.full_system_parallel_scheduler_remote_flows().is_empty());
+    assert_eq!(
+        run.full_system_parallel_scheduler_remote_flow_count(
+            PartitionId::new(0),
+            PartitionId::new(1)
+        ),
+        0
+    );
     assert_eq!(
         run.active_full_system_parallel_scheduler_partition_count(),
         0
@@ -442,6 +483,68 @@ fn system_run_starts_without_resource_activity() {
     assert_eq!(run.initial_data_cache_deadlock_diagnostic_count(), 0);
     assert_eq!(run.remaining_data_cache_deadlock_diagnostic_count(), 0);
     assert_eq!(run.data_cache_deadlock_diagnostic_count(), 0);
+}
+
+#[test]
+fn system_run_reports_parallel_scheduler_remote_flows() {
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let directory = PartitionId::new(3);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(core, 0, move |context| {
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let turn = RiscvClusterTurn::parallel_scheduler(plan, recorded);
+    let data_cache_run = coherence_run_with_remote_flow(cache, directory);
+    assert_eq!(data_cache_run.remote_flow_count(cache, directory), 2);
+
+    let run = RiscvSystemRun::new(
+        vec![turn],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 8 },
+    )
+    .with_data_cache_runs(vec![data_cache_run]);
+
+    assert_eq!(run.parallel_scheduler_remote_flow_count(core, memory), 1);
+    assert_eq!(
+        run.data_cache_parallel_scheduler_remote_flow_count(cache, directory),
+        2
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_remote_flow_count(core, memory),
+        1
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_remote_flow_count(cache, directory),
+        2
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_remote_flow_count(memory, core),
+        0
+    );
+
+    let core_flows = run.parallel_scheduler_remote_flows();
+    assert_eq!(core_flows.len(), 1);
+    assert_eq!(core_flows[0].source(), core);
+    assert_eq!(core_flows[0].target(), memory);
+    assert_eq!(core_flows[0].send_count(), 1);
+
+    let data_cache_flows = run.data_cache_parallel_scheduler_remote_flows();
+    assert_eq!(data_cache_flows.len(), 1);
+    assert_eq!(data_cache_flows[0].source(), cache);
+    assert_eq!(data_cache_flows[0].target(), directory);
+    assert_eq!(data_cache_flows[0].send_count(), 2);
+
+    let full_flows = run.full_system_parallel_scheduler_remote_flows();
+    assert_eq!(full_flows.len(), 2);
+    assert_eq!(full_flows[0], core_flows[0]);
+    assert_eq!(full_flows[1], data_cache_flows[0]);
 }
 
 #[test]

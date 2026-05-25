@@ -151,3 +151,54 @@ fn cluster_run_reports_parallel_scheduler_partition_activity() {
     assert!(run.has_parallel_scheduler_partition_activity(PartitionId::new(0)));
     assert!(!run.has_parallel_scheduler_partition_activity(PartitionId::new(3)));
 }
+
+#[test]
+fn cluster_run_reports_parallel_scheduler_remote_flows() {
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+    let io = PartitionId::new(3);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(core0, 0, move |context| {
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+            context.schedule_remote_after(io, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(core1, 0, move |context| {
+            context.schedule_remote_after(memory, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let run = RiscvClusterRun::new(
+        vec![RiscvClusterTurn::parallel_scheduler(plan, recorded)],
+        RiscvClusterStopReason::StopCondition,
+    );
+
+    let epoch = run.turns()[0].parallel_scheduler_epoch().unwrap();
+    let flows = epoch.remote_flows();
+    assert_eq!(flows.len(), 3);
+    assert_eq!(flows[0].source(), core0);
+    assert_eq!(flows[0].target(), memory);
+    assert_eq!(flows[0].send_count(), 2);
+    assert_eq!(flows[0].first_tick(), 4);
+    assert_eq!(flows[0].last_tick(), 4);
+    assert_eq!(flows[1].source(), core0);
+    assert_eq!(flows[1].target(), io);
+    assert_eq!(flows[1].send_count(), 1);
+    assert_eq!(flows[2].source(), core1);
+    assert_eq!(flows[2].target(), memory);
+    assert_eq!(flows[2].send_count(), 1);
+    assert_eq!(epoch.remote_flow_count(core0, memory), 2);
+    assert_eq!(epoch.remote_flow_count(core1, memory), 1);
+    assert_eq!(epoch.remote_flow_count(memory, core0), 0);
+
+    assert_eq!(run.parallel_scheduler_remote_flows(), flows);
+    assert_eq!(run.parallel_scheduler_remote_flow_count(core0, memory), 2);
+    assert_eq!(run.parallel_scheduler_remote_flow_count(core1, memory), 1);
+    assert_eq!(run.parallel_scheduler_remote_flow_count(memory, core0), 0);
+}

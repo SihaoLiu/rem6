@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_coherence::{ParallelCoherenceRunHistory, ParallelCoherenceRunSummary};
 use rem6_kernel::{
-    DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
-    PartitionId, RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind,
-    WaitForNode,
+    DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelPartitionActivity,
+    ParallelRemoteFlowRecord, ParallelRunProfile, PartitionId, RecordedRunSummary,
+    SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind, WaitForNode,
 };
 
 use crate::RiscvSystemRun;
@@ -168,6 +168,25 @@ impl RiscvSystemRun {
             .iter()
             .flat_map(ParallelCoherenceRunSummary::parallel_worker_partitions)
             .collect()
+    }
+
+    pub fn data_cache_parallel_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        self.data_cache_runs
+            .iter()
+            .map(|run| run.remote_flow_count(source, target))
+            .sum()
+    }
+
+    pub fn data_cache_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        crate::system_run_remote_flow::merge_parallel_remote_flow_records(
+            self.data_cache_runs
+                .iter()
+                .flat_map(ParallelCoherenceRunSummary::remote_flows),
+        )
     }
 
     pub fn data_cache_parallel_scheduler_profile(&self) -> ParallelRunProfile {
@@ -378,6 +397,21 @@ impl RiscvSystemRun {
         let mut partitions = self.parallel_scheduler_worker_partitions();
         partitions.extend(self.data_cache_parallel_scheduler_worker_partitions());
         partitions
+    }
+
+    pub fn full_system_parallel_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        self.parallel_scheduler_remote_flow_count(source, target)
+            + self.data_cache_parallel_scheduler_remote_flow_count(source, target)
+    }
+
+    pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        let mut flows = self.parallel_scheduler_remote_flows();
+        flows.extend(self.data_cache_parallel_scheduler_remote_flows());
+        crate::system_run_remote_flow::merge_parallel_remote_flow_records(flows)
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {

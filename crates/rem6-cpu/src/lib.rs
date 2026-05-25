@@ -31,6 +31,7 @@ mod indirect_target_predictor;
 mod loop_predictor;
 mod ltage_predictor;
 mod multiperspective_perceptron;
+mod parallel_flow;
 mod riscv_activity;
 mod riscv_cluster;
 mod riscv_data_access;
