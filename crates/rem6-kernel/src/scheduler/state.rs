@@ -1046,6 +1046,18 @@ impl RecordedRunSummary {
         self.profile.batch_count()
     }
 
+    pub fn batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
+        collect_batch_worker_count_summaries(&self.batches)
+    }
+
+    pub fn batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        batch_count_for_worker_count(&self.batches, worker_count)
+    }
+
+    pub fn batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
+        batch_count_at_or_above(&self.batches, minimum_worker_count)
+    }
+
     pub fn empty_epoch_count(&self) -> usize {
         self.profile.empty_epoch_count()
     }
@@ -1326,6 +1338,26 @@ impl RecordedConservativeRunSummary {
         self.profile.batch_count()
     }
 
+    pub fn batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
+        collect_batch_worker_count_summaries(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+        )
+    }
+
+    pub fn batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        batch_count_for_worker_count(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            worker_count,
+        )
+    }
+
+    pub fn batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
+        batch_count_at_or_above(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            minimum_worker_count,
+        )
+    }
+
     pub fn empty_epoch_count(&self) -> usize {
         self.profile.empty_epoch_count()
     }
@@ -1415,6 +1447,40 @@ fn merge_parallel_partition_activities(
             .and_modify(|stored| *stored = stored.merge(activity))
             .or_insert(activity);
     }
+}
+
+fn collect_batch_worker_count_summaries<'a, I>(batches: I) -> Vec<(usize, usize)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<usize, usize>::new();
+    for batch in batches {
+        let worker_count = batch.worker_count();
+        if worker_count != 0 {
+            *summaries.entry(worker_count).or_default() += 1;
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+fn batch_count_for_worker_count<'a, I>(batches: I, worker_count: usize) -> usize
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() == worker_count)
+        .count()
+}
+
+fn batch_count_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> usize
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .count()
 }
 
 fn progress_monitor_snapshot<I>(
