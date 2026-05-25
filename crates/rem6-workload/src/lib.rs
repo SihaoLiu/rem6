@@ -11,6 +11,7 @@ mod heterogeneous;
 mod host_event;
 mod identity;
 mod manifest_parallel_frontier;
+mod manifest_progress;
 mod manifest_remote_endpoints;
 mod manifest_remote_traffic;
 mod parallel_batch;
@@ -48,14 +49,17 @@ pub use parallel_expectation::{
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayCeiling,
-    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
+    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelProgressTransitionExpectationError,
+    WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
+    WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -276,6 +280,7 @@ pub struct WorkloadManifest {
         Vec<WorkloadExpectedParallelRemoteTrafficConsistency>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
+    expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -442,6 +447,7 @@ pub struct WorkloadManifestBuilder {
         Vec<WorkloadExpectedParallelRemoteTrafficConsistency>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
+    expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -476,6 +482,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_traffic_consistency: Vec::new(),
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
+            expected_parallel_progress_transitions: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_worker_activity: Vec::new(),
             expected_parallel_scheduler_progress: Vec::new(),
@@ -851,6 +858,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_remote_traffic_consistency,
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
+            expected_parallel_progress_transitions: &self.expected_parallel_progress_transitions,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
             expected_parallel_scheduler_progress: &self.expected_parallel_scheduler_progress,
@@ -885,6 +893,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_remote_traffic_consistency,
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
+            expected_parallel_progress_transitions: self.expected_parallel_progress_transitions,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
             expected_parallel_scheduler_progress: self.expected_parallel_scheduler_progress,
@@ -926,6 +935,7 @@ pub struct WorkloadReplayPlan {
         Vec<WorkloadExpectedParallelRemoteTrafficConsistency>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
+    expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -978,6 +988,9 @@ impl WorkloadReplayPlan {
             expected_parallel_remote_sends: manifest.expected_parallel_remote_sends().to_vec(),
             expected_parallel_remote_flow_timings: manifest
                 .expected_parallel_remote_flow_timings()
+                .to_vec(),
+            expected_parallel_progress_transitions: manifest
+                .expected_parallel_progress_transitions()
                 .to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_worker_activity: manifest
@@ -1385,6 +1398,7 @@ impl WorkloadReplayPlan {
         self.verify_stop_reason(result)?;
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
         replay_verify::verify_expected_parallel_remote_sends(self, result)?;
+        replay_verify::verify_expected_parallel_progress_transitions(self, result)?;
         replay_verify::verify_expected_parallel_remote_flow_timings(self, result)?;
         replay_verify::verify_expected_parallel_remote_endpoints(self, result)?;
         replay_verify::verify_expected_parallel_remote_delay_floors(self, result)?;

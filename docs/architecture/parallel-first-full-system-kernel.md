@@ -82,7 +82,7 @@ backed by tests, traces, or explicit runtime records.
 
 | gem5 pressure | rem6 countermeasure | Required evidence |
 | --- | --- | --- |
-| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require batch count, dispatch progress, and worker activity derived from the strongest available aggregate, batch histogram, exact partition-set histogram, same-partition-set streak, or per-partition activity evidence, per-partition remote activity derived from remote-send records or remote-flow records, remote-flow count and timing evidence derived from remote-send records when aggregate flow records are absent or weaker, initial or final frontier minima, and worker-use evidence. |
+| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require batch count, dispatch progress, exact progress-free transition records, and worker activity derived from the strongest available aggregate, batch histogram, exact partition-set histogram, same-partition-set streak, or per-partition activity evidence, per-partition remote activity derived from remote-send records or remote-flow records, remote-flow count and timing evidence derived from remote-send records when aggregate flow records are absent or weaker, initial or final frontier minima, and worker-use evidence. |
 | Parallel extensions are added around an older serial core. | Every core, cache, directory bank, NoC tile, memory channel, GPU unit, and accelerator engine has partition ownership. | Topology tests reject components without a partition, and run summaries report active partitions from aggregate counts, exact batch partition-set unions, activity-derived partition unions, remote-send endpoints, or remote-flow source/target unions. Summary work flags are also driven by typed partition evidence and frontier records rather than by worker aggregates alone. |
 | Classic cache and Ruby coherence stacks are split. | Memory, cache, coherence, NoC, and DRAM use one transaction and message vocabulary. | Cross-crate tests move CPU, GPU, and DMA traffic through the same transport path, and workload replay manifests can require attributed data-cache runs with no unattributed bridge activity, internally consistent data-cache run accounting, and recorded MSI/MESI/MOESI/CHI data-cache protocol runs. |
 | Ruby protocols encode topology and protocol behavior together. | Protocol crates own state machines; topology and transport crates own placement and routing. | Protocol tests run without topology, and topology tests swap protocol backends without changing routes. |
@@ -393,14 +393,16 @@ Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
-They may also require individual remote-send records, remote-flow delivery
-windows, and optional min/max delay bounds, turning cross-partition timing into
-replayable evidence instead of an aggregate traffic count. Remote-send records
-are strong enough to derive route-level flow count, first/last delivery tick,
-and delay-bound evidence when an aggregate remote-flow record is absent or
-weaker than the exact send evidence.
-Remote-send and remote-flow expectations are exact per declared scope: replay
-rejects missing records and additional records in that scope.
+They may also require individual remote-send records, exact progress-free
+transition records, remote-flow delivery windows, and optional min/max delay
+bounds, turning cross-partition timing and livelock evidence into replayable
+data instead of aggregate counters. Remote-send records are strong enough to
+derive route-level flow count, first/last delivery tick, and delay-bound
+evidence when an aggregate remote-flow record is absent or weaker than the
+exact send evidence.
+Remote-send, progress-transition, and remote-flow expectations are exact per
+declared scope: replay rejects missing records and additional records in that
+scope.
 
 ## Message Model
 
@@ -605,7 +607,7 @@ work.
 | Statistics | Tests for registry-owned stat groups, self-describing group catalogs on snapshots, dumps, and deltas, checked counter descriptions, structured counter scope/name identity, path grammar, structured unit and rate grammar, monotonic reset behavior, typed dump records, schema-and-reset-scope-checked deltas, and aggregation into system summaries. |
 | Power | Tests for power domains, expression inputs, stat snapshot and core stats-delta bindings, thermal coupling, and invalid scope or schema rejection. |
 | Deadlock diagnostics | Tests that create a wait-for cycle and assert a bounded diagnostic. |
-| Livelock diagnostics | Tests that create repeated progress-free transitions and assert a bounded diagnostic. |
+| Livelock diagnostics | Tests that create repeated progress-free transitions, assert exact replay records, and assert a bounded diagnostic. |
 
 ## Disallowed Patterns
 

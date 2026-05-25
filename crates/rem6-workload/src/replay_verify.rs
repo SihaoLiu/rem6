@@ -1,10 +1,14 @@
 use std::collections::BTreeMap;
 
-use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId, Tick};
+use rem6_kernel::{
+    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionId, Tick,
+};
 
 use crate::{
-    WorkloadError, WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadParallelExecutionSummary,
+    WorkloadError, WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadParallelExecutionSummary, WorkloadParallelProgressTransitionExpectationFailure,
     WorkloadParallelRemoteFlowScope, WorkloadParallelRemoteTrafficConsistencyMismatch,
     WorkloadReplayPlan, WorkloadResult,
 };
@@ -67,6 +71,96 @@ pub(crate) fn verify_expected_parallel_remote_sends(
         }
     }
     Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_progress_transitions(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_transitions = plan.expected_parallel_progress_transitions();
+    if expected_transitions.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        return Err(expected_transitions[0]
+            .to_error(WorkloadParallelProgressTransitionExpectationFailure::MissingSummary));
+    };
+
+    for expected in expected_transitions {
+        if expected.actual_record(summary).is_none() {
+            return Err(expected
+                .to_error(WorkloadParallelProgressTransitionExpectationFailure::MissingRecord));
+        }
+    }
+    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+        let expected_for_scope =
+            expected_parallel_progress_transitions_for_scope(expected_transitions, scope);
+        if expected_for_scope.is_empty() {
+            continue;
+        }
+        let actual_for_scope = actual_parallel_progress_transitions_for_scope(summary, scope);
+        if let Some(actual) =
+            unexpected_parallel_progress_transition(&expected_for_scope, &actual_for_scope)
+        {
+            return Err(WorkloadExpectedParallelProgressTransition::new(
+                scope,
+                actual.partition(),
+                actual.subject().clone(),
+                actual.kind(),
+                actual.tick(),
+                actual.order(),
+            )
+            .to_error(WorkloadParallelProgressTransitionExpectationFailure::UnexpectedRecord));
+        }
+    }
+    Ok(())
+}
+
+fn expected_parallel_progress_transitions_for_scope(
+    expected_transitions: &[WorkloadExpectedParallelProgressTransition],
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<WorkloadExpectedParallelProgressTransition> {
+    expected_transitions
+        .iter()
+        .filter(|expected| expected.scope() == scope)
+        .cloned()
+        .collect()
+}
+
+fn actual_parallel_progress_transitions_for_scope(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<ParallelProgressTransitionRecord> {
+    match scope {
+        WorkloadParallelRemoteFlowScope::Scheduler => {
+            summary.parallel_scheduler_progress_transitions().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            .data_cache_parallel_scheduler_progress_transitions()
+            .to_vec(),
+        WorkloadParallelRemoteFlowScope::FullSystem => summary.full_system_progress_transitions(),
+    }
+}
+
+fn unexpected_parallel_progress_transition(
+    expected_transitions: &[WorkloadExpectedParallelProgressTransition],
+    actual_transitions: &[ParallelProgressTransitionRecord],
+) -> Option<ParallelProgressTransitionRecord> {
+    let mut matched_expectations = vec![false; expected_transitions.len()];
+    for actual in actual_transitions {
+        let matching_index = expected_transitions
+            .iter()
+            .enumerate()
+            .find(|(index, expected)| {
+                !matched_expectations[*index] && expected.matches_record(actual)
+            })
+            .map(|(index, _)| index);
+        match matching_index {
+            Some(index) => matched_expectations[index] = true,
+            None => return Some(actual.clone()),
+        }
+    }
+    None
 }
 
 fn expected_parallel_remote_sends_for_scope(

@@ -12,8 +12,9 @@ use crate::{
     },
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency,
+    WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
+    WorkloadRouteLatency,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -425,6 +426,7 @@ pub enum WorkloadError {
         delivery_tick: Tick,
         order: u64,
     },
+    ParallelProgressTransitionExpectation(WorkloadParallelProgressTransitionExpectationError),
     ZeroExpectedParallelRemoteDelayFloor {
         scope: WorkloadParallelRemoteFlowScope,
     },
@@ -1279,6 +1281,17 @@ impl fmt::Display for WorkloadError {
             | Self::UnexpectedParallelRemoteSend { .. } => {
                 format_remote_traffic_error(self, formatter)
             }
+            Self::ParallelProgressTransitionExpectation(error) => write!(
+                formatter,
+                "{} {} progress transition on partition {} for {} kind {} at tick {} with order {}",
+                error.failure().as_str(),
+                error.scope().as_str(),
+                error.partition().index(),
+                error.subject(),
+                error.kind().as_str(),
+                error.tick(),
+                error.order()
+            ),
             Self::EmptyExpectedParallelRemoteEndpointSources { .. }
             | Self::EmptyExpectedParallelRemoteEndpointTargets { .. }
             | Self::DuplicateExpectedParallelRemoteEndpoints { .. }
