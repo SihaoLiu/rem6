@@ -422,6 +422,14 @@ pub enum WorkloadError {
         expected_last_tick: Tick,
         actual_last_tick: Option<Tick>,
     },
+    UnexpectedParallelRemoteFlowTiming {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        actual_send_count: usize,
+        actual_first_tick: Tick,
+        actual_last_tick: Tick,
+    },
     ExpectedParallelRemoteFlowDelayBoundsMismatch {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
@@ -1238,6 +1246,18 @@ impl fmt::Display for WorkloadError {
                     scope.as_str()
                 )
             }
+            Self::UnexpectedParallelRemoteFlowTiming {
+                scope,
+                source,
+                target,
+                actual_send_count,
+                actual_first_tick,
+                actual_last_tick,
+            } => write!(
+                formatter,
+                "unexpected {} remote flow timing {source}->{target} with {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
+                scope.as_str()
+            ),
             Self::ExpectedParallelRemoteFlowDelayBoundsMismatch {
                 scope,
                 source,

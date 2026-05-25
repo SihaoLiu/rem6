@@ -344,6 +344,40 @@ fn workload_replay_plan_rejects_missing_or_mismatched_parallel_remote_flow_timin
 }
 
 #[test]
+fn workload_replay_plan_rejects_unexpected_parallel_remote_flow_timing() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow_timing(expected_timing(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+            3,
+            7,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 3, 7),
+            ParallelRemoteFlowRecord::new(PartitionId::new(2), PartitionId::new(3), 1, 11, 11),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelRemoteFlowTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            actual_send_count: 1,
+            actual_first_tick: 11,
+            actual_last_tick: 11,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_missing_or_mismatched_parallel_remote_flow_delay_bounds() {
     let plan = replay_plan()
         .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(

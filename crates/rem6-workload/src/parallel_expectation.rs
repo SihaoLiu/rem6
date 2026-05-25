@@ -794,6 +794,14 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
         }
     }
 
+    pub(crate) fn matches_timing_record(self, flow: ParallelRemoteFlowRecord) -> bool {
+        flow.source() == self.source
+            && flow.target() == self.target
+            && flow.send_count() == self.send_count
+            && flow.first_tick() == self.first_tick
+            && flow.last_tick() == self.last_tick
+    }
+
     pub(crate) fn delay_bounds_mismatch(
         self,
         actual: Option<ParallelRemoteFlowRecord>,

@@ -1,9 +1,9 @@
 use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord};
 
 use crate::{
-    WorkloadError, WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteSend,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResult,
+    WorkloadError, WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResult,
 };
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 3] = [
@@ -249,7 +249,49 @@ pub(crate) fn verify_expected_parallel_remote_flow_timings(
             return Err(error);
         }
     }
+    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+        let expected_for_scope =
+            expected_parallel_remote_flow_timings_for_scope(expected_timings, scope);
+        if expected_for_scope.is_empty() {
+            continue;
+        }
+        let actual_for_scope = actual_parallel_remote_flows_for_scope(summary, scope);
+        if let Some(actual) =
+            unexpected_parallel_remote_flow_timing(&expected_for_scope, &actual_for_scope)
+        {
+            return Err(WorkloadError::UnexpectedParallelRemoteFlowTiming {
+                scope,
+                source: actual.source().index(),
+                target: actual.target().index(),
+                actual_send_count: actual.send_count(),
+                actual_first_tick: actual.first_tick(),
+                actual_last_tick: actual.last_tick(),
+            });
+        }
+    }
     Ok(())
+}
+
+fn expected_parallel_remote_flow_timings_for_scope(
+    expected_timings: &[WorkloadExpectedParallelRemoteFlowTiming],
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<WorkloadExpectedParallelRemoteFlowTiming> {
+    expected_timings
+        .iter()
+        .copied()
+        .filter(|expected| expected.scope() == scope)
+        .collect()
+}
+
+fn unexpected_parallel_remote_flow_timing(
+    expected_timings: &[WorkloadExpectedParallelRemoteFlowTiming],
+    actual_flows: &[ParallelRemoteFlowRecord],
+) -> Option<ParallelRemoteFlowRecord> {
+    actual_flows.iter().copied().find(|actual| {
+        !expected_timings
+            .iter()
+            .any(|expected| expected.matches_timing_record(*actual))
+    })
 }
 
 pub(crate) fn verify_expected_clean_parallel_diagnostics(
