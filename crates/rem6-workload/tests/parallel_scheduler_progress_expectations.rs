@@ -4,6 +4,7 @@ use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelSchedulerProgress, WorkloadId,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
     WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
     WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
@@ -246,6 +247,65 @@ fn workload_replay_plan_derives_dispatch_progress_from_partition_activity() {
     assert!(summary.has_parallel_scheduler_work());
     assert!(summary.has_data_cache_parallel_work());
     assert!(summary.has_full_system_parallel_scheduler_work());
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_dispatch_progress_from_batch_evidence() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("scheduler-progress-from-batch-evidence"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            10,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            0,
+            11,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            21,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 3),
+            WorkloadParallelBatchWorkerCount::new(4, 1),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(10), PartitionId::new(11)], 3),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(10),
+                    PartitionId::new(12),
+                    PartitionId::new(13),
+                    PartitionId::new(14),
+                    PartitionId::new(15),
+                ],
+                1,
+            ),
+        ]);
+
+    assert_eq!(summary.scheduler_dispatch_count(), 10);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 21);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
