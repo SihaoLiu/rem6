@@ -82,6 +82,9 @@ pub enum SchedulerError {
         partition: PartitionId,
         tick: Tick,
     },
+    ParallelWorkerPanicked {
+        partition: PartitionId,
+    },
     EpochHorizonOverflow {
         partition: PartitionId,
         now: Tick,
@@ -156,6 +159,11 @@ impl fmt::Display for SchedulerError {
             Self::SerialEventInParallelEpoch { partition, tick } => write!(
                 formatter,
                 "parallel epoch cannot dispatch serial event in partition {} at tick {tick}",
+                partition.index()
+            ),
+            Self::ParallelWorkerPanicked { partition } => write!(
+                formatter,
+                "parallel worker for partition {} panicked",
                 partition.index()
             ),
             Self::EpochHorizonOverflow {
@@ -830,23 +838,38 @@ impl PartitionedScheduler {
 
             for (index, partition, queue) in partition_queues {
                 let remote_events = Arc::clone(&remote_events);
-                handles.push(scope.spawn(move || {
-                    run_parallel_partition(
-                        index,
-                        partition,
-                        queue,
-                        horizon,
-                        min_remote_delay,
-                        partition_count,
-                        remote_events,
-                    )
-                }));
+                handles.push((
+                    partition,
+                    scope.spawn(move || {
+                        run_parallel_partition(
+                            index,
+                            partition,
+                            queue,
+                            horizon,
+                            min_remote_delay,
+                            partition_count,
+                            remote_events,
+                        )
+                    }),
+                ));
             }
 
-            handles
-                .into_iter()
-                .map(|handle| handle.join().expect("parallel scheduler worker panicked"))
-                .collect::<Result<Vec<_>, SchedulerError>>()
+            let mut results = Vec::with_capacity(handles.len());
+            let mut first_error = None;
+            for (partition, handle) in handles {
+                match handle.join() {
+                    Ok(Ok(result)) => results.push(result),
+                    Ok(Err(error)) => {
+                        first_error.get_or_insert(error);
+                    }
+                    Err(_) => {
+                        first_error
+                            .get_or_insert(SchedulerError::ParallelWorkerPanicked { partition });
+                    }
+                }
+            }
+
+            first_error.map_or(Ok(results), Err)
         })?;
 
         let mut executed_events = 0;

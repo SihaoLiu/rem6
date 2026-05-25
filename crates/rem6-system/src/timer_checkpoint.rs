@@ -490,6 +490,10 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
         SchedulerError::NoPartitions => write_u64(payload, 0),
         SchedulerError::ZeroLookahead => write_u64(payload, 1),
         SchedulerError::ZeroParallelWorkers => write_u64(payload, 13),
+        SchedulerError::ParallelWorkerPanicked { partition } => {
+            write_u64(payload, 15);
+            write_u32(payload, partition.index());
+        }
         SchedulerError::UnknownPartition {
             partition,
             partitions,
@@ -587,6 +591,9 @@ fn decode_scheduler_error(
         0 => Ok(SchedulerError::NoPartitions),
         1 => Ok(SchedulerError::ZeroLookahead),
         13 => Ok(SchedulerError::ZeroParallelWorkers),
+        15 => Ok(SchedulerError::ParallelWorkerPanicked {
+            partition: PartitionId::new(cursor.read_u32("scheduler panicked worker partition")?),
+        }),
         2 => Ok(SchedulerError::UnknownPartition {
             partition: PartitionId::new(cursor.read_u32("scheduler unknown partition")?),
             partitions: cursor.read_u32("scheduler partition count")?,

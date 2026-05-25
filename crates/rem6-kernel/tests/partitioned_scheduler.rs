@@ -1192,6 +1192,21 @@ fn scheduler_rejects_zero_parallel_worker_limit() {
 }
 
 #[test]
+fn scheduler_parallel_worker_panic_returns_typed_error() {
+    let core = PartitionId::new(0);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    scheduler
+        .schedule_parallel_at(core, 0, |_| panic!("worker panic sentinel"))
+        .unwrap();
+
+    assert_eq!(
+        scheduler.run_next_epoch_parallel_recorded().unwrap_err(),
+        SchedulerError::ParallelWorkerPanicked { partition: core }
+    );
+}
+
+#[test]
 fn scheduler_min_delay_constructor_keeps_unbounded_worker_limit() {
     let scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
