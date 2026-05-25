@@ -19,7 +19,8 @@ use crate::result_collect::{
     collect_requestor_summaries, parallel_remote_flow_count,
 };
 use crate::result_partition_activity::{
-    merge_parallel_partition_activity_options, parallel_partition_activity_for_partition,
+    combined_parallel_active_partition_count, merge_parallel_partition_activity_options,
+    parallel_active_partition_count, parallel_partition_activity_for_partition,
     parallel_partition_dispatch_count,
 };
 
@@ -750,8 +751,12 @@ impl WorkloadParallelExecutionSummary {
         self.scheduler_batch_count
     }
 
-    pub const fn active_scheduler_partition_count(&self) -> usize {
+    pub fn active_scheduler_partition_count(&self) -> usize {
         self.active_scheduler_partition_count
+            .max(parallel_active_partition_count(
+                &self.parallel_scheduler_partition_activities,
+                &self.parallel_scheduler_remote_flows,
+            ))
     }
 
     pub fn max_parallel_scheduler_workers(&self) -> usize {
@@ -930,8 +935,12 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_parallel_scheduler_batch_count
     }
 
-    pub const fn active_data_cache_parallel_scheduler_partition_count(&self) -> usize {
+    pub fn active_data_cache_parallel_scheduler_partition_count(&self) -> usize {
         self.active_data_cache_parallel_scheduler_partition_count
+            .max(parallel_active_partition_count(
+                &self.data_cache_parallel_scheduler_partition_activities,
+                &self.data_cache_parallel_scheduler_remote_flows,
+            ))
     }
 
     pub fn data_cache_parallel_scheduler_max_workers(&self) -> usize {
@@ -1554,10 +1563,12 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
         self.active_full_system_parallel_scheduler_partition_count
-            .max(
-                self.full_system_parallel_scheduler_partition_activities()
-                    .len(),
-            )
+            .max(combined_parallel_active_partition_count(
+                &self.parallel_scheduler_partition_activities,
+                &self.parallel_scheduler_remote_flows,
+                &self.data_cache_parallel_scheduler_partition_activities,
+                &self.data_cache_parallel_scheduler_remote_flows,
+            ))
     }
 
     pub fn full_system_parallel_scheduler_max_workers(&self) -> usize {

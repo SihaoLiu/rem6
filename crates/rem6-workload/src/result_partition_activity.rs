@@ -1,4 +1,27 @@
+use std::collections::BTreeSet;
+
 use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
+
+pub(crate) fn parallel_active_partition_count(
+    activities: &[(PartitionId, ParallelPartitionActivity)],
+    flows: &[ParallelRemoteFlowRecord],
+) -> usize {
+    let mut partitions = BTreeSet::new();
+    collect_active_partitions(&mut partitions, activities, flows);
+    partitions.len()
+}
+
+pub(crate) fn combined_parallel_active_partition_count(
+    left_activities: &[(PartitionId, ParallelPartitionActivity)],
+    left_flows: &[ParallelRemoteFlowRecord],
+    right_activities: &[(PartitionId, ParallelPartitionActivity)],
+    right_flows: &[ParallelRemoteFlowRecord],
+) -> usize {
+    let mut partitions = BTreeSet::new();
+    collect_active_partitions(&mut partitions, left_activities, left_flows);
+    collect_active_partitions(&mut partitions, right_activities, right_flows);
+    partitions.len()
+}
 
 pub(crate) fn parallel_partition_dispatch_count(
     activities: &[(PartitionId, ParallelPartitionActivity)],
@@ -38,6 +61,18 @@ pub(crate) fn merge_parallel_partition_activity_options(
         )),
         (Some(activity), None) | (None, Some(activity)) => Some(activity),
         (None, None) => None,
+    }
+}
+
+fn collect_active_partitions(
+    partitions: &mut BTreeSet<PartitionId>,
+    activities: &[(PartitionId, ParallelPartitionActivity)],
+    flows: &[ParallelRemoteFlowRecord],
+) {
+    partitions.extend(activities.iter().map(|(partition, _)| *partition));
+    for flow in flows {
+        partitions.insert(flow.source());
+        partitions.insert(flow.target());
     }
 }
 
