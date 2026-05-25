@@ -560,6 +560,25 @@ impl fmt::Display for WorkloadError {
                 "expected {} partition use to reach at least {minimum_active_partitions} active partitions, got {actual_active_partitions}",
                 scope.as_str()
             ),
+            Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(
+                formatter,
+                "expected {} clean parallel diagnostics is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelDiagnosticSummary { scope } => write!(
+                formatter,
+                "missing parallel summary for expected clean {} diagnostics",
+                scope.as_str()
+            ),
+            Self::ExpectedCleanParallelDiagnosticsViolation {
+                scope,
+                wait_for_edge_count,
+                deadlock_diagnostic_count,
+            } => write!(
+                formatter,
+                "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges and {deadlock_diagnostic_count} deadlock diagnostics",
+                scope.as_str()
+            ),
         }
     }
 }

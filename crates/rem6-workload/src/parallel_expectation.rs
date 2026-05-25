@@ -27,6 +27,84 @@ impl WorkloadParallelRemoteFlowScope {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadParallelDiagnosticScope {
+    Resource,
+    DataCache,
+    Compute,
+    Dma,
+    FullSystem,
+}
+
+impl WorkloadParallelDiagnosticScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Resource => "resource",
+            Self::DataCache => "data-cache",
+            Self::Compute => "compute",
+            Self::Dma => "dma",
+            Self::FullSystem => "full-system",
+        }
+    }
+
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Resource => 0,
+            Self::DataCache => 1,
+            Self::Compute => 2,
+            Self::Dma => 3,
+            Self::FullSystem => 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedCleanParallelDiagnostics {
+    scope: WorkloadParallelDiagnosticScope,
+}
+
+impl WorkloadExpectedCleanParallelDiagnostics {
+    pub const fn new(scope: WorkloadParallelDiagnosticScope) -> Self {
+        Self { scope }
+    }
+
+    pub const fn scope(self) -> WorkloadParallelDiagnosticScope {
+        self.scope
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) const fn actual_counts(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> (usize, usize) {
+        match self.scope {
+            WorkloadParallelDiagnosticScope::Resource => (
+                summary.resource_wait_for_edge_count(),
+                summary.resource_deadlock_diagnostic_count(),
+            ),
+            WorkloadParallelDiagnosticScope::DataCache => (
+                summary.data_cache_wait_for_edge_count(),
+                summary.data_cache_deadlock_diagnostic_count(),
+            ),
+            WorkloadParallelDiagnosticScope::Compute => (
+                summary.compute_wait_for_edge_count(),
+                summary.compute_deadlock_diagnostic_count(),
+            ),
+            WorkloadParallelDiagnosticScope::Dma => (
+                summary.dma_wait_for_edge_count(),
+                summary.dma_deadlock_diagnostic_count(),
+            ),
+            WorkloadParallelDiagnosticScope::FullSystem => (
+                summary.full_system_wait_for_edge_count(),
+                summary.full_system_deadlock_diagnostic_count(),
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelRemoteFlow {
     scope: WorkloadParallelRemoteFlowScope,

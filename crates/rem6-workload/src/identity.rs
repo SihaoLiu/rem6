@@ -1,7 +1,8 @@
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 
 use crate::{
-    CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadExpectedParallelPartitionUse,
+    CheckpointLineage, HostEventIntent, WorkloadBootImage,
+    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionUse,
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelWorkerUse, WorkloadHostEvent,
     WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
     WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
@@ -18,6 +19,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) resources: &'a [WorkloadResource],
     pub(crate) required_resources: &'a [WorkloadResourceId],
     pub(crate) host_events: &'a [WorkloadHostEvent],
+    pub(crate) expected_clean_parallel_diagnostics:
+        &'a [WorkloadExpectedCleanParallelDiagnostics],
     pub(crate) expected_parallel_remote_flows: &'a [WorkloadExpectedParallelRemoteFlow],
     pub(crate) expected_parallel_worker_use: &'a [WorkloadExpectedParallelWorkerUse],
     pub(crate) expected_parallel_partition_use: &'a [WorkloadExpectedParallelPartitionUse],
@@ -53,6 +56,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         hash_u64(&mut hash, event.tick());
         hash_host_event(&mut hash, event.intent());
     }
+    hash_u64(
+        &mut hash,
+        input.expected_clean_parallel_diagnostics.len() as u64,
+    );
+    for expected in input.expected_clean_parallel_diagnostics {
+        hash_expected_clean_parallel_diagnostics(&mut hash, *expected);
+    }
     hash_u64(&mut hash, input.expected_parallel_remote_flows.len() as u64);
     for expected in input.expected_parallel_remote_flows {
         hash_expected_parallel_remote_flow(&mut hash, *expected);
@@ -70,6 +80,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     }
     hash_checkpoint_lineage(&mut hash, input.checkpoint_lineage);
     WorkloadManifestIdentity::new(hash)
+}
+
+fn hash_expected_clean_parallel_diagnostics(
+    hash: &mut u64,
+    expected: WorkloadExpectedCleanParallelDiagnostics,
+) {
+    hash_str(hash, expected.scope().as_str());
 }
 
 fn hash_expected_parallel_remote_flow(

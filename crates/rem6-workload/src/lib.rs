@@ -9,6 +9,7 @@ use rem6_stats::StatSnapshot;
 mod boot_handoff;
 mod error;
 mod heterogeneous;
+mod host_event;
 mod identity;
 mod parallel_expectation;
 mod qos;
@@ -21,10 +22,19 @@ pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
 };
+use host_event::{
+    execution_mode_switch_matches, host_event_sort_key, planned_checkpoint_labels,
+    planned_checkpoint_restore_labels, planned_execution_mode_switches, planned_stop_reason,
+};
+pub use host_event::{
+    CheckpointLineage, HostEventIntent, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
+    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadStatsScope,
+};
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_expectation::{
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelWorkerUse, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelWorkerUse,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -211,245 +221,6 @@ impl WorkloadBootSegment {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkloadExecutionMode {
-    Functional,
-    Timing,
-    Detailed,
-}
-
-impl WorkloadExecutionMode {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Functional => "functional",
-            Self::Timing => "timing",
-            Self::Detailed => "detailed",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadExecutionModeSwitch {
-    tick: Tick,
-    target: String,
-    mode: WorkloadExecutionMode,
-    stats_scope: Option<WorkloadStatsScope>,
-}
-
-impl WorkloadExecutionModeSwitch {
-    pub fn new(tick: Tick, target: impl Into<String>, mode: WorkloadExecutionMode) -> Self {
-        Self {
-            tick,
-            target: target.into(),
-            mode,
-            stats_scope: None,
-        }
-    }
-
-    pub const fn with_stats_scope(mut self, epoch: u64, reset_tick: Tick) -> Self {
-        self.stats_scope = Some(WorkloadStatsScope::new(epoch, reset_tick));
-        self
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub fn target(&self) -> &str {
-        &self.target
-    }
-
-    pub const fn mode(&self) -> &WorkloadExecutionMode {
-        &self.mode
-    }
-
-    pub const fn stats_scope(&self) -> Option<&WorkloadStatsScope> {
-        self.stats_scope.as_ref()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadStatsScope {
-    epoch: u64,
-    reset_tick: Tick,
-}
-
-impl WorkloadStatsScope {
-    pub const fn new(epoch: u64, reset_tick: Tick) -> Self {
-        Self { epoch, reset_tick }
-    }
-
-    pub const fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    pub const fn reset_tick(&self) -> Tick {
-        self.reset_tick
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct WorkloadHostActionSummary {
-    total_action_count: usize,
-    injected_command_count: usize,
-    stats_reset_count: usize,
-    stats_snapshot_count: usize,
-    checkpoint_count: usize,
-    checkpoint_restore_count: usize,
-    execution_mode_switch_count: usize,
-    stop_count: usize,
-}
-
-impl WorkloadHostActionSummary {
-    pub fn record_injected_command(&mut self) {
-        self.total_action_count += 1;
-        self.injected_command_count += 1;
-    }
-
-    pub fn record_stats_reset(&mut self) {
-        self.total_action_count += 1;
-        self.stats_reset_count += 1;
-    }
-
-    pub fn record_stats_snapshot(&mut self) {
-        self.total_action_count += 1;
-        self.stats_snapshot_count += 1;
-    }
-
-    pub fn record_checkpoint(&mut self) {
-        self.total_action_count += 1;
-        self.checkpoint_count += 1;
-    }
-
-    pub fn record_checkpoint_restore(&mut self) {
-        self.total_action_count += 1;
-        self.checkpoint_restore_count += 1;
-    }
-
-    pub fn record_execution_mode_switch(&mut self) {
-        self.total_action_count += 1;
-        self.execution_mode_switch_count += 1;
-    }
-
-    pub fn record_stop(&mut self) {
-        self.total_action_count += 1;
-        self.stop_count += 1;
-    }
-
-    pub const fn total_action_count(&self) -> usize {
-        self.total_action_count
-    }
-
-    pub const fn injected_command_count(&self) -> usize {
-        self.injected_command_count
-    }
-
-    pub const fn stats_reset_count(&self) -> usize {
-        self.stats_reset_count
-    }
-
-    pub const fn stats_snapshot_count(&self) -> usize {
-        self.stats_snapshot_count
-    }
-
-    pub const fn checkpoint_count(&self) -> usize {
-        self.checkpoint_count
-    }
-
-    pub const fn checkpoint_restore_count(&self) -> usize {
-        self.checkpoint_restore_count
-    }
-
-    pub const fn execution_mode_switch_count(&self) -> usize {
-        self.execution_mode_switch_count
-    }
-
-    pub const fn stop_count(&self) -> usize {
-        self.stop_count
-    }
-
-    pub const fn has_host_actions(&self) -> bool {
-        self.total_action_count != 0
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum HostEventIntent {
-    RoiBegin {
-        label: String,
-    },
-    RoiEnd {
-        label: String,
-    },
-    StatsReset {
-        label: String,
-    },
-    StatsDump {
-        label: String,
-    },
-    SwitchExecutionMode {
-        target: String,
-        mode: WorkloadExecutionMode,
-    },
-    Checkpoint {
-        label: String,
-    },
-    RestoreCheckpoint {
-        label: String,
-    },
-    Stop {
-        reason: String,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadHostEvent {
-    tick: Tick,
-    intent: HostEventIntent,
-}
-
-impl WorkloadHostEvent {
-    pub const fn new(tick: Tick, intent: HostEventIntent) -> Self {
-        Self { tick, intent }
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub const fn intent(&self) -> &HostEventIntent {
-        &self.intent
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CheckpointLineage {
-    CreatedByWorkload {
-        label: String,
-    },
-    RestoredFrom {
-        label: String,
-        manifest_identity: String,
-    },
-}
-
-impl CheckpointLineage {
-    pub fn label(&self) -> &str {
-        match self {
-            Self::CreatedByWorkload { label } | Self::RestoredFrom { label, .. } => label,
-        }
-    }
-
-    pub fn manifest_identity(&self) -> Option<&str> {
-        match self {
-            Self::CreatedByWorkload { .. } => None,
-            Self::RestoredFrom {
-                manifest_identity, ..
-            } => Some(manifest_identity),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WorkloadManifestIdentity(String);
 
@@ -472,6 +243,7 @@ pub struct WorkloadManifest {
     resources: Vec<WorkloadResource>,
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
+    expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
@@ -529,6 +301,12 @@ impl WorkloadManifest {
         &self.host_events
     }
 
+    pub fn expected_clean_parallel_diagnostics(
+        &self,
+    ) -> &[WorkloadExpectedCleanParallelDiagnostics] {
+        &self.expected_clean_parallel_diagnostics
+    }
+
     pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
         &self.expected_parallel_remote_flows
     }
@@ -563,6 +341,7 @@ pub struct WorkloadManifestBuilder {
     resources: BTreeMap<WorkloadResourceId, WorkloadResource>,
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
+    expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
@@ -579,6 +358,7 @@ impl WorkloadManifestBuilder {
             resources: BTreeMap::new(),
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
+            expected_clean_parallel_diagnostics: Vec::new(),
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
@@ -592,6 +372,25 @@ impl WorkloadManifestBuilder {
             return Err(WorkloadError::DuplicateResource { resource: id });
         }
         self.resources.insert(id, resource);
+        Ok(self)
+    }
+
+    pub fn add_expected_clean_parallel_diagnostics(
+        mut self,
+        expected: WorkloadExpectedCleanParallelDiagnostics,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_clean_parallel_diagnostics
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedCleanParallelDiagnostics {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_clean_parallel_diagnostics.push(expected);
+        self.expected_clean_parallel_diagnostics
+            .sort_by_key(|diagnostics| diagnostics.sort_key());
         Ok(self)
     }
 
@@ -748,6 +547,7 @@ impl WorkloadManifestBuilder {
             resources: &resources,
             required_resources: &required_resources,
             host_events: &self.host_events,
+            expected_clean_parallel_diagnostics: &self.expected_clean_parallel_diagnostics,
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
@@ -762,6 +562,7 @@ impl WorkloadManifestBuilder {
             resources,
             required_resources,
             host_events: self.host_events,
+            expected_clean_parallel_diagnostics: self.expected_clean_parallel_diagnostics,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
@@ -783,6 +584,7 @@ pub struct WorkloadReplayPlan {
     planned_checkpoint_restore_labels: Vec<String>,
     planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
+    expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
@@ -802,6 +604,9 @@ impl WorkloadReplayPlan {
             planned_checkpoint_restore_labels: planned_checkpoint_restore_labels(&host_events),
             planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
+            expected_clean_parallel_diagnostics: manifest
+                .expected_clean_parallel_diagnostics()
+                .to_vec(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
@@ -921,6 +726,31 @@ impl WorkloadReplayPlan {
         Ok(self)
     }
 
+    pub fn add_expected_clean_parallel_diagnostics(
+        mut self,
+        expected: WorkloadExpectedCleanParallelDiagnostics,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_clean_parallel_diagnostics
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedCleanParallelDiagnostics {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_clean_parallel_diagnostics.push(expected);
+        self.expected_clean_parallel_diagnostics
+            .sort_by_key(|diagnostics| diagnostics.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_clean_parallel_diagnostics(
+        &self,
+    ) -> &[WorkloadExpectedCleanParallelDiagnostics] {
+        &self.expected_clean_parallel_diagnostics
+    }
+
     pub fn expected_parallel_partition_use(&self) -> &[WorkloadExpectedParallelPartitionUse] {
         &self.expected_parallel_partition_use
     }
@@ -946,6 +776,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_remote_flows(result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_partition_use(result)?;
+        self.verify_expected_clean_parallel_diagnostics(result)?;
         Ok(())
     }
 
@@ -1157,6 +988,33 @@ impl WorkloadReplayPlan {
                     scope: expected.scope(),
                     minimum_active_partitions: expected.minimum_active_partitions(),
                     actual_active_partitions,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_expected_clean_parallel_diagnostics(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_clean_parallel_diagnostics.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_clean_parallel_diagnostics[0];
+            return Err(WorkloadError::MissingParallelDiagnosticSummary {
+                scope: expected.scope(),
+            });
+        };
+
+        for expected in &self.expected_clean_parallel_diagnostics {
+            let (wait_for_edge_count, deadlock_diagnostic_count) = expected.actual_counts(summary);
+            if wait_for_edge_count != 0 || deadlock_diagnostic_count != 0 {
+                return Err(WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
+                    scope: expected.scope(),
+                    wait_for_edge_count,
+                    deadlock_diagnostic_count,
                 });
             }
         }
@@ -1678,68 +1536,15 @@ pub enum WorkloadError {
         minimum_active_partitions: usize,
         actual_active_partitions: usize,
     },
-}
-
-fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
-    let (rank, label) = match event.intent() {
-        HostEventIntent::RoiBegin { label } => (0, label.as_str()),
-        HostEventIntent::RoiEnd { label } => (1, label.as_str()),
-        HostEventIntent::StatsReset { label } => (2, label.as_str()),
-        HostEventIntent::StatsDump { label } => (3, label.as_str()),
-        HostEventIntent::SwitchExecutionMode { target, .. } => (4, target.as_str()),
-        HostEventIntent::Checkpoint { label } => (5, label.as_str()),
-        HostEventIntent::RestoreCheckpoint { label } => (6, label.as_str()),
-        HostEventIntent::Stop { reason } => (7, reason.as_str()),
-    };
-    (event.tick(), rank, label.to_string())
-}
-
-fn planned_checkpoint_labels(events: &[WorkloadHostEvent]) -> Vec<String> {
-    events
-        .iter()
-        .filter_map(|event| match event.intent() {
-            HostEventIntent::Checkpoint { label } => Some(label.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn planned_checkpoint_restore_labels(events: &[WorkloadHostEvent]) -> Vec<String> {
-    events
-        .iter()
-        .filter_map(|event| match event.intent() {
-            HostEventIntent::RestoreCheckpoint { label } => Some(label.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn planned_execution_mode_switches(
-    events: &[WorkloadHostEvent],
-) -> Vec<WorkloadExecutionModeSwitch> {
-    events
-        .iter()
-        .filter_map(|event| match event.intent() {
-            HostEventIntent::SwitchExecutionMode { target, mode } => Some(
-                WorkloadExecutionModeSwitch::new(event.tick(), target.clone(), mode.clone()),
-            ),
-            _ => None,
-        })
-        .collect()
-}
-
-fn execution_mode_switch_matches(
-    expected: &WorkloadExecutionModeSwitch,
-    actual: &WorkloadExecutionModeSwitch,
-) -> bool {
-    expected.tick() == actual.tick()
-        && expected.target() == actual.target()
-        && expected.mode() == actual.mode()
-}
-
-fn planned_stop_reason(events: &[WorkloadHostEvent]) -> Option<String> {
-    events.iter().find_map(|event| match event.intent() {
-        HostEventIntent::Stop { reason } => Some(reason.clone()),
-        _ => None,
-    })
+    DuplicateExpectedCleanParallelDiagnostics {
+        scope: WorkloadParallelDiagnosticScope,
+    },
+    MissingParallelDiagnosticSummary {
+        scope: WorkloadParallelDiagnosticScope,
+    },
+    ExpectedCleanParallelDiagnosticsViolation {
+        scope: WorkloadParallelDiagnosticScope,
+        wait_for_edge_count: usize,
+        deadlock_diagnostic_count: usize,
+    },
 }
