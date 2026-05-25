@@ -467,6 +467,45 @@ impl fmt::Display for WorkloadError {
             Self::UnexpectedStopReason { actual } => {
                 write!(formatter, "stop reason {actual} was not planned")
             }
+            Self::ZeroExpectedParallelRemoteFlowCount {
+                scope,
+                source,
+                target,
+            } => write!(
+                formatter,
+                "expected {} remote flow {source}->{target} must have a positive send count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelRemoteFlow {
+                scope,
+                source,
+                target,
+            } => write!(
+                formatter,
+                "expected {} remote flow {source}->{target} is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelExecutionSummary {
+                scope,
+                source,
+                target,
+                expected_send_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} remote flow {source}->{target} with {expected_send_count} sends",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelRemoteFlowCountMismatch {
+                scope,
+                source,
+                target,
+                expected_send_count,
+                actual_send_count,
+            } => write!(
+                formatter,
+                "expected {} remote flow {source}->{target} to have {expected_send_count} sends, got {actual_send_count}",
+                scope.as_str()
+            ),
         }
     }
 }

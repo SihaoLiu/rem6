@@ -10,6 +10,7 @@ mod boot_handoff;
 mod error;
 mod heterogeneous;
 mod identity;
+mod parallel_expectation;
 mod qos;
 mod resource_payload;
 mod result;
@@ -21,6 +22,9 @@ pub use heterogeneous::{
     WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
 };
 use identity::{manifest_identity, ManifestIdentityInput};
+pub use parallel_expectation::{
+    WorkloadExpectedParallelRemoteFlow, WorkloadParallelRemoteFlowScope,
+};
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
     WorkloadQosTurnaroundPolicyKind,
@@ -692,6 +696,7 @@ pub struct WorkloadReplayPlan {
     planned_checkpoint_restore_labels: Vec<String>,
     planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
+    expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -708,6 +713,7 @@ impl WorkloadReplayPlan {
             planned_checkpoint_restore_labels: planned_checkpoint_restore_labels(&host_events),
             planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
+            expected_parallel_remote_flows: Vec::new(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
         })
@@ -757,6 +763,31 @@ impl WorkloadReplayPlan {
         self.planned_stop_reason.as_deref()
     }
 
+    pub fn add_expected_parallel_remote_flow(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteFlow,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_flows
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlow {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+            });
+        }
+        self.expected_parallel_remote_flows.push(expected);
+        self.expected_parallel_remote_flows
+            .sort_by_key(|flow| flow.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
+        &self.expected_parallel_remote_flows
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -775,6 +806,7 @@ impl WorkloadReplayPlan {
         self.verify_checkpoint_restore_labels(result)?;
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
+        self.verify_expected_parallel_remote_flows(result)?;
         Ok(())
     }
 
@@ -902,6 +934,38 @@ impl WorkloadReplayPlan {
             expected: expected.clone(),
             actual: result.stop_reason().map(str::to_string),
         })
+    }
+
+    fn verify_expected_parallel_remote_flows(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_remote_flows.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_parallel_remote_flows[0];
+            return Err(WorkloadError::MissingParallelExecutionSummary {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                expected_send_count: expected.send_count(),
+            });
+        };
+
+        for expected in &self.expected_parallel_remote_flows {
+            let actual_send_count = expected.actual_send_count(summary);
+            if actual_send_count != expected.send_count() {
+                return Err(WorkloadError::ExpectedParallelRemoteFlowCountMismatch {
+                    scope: expected.scope(),
+                    source: expected.source().index(),
+                    target: expected.target().index(),
+                    expected_send_count: expected.send_count(),
+                    actual_send_count,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1365,6 +1429,29 @@ pub enum WorkloadError {
     },
     UnexpectedStopReason {
         actual: String,
+    },
+    ZeroExpectedParallelRemoteFlowCount {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
+    DuplicateExpectedParallelRemoteFlow {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
+    MissingParallelExecutionSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+    },
+    ExpectedParallelRemoteFlowCountMismatch {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+        actual_send_count: usize,
     },
 }
 
