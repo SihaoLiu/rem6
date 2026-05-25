@@ -879,9 +879,7 @@ impl PartitionedScheduler {
             executed_events += result.executed_events;
             dispatches.extend(result.dispatches);
             latest_partition_tick = latest_partition_tick.max(result.queue.now);
-            if result.error.is_none() {
-                remote_events.extend(result.remote_events);
-            }
+            remote_events.extend(result.remote_events);
             self.partitions[result.index] = result.queue;
         }
 
@@ -1203,6 +1201,7 @@ fn run_parallel_partition(
             PartitionEventCallback::Parallel(callback) => {
                 let rollback_next_id = queue.next_id;
                 let rollback_next_order = queue.next_order;
+                let rollback_remote_len = remote_events.len();
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     let mut context = ParallelSchedulerContext {
                         queue: &mut queue,
@@ -1217,6 +1216,7 @@ fn run_parallel_partition(
                 }));
                 if result.is_err() {
                     queue.rollback_scheduled_events(rollback_next_id, rollback_next_order);
+                    remote_events.truncate(rollback_remote_len);
                     return ParallelPartitionResult {
                         index,
                         queue,
