@@ -1629,6 +1629,47 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn full_system_parallel_scheduler_initial_frontiers(&self) -> Vec<PartitionFrontier> {
+        collect_partition_frontiers(
+            self.parallel_scheduler_initial_frontiers
+                .iter()
+                .copied()
+                .chain(
+                    self.data_cache_parallel_scheduler_initial_frontiers
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_final_frontiers(&self) -> Vec<PartitionFrontier> {
+        collect_partition_frontiers(
+            self.parallel_scheduler_final_frontiers
+                .iter()
+                .copied()
+                .chain(
+                    self.data_cache_parallel_scheduler_final_frontiers
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_initial_frontier_count(&self) -> usize {
+        self.parallel_scheduler_initial_frontier_count()
+            + self.data_cache_parallel_scheduler_initial_frontier_count()
+    }
+
+    pub fn full_system_parallel_scheduler_final_frontier_count(&self) -> usize {
+        self.parallel_scheduler_final_frontier_count()
+            + self.data_cache_parallel_scheduler_final_frontier_count()
+    }
+
+    pub fn has_full_system_parallel_scheduler_frontiers(&self) -> bool {
+        self.has_parallel_scheduler_frontiers()
+            || self.has_data_cache_parallel_scheduler_frontiers()
+    }
+
     pub fn full_system_parallel_scheduler_partition_activities(
         &self,
     ) -> Vec<(PartitionId, ParallelPartitionActivity)> {

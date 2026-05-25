@@ -54,7 +54,8 @@ The following public sources shape this design:
   experienced researchers:
   <https://www.gem5.org/documentation/gem5art/main/summary>
 - parti-gem5 identifies gem5's single-threaded simulation kernel as a major
-  throughput limit and reports speedups with timing deviations:
+  throughput limit, describes thread safety as hard because gem5 was designed
+  for sequential execution, and reports speedups with timing deviations:
   <https://arxiv.org/abs/2308.09445>
 - The gem5 packaging discussion identifies many build and run-time
   dependencies, numerous compile-time options, and individually managed source
@@ -356,7 +357,10 @@ frontiers for each recorded parallel epoch, so higher layers can verify how far
 each partition advanced instead of inferring it from aggregate counts.
 Data-cache and coherence run summaries follow the same rule, and workload
 result summaries must retain those frontiers separately from aggregate worker
-and batch counts.
+and batch counts. Workload result summaries also expose aggregate full-system
+frontier views so verification can reason about the combined CPU and
+data-cache/coherence conservative horizon without discarding per-subsystem
+records.
 
 ## Message Model
 

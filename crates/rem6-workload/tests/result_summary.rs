@@ -294,6 +294,31 @@ fn workload_result_records_parallel_execution_summary() {
         1
     );
     assert!(summary.has_data_cache_parallel_scheduler_frontiers());
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontiers(),
+        vec![
+            PartitionFrontier::new(PartitionId::new(0), 0, 8, Some(2), 1),
+            PartitionFrontier::new(PartitionId::new(1), 0, 8, Some(4), 1),
+            PartitionFrontier::new(PartitionId::new(4), 13, 21, Some(19), 2),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontiers(),
+        vec![
+            PartitionFrontier::new(PartitionId::new(0), 8, 16, None, 0),
+            PartitionFrontier::new(PartitionId::new(1), 4, 16, Some(12), 1),
+            PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontier_count(),
+        3
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontier_count(),
+        3
+    );
+    assert!(summary.has_full_system_parallel_scheduler_frontiers());
     assert_eq!(summary.attributed_data_cache_parallel_run_count(), 6);
     assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 1);
     assert_eq!(
