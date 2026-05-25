@@ -6,6 +6,8 @@ use rem6_kernel::{ParallelPartitionActivity, PartitionId, Tick};
 pub enum WorkloadParallelBatchScope {
     Scheduler,
     DataCacheScheduler,
+    GpuDmaScheduler,
+    AcceleratorDmaScheduler,
 }
 
 impl WorkloadParallelBatchScope {
@@ -13,6 +15,8 @@ impl WorkloadParallelBatchScope {
         match self {
             Self::Scheduler => "scheduler",
             Self::DataCacheScheduler => "data-cache-scheduler",
+            Self::GpuDmaScheduler => "gpu-dma-scheduler",
+            Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
         }
     }
 
@@ -20,6 +24,8 @@ impl WorkloadParallelBatchScope {
         match self {
             Self::Scheduler => 0,
             Self::DataCacheScheduler => 1,
+            Self::GpuDmaScheduler => 2,
+            Self::AcceleratorDmaScheduler => 3,
         }
     }
 }

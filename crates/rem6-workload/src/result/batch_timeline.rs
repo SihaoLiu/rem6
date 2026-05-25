@@ -51,6 +51,40 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        let timeline = collect_scoped_parallel_batch_timeline(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            records,
+        );
+        self.gpu_dma_scheduler_batch_count = timeline.len();
+        self.gpu_dma_scheduler_batch_worker_counts =
+            collect_parallel_batch_worker_counts_from_timeline(&timeline);
+        self.gpu_dma_scheduler_batch_worker_count_ticks =
+            collect_parallel_batch_worker_count_tick_summaries(&timeline);
+        self.gpu_dma_scheduler_batch_timeline = timeline;
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        let timeline = collect_scoped_parallel_batch_timeline(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            records,
+        );
+        self.accelerator_dma_scheduler_batch_count = timeline.len();
+        self.accelerator_dma_scheduler_batch_worker_counts =
+            collect_parallel_batch_worker_counts_from_timeline(&timeline);
+        self.accelerator_dma_scheduler_batch_worker_count_ticks =
+            collect_parallel_batch_worker_count_tick_summaries(&timeline);
+        self.accelerator_dma_scheduler_batch_timeline = timeline;
+        self
+    }
+
     pub fn parallel_scheduler_batch_timeline(&self) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.parallel_scheduler_batch_timeline
     }
@@ -59,6 +93,26 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.data_cache_parallel_scheduler_batch_timeline
+    }
+
+    pub fn gpu_dma_scheduler_batch_timeline(&self) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.gpu_dma_scheduler_batch_timeline
+    }
+
+    pub fn accelerator_dma_scheduler_batch_timeline(
+        &self,
+    ) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.accelerator_dma_scheduler_batch_timeline
+    }
+
+    pub fn dma_scheduler_batch_timeline(&self) -> Vec<WorkloadParallelBatchTimelineRecord> {
+        collect_parallel_batch_timeline(
+            self.gpu_dma_scheduler_batch_timeline.iter().cloned().chain(
+                self.accelerator_dma_scheduler_batch_timeline
+                    .iter()
+                    .cloned(),
+            ),
+        )
     }
 
     pub fn full_system_parallel_scheduler_batch_timeline(
@@ -72,7 +126,8 @@ impl WorkloadParallelExecutionSummary {
                     self.data_cache_parallel_scheduler_batch_timeline
                         .iter()
                         .cloned(),
-                ),
+                )
+                .chain(self.dma_scheduler_batch_timeline()),
         )
     }
 
@@ -92,20 +147,22 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<(usize, Tick)> {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        collect_batch_worker_count_tick_summaries(
-            collect_parallel_batch_worker_count_tick_summaries(&timeline)
-                .into_iter()
-                .chain(
-                    self.gpu_dma_scheduler_batch_worker_count_tick_summaries()
-                        .iter()
-                        .copied(),
-                )
-                .chain(
-                    self.accelerator_dma_scheduler_batch_worker_count_tick_summaries()
-                        .iter()
-                        .copied(),
-                ),
-        )
+        let mut summaries = collect_parallel_batch_worker_count_tick_summaries(&timeline);
+        if self.gpu_dma_scheduler_batch_timeline.is_empty() {
+            summaries.extend(
+                self.gpu_dma_scheduler_batch_worker_count_tick_summaries()
+                    .iter()
+                    .copied(),
+            );
+        }
+        if self.accelerator_dma_scheduler_batch_timeline.is_empty() {
+            summaries.extend(
+                self.accelerator_dma_scheduler_batch_worker_count_tick_summaries()
+                    .iter()
+                    .copied(),
+            );
+        }
+        collect_batch_worker_count_tick_summaries(summaries)
     }
 
     pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
@@ -193,7 +250,7 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_ticks_for_worker_count(&timeline, worker_count)
-            .saturating_add(self.dma_scheduler_batch_ticks_for_worker_count(worker_count))
+            .saturating_add(self.dma_scheduler_fallback_batch_ticks_for_worker_count(worker_count))
     }
 
     pub fn full_system_parallel_scheduler_batch_ticks_at_or_above(
@@ -201,14 +258,15 @@ impl WorkloadParallelExecutionSummary {
         minimum_worker_count: usize,
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count)
-            .saturating_add(self.dma_scheduler_batch_ticks_at_or_above(minimum_worker_count))
+        parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count).saturating_add(
+            self.dma_scheduler_fallback_batch_ticks_at_or_above(minimum_worker_count),
+        )
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_worker_ticks(&timeline)
-            .saturating_add(self.dma_scheduler_batch_worker_ticks())
+            .saturating_add(self.dma_scheduler_fallback_batch_worker_ticks())
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
@@ -216,8 +274,9 @@ impl WorkloadParallelExecutionSummary {
         minimum_worker_count: usize,
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count)
-            .saturating_add(self.dma_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count))
+        parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count).saturating_add(
+            self.dma_scheduler_fallback_batch_worker_ticks_at_or_above(minimum_worker_count),
+        )
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -226,6 +285,59 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_longest_tick_streak_at_or_above(&timeline, minimum_worker_count)
+    }
+
+    fn dma_scheduler_fallback_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        fallback_batch_ticks_for_worker_count(
+            &self.gpu_dma_scheduler_batch_timeline,
+            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
+            worker_count,
+        )
+        .saturating_add(fallback_batch_ticks_for_worker_count(
+            &self.accelerator_dma_scheduler_batch_timeline,
+            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
+            worker_count,
+        ))
+    }
+
+    fn dma_scheduler_fallback_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        fallback_batch_ticks_at_or_above(
+            &self.gpu_dma_scheduler_batch_timeline,
+            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
+            minimum_worker_count,
+        )
+        .saturating_add(fallback_batch_ticks_at_or_above(
+            &self.accelerator_dma_scheduler_batch_timeline,
+            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
+            minimum_worker_count,
+        ))
+    }
+
+    fn dma_scheduler_fallback_batch_worker_ticks(&self) -> Tick {
+        fallback_batch_worker_ticks(
+            &self.gpu_dma_scheduler_batch_timeline,
+            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
+        )
+        .saturating_add(fallback_batch_worker_ticks(
+            &self.accelerator_dma_scheduler_batch_timeline,
+            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
+        ))
+    }
+
+    fn dma_scheduler_fallback_batch_worker_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        fallback_batch_worker_ticks_at_or_above(
+            &self.gpu_dma_scheduler_batch_timeline,
+            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
+            minimum_worker_count,
+        )
+        .saturating_add(fallback_batch_worker_ticks_at_or_above(
+            &self.accelerator_dma_scheduler_batch_timeline,
+            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
+            minimum_worker_count,
+        ))
     }
 }
 
@@ -256,4 +368,62 @@ fn collect_batch_worker_count_tick_summaries(
         *stored = stored.saturating_add(ticks);
     }
     by_worker_count.into_iter().collect()
+}
+
+fn fallback_batch_ticks_for_worker_count(
+    timeline: &[WorkloadParallelBatchTimelineRecord],
+    summaries: &[(usize, Tick)],
+    worker_count: usize,
+) -> Tick {
+    if !timeline.is_empty() {
+        return 0;
+    }
+    summaries
+        .iter()
+        .filter(|(count, _)| *count == worker_count)
+        .map(|(_, ticks)| *ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn fallback_batch_ticks_at_or_above(
+    timeline: &[WorkloadParallelBatchTimelineRecord],
+    summaries: &[(usize, Tick)],
+    minimum_worker_count: usize,
+) -> Tick {
+    if !timeline.is_empty() {
+        return 0;
+    }
+    summaries
+        .iter()
+        .filter(|(count, _)| *count >= minimum_worker_count)
+        .map(|(_, ticks)| *ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn fallback_batch_worker_ticks(
+    timeline: &[WorkloadParallelBatchTimelineRecord],
+    summaries: &[(usize, Tick)],
+) -> Tick {
+    if !timeline.is_empty() {
+        return 0;
+    }
+    summaries
+        .iter()
+        .map(|(count, ticks)| ticks.saturating_mul(*count as Tick))
+        .fold(0, Tick::saturating_add)
+}
+
+fn fallback_batch_worker_ticks_at_or_above(
+    timeline: &[WorkloadParallelBatchTimelineRecord],
+    summaries: &[(usize, Tick)],
+    minimum_worker_count: usize,
+) -> Tick {
+    if !timeline.is_empty() {
+        return 0;
+    }
+    summaries
+        .iter()
+        .filter(|(count, _)| *count >= minimum_worker_count)
+        .map(|(count, ticks)| ticks.saturating_mul(*count as Tick))
+        .fold(0, Tick::saturating_add)
 }

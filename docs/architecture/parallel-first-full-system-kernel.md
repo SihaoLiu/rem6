@@ -446,13 +446,14 @@ reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to
 manifest checks.
 GPU and accelerator DMA replay paths also preserve recorded scheduler batch
-counts and duration-weighted worker-tick evidence for their internal read and
-write schedulers, so heterogeneous memory movement does not disappear behind
-copy/completion counters. The workload full-system scheduler aggregate includes
-that DMA scheduler evidence alongside CPU and data-cache scheduler evidence, so
+timelines, batch counts, worker-count buckets, and duration-weighted
+worker-tick evidence for their internal read and write schedulers, so
+heterogeneous memory movement does not disappear behind copy/completion
+counters. The workload full-system scheduler aggregate includes that DMA
+scheduler evidence alongside CPU and data-cache scheduler evidence, so
 heterogeneous parallel work remains visible through the same full-system batch
-worker-count, max-worker, total-worker, worker-tick, and thresholded batch
-queries used by CPU/cache runs.
+timeline, worker-count, max-worker, total-worker, worker-tick, and thresholded
+batch queries used by CPU/cache runs.
 The full-system batch sequence is merged by worker start tick with deterministic
 tie breakers, which prevents a CPU batch between two data-cache batches from
 being hidden by subsystem-local concatenation when sustained occupancy is

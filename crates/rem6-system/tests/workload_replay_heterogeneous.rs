@@ -10,8 +10,9 @@ use rem6_workload::{
     WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
     WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent,
     WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    WorkloadParallelBatchScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -933,6 +934,26 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
         summary.dma_scheduler_batch_count(),
         summary.gpu_dma_scheduler_batch_count() + summary.accelerator_dma_scheduler_batch_count(),
     );
+    assert_eq!(
+        summary.gpu_dma_scheduler_batch_timeline().len(),
+        summary.gpu_dma_scheduler_batch_count(),
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_batch_timeline().len(),
+        summary.accelerator_dma_scheduler_batch_count(),
+    );
+    assert_eq!(
+        summary.dma_scheduler_batch_timeline().len(),
+        summary.dma_scheduler_batch_count(),
+    );
+    assert!(summary
+        .full_system_parallel_scheduler_batch_timeline()
+        .iter()
+        .any(|record| record.scope() == WorkloadParallelBatchScope::GpuDmaScheduler));
+    assert!(summary
+        .full_system_parallel_scheduler_batch_timeline()
+        .iter()
+        .any(|record| record.scope() == WorkloadParallelBatchScope::AcceleratorDmaScheduler));
     assert_eq!(
         summary.dma_scheduler_total_workers(),
         summary.gpu_dma_scheduler_total_workers()

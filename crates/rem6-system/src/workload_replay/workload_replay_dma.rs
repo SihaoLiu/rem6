@@ -8,14 +8,18 @@ use rem6_memory::{
 };
 use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport};
 use rem6_workload::{
-    WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadParallelBatchWorkerCount, WorkloadRouteId,
+    WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount, WorkloadRouteId,
     WorkloadTopology,
 };
 
 use super::{
-    cached_memory_response, dma_scheduler_batch_worker_count_ticks,
-    dma_scheduler_batch_worker_counts, merge_dma_scheduler_run, RiscvWorkloadReplayError,
-    WorkloadDataCacheBackend, WorkloadMemoryBackend,
+    cached_memory_response,
+    dma_scheduler_evidence::{
+        dma_scheduler_batch_timeline, dma_scheduler_batch_worker_count_ticks,
+        dma_scheduler_batch_worker_counts, DmaSchedulerEvidence,
+    },
+    RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
 };
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, merge_wait_for_graph, WorkloadAcceleratorRuntime,
@@ -29,6 +33,7 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) scheduler_epoch_count: usize,
     pub(super) scheduler_dispatch_count: usize,
     pub(super) scheduler_batch_count: usize,
+    pub(super) scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     pub(super) scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     pub(super) scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     pub(super) wait_for_edge_count: usize,
@@ -64,11 +69,7 @@ pub(super) fn run_accelerator_dma_copies(
         topology.parallel_worker_limit(),
     )
     .map_err(RiscvWorkloadReplayError::Scheduler)?;
-    let mut scheduler_epoch_count = 0;
-    let mut scheduler_dispatch_count = 0;
-    let mut scheduler_batch_count = 0;
-    let mut scheduler_batch_worker_counts = BTreeMap::<usize, usize>::new();
-    let mut scheduler_batch_worker_count_ticks = BTreeMap::<usize, Tick>::new();
+    let mut scheduler_evidence = DmaSchedulerEvidence::default();
 
     for copy in topology.accelerator_dma_copies() {
         let engine = AcceleratorEngineId::new(copy.engine());
@@ -96,13 +97,9 @@ pub(super) fn run_accelerator_dma_copies(
     let read_run = scheduler
         .run_until_idle_parallel_recorded()
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
-    merge_dma_scheduler_run(
+    scheduler_evidence.merge_run(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
         &read_run,
-        &mut scheduler_epoch_count,
-        &mut scheduler_dispatch_count,
-        &mut scheduler_batch_count,
-        &mut scheduler_batch_worker_counts,
-        &mut scheduler_batch_worker_count_ticks,
     );
 
     for copy in topology.accelerator_dma_copies() {
@@ -133,13 +130,9 @@ pub(super) fn run_accelerator_dma_copies(
     let write_run = scheduler
         .run_until_idle_parallel_recorded()
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
-    merge_dma_scheduler_run(
+    scheduler_evidence.merge_run(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
         &write_run,
-        &mut scheduler_epoch_count,
-        &mut scheduler_dispatch_count,
-        &mut scheduler_batch_count,
-        &mut scheduler_batch_worker_counts,
-        &mut scheduler_batch_worker_count_ticks,
     );
 
     let after = accelerator_snapshots(devices);
@@ -170,14 +163,15 @@ pub(super) fn run_accelerator_dma_copies(
         copy_count: topology.accelerator_dma_copies().len(),
         completion_count,
         active_device_count,
-        scheduler_epoch_count,
-        scheduler_dispatch_count,
-        scheduler_batch_count,
+        scheduler_epoch_count: scheduler_evidence.epoch_count,
+        scheduler_dispatch_count: scheduler_evidence.dispatch_count,
+        scheduler_batch_count: scheduler_evidence.batch_count,
+        scheduler_batch_timeline: dma_scheduler_batch_timeline(scheduler_evidence.batch_timeline),
         scheduler_batch_worker_counts: dma_scheduler_batch_worker_counts(
-            scheduler_batch_worker_counts,
+            scheduler_evidence.batch_worker_counts,
         ),
         scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
-            scheduler_batch_worker_count_ticks,
+            scheduler_evidence.batch_worker_count_ticks,
         ),
         wait_for_edge_count: 0,
         deadlock_diagnostic_count: 0,

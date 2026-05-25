@@ -674,6 +674,27 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         [cpu1, cache],
         2,
     );
+    let gpu_dma_early = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        2,
+        3,
+        [cpu0, cache],
+        3,
+    );
+    let gpu_dma_late = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        3,
+        6,
+        [cpu0, cpu1, cache],
+        3,
+    );
+    let accelerator_dma = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+        6,
+        11,
+        [cpu1, cache],
+        4,
+    );
     let empty = WorkloadParallelBatchTimelineRecord::new(
         WorkloadParallelBatchScope::Scheduler,
         12,
@@ -690,15 +711,25 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         .with_data_cache_parallel_scheduler_batch_timeline([data_cache.clone()])
         .with_gpu_dma_scheduler_counts(1, 2, 2, [(3, 4)])
         .with_gpu_dma_scheduler_batch_worker_counts([WorkloadParallelBatchWorkerCount::new(3, 2)])
+        .with_gpu_dma_scheduler_batch_timeline([gpu_dma_late.clone(), gpu_dma_early.clone()])
         .with_accelerator_dma_scheduler_counts(1, 1, 1, [(4, 5)])
         .with_accelerator_dma_scheduler_batch_worker_counts([
             WorkloadParallelBatchWorkerCount::new(4, 1),
-        ]);
+        ])
+        .with_accelerator_dma_scheduler_batch_timeline([accelerator_dma.clone()]);
 
     assert_eq!(WorkloadParallelBatchScope::Scheduler.as_str(), "scheduler");
     assert_eq!(
         WorkloadParallelBatchScope::DataCacheScheduler.as_str(),
         "data-cache-scheduler",
+    );
+    assert_eq!(
+        WorkloadParallelBatchScope::GpuDmaScheduler.as_str(),
+        "gpu-dma-scheduler",
+    );
+    assert_eq!(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler.as_str(),
+        "accelerator-dma-scheduler",
     );
     assert_eq!(
         summary.parallel_scheduler_batch_timeline(),
@@ -709,10 +740,29 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         std::slice::from_ref(&data_cache),
     );
     assert_eq!(
+        summary.gpu_dma_scheduler_batch_timeline(),
+        &[gpu_dma_early.clone(), gpu_dma_late.clone()],
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_batch_timeline(),
+        std::slice::from_ref(&accelerator_dma),
+    );
+    assert_eq!(
+        summary.dma_scheduler_batch_timeline(),
+        vec![
+            gpu_dma_early.clone(),
+            gpu_dma_late.clone(),
+            accelerator_dma.clone(),
+        ],
+    );
+    assert_eq!(
         summary.full_system_parallel_scheduler_batch_timeline(),
         vec![
             scheduler_early.clone(),
+            gpu_dma_early.clone(),
+            gpu_dma_late.clone(),
             data_cache.clone(),
+            accelerator_dma.clone(),
             scheduler_late.clone()
         ],
     );
@@ -871,11 +921,15 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
-        8,
+        11,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(3),
-        0,
+        9,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(4),
+        5,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_partition_sets(),

@@ -276,6 +276,9 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .copied(),
         )
+        .with_gpu_dma_scheduler_batch_timeline(
+            activities.gpu_dma.scheduler_batch_timeline.iter().cloned(),
+        )
         .with_gpu_dma_diagnostics(
             activities.gpu_dma.wait_for_edge_count,
             activities.gpu_dma.deadlock_diagnostic_count,
@@ -311,6 +314,13 @@ pub(super) fn parallel_execution_summary(
                 .scheduler_batch_worker_counts
                 .iter()
                 .copied(),
+        )
+        .with_accelerator_dma_scheduler_batch_timeline(
+            activities
+                .accelerator_dma
+                .scheduler_batch_timeline
+                .iter()
+                .cloned(),
         )
         .with_accelerator_dma_diagnostics(
             activities.accelerator_dma.wait_for_edge_count,
