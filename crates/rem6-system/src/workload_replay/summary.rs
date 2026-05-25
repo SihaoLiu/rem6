@@ -50,6 +50,7 @@ pub(super) fn parallel_execution_summary(
             run.active_parallel_scheduler_partition_count(),
             run.max_parallel_scheduler_workers(),
         )
+        .with_scheduler_worker_count(scheduler.total_parallel_workers())
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_riscv_core_counts(
@@ -70,6 +71,7 @@ pub(super) fn parallel_execution_summary(
         .with_data_cache_parallel_partitions(
             run.active_data_cache_parallel_scheduler_partition_count(),
         )
+        .with_data_cache_parallel_worker_count(run.data_cache_parallel_scheduler_total_workers())
         .with_data_cache_parallel_scheduler_partition_activities(
             run.data_cache_parallel_scheduler_partition_activities(),
         )

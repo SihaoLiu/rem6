@@ -342,6 +342,56 @@ impl WorkloadExpectedParallelWorkerUse {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelWorkerActivity {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_total_workers: usize,
+}
+
+impl WorkloadExpectedParallelWorkerActivity {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_total_workers: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_total_workers == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelWorkerActivity { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_total_workers,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_total_workers(self) -> usize {
+        self.minimum_total_workers
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) const fn actual_total_workers(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> usize {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.total_parallel_scheduler_workers()
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_total_workers()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_total_workers()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelPartitionActivity {
     scope: WorkloadParallelRemoteFlowScope,
     partition: PartitionId,

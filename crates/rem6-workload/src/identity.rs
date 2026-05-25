@@ -4,9 +4,10 @@ use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionActivity,
     WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerUse, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelRemoteFlowScope, WorkloadResource,
+    WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -26,6 +27,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_parallel_remote_flow_timings:
         &'a [WorkloadExpectedParallelRemoteFlowTiming],
     pub(crate) expected_parallel_worker_use: &'a [WorkloadExpectedParallelWorkerUse],
+    pub(crate) expected_parallel_worker_activity: &'a [WorkloadExpectedParallelWorkerActivity],
     pub(crate) expected_parallel_partition_use: &'a [WorkloadExpectedParallelPartitionUse],
     pub(crate) expected_parallel_partition_activity:
         &'a [WorkloadExpectedParallelPartitionActivity],
@@ -85,6 +87,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     }
     hash_u64(
         &mut hash,
+        input.expected_parallel_worker_activity.len() as u64,
+    );
+    for expected in input.expected_parallel_worker_activity {
+        hash_expected_parallel_worker_activity(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
         input.expected_parallel_partition_use.len() as u64,
     );
     for expected in input.expected_parallel_partition_use {
@@ -137,6 +146,14 @@ fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemote
 fn hash_expected_parallel_worker_use(hash: &mut u64, expected: WorkloadExpectedParallelWorkerUse) {
     hash_parallel_remote_flow_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_max_workers() as u64);
+}
+
+fn hash_expected_parallel_worker_activity(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelWorkerActivity,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, expected.minimum_total_workers() as u64);
 }
 
 fn hash_expected_parallel_partition_use(

@@ -34,8 +34,9 @@ use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionActivity,
     WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerUse,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -248,6 +249,7 @@ pub struct WorkloadManifest {
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
+    expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -324,6 +326,10 @@ impl WorkloadManifest {
         &self.expected_parallel_worker_use
     }
 
+    pub fn expected_parallel_worker_activity(&self) -> &[WorkloadExpectedParallelWorkerActivity] {
+        &self.expected_parallel_worker_activity
+    }
+
     pub fn expected_parallel_partition_use(&self) -> &[WorkloadExpectedParallelPartitionUse] {
         &self.expected_parallel_partition_use
     }
@@ -360,6 +366,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
+    expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -379,6 +386,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
+            expected_parallel_worker_activity: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             expected_parallel_partition_activity: Vec::new(),
             checkpoint_lineage: None,
@@ -431,6 +439,25 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_remote_flow_timings.push(expected);
         self.expected_parallel_remote_flow_timings
             .sort_by_key(|timing| timing.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_worker_activity(
+        mut self,
+        expected: WorkloadExpectedParallelWorkerActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_worker_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelWorkerActivity {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_worker_activity.push(expected);
+        self.expected_parallel_worker_activity
+            .sort_by_key(|worker_activity| worker_activity.sort_key());
         Ok(self)
     }
 
@@ -611,6 +638,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
+            expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
@@ -628,6 +656,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
+            expected_parallel_worker_activity: self.expected_parallel_worker_activity,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage,
@@ -652,6 +681,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
+    expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -678,6 +708,9 @@ impl WorkloadReplayPlan {
                 .expected_parallel_remote_flow_timings()
                 .to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
+            expected_parallel_worker_activity: manifest
+                .expected_parallel_worker_activity()
+                .to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
             expected_parallel_partition_activity: manifest
                 .expected_parallel_partition_activity()
@@ -806,6 +839,29 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_worker_use
     }
 
+    pub fn add_expected_parallel_worker_activity(
+        mut self,
+        expected: WorkloadExpectedParallelWorkerActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_worker_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelWorkerActivity {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_worker_activity.push(expected);
+        self.expected_parallel_worker_activity
+            .sort_by_key(|worker_activity| worker_activity.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_worker_activity(&self) -> &[WorkloadExpectedParallelWorkerActivity] {
+        &self.expected_parallel_worker_activity
+    }
+
     pub fn add_expected_parallel_partition_use(
         mut self,
         expected: WorkloadExpectedParallelPartitionUse,
@@ -901,6 +957,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_remote_flows(result)?;
         self.verify_expected_parallel_remote_flow_timings(result)?;
         self.verify_expected_parallel_worker_use(result)?;
+        self.verify_expected_parallel_worker_activity(result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
         self.verify_expected_clean_parallel_diagnostics(result)?;
@@ -1131,6 +1188,34 @@ impl WorkloadReplayPlan {
                     scope: expected.scope(),
                     minimum_max_workers: expected.minimum_max_workers(),
                     actual_max_workers,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_expected_parallel_worker_activity(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_worker_activity.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_parallel_worker_activity[0];
+            return Err(WorkloadError::MissingParallelWorkerActivitySummary {
+                scope: expected.scope(),
+                minimum_total_workers: expected.minimum_total_workers(),
+            });
+        };
+
+        for expected in &self.expected_parallel_worker_activity {
+            let actual_total_workers = expected.actual_total_workers(summary);
+            if actual_total_workers < expected.minimum_total_workers() {
+                return Err(WorkloadError::ExpectedParallelWorkerActivityBelowMinimum {
+                    scope: expected.scope(),
+                    minimum_total_workers: expected.minimum_total_workers(),
+                    actual_total_workers,
                 });
             }
         }

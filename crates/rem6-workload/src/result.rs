@@ -123,6 +123,7 @@ pub struct WorkloadParallelExecutionSummary {
     scheduler_batch_count: usize,
     active_scheduler_partition_count: usize,
     max_parallel_scheduler_workers: usize,
+    total_parallel_scheduler_workers: usize,
     parallel_scheduler_partition_activities: Vec<(PartitionId, ParallelPartitionActivity)>,
     parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     riscv_core_count: usize,
@@ -137,6 +138,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_batch_count: usize,
     active_data_cache_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_max_workers: usize,
+    data_cache_parallel_scheduler_total_workers: usize,
     active_full_system_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
@@ -223,6 +225,11 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub const fn with_scheduler_worker_count(mut self, total_worker_count: usize) -> Self {
+        self.total_parallel_scheduler_workers = total_worker_count;
+        self
+    }
+
     pub fn with_parallel_scheduler_remote_flows(
         mut self,
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
@@ -280,6 +287,14 @@ impl WorkloadParallelExecutionSummary {
         active_partition_count: usize,
     ) -> Self {
         self.active_data_cache_parallel_scheduler_partition_count = active_partition_count;
+        self
+    }
+
+    pub const fn with_data_cache_parallel_worker_count(
+        mut self,
+        total_worker_count: usize,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_total_workers = total_worker_count;
         self
     }
 
@@ -546,6 +561,10 @@ impl WorkloadParallelExecutionSummary {
         self.max_parallel_scheduler_workers
     }
 
+    pub const fn total_parallel_scheduler_workers(&self) -> usize {
+        self.total_parallel_scheduler_workers
+    }
+
     pub fn parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
         &self.parallel_scheduler_remote_flows
     }
@@ -631,6 +650,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn data_cache_parallel_scheduler_max_workers(&self) -> usize {
         self.data_cache_parallel_scheduler_max_workers
+    }
+
+    pub const fn data_cache_parallel_scheduler_total_workers(&self) -> usize {
+        self.data_cache_parallel_scheduler_total_workers
     }
 
     pub fn data_cache_parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
@@ -1123,6 +1146,10 @@ impl WorkloadParallelExecutionSummary {
         }
     }
 
+    pub const fn full_system_parallel_scheduler_total_workers(&self) -> usize {
+        self.total_parallel_scheduler_workers + self.data_cache_parallel_scheduler_total_workers
+    }
+
     pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         collect_parallel_remote_flows(
             self.parallel_scheduler_remote_flows.iter().copied().chain(
@@ -1179,12 +1206,14 @@ impl WorkloadParallelExecutionSummary {
     pub const fn has_parallel_scheduler_work(&self) -> bool {
         self.scheduler_dispatch_count != 0
             || self.scheduler_batch_count != 0
+            || self.total_parallel_scheduler_workers != 0
             || self.max_parallel_scheduler_workers != 0
     }
 
     pub const fn has_data_cache_parallel_work(&self) -> bool {
         self.data_cache_parallel_run_count != 0
             || self.data_cache_parallel_scheduler_dispatch_count != 0
+            || self.data_cache_parallel_scheduler_total_workers != 0
             || self.data_cache_parallel_scheduler_max_workers != 0
     }
 }

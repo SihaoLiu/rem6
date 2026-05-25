@@ -382,6 +382,12 @@ pub enum WorkloadError {
     DuplicateExpectedParallelWorkerUse {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    ZeroExpectedParallelWorkerActivity {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelWorkerActivity {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
     MissingParallelWorkerSummary {
         scope: WorkloadParallelRemoteFlowScope,
         minimum_max_workers: usize,
@@ -390,6 +396,15 @@ pub enum WorkloadError {
         scope: WorkloadParallelRemoteFlowScope,
         minimum_max_workers: usize,
         actual_max_workers: usize,
+    },
+    MissingParallelWorkerActivitySummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_total_workers: usize,
+    },
+    ExpectedParallelWorkerActivityBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_total_workers: usize,
+        actual_total_workers: usize,
     },
     ZeroExpectedParallelPartitionCount {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1011,6 +1026,16 @@ impl fmt::Display for WorkloadError {
                 "expected {} worker use is already declared",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelWorkerActivity { scope } => write!(
+                formatter,
+                "expected {} worker activity must require a positive total worker count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelWorkerActivity { scope } => write!(
+                formatter,
+                "expected {} worker activity is already declared",
+                scope.as_str()
+            ),
             Self::MissingParallelWorkerSummary {
                 scope,
                 minimum_max_workers,
@@ -1026,6 +1051,23 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} worker use to reach at least {minimum_max_workers} workers, got {actual_max_workers}",
+                scope.as_str()
+            ),
+            Self::MissingParallelWorkerActivitySummary {
+                scope,
+                minimum_total_workers,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} worker activity with at least {minimum_total_workers} total workers",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelWorkerActivityBelowMinimum {
+                scope,
+                minimum_total_workers,
+                actual_total_workers,
+            } => write!(
+                formatter,
+                "expected {} worker activity to reach at least {minimum_total_workers} total workers, got {actual_total_workers}",
                 scope.as_str()
             ),
             Self::ZeroExpectedParallelPartitionCount { scope } => write!(
