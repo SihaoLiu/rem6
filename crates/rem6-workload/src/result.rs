@@ -845,6 +845,7 @@ impl WorkloadParallelExecutionSummary {
     ) -> usize {
         parallel_batch_count_for_partition_set(
             &self.parallel_scheduler_batch_partition_sets,
+            &self.parallel_scheduler_batch_partition_streaks,
             partitions,
         )
     }
@@ -1061,6 +1062,7 @@ impl WorkloadParallelExecutionSummary {
     ) -> usize {
         parallel_batch_count_for_partition_set(
             &self.data_cache_parallel_scheduler_batch_partition_sets,
+            &self.data_cache_parallel_scheduler_batch_partition_streaks,
             partitions,
         )
     }

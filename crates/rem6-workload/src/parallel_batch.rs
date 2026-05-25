@@ -435,13 +435,21 @@ fn total_parallel_batch_partition_streak_count(
 
 pub(crate) fn parallel_batch_count_for_partition_set(
     sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
     partitions: impl IntoIterator<Item = PartitionId>,
 ) -> usize {
     let partitions = normalize_partition_set(partitions);
-    sets.iter()
+    let set_count = sets
+        .iter()
         .find(|set| set.partitions() == partitions.as_slice())
         .map(WorkloadParallelBatchPartitionSet::batch_count)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let streak_count = streaks
+        .iter()
+        .find(|streak| streak.partitions() == partitions.as_slice())
+        .map(WorkloadParallelBatchPartitionStreak::consecutive_batch_count)
+        .unwrap_or(0);
+    set_count.max(streak_count)
 }
 
 pub(crate) fn parallel_batch_streak_count_for_partition_set(

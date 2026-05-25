@@ -365,11 +365,12 @@ data-cache scheduler records conservatively instead of reporting whichever
 subsystem progressed further. Workload result summaries treat non-empty typed
 frontier and partition evidence as parallel work even when worker and batch
 aggregates are not present. Exact batch partition-set histograms also imply
-active partition counts, minimum max-worker use, total-worker activity, and
-multi-worker batch activity for any worker threshold not larger than the
-recorded partition set. Maximum same-partition-set streak records imply the
-same lower-bound metrics from their consecutive batch counts. Both exact batch
-sets and streak records also imply per-partition worker and dispatch activity
+active partition counts, exact partition-set batch counts, minimum max-worker
+use, total-worker activity, and multi-worker batch activity for any worker
+threshold not larger than the recorded partition set. Maximum
+same-partition-set streak records imply the same lower-bound metrics from their
+consecutive batch counts. Both exact batch sets and streak records also imply
+per-partition worker and dispatch activity
 for every partition contained in each recorded batch set, making same-batch
 participation replay-verifiable without duplicating explicit activity records.
 Within one scheduler scope, explicit per-partition activity,

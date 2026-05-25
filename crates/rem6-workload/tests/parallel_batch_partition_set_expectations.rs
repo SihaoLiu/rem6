@@ -230,6 +230,75 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_batch_partition_
 }
 
 #[test]
+fn workload_replay_plan_derives_batch_partition_sets_from_streaks() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-batch-partitions-from-streaks"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            [partition(0), partition(1)],
+            3,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            [partition(10), partition(11), partition(12)],
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            [partition(0), partition(2)],
+            5,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_streak_sequence([
+            WorkloadParallelBatchPartitionSet::new([partition(0), partition(1)], 3),
+            WorkloadParallelBatchPartitionSet::new([partition(0), partition(2)], 2),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_streak_sequence([
+            WorkloadParallelBatchPartitionSet::new(
+                [partition(10), partition(11), partition(12)],
+                4,
+            ),
+            WorkloadParallelBatchPartitionSet::new([partition(0), partition(2)], 3),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_batch_count_for_partition_set([partition(0), partition(1)]),
+        3,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_count_for_partition_set([
+            partition(10),
+            partition(11),
+            partition(12),
+        ]),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([
+            partition(0),
+            partition(2),
+        ]),
+        5,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_batch_partition_sets() {
     let single_partition = WorkloadExpectedParallelBatchPartitionSet::new(
         WorkloadParallelRemoteFlowScope::Scheduler,
