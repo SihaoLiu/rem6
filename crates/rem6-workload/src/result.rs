@@ -10,10 +10,10 @@ use crate::parallel_batch::{
     collect_parallel_batch_partition_streaks_from_sequence, collect_parallel_batch_worker_counts,
     max_parallel_batch_activity_worker_count, parallel_batch_active_partition_count,
     parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
-    parallel_batch_partition_activity_for_partition, parallel_batch_streak_count_for_partition_set,
-    strongest_parallel_batch_count, total_parallel_batch_activity_worker_count,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchWorkerCount,
+    parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
+    parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
+    total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flows,
@@ -749,6 +749,7 @@ impl WorkloadParallelExecutionSummary {
             total_parallel_batch_activity_worker_count(
                 &self.parallel_scheduler_batch_worker_counts,
                 &self.parallel_scheduler_batch_partition_sets,
+                &self.parallel_scheduler_batch_partition_streaks,
             )
             .max(parallel_partition_dispatch_count(
                 &self.parallel_scheduler_partition_activities,
@@ -761,6 +762,7 @@ impl WorkloadParallelExecutionSummary {
             .max(strongest_parallel_batch_count(
                 &self.parallel_scheduler_batch_worker_counts,
                 &self.parallel_scheduler_batch_partition_sets,
+                &self.parallel_scheduler_batch_partition_streaks,
             ))
     }
 
@@ -768,6 +770,7 @@ impl WorkloadParallelExecutionSummary {
         self.active_scheduler_partition_count
             .max(parallel_batch_active_partition_count(
                 &self.parallel_scheduler_batch_partition_sets,
+                &self.parallel_scheduler_batch_partition_streaks,
             ))
             .max(parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
@@ -780,6 +783,7 @@ impl WorkloadParallelExecutionSummary {
             .max(max_parallel_batch_activity_worker_count(
                 &self.parallel_scheduler_batch_worker_counts,
                 &self.parallel_scheduler_batch_partition_sets,
+                &self.parallel_scheduler_batch_partition_streaks,
             ))
     }
 
@@ -788,6 +792,7 @@ impl WorkloadParallelExecutionSummary {
             total_parallel_batch_activity_worker_count(
                 &self.parallel_scheduler_batch_worker_counts,
                 &self.parallel_scheduler_batch_partition_sets,
+                &self.parallel_scheduler_batch_partition_streaks,
             )
             .max(parallel_partition_worker_count(
                 &self.parallel_scheduler_partition_activities,
@@ -829,6 +834,7 @@ impl WorkloadParallelExecutionSummary {
         parallel_batch_activity_count_at_or_above(
             &self.parallel_scheduler_batch_worker_counts,
             &self.parallel_scheduler_batch_partition_sets,
+            &self.parallel_scheduler_batch_partition_streaks,
             minimum_worker_count,
         )
     }
@@ -864,13 +870,19 @@ impl WorkloadParallelExecutionSummary {
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
         merge_parallel_partition_activity_evidence_options(
-            parallel_partition_activity_for_partition(
-                &self.parallel_scheduler_partition_activities,
-                &self.parallel_scheduler_remote_flows,
-                partition,
+            merge_parallel_partition_activity_evidence_options(
+                parallel_partition_activity_for_partition(
+                    &self.parallel_scheduler_partition_activities,
+                    &self.parallel_scheduler_remote_flows,
+                    partition,
+                ),
+                parallel_batch_partition_activity_for_partition(
+                    &self.parallel_scheduler_batch_partition_sets,
+                    partition,
+                ),
             ),
-            parallel_batch_partition_activity_for_partition(
-                &self.parallel_scheduler_batch_partition_sets,
+            parallel_batch_streak_activity_for_partition(
+                &self.parallel_scheduler_batch_partition_streaks,
                 partition,
             ),
         )
@@ -957,6 +969,7 @@ impl WorkloadParallelExecutionSummary {
             total_parallel_batch_activity_worker_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
             )
             .max(parallel_partition_dispatch_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
@@ -969,6 +982,7 @@ impl WorkloadParallelExecutionSummary {
             .max(strongest_parallel_batch_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
             ))
     }
 
@@ -976,6 +990,7 @@ impl WorkloadParallelExecutionSummary {
         self.active_data_cache_parallel_scheduler_partition_count
             .max(parallel_batch_active_partition_count(
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
             ))
             .max(parallel_active_partition_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
@@ -988,6 +1003,7 @@ impl WorkloadParallelExecutionSummary {
             max_parallel_batch_activity_worker_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
             ),
         )
     }
@@ -997,6 +1013,7 @@ impl WorkloadParallelExecutionSummary {
             total_parallel_batch_activity_worker_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
             )
             .max(parallel_partition_worker_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
@@ -1033,6 +1050,7 @@ impl WorkloadParallelExecutionSummary {
         parallel_batch_activity_count_at_or_above(
             &self.data_cache_parallel_scheduler_batch_worker_counts,
             &self.data_cache_parallel_scheduler_batch_partition_sets,
+            &self.data_cache_parallel_scheduler_batch_partition_streaks,
             minimum_worker_count,
         )
     }
@@ -1068,13 +1086,19 @@ impl WorkloadParallelExecutionSummary {
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
         merge_parallel_partition_activity_evidence_options(
-            parallel_partition_activity_for_partition(
-                &self.data_cache_parallel_scheduler_partition_activities,
-                &self.data_cache_parallel_scheduler_remote_flows,
-                partition,
+            merge_parallel_partition_activity_evidence_options(
+                parallel_partition_activity_for_partition(
+                    &self.data_cache_parallel_scheduler_partition_activities,
+                    &self.data_cache_parallel_scheduler_remote_flows,
+                    partition,
+                ),
+                parallel_batch_partition_activity_for_partition(
+                    &self.data_cache_parallel_scheduler_batch_partition_sets,
+                    partition,
+                ),
             ),
-            parallel_batch_partition_activity_for_partition(
-                &self.data_cache_parallel_scheduler_batch_partition_sets,
+            parallel_batch_streak_activity_for_partition(
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
                 partition,
             ),
         )

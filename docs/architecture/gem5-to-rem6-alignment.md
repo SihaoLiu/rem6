@@ -32,9 +32,9 @@ isolated bugs:
   per-partition snapshots, scheduler epoch and dispatch progress, bounded
   empty-epoch exposure, verifiable minimum max-worker use, total-worker use,
   and multi-worker batch activity derived from the strongest same-scope
-  worker-count or exact partition-set histograms, exact same-batch
-  partition-set activity, and sustained same-batch streak activity as core
-  kernel contracts.
+  worker-count, exact partition-set, or same-partition-set streak evidence,
+  exact same-batch partition-set activity, and sustained same-batch streak
+  activity as core kernel contracts.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -61,14 +61,14 @@ isolated bugs:
   cluster, coherence, full-system run, and workload-result summaries preserve
   those flow records. Workload manifests and replay plans can declare exact
   expected remote-flow counts, exact remote-flow first/last tick windows,
-  minimum max-worker use derived from aggregate, worker-count, or exact
-  partition-set evidence, batch counts derived from the strongest available
-  aggregate, worker-count, or exact partition-set evidence, minimum total-worker
-  activity derived from the strongest available aggregate, worker-count, exact
-  partition-set, or per-partition evidence, minimum scheduler epoch progress plus dispatch
+  minimum max-worker use derived from aggregate, worker-count, exact
+  partition-set, or streak evidence, batch counts derived from the strongest
+  available aggregate, worker-count, exact partition-set, or streak evidence,
+  minimum total-worker activity derived from the strongest available aggregate,
+  worker-count, exact partition-set, streak, or per-partition evidence, minimum scheduler epoch progress plus dispatch
   progress from the strongest available aggregate counts, batch-histogram,
   exact partition-set, or per-partition evidence, per-partition worker and
-  dispatch activity derived from exact partition-set histograms, and
+  dispatch activity derived from exact partition-set histograms or streaks, and
   non-overcounting same-scope activity evidence merges, maximum scheduler empty
   epochs, minimum multi-worker batch counts, exact partition-set batch counts,
   minimum same-partition-set consecutive batch streaks, minimum active partition counts derived from
@@ -249,7 +249,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, recorded initial and final epoch frontiers carried through CPU, data-cache/coherence, full-system, and workload-result summaries with per-partition conservative full-system frontier aggregation, worker-local remote outboxes, ordered remote-send records, source-target remote-flow records carried through RISC-V cluster, full-system, and workload-result summaries, scheduler epoch, empty-epoch, and dispatch counts, CPU scheduler, data-cache scheduler, and merged full-system progress-free transition counts plus declared-threshold livelock diagnostic counts exposed on `RiscvSystemRun` and carried into workload summaries, batch worker-count histograms, exact batch partition-set histograms, and maximum consecutive partition-set streaks carried into workload summaries, manifest-owned and result-verifiable expected remote-flow counts and first/last tick windows, batch count summaries derived from the strongest available aggregate, batch-worker, or exact partition-set evidence, minimum scheduler progress contracts backed by aggregate epoch or dispatch counts, batch-worker histograms, exact partition-set histograms, or per-partition dispatch activity, maximum scheduler idle contracts, minimum max-worker contracts backed by aggregate counts, batch-worker histograms, or exact partition-set histograms, total-worker activity contracts backed by aggregate counts, batch-worker histograms, exact partition-set histograms, or per-partition worker activity, multi-worker batch activity contracts, exact batch partition-set contracts, sustained same-batch partition-set streak contracts, active-partition contracts backed by aggregate counts, exact batch partition-set unions, activity-derived partition unions, or remote-flow source/target unions, typed work flags backed by partition and frontier evidence, per-partition activity contracts backed by explicit activity, exact batch partition-set histograms, or remote-flow records with same-scope activity projections merged as lower-bound evidence instead of added, per-partition initial/final frontier contracts, clean diagnostic contracts, source and target partition counts in recorded parallel summaries, and typed parallel-worker failure reporting that preserves remaining partition events, keeps executed-time visibility, commits successful callbacks' remote messages, and rolls back local and remote events scheduled by the panicked callback exist. |
+| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, recorded initial and final epoch frontiers carried through CPU, data-cache/coherence, full-system, and workload-result summaries with per-partition conservative full-system frontier aggregation, worker-local remote outboxes, ordered remote-send records, source-target remote-flow records carried through RISC-V cluster, full-system, and workload-result summaries, scheduler epoch, empty-epoch, and dispatch counts, CPU scheduler, data-cache scheduler, and merged full-system progress-free transition counts plus declared-threshold livelock diagnostic counts exposed on `RiscvSystemRun` and carried into workload summaries, batch worker-count histograms, exact batch partition-set histograms, and maximum consecutive partition-set streaks carried into workload summaries, manifest-owned and result-verifiable expected remote-flow counts and first/last tick windows, batch count summaries derived from the strongest available aggregate, batch-worker, exact partition-set, or streak evidence, minimum scheduler progress contracts backed by aggregate epoch or dispatch counts, batch-worker histograms, exact partition-set histograms, streaks, or per-partition dispatch activity, maximum scheduler idle contracts, minimum max-worker contracts backed by aggregate counts, batch-worker histograms, exact partition-set histograms, or streaks, total-worker activity contracts backed by aggregate counts, batch-worker histograms, exact partition-set histograms, streaks, or per-partition worker activity, multi-worker batch activity contracts backed by batch-worker histograms, exact partition-set histograms, or streaks, exact batch partition-set contracts, sustained same-batch partition-set streak contracts, active-partition contracts backed by aggregate counts, exact batch partition-set unions, streak partition-set unions, activity-derived partition unions, or remote-flow source/target unions, typed work flags backed by partition and frontier evidence, per-partition activity contracts backed by explicit activity, exact batch partition-set histograms, streaks, or remote-flow records with same-scope activity projections merged as lower-bound evidence instead of added, per-partition initial/final frontier contracts, clean diagnostic contracts, source and target partition counts in recorded parallel summaries, and typed parallel-worker failure reporting that preserves remaining partition events, keeps executed-time visibility, commits successful callbacks' remote messages, and rolls back local and remote events scheduled by the panicked callback exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, and probe event snapshots exist. Broader power-controller and external-analysis adapter breadth remains open. |
@@ -415,9 +415,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   empty-epoch, dispatch counts, progress-free transition counts,
   declared-threshold livelock diagnostic counts, merged resource and
   full-system deadlock diagnostic counts, batch counts derived from the
-  strongest available aggregate, worker-count, or exact partition-set evidence,
+  strongest available aggregate, worker-count, exact partition-set, or streak evidence,
   total-worker counts derived from the
-  strongest available aggregate, batch-histogram, exact partition-set, or per-partition worker evidence, exact batch
+  strongest available aggregate, batch-histogram, exact partition-set, streak, or per-partition worker evidence, exact batch
   partition-set histograms, maximum
   consecutive partition-set streaks, per-partition activity summaries,
   replay-plan
@@ -425,13 +425,13 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   minimum scheduler epoch progress plus dispatch progress from the strongest
   available aggregate counts, batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
   minimum max-worker use derived from the strongest available aggregate,
-  worker-count, or exact partition-set evidence, minimum total-worker activity
+  worker-count, exact partition-set, or streak evidence, minimum total-worker activity
   derived from the strongest available aggregate, worker-count, exact
-  partition-set, or per-partition evidence, minimum multi-worker batch activity
-  derived from the strongest available worker-count or exact partition-set
+  partition-set, streak, or per-partition evidence, minimum multi-worker batch activity
+  derived from the strongest available worker-count, exact partition-set, or streak
   evidence, exact batch partition-set activity,
   sustained same-batch partition-set streak activity, minimum active partition
-  counts derived from aggregate, exact partition-set, activity, or remote-flow
+  counts derived from aggregate, exact partition-set, streak, activity, or remote-flow
   evidence, per-partition activity minima backed by explicit activity, exact
   batch partition-set histograms, or remote-flow records with same-scope
   activity projections merged as lower-bound evidence, data-cache run attribution

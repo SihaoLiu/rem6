@@ -1,6 +1,8 @@
 use rem6_boot::BootImage;
 use rem6_fabric::{QosPriority, QosRequestorId};
-use rem6_kernel::{ParallelRemoteFlowRecord, PartitionFrontier, PartitionId};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
@@ -695,5 +697,75 @@ fn workload_result_records_parallel_batch_partition_streaks_from_ordered_batches
             PartitionId::new(2),
         ]),
         2,
+    );
+}
+
+#[test]
+fn workload_result_derives_parallel_activity_from_batch_partition_streaks() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_streak_sequence([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 2),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(1), PartitionId::new(0)], 1),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(2),
+                    PartitionId::new(3),
+                    PartitionId::new(4),
+                ],
+                2,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_streak_sequence([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(10), PartitionId::new(11)], 4),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(11),
+                    PartitionId::new(12),
+                    PartitionId::new(13),
+                ],
+                1,
+            ),
+        ]);
+
+    assert_eq!(summary.scheduler_batch_count(), 5);
+    assert_eq!(summary.scheduler_dispatch_count(), 12);
+    assert_eq!(summary.max_parallel_scheduler_workers(), 3);
+    assert_eq!(summary.total_parallel_scheduler_workers(), 12);
+    assert_eq!(summary.active_scheduler_partition_count(), 5);
+    assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 5);
+    assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(3), 2);
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(3, 3, 0, 0, 0)),
+    );
+
+    assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 5);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
+    assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
+    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 11);
+    assert_eq!(
+        summary.active_data_cache_parallel_scheduler_partition_count(),
+        4,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_count_at_or_above(3),
+        1,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_partition_activity(PartitionId::new(11)),
+        Some(ParallelPartitionActivity::with_remote_counts(5, 5, 0, 0, 0)),
+    );
+
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 10);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 23);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 23);
+    assert_eq!(
+        summary.active_full_system_parallel_scheduler_partition_count(),
+        9,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_at_or_above(3),
+        3,
     );
 }

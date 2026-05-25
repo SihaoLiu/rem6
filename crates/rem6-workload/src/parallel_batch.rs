@@ -211,10 +211,13 @@ pub(crate) fn parallel_batch_count_at_or_above(
 pub(crate) fn parallel_batch_activity_count_at_or_above(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
     minimum_worker_count: usize,
 ) -> usize {
     parallel_batch_count_at_or_above(counts, minimum_worker_count).max(
-        parallel_batch_partition_set_count_at_or_above(sets, minimum_worker_count),
+        parallel_batch_partition_set_count_at_or_above(sets, minimum_worker_count).max(
+            parallel_batch_partition_streak_count_at_or_above(streaks, minimum_worker_count),
+        ),
     )
 }
 
@@ -225,6 +228,17 @@ fn parallel_batch_partition_set_count_at_or_above(
     sets.iter()
         .filter(|set| set.partitions().len() >= minimum_worker_count)
         .map(WorkloadParallelBatchPartitionSet::batch_count)
+        .sum()
+}
+
+fn parallel_batch_partition_streak_count_at_or_above(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+    minimum_worker_count: usize,
+) -> usize {
+    streaks
+        .iter()
+        .filter(|streak| streak.partitions().len() >= minimum_worker_count)
+        .map(WorkloadParallelBatchPartitionStreak::consecutive_batch_count)
         .sum()
 }
 
@@ -241,8 +255,11 @@ pub(crate) fn max_parallel_batch_worker_count(
 pub(crate) fn max_parallel_batch_activity_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
 ) -> usize {
-    max_parallel_batch_worker_count(counts).max(max_parallel_batch_partition_set_worker_count(sets))
+    max_parallel_batch_worker_count(counts)
+        .max(max_parallel_batch_partition_set_worker_count(sets))
+        .max(max_parallel_batch_partition_streak_worker_count(streaks))
 }
 
 fn max_parallel_batch_partition_set_worker_count(
@@ -250,6 +267,16 @@ fn max_parallel_batch_partition_set_worker_count(
 ) -> usize {
     sets.iter()
         .map(|set| set.partitions().len())
+        .max()
+        .unwrap_or(0)
+}
+
+fn max_parallel_batch_partition_streak_worker_count(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+) -> usize {
+    streaks
+        .iter()
+        .map(|streak| streak.partitions().len())
         .max()
         .unwrap_or(0)
 }
@@ -273,33 +300,44 @@ pub(crate) fn total_parallel_batch_count(counts: &[WorkloadParallelBatchWorkerCo
 pub(crate) fn strongest_parallel_batch_count(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
 ) -> usize {
-    total_parallel_batch_count(counts).max(total_parallel_batch_partition_set_count(sets))
+    total_parallel_batch_count(counts)
+        .max(total_parallel_batch_partition_set_count(sets))
+        .max(total_parallel_batch_partition_streak_count(streaks))
 }
 
 pub(crate) fn total_parallel_batch_activity_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
 ) -> usize {
     total_parallel_batch_worker_count(counts)
         .max(total_parallel_batch_partition_set_worker_count(sets))
+        .max(total_parallel_batch_partition_streak_worker_count(streaks))
 }
 
 pub(crate) fn parallel_batch_active_partition_count(
     sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
 ) -> usize {
     let mut partitions = BTreeSet::new();
     collect_parallel_batch_active_partitions(&mut partitions, sets);
+    collect_parallel_batch_streak_active_partitions(&mut partitions, streaks);
     partitions.len()
 }
 
 pub(crate) fn combined_parallel_batch_active_partition_count(
     left: &[WorkloadParallelBatchPartitionSet],
+    left_streaks: &[WorkloadParallelBatchPartitionStreak],
     right: &[WorkloadParallelBatchPartitionSet],
+    right_streaks: &[WorkloadParallelBatchPartitionStreak],
 ) -> usize {
     let mut partitions = BTreeSet::new();
     collect_parallel_batch_active_partitions(&mut partitions, left);
+    collect_parallel_batch_streak_active_partitions(&mut partitions, left_streaks);
     collect_parallel_batch_active_partitions(&mut partitions, right);
+    collect_parallel_batch_streak_active_partitions(&mut partitions, right_streaks);
     partitions.len()
 }
 
@@ -324,12 +362,42 @@ pub(crate) fn parallel_batch_partition_activity_for_partition(
     ))
 }
 
+pub(crate) fn parallel_batch_streak_activity_for_partition(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+    partition: PartitionId,
+) -> Option<ParallelPartitionActivity> {
+    let batch_count = streaks
+        .iter()
+        .filter(|streak| streak.partitions().contains(&partition))
+        .map(WorkloadParallelBatchPartitionStreak::consecutive_batch_count)
+        .sum();
+    if batch_count == 0 {
+        return None;
+    }
+    Some(ParallelPartitionActivity::with_remote_counts(
+        batch_count,
+        batch_count,
+        0,
+        0,
+        0,
+    ))
+}
+
 fn collect_parallel_batch_active_partitions(
     partitions: &mut BTreeSet<PartitionId>,
     sets: &[WorkloadParallelBatchPartitionSet],
 ) {
     for set in sets {
         partitions.extend(set.partitions().iter().copied());
+    }
+}
+
+fn collect_parallel_batch_streak_active_partitions(
+    partitions: &mut BTreeSet<PartitionId>,
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+) {
+    for streak in streaks {
+        partitions.extend(streak.partitions().iter().copied());
     }
 }
 
@@ -341,9 +409,27 @@ fn total_parallel_batch_partition_set_worker_count(
         .sum()
 }
 
+fn total_parallel_batch_partition_streak_worker_count(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+) -> usize {
+    streaks
+        .iter()
+        .map(|streak| streak.partitions().len() * streak.consecutive_batch_count())
+        .sum()
+}
+
 fn total_parallel_batch_partition_set_count(sets: &[WorkloadParallelBatchPartitionSet]) -> usize {
     sets.iter()
         .map(WorkloadParallelBatchPartitionSet::batch_count)
+        .sum()
+}
+
+fn total_parallel_batch_partition_streak_count(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+) -> usize {
+    streaks
+        .iter()
+        .map(WorkloadParallelBatchPartitionStreak::consecutive_batch_count)
         .sum()
 }
 

@@ -39,7 +39,9 @@ impl WorkloadParallelExecutionSummary {
         self.active_full_system_parallel_scheduler_partition_count
             .max(combined_parallel_batch_active_partition_count(
                 &self.parallel_scheduler_batch_partition_sets,
+                &self.parallel_scheduler_batch_partition_streaks,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_streaks,
             ))
             .max(combined_parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
