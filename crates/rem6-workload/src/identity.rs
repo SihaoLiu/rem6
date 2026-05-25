@@ -9,11 +9,12 @@ use crate::{
     WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayFloor,
     WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope,
-    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
+    WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -37,6 +38,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_parallel_remote_endpoints: &'a [WorkloadExpectedParallelRemoteEndpoints],
     pub(crate) expected_parallel_remote_delay_floors:
         &'a [WorkloadExpectedParallelRemoteDelayFloor],
+    pub(crate) expected_parallel_remote_traffic_consistency:
+        &'a [WorkloadExpectedParallelRemoteTrafficConsistency],
     pub(crate) expected_parallel_remote_sends: &'a [WorkloadExpectedParallelRemoteSend],
     pub(crate) expected_parallel_remote_flow_timings:
         &'a [WorkloadExpectedParallelRemoteFlowTiming],
@@ -120,6 +123,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_remote_delay_floors {
         hash_expected_parallel_remote_delay_floor(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_remote_traffic_consistency.len() as u64,
+    );
+    for expected in input.expected_parallel_remote_traffic_consistency {
+        hash_expected_parallel_remote_traffic_consistency(&mut hash, *expected);
     }
     hash_u64(&mut hash, input.expected_parallel_remote_sends.len() as u64);
     for expected in input.expected_parallel_remote_sends {
@@ -271,6 +281,13 @@ fn hash_expected_parallel_remote_delay_floor(
 ) {
     hash_parallel_remote_flow_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_delay());
+}
+
+fn hash_expected_parallel_remote_traffic_consistency(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelRemoteTrafficConsistency,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
 }
 
 fn hash_expected_parallel_remote_send(

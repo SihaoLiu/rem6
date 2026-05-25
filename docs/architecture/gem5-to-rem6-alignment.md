@@ -66,7 +66,8 @@ isolated bugs:
   plans can declare exact expected remote-send records, remote-flow actual sets,
   and remote source/target endpoint partition sets for scheduler, data-cache
   scheduler, or merged full-system scope, exact remote-flow first/last tick windows,
-  manifest-verifiable minimum remote-delay floors,
+  manifest-verifiable minimum remote-delay floors, and manifest-verifiable
+  consistency between aggregate remote-flow evidence and exact remote-send evidence,
   minimum max-worker use derived from aggregate, worker-count, exact
   partition-set, or streak evidence, batch counts derived from the strongest
   available aggregate, worker-count, exact partition-set, or streak evidence,
@@ -449,7 +450,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   validation of exact expected remote-flow actual sets and first/last tick windows,
   remote endpoint source/target partition fan-in and fan-out summaries plus
   exact manifest-owned endpoint-set expectations, manifest-verifiable remote
-  delay-floor expectations,
+  delay-floor expectations, aggregate-flow to exact-send consistency expectations,
   minimum scheduler epoch progress plus dispatch progress from the strongest
   available aggregate counts, batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
   minimum max-worker use derived from the strongest available aggregate,

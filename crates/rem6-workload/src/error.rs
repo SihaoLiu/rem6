@@ -17,6 +17,23 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadParallelRemoteTrafficConsistencyMismatch {
+    pub scope: WorkloadParallelRemoteFlowScope,
+    pub source: u32,
+    pub target: u32,
+    pub flow_send_count: usize,
+    pub send_record_count: usize,
+    pub flow_first_tick: Tick,
+    pub send_first_tick: Option<Tick>,
+    pub flow_last_tick: Tick,
+    pub send_last_tick: Option<Tick>,
+    pub flow_minimum_delay: Option<Tick>,
+    pub send_minimum_delay: Option<Tick>,
+    pub flow_maximum_delay: Option<Tick>,
+    pub send_maximum_delay: Option<Tick>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
     Boot(BootError),
     Memory(MemoryError),
@@ -414,6 +431,9 @@ pub enum WorkloadError {
     DuplicateExpectedParallelRemoteDelayFloor {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    DuplicateExpectedParallelRemoteTrafficConsistency {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
     MissingParallelRemoteDelayFloorSummary {
         scope: WorkloadParallelRemoteFlowScope,
         minimum_delay: Tick,
@@ -435,6 +455,10 @@ pub enum WorkloadError {
         minimum_delay: Tick,
         actual_minimum_delay: Tick,
     },
+    MissingParallelRemoteTrafficConsistencySummary {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    ParallelRemoteTrafficConsistencyMismatch(Box<WorkloadParallelRemoteTrafficConsistencyMismatch>),
     InvalidExpectedParallelRemoteFlowTimingWindow {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
@@ -1240,10 +1264,13 @@ impl fmt::Display for WorkloadError {
             }
             Self::ZeroExpectedParallelRemoteDelayFloor { .. }
             | Self::DuplicateExpectedParallelRemoteDelayFloor { .. }
+            | Self::DuplicateExpectedParallelRemoteTrafficConsistency { .. }
             | Self::MissingParallelRemoteDelayFloorSummary { .. }
             | Self::MissingParallelRemoteDelayEvidence { .. }
             | Self::MissingParallelRemoteFlowDelayEvidence { .. }
             | Self::ExpectedParallelRemoteDelayBelowFloor { .. }
+            | Self::MissingParallelRemoteTrafficConsistencySummary { .. }
+            | Self::ParallelRemoteTrafficConsistencyMismatch(_)
             | Self::InvalidExpectedParallelRemoteFlowTimingWindow { .. }
             | Self::InvalidExpectedParallelRemoteFlowDelayBounds { .. }
             | Self::DuplicateExpectedParallelRemoteFlowTiming { .. }

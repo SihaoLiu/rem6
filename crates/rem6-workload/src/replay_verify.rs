@@ -1,9 +1,12 @@
-use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord};
+use std::collections::BTreeMap;
+
+use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId, Tick};
 
 use crate::{
     WorkloadError, WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
     WorkloadExpectedParallelRemoteSend, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResult,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelRemoteTrafficConsistencyMismatch,
+    WorkloadReplayPlan, WorkloadResult,
 };
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 3] = [
@@ -249,6 +252,169 @@ pub(crate) fn verify_expected_parallel_remote_delay_floors(
         }
     }
     Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_consistency = plan.expected_parallel_remote_traffic_consistency();
+    if expected_consistency.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        return Err(
+            WorkloadError::MissingParallelRemoteTrafficConsistencySummary {
+                scope: expected_consistency[0].scope(),
+            },
+        );
+    };
+
+    for expected in expected_consistency {
+        let flows = explicit_parallel_remote_flows_for_scope(summary, expected.scope());
+        let sends = actual_parallel_remote_sends_for_scope(summary, expected.scope());
+        let send_observations = remote_send_observations(&sends);
+        for flow in flows {
+            let Some(send_observation) = send_observations.get(&(flow.source(), flow.target()))
+            else {
+                continue;
+            };
+            if !remote_traffic_observation_matches(flow, *send_observation) {
+                return Err(remote_traffic_consistency_mismatch(
+                    expected.scope(),
+                    flow,
+                    *send_observation,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn explicit_parallel_remote_flows_for_scope(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<ParallelRemoteFlowRecord> {
+    match scope {
+        WorkloadParallelRemoteFlowScope::Scheduler => {
+            summary.parallel_scheduler_remote_flows().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            .data_cache_parallel_scheduler_remote_flows()
+            .to_vec(),
+        WorkloadParallelRemoteFlowScope::FullSystem => merge_explicit_parallel_remote_flows(
+            summary
+                .parallel_scheduler_remote_flows()
+                .iter()
+                .copied()
+                .chain(
+                    summary
+                        .data_cache_parallel_scheduler_remote_flows()
+                        .iter()
+                        .copied(),
+                ),
+        ),
+    }
+}
+
+fn merge_explicit_parallel_remote_flows(
+    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+) -> Vec<ParallelRemoteFlowRecord> {
+    let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
+    for flow in flows {
+        if flow.send_count() == 0 {
+            continue;
+        }
+        by_route
+            .entry((flow.source(), flow.target()))
+            .and_modify(|stored| *stored = stored.merged_with(flow))
+            .or_insert(flow);
+    }
+    by_route.into_values().collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RemoteSendObservation {
+    send_count: usize,
+    first_tick: Tick,
+    last_tick: Tick,
+    minimum_delay: Tick,
+    maximum_delay: Tick,
+}
+
+impl RemoteSendObservation {
+    fn from_send(send: ParallelRemoteSendRecord) -> Self {
+        let delay = send.delay();
+        Self {
+            send_count: 1,
+            first_tick: send.delivery_tick(),
+            last_tick: send.delivery_tick(),
+            minimum_delay: delay,
+            maximum_delay: delay,
+        }
+    }
+
+    fn record_send(&mut self, send: ParallelRemoteSendRecord) {
+        self.send_count += 1;
+        self.first_tick = self.first_tick.min(send.delivery_tick());
+        self.last_tick = self.last_tick.max(send.delivery_tick());
+        let delay = send.delay();
+        self.minimum_delay = self.minimum_delay.min(delay);
+        self.maximum_delay = self.maximum_delay.max(delay);
+    }
+}
+
+fn remote_send_observations(
+    sends: &[ParallelRemoteSendRecord],
+) -> BTreeMap<(PartitionId, PartitionId), RemoteSendObservation> {
+    let mut observations = BTreeMap::new();
+    for send in sends {
+        observations
+            .entry((send.source(), send.target()))
+            .and_modify(|observation: &mut RemoteSendObservation| observation.record_send(*send))
+            .or_insert_with(|| RemoteSendObservation::from_send(*send));
+    }
+    observations
+}
+
+fn remote_traffic_observation_matches(
+    flow: ParallelRemoteFlowRecord,
+    sends: RemoteSendObservation,
+) -> bool {
+    let timing_matches = flow.send_count() == sends.send_count
+        && flow.first_tick() == sends.first_tick
+        && flow.last_tick() == sends.last_tick;
+    let delay_matches = match flow.delay_bounds() {
+        Some((minimum_delay, maximum_delay)) => {
+            minimum_delay == sends.minimum_delay && maximum_delay == sends.maximum_delay
+        }
+        None => true,
+    };
+    timing_matches && delay_matches
+}
+
+fn remote_traffic_consistency_mismatch(
+    scope: WorkloadParallelRemoteFlowScope,
+    flow: ParallelRemoteFlowRecord,
+    sends: RemoteSendObservation,
+) -> WorkloadError {
+    WorkloadError::ParallelRemoteTrafficConsistencyMismatch(Box::new(
+        WorkloadParallelRemoteTrafficConsistencyMismatch {
+            scope,
+            source: flow.source().index(),
+            target: flow.target().index(),
+            flow_send_count: flow.send_count(),
+            send_record_count: sends.send_count,
+            flow_first_tick: flow.first_tick(),
+            send_first_tick: Some(sends.first_tick),
+            flow_last_tick: flow.last_tick(),
+            send_last_tick: Some(sends.last_tick),
+            flow_minimum_delay: flow.minimum_delay(),
+            send_minimum_delay: Some(sends.minimum_delay),
+            flow_maximum_delay: flow.maximum_delay(),
+            send_maximum_delay: Some(sends.maximum_delay),
+        },
+    ))
 }
 
 pub(crate) fn verify_expected_parallel_remote_endpoints(

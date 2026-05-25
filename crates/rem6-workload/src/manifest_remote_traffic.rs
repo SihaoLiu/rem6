@@ -1,7 +1,8 @@
 use crate::{
     WorkloadError, WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend, WorkloadManifest,
-    WorkloadManifestBuilder, WorkloadReplayPlan,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadManifest, WorkloadManifestBuilder,
+    WorkloadReplayPlan,
 };
 
 impl WorkloadManifest {
@@ -13,6 +14,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedParallelRemoteDelayFloor] {
         &self.expected_parallel_remote_delay_floors
+    }
+
+    pub fn expected_parallel_remote_traffic_consistency(
+        &self,
+    ) -> &[WorkloadExpectedParallelRemoteTrafficConsistency] {
+        &self.expected_parallel_remote_traffic_consistency
     }
 
     pub fn expected_parallel_remote_sends(&self) -> &[WorkloadExpectedParallelRemoteSend] {
@@ -64,6 +71,28 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_remote_delay_floors.push(expected);
         self.expected_parallel_remote_delay_floors
             .sort_by_key(|floor| floor.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_remote_traffic_consistency(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteTrafficConsistency,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_traffic_consistency
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelRemoteTrafficConsistency {
+                    scope: expected.scope(),
+                },
+            );
+        }
+        self.expected_parallel_remote_traffic_consistency
+            .push(expected);
+        self.expected_parallel_remote_traffic_consistency
+            .sort_by_key(|consistency| consistency.sort_key());
         Ok(self)
     }
 
@@ -162,6 +191,34 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedParallelRemoteDelayFloor] {
         &self.expected_parallel_remote_delay_floors
+    }
+
+    pub fn add_expected_parallel_remote_traffic_consistency(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteTrafficConsistency,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_traffic_consistency
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelRemoteTrafficConsistency {
+                    scope: expected.scope(),
+                },
+            );
+        }
+        self.expected_parallel_remote_traffic_consistency
+            .push(expected);
+        self.expected_parallel_remote_traffic_consistency
+            .sort_by_key(|consistency| consistency.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_remote_traffic_consistency(
+        &self,
+    ) -> &[WorkloadExpectedParallelRemoteTrafficConsistency] {
+        &self.expected_parallel_remote_traffic_consistency
     }
 
     pub fn add_expected_parallel_remote_send(

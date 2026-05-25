@@ -25,7 +25,7 @@ mod topology;
 mod workload_result;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
-pub use error::WorkloadError;
+pub use error::{WorkloadError, WorkloadParallelRemoteTrafficConsistencyMismatch};
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
@@ -51,10 +51,11 @@ pub use parallel_expectation::{
     WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayFloor,
     WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -270,6 +271,8 @@ pub struct WorkloadManifest {
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
+    expected_parallel_remote_traffic_consistency:
+        Vec<WorkloadExpectedParallelRemoteTrafficConsistency>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -433,6 +436,8 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
+    expected_parallel_remote_traffic_consistency:
+        Vec<WorkloadExpectedParallelRemoteTrafficConsistency>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -465,6 +470,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_remote_endpoints: Vec::new(),
             expected_parallel_remote_delay_floors: Vec::new(),
+            expected_parallel_remote_traffic_consistency: Vec::new(),
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
@@ -837,6 +843,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_remote_endpoints: &self.expected_parallel_remote_endpoints,
             expected_parallel_remote_delay_floors: &self.expected_parallel_remote_delay_floors,
+            expected_parallel_remote_traffic_consistency: &self
+                .expected_parallel_remote_traffic_consistency,
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
@@ -868,6 +876,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_remote_endpoints: self.expected_parallel_remote_endpoints,
             expected_parallel_remote_delay_floors: self.expected_parallel_remote_delay_floors,
+            expected_parallel_remote_traffic_consistency: self
+                .expected_parallel_remote_traffic_consistency,
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
@@ -906,6 +916,8 @@ pub struct WorkloadReplayPlan {
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
+    expected_parallel_remote_traffic_consistency:
+        Vec<WorkloadExpectedParallelRemoteTrafficConsistency>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -950,6 +962,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_remote_delay_floors: manifest
                 .expected_parallel_remote_delay_floors()
+                .to_vec(),
+            expected_parallel_remote_traffic_consistency: manifest
+                .expected_parallel_remote_traffic_consistency()
                 .to_vec(),
             expected_parallel_remote_sends: manifest.expected_parallel_remote_sends().to_vec(),
             expected_parallel_remote_flow_timings: manifest
@@ -1364,6 +1379,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_remote_flow_timings(self, result)?;
         replay_verify::verify_expected_parallel_remote_endpoints(self, result)?;
         replay_verify::verify_expected_parallel_remote_delay_floors(self, result)?;
+        replay_verify::verify_expected_parallel_remote_traffic_consistency(self, result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;

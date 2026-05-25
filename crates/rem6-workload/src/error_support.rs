@@ -183,6 +183,11 @@ pub(crate) fn format_remote_delay_error(
             "expected {} remote delay floor is already declared",
             scope.as_str()
         ),
+        WorkloadError::DuplicateExpectedParallelRemoteTrafficConsistency { scope } => write!(
+            formatter,
+            "expected {} remote traffic consistency is already declared",
+            scope.as_str()
+        ),
         WorkloadError::MissingParallelRemoteDelayFloorSummary {
             scope,
             minimum_delay,
@@ -219,6 +224,28 @@ pub(crate) fn format_remote_delay_error(
             formatter,
             "expected {} remote flow {source}->{target} minimum delay at least {minimum_delay}, got {actual_minimum_delay}",
             scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteTrafficConsistencySummary { scope } => write!(
+            formatter,
+            "missing parallel summary for expected {} remote traffic consistency",
+            scope.as_str()
+        ),
+        WorkloadError::ParallelRemoteTrafficConsistencyMismatch(mismatch) => write!(
+            formatter,
+            "expected {} remote traffic {source}->{target} flow evidence count {flow_send_count}, ticks {flow_first_tick} to {flow_last_tick}, delay {} to {}; send evidence count {send_record_count}, ticks {} to {}, delay {} to {}",
+            mismatch.scope.as_str(),
+            format_optional_tick(mismatch.flow_minimum_delay),
+            format_optional_tick(mismatch.flow_maximum_delay),
+            format_optional_tick(mismatch.send_first_tick),
+            format_optional_tick(mismatch.send_last_tick),
+            format_optional_tick(mismatch.send_minimum_delay),
+            format_optional_tick(mismatch.send_maximum_delay),
+            source = mismatch.source,
+            target = mismatch.target,
+            flow_send_count = mismatch.flow_send_count,
+            send_record_count = mismatch.send_record_count,
+            flow_first_tick = mismatch.flow_first_tick,
+            flow_last_tick = mismatch.flow_last_tick
         ),
         WorkloadError::InvalidExpectedParallelRemoteFlowTimingWindow {
             scope,
@@ -321,6 +348,11 @@ pub(crate) fn format_remote_delay_error(
         }
         _ => unreachable!("unsupported remote delay error"),
     }
+}
+
+fn format_optional_tick(tick: Option<u64>) -> String {
+    tick.map(|tick| tick.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }
 
 impl Error for WorkloadError {
