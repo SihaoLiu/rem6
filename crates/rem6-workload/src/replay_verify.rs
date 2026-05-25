@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
     ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
@@ -8,9 +8,9 @@ use rem6_kernel::{
 use crate::{
     WorkloadError, WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteFlow,
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadParallelExecutionSummary, WorkloadParallelProgressTransitionExpectationFailure,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelRemoteTrafficConsistencyMismatch,
-    WorkloadReplayPlan, WorkloadResult,
+    WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
+    WorkloadParallelRemoteTrafficConsistencyMismatch, WorkloadReplayPlan, WorkloadResult,
 };
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 3] = [
@@ -719,10 +719,36 @@ pub(crate) fn verify_expected_clean_parallel_diagnostics(
                 wait_for_edge_count,
                 deadlock_diagnostic_count,
                 livelock_diagnostic_count,
+                livelock_subjects: actual_livelock_subjects(expected.scope(), summary),
             });
         }
     }
     Ok(())
+}
+
+fn actual_livelock_subjects(
+    scope: WorkloadParallelDiagnosticScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<String> {
+    match scope {
+        WorkloadParallelDiagnosticScope::DataCache => summary
+            .data_cache_parallel_scheduler_livelock_diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.subject().to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        WorkloadParallelDiagnosticScope::FullSystem => summary
+            .full_system_livelock_diagnostics()
+            .into_iter()
+            .map(|diagnostic| diagnostic.subject().to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        WorkloadParallelDiagnosticScope::Resource
+        | WorkloadParallelDiagnosticScope::Compute
+        | WorkloadParallelDiagnosticScope::Dma => Vec::new(),
+    }
 }
 
 pub(crate) fn verify_expected_resource_activity(

@@ -164,6 +164,7 @@ fn workload_replay_plan_rejects_missing_or_dirty_parallel_diagnostics() {
             wait_for_edge_count: 5,
             deadlock_diagnostic_count: 10,
             livelock_diagnostic_count: 0,
+            livelock_subjects: Vec::new(),
         },
     );
 }

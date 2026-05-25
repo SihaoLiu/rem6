@@ -272,8 +272,10 @@ by transition kind, partition, and subject. Workload result summaries preserve
 the same evidence shape plus threshold-driven livelock diagnostic records and
 counts for CPU-scheduler, data-cache scheduler, and merged full-system scopes
 before workload replay translates them into manifest-verifiable result
-summaries. Useful work resets the active window so retry-heavy but productive
-models do not look like livelock.
+summaries; clean-diagnostic violations include the dirty livelock subjects so a
+failing replay identifies the stuck component or resource. Useful work resets
+the active window so retry-heavy but productive models do not look like
+livelock.
 
 Tests for each integration layer should cover both outcomes:
 

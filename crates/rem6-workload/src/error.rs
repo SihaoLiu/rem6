@@ -803,6 +803,7 @@ pub enum WorkloadError {
         wait_for_edge_count: usize,
         deadlock_diagnostic_count: usize,
         livelock_diagnostic_count: usize,
+        livelock_subjects: Vec<String>,
     },
 }
 
@@ -1778,11 +1779,22 @@ impl fmt::Display for WorkloadError {
                 wait_for_edge_count,
                 deadlock_diagnostic_count,
                 livelock_diagnostic_count,
-            } => write!(
-                formatter,
-                "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges, {deadlock_diagnostic_count} deadlock diagnostics, and {livelock_diagnostic_count} livelock diagnostics",
-                scope.as_str()
-            ),
+                livelock_subjects,
+            } => {
+                write!(
+                    formatter,
+                    "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges, {deadlock_diagnostic_count} deadlock diagnostics, and {livelock_diagnostic_count} livelock diagnostics",
+                    scope.as_str()
+                )?;
+                if !livelock_subjects.is_empty() {
+                    write!(
+                        formatter,
+                        " for livelock subjects {}",
+                        livelock_subjects.join(", ")
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }

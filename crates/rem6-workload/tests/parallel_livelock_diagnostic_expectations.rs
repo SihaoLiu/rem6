@@ -215,8 +215,22 @@ fn workload_replay_plan_rejects_livelock_dirty_parallel_diagnostics() {
         .unwrap();
 
     let dirty_summary = WorkloadParallelExecutionSummary::default()
-        .with_parallel_scheduler_livelock_diagnostics(4, 1)
-        .with_data_cache_parallel_scheduler_livelock_diagnostics(3, 2);
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            4,
+            [livelock_diagnostic(
+                component("cpu-progress-loop"),
+                1,
+                [(LivelockTransitionKind::ProtocolRetry, 0)],
+            )],
+        )
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(
+            3,
+            [livelock_diagnostic(
+                component("cache-progress-loop"),
+                1,
+                [(LivelockTransitionKind::MessageRetry, 3)],
+            )],
+        );
     let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_parallel_execution_summary(dirty_summary);
 
@@ -226,7 +240,11 @@ fn workload_replay_plan_rejects_livelock_dirty_parallel_diagnostics() {
             scope: WorkloadParallelDiagnosticScope::FullSystem,
             wait_for_edge_count: 0,
             deadlock_diagnostic_count: 0,
-            livelock_diagnostic_count: 3,
+            livelock_diagnostic_count: 2,
+            livelock_subjects: vec![
+                "component:cache-progress-loop".to_string(),
+                "component:cpu-progress-loop".to_string(),
+            ],
         },
     );
 }
@@ -252,6 +270,7 @@ fn workload_clean_data_cache_diagnostics_include_data_cache_livelock() {
             wait_for_edge_count: 0,
             deadlock_diagnostic_count: 0,
             livelock_diagnostic_count: 2,
+            livelock_subjects: Vec::new(),
         },
     );
 }
