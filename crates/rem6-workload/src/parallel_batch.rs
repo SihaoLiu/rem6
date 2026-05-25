@@ -240,6 +240,26 @@ pub(crate) fn max_parallel_batch_worker_count(
         .unwrap_or(0)
 }
 
+pub(crate) fn max_parallel_batch_activity_worker_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    if counts.is_empty() {
+        max_parallel_batch_partition_set_worker_count(sets)
+    } else {
+        max_parallel_batch_worker_count(counts)
+    }
+}
+
+fn max_parallel_batch_partition_set_worker_count(
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    sets.iter()
+        .map(|set| set.partitions().len())
+        .max()
+        .unwrap_or(0)
+}
+
 pub(crate) fn total_parallel_batch_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
 ) -> usize {

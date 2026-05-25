@@ -365,11 +365,11 @@ data-cache scheduler records conservatively instead of reporting whichever
 subsystem progressed further. Workload result summaries treat non-empty typed
 frontier and partition evidence as parallel work even when worker and batch
 aggregates are not present. Exact batch partition-set histograms also imply
-multi-worker batch activity for any worker threshold not larger than the
-recorded partition set. Workload manifests may declare required initial
-or final frontier minima for specific partitions and scopes, turning
-conservative-frontier progress into a replay contract rather than an informal
-trace inspection.
+minimum max-worker use and multi-worker batch activity for any worker threshold
+not larger than the recorded partition set. Workload manifests may declare
+required initial or final frontier minima for specific partitions and scopes,
+turning conservative-frontier progress into a replay contract rather than an
+informal trace inspection.
 
 ## Message Model
 
