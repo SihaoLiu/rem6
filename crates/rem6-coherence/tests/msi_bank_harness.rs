@@ -10,8 +10,8 @@ use rem6_directory::{DirectoryDataSource, DirectoryLineState};
 use rem6_fabric::{QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryRequest, MemoryRequestId, ResponseStatus,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::{
@@ -217,6 +217,45 @@ fn msi_bank_harness_snapshot_aggregates_cache_mshr_qos_profiles() {
         Some(5)
     );
     assert!(restored.cache_mshr_qos_profile(agent(9)).is_err());
+}
+
+#[test]
+fn msi_bank_harness_byte_snapshot_preserves_mshr_target_ordering() {
+    let ordering = MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        Some(MemoryBarrierSet::new(false, true)),
+    );
+    let mut bank =
+        MsiCacheBank::new_with_mshr(agent(1), layout(), MshrQueueConfig::new(2, 3, 0).unwrap());
+    bank.accept_cpu_request_with_qos(
+        read(1, 42, 0x2004).with_ordering(ordering),
+        MshrQosClass::new(90, 2),
+    )
+    .unwrap();
+    let snapshot = MsiBankDirectoryHarnessSnapshot::new(
+        layout(),
+        BTreeMap::from([(agent(1), bank.snapshot())]),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let rebuilt = MsiBankDirectoryHarnessSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+
+    assert_eq!(rebuilt, snapshot);
+    assert_eq!(
+        rebuilt
+            .cache_snapshot(agent(1))
+            .unwrap()
+            .mshr()
+            .unwrap()
+            .entries()[0]
+            .targets()[0]
+            .request()
+            .ordering(),
+        ordering
+    );
 }
 
 #[test]

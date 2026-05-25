@@ -289,7 +289,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   ordering propagation, MSHR-to-transport QoS class export, per-cycle MSI bank
   run QoS counts by effective requestor and priority, parallel-cycle history
   counts by effective requestor and priority, and byte-snapshot restore of MSHR
-  queue configuration plus target QoS state.
+  queue configuration plus target QoS and ordering state.
 - Cache prefetch tests cover tagged next-line candidate generation, DCPT masked
   delta-pair matching with earliest historical replay and snapshot restore, BOP
   best-offset learning with degree candidate metadata, delayed RR training, RR

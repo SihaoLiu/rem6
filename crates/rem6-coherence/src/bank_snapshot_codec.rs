@@ -8,8 +8,8 @@ use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryGrant, DirectoryLineState, DirectorySnoop,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
-    MemoryRequestId, ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryOperation, MemoryRequest, MemoryRequestId, ResponseStatus,
 };
 use rem6_protocol_msi::{MsiCacheLine, MsiEvent, MsiLineId, MsiState};
 
@@ -18,7 +18,7 @@ use crate::{
     MsiBankDirectoryHarnessSnapshot, SubmitKind, SubmitResult,
 };
 
-const FORMAT_VERSION: u64 = 4;
+const FORMAT_VERSION: u64 = 5;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
@@ -553,6 +553,7 @@ fn write_request(payload: &mut Vec<u8>, request: &MemoryRequest) {
         }
         None => write_bool(payload, false),
     }
+    write_memory_access_ordering(payload, request.ordering());
 }
 
 fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String> {
@@ -574,8 +575,9 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
     } else {
         None
     };
+    let ordering = read_memory_access_ordering(cursor)?;
 
-    match operation {
+    let request = match operation {
         MemoryOperation::InstructionFetch => {
             MemoryRequest::instruction_fetch(id, address, size, layout)
         }
@@ -612,7 +614,56 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
             ));
         }
     }
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(request.with_ordering(ordering))
+}
+
+fn write_memory_access_ordering(payload: &mut Vec<u8>, ordering: MemoryAccessOrdering) {
+    write_optional_memory_barrier_set(payload, ordering.before());
+    write_optional_memory_barrier_set(payload, ordering.after());
+}
+
+fn read_memory_access_ordering(
+    cursor: &mut PayloadCursor<'_>,
+) -> Result<MemoryAccessOrdering, String> {
+    let before = read_optional_memory_barrier_set(
+        cursor,
+        "MSI request before-ordering flag",
+        "MSI request before-ordering read flag",
+        "MSI request before-ordering write flag",
+    )?;
+    let after = read_optional_memory_barrier_set(
+        cursor,
+        "MSI request after-ordering flag",
+        "MSI request after-ordering read flag",
+        "MSI request after-ordering write flag",
+    )?;
+    Ok(MemoryAccessOrdering::new(before, after))
+}
+
+fn write_optional_memory_barrier_set(payload: &mut Vec<u8>, barrier: Option<MemoryBarrierSet>) {
+    match barrier {
+        Some(barrier) => {
+            write_bool(payload, true);
+            write_bool(payload, barrier.read());
+            write_bool(payload, barrier.write());
+        }
+        None => write_bool(payload, false),
+    }
+}
+
+fn read_optional_memory_barrier_set(
+    cursor: &mut PayloadCursor<'_>,
+    flag_field: &str,
+    read_field: &str,
+    write_field: &str,
+) -> Result<Option<MemoryBarrierSet>, String> {
+    if !cursor.read_bool(flag_field)? {
+        return Ok(None);
+    }
+    let read = cursor.read_bool(read_field)?;
+    let write = cursor.read_bool(write_field)?;
+    Ok(Some(MemoryBarrierSet::new(read, write)))
 }
 
 fn write_request_id(payload: &mut Vec<u8>, request: MemoryRequestId) {
