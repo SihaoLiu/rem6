@@ -120,6 +120,13 @@ pub enum MemoryOperation {
 pub enum MemoryAtomicOp {
     Swap,
     Add,
+    Xor,
+    Or,
+    And,
+    MinSigned,
+    MaxSigned,
+    MinUnsigned,
+    MaxUnsigned,
 }
 
 impl MemoryOperation {
@@ -1482,6 +1489,25 @@ impl MemoryRequest {
         {
             MemoryAtomicOp::Swap => Ok(payload.to_vec()),
             MemoryAtomicOp::Add => self.atomic_add_data(old_data, payload),
+            MemoryAtomicOp::Xor => {
+                self.atomic_bitwise_data(old_data, payload, |old, new| old ^ new)
+            }
+            MemoryAtomicOp::Or => self.atomic_bitwise_data(old_data, payload, |old, new| old | new),
+            MemoryAtomicOp::And => {
+                self.atomic_bitwise_data(old_data, payload, |old, new| old & new)
+            }
+            MemoryAtomicOp::MinSigned => {
+                self.atomic_signed_select_data(old_data, payload, |old, operand| old <= operand)
+            }
+            MemoryAtomicOp::MaxSigned => {
+                self.atomic_signed_select_data(old_data, payload, |old, operand| old >= operand)
+            }
+            MemoryAtomicOp::MinUnsigned => {
+                self.atomic_unsigned_select_data(old_data, payload, |old, operand| old <= operand)
+            }
+            MemoryAtomicOp::MaxUnsigned => {
+                self.atomic_unsigned_select_data(old_data, payload, |old, operand| old >= operand)
+            }
         }
     }
 
@@ -1501,6 +1527,71 @@ impl MemoryRequest {
         let mask = (1u128 << bit_count) - 1;
         let sum = (old.wrapping_add(increment)) & mask;
         Ok(sum.to_le_bytes()[..width].to_vec())
+    }
+
+    fn atomic_bitwise_data(
+        &self,
+        old_data: &[u8],
+        payload: &[u8],
+        operation: fn(u128, u128) -> u128,
+    ) -> Result<Vec<u8>, MemoryError> {
+        let width = self.size().as_usize()?;
+        if !matches!(width, 1 | 2 | 4 | 8) {
+            return Err(MemoryError::UnsupportedAtomicAccessSize {
+                request: self.id(),
+                op: self.atomic_op().expect("validated atomic operation"),
+                size: self.size(),
+            });
+        }
+
+        let old = read_le_u128(old_data);
+        let operand = read_le_u128(payload);
+        Ok(operation(old, operand).to_le_bytes()[..width].to_vec())
+    }
+
+    fn atomic_signed_select_data(
+        &self,
+        old_data: &[u8],
+        payload: &[u8],
+        select_old: fn(i128, i128) -> bool,
+    ) -> Result<Vec<u8>, MemoryError> {
+        self.validate_atomic_numeric_width()?;
+        let old = read_le_i128(old_data);
+        let operand = read_le_i128(payload);
+        if select_old(old, operand) {
+            Ok(old_data.to_vec())
+        } else {
+            Ok(payload.to_vec())
+        }
+    }
+
+    fn atomic_unsigned_select_data(
+        &self,
+        old_data: &[u8],
+        payload: &[u8],
+        select_old: fn(u128, u128) -> bool,
+    ) -> Result<Vec<u8>, MemoryError> {
+        self.validate_atomic_numeric_width()?;
+        let old = read_le_u128(old_data);
+        let operand = read_le_u128(payload);
+        if select_old(old, operand) {
+            Ok(old_data.to_vec())
+        } else {
+            Ok(payload.to_vec())
+        }
+    }
+
+    fn validate_atomic_numeric_width(&self) -> Result<(), MemoryError> {
+        let width = self.size().as_usize()?;
+        if matches!(width, 1 | 2 | 4 | 8) {
+            return Ok(());
+        }
+
+        Err(MemoryError::UnsupportedAtomicAccessSize {
+            request: self.id(),
+            op: self.atomic_op().expect("validated atomic operation"),
+            size: self.size(),
+        })
     }
 
     pub const fn requires_response(&self) -> bool {
@@ -1526,6 +1617,18 @@ fn read_le_u128(bytes: &[u8]) -> u128 {
         value |= (*byte as u128) << (shift * 8);
     }
     value
+}
+
+fn read_le_i128(bytes: &[u8]) -> i128 {
+    let unsigned = read_le_u128(bytes);
+    let bit_count = bytes.len() * 8;
+    let sign_bit = 1u128 << (bit_count - 1);
+    if unsigned & sign_bit == 0 {
+        unsigned as i128
+    } else {
+        let extension = !0u128 << bit_count;
+        (unsigned | extension) as i128
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

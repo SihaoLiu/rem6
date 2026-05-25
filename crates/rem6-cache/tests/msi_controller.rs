@@ -16,6 +16,9 @@ fn request_id(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(1), sequence)
 }
 
+type AtomicBinary = fn(u64, u64) -> u64;
+type AtomicLogicalCase = (MemoryAtomicOp, AtomicBinary);
+
 fn controller() -> MsiCacheController {
     MsiCacheController::new(AgentId::new(10), layout(), Address::new(0x1000))
 }
@@ -226,6 +229,110 @@ fn controller_atomic_add_hit_returns_old_bytes_and_updates_modified_line() {
             MemoryResponse::completed(&read_back, Some(vec![0x10; 8])).unwrap()
         ))
     );
+}
+
+#[test]
+fn controller_atomic_logical_ops_hit_return_old_bytes_and_update_modified_line() {
+    let cases: [AtomicLogicalCase; 3] = [
+        (MemoryAtomicOp::Xor, |old: u64, operand: u64| old ^ operand),
+        (MemoryAtomicOp::Or, |old: u64, operand: u64| old | operand),
+        (MemoryAtomicOp::And, |old: u64, operand: u64| old & operand),
+    ];
+
+    for (index, (op, expected)) in cases.into_iter().enumerate() {
+        let old = 0xf0f0_0f0f_aaaa_5555u64;
+        let operand = 0x0ff0_f00f_5555_3333u64;
+        let mut line = vec![0; 64];
+        line[8..16].copy_from_slice(&old.to_le_bytes());
+        let mut controller = controller();
+        controller.install_modified(line).unwrap();
+        let request = atomic_with_op(
+            28 + index as u64,
+            0x1008,
+            op,
+            operand.to_le_bytes().to_vec(),
+            ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+        );
+
+        let result = controller.accept_cpu_request(request.clone()).unwrap();
+
+        assert_eq!(result.kind(), CacheControllerResultKind::Hit);
+        assert_eq!(
+            result.target_outcome(),
+            Some(&TargetOutcome::Respond(
+                MemoryResponse::completed(&request, Some(old.to_le_bytes().to_vec())).unwrap()
+            ))
+        );
+        let read_back = MemoryRequest::read_shared(
+            request_id(31 + index as u64),
+            Address::new(0x1008),
+            AccessSize::new(8).unwrap(),
+            layout(),
+        )
+        .unwrap();
+        let hit = controller.accept_cpu_request(read_back.clone()).unwrap();
+        assert_eq!(
+            hit.target_outcome(),
+            Some(&TargetOutcome::Respond(
+                MemoryResponse::completed(
+                    &read_back,
+                    Some(expected(old, operand).to_le_bytes().to_vec())
+                )
+                .unwrap()
+            ))
+        );
+    }
+}
+
+#[test]
+fn controller_atomic_min_max_ops_hit_return_old_bytes_and_update_modified_line() {
+    let negative = 0xffff_ffff_ffff_fff0u64;
+    let positive = 7u64;
+    let cases: [(MemoryAtomicOp, u64, u64, u64); 4] = [
+        (MemoryAtomicOp::MinSigned, negative, positive, negative),
+        (MemoryAtomicOp::MaxSigned, negative, positive, positive),
+        (MemoryAtomicOp::MinUnsigned, negative, positive, positive),
+        (MemoryAtomicOp::MaxUnsigned, negative, positive, negative),
+    ];
+
+    for (index, (op, old, operand, expected)) in cases.into_iter().enumerate() {
+        let mut line = vec![0; 64];
+        line[8..16].copy_from_slice(&old.to_le_bytes());
+        let mut controller = controller();
+        controller.install_modified(line).unwrap();
+        let request = atomic_with_op(
+            34 + index as u64,
+            0x1008,
+            op,
+            operand.to_le_bytes().to_vec(),
+            ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+        );
+
+        let result = controller.accept_cpu_request(request.clone()).unwrap();
+
+        assert_eq!(result.kind(), CacheControllerResultKind::Hit);
+        assert_eq!(
+            result.target_outcome(),
+            Some(&TargetOutcome::Respond(
+                MemoryResponse::completed(&request, Some(old.to_le_bytes().to_vec())).unwrap()
+            ))
+        );
+        let read_back = MemoryRequest::read_shared(
+            request_id(38 + index as u64),
+            Address::new(0x1008),
+            AccessSize::new(8).unwrap(),
+            layout(),
+        )
+        .unwrap();
+        let hit = controller.accept_cpu_request(read_back.clone()).unwrap();
+        assert_eq!(
+            hit.target_outcome(),
+            Some(&TargetOutcome::Respond(
+                MemoryResponse::completed(&read_back, Some(expected.to_le_bytes().to_vec()))
+                    .unwrap()
+            ))
+        );
+    }
 }
 
 #[test]

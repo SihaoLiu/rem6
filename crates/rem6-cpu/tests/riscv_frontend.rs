@@ -103,6 +103,9 @@ fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
 }
 
+type AtomicBinary = fn(u64, u64) -> u64;
+type LogicalAmoCase = (u32, AtomicBinary);
+
 fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
     CpuCore::new(
         CpuResetState::new(
@@ -1179,6 +1182,119 @@ fn riscv_core_amoaddd_writes_sum_and_returns_old_value() {
     );
     assert_eq!(events[0].operation(), MemoryOperation::Atomic);
     assert_eq!(events[1].data(), Some(&[8, 9, 10, 11, 12, 13, 14, 15][..]));
+}
+
+#[test]
+fn riscv_core_logical_amo_ops_write_bitwise_result_and_return_old_value() {
+    let cases: [LogicalAmoCase; 3] = [
+        (0x04, |old: u64, operand: u64| old ^ operand),
+        (0x08, |old: u64, operand: u64| old | operand),
+        (0x0c, |old: u64, operand: u64| old & operand),
+    ];
+
+    for (index, (funct5, expected)) in cases.into_iter().enumerate() {
+        let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+        let core = data_core(fetch_route, data_route, 0x8000);
+        let old = 0xf0f0_0f0f_aaaa_5555u64;
+        let operand = 0x0ff0_f00f_5555_3333u64;
+        core.write_register(reg(2), 0x9008);
+        core.write_register(reg(6), operand);
+        let store = loaded_store_with_data(
+            0x8000,
+            atomic_type(funct5, true, false, 6, 2, 0x3, 7),
+            0x9008,
+            old.to_le_bytes().to_vec(),
+        );
+
+        fetch_one(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+        core.execute_next_completed_fetch().unwrap().unwrap();
+        issue_one_data_access(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+
+        assert_eq!(core.read_register(reg(7)), old);
+        assert_eq!(
+            read_store_bytes(&store, 0x9008, 8, 44 + index as u64),
+            expected(old, operand).to_le_bytes()
+        );
+        let events = core.data_access_events();
+        assert_eq!(
+            events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+            vec![
+                RiscvDataAccessEventKind::Issued,
+                RiscvDataAccessEventKind::Completed,
+            ]
+        );
+        assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+        assert_eq!(events[1].data(), Some(&old.to_le_bytes()[..]));
+    }
+}
+
+#[test]
+fn riscv_core_min_max_amo_ops_write_selected_value_and_return_old_value() {
+    let negative = 0xffff_ffff_ffff_fff0u64;
+    let positive = 7u64;
+    let cases: [(u32, u64, u64, u64); 4] = [
+        (0x10, negative, positive, negative),
+        (0x14, negative, positive, positive),
+        (0x18, negative, positive, positive),
+        (0x1c, negative, positive, negative),
+    ];
+
+    for (index, (funct5, old, operand, expected)) in cases.into_iter().enumerate() {
+        let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+        let core = data_core(fetch_route, data_route, 0x8000);
+        core.write_register(reg(2), 0x9008);
+        core.write_register(reg(6), operand);
+        let store = loaded_store_with_data(
+            0x8000,
+            atomic_type(funct5, false, true, 6, 2, 0x3, 7),
+            0x9008,
+            old.to_le_bytes().to_vec(),
+        );
+
+        fetch_one(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+        core.execute_next_completed_fetch().unwrap().unwrap();
+        issue_one_data_access(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+
+        assert_eq!(core.read_register(reg(7)), old);
+        assert_eq!(
+            read_store_bytes(&store, 0x9008, 8, 47 + index as u64),
+            expected.to_le_bytes()
+        );
+        let events = core.data_access_events();
+        assert_eq!(
+            events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+            vec![
+                RiscvDataAccessEventKind::Issued,
+                RiscvDataAccessEventKind::Completed,
+            ]
+        );
+        assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+        assert_eq!(events[1].data(), Some(&old.to_le_bytes()[..]));
+    }
 }
 
 #[test]

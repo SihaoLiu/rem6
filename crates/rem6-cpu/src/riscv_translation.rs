@@ -599,6 +599,17 @@ fn cpu_translation_request(
             match op {
                 rem6_isa_riscv::AtomicMemoryOp::Swap => rem6_memory::MemoryAtomicOp::Swap,
                 rem6_isa_riscv::AtomicMemoryOp::Add => rem6_memory::MemoryAtomicOp::Add,
+                rem6_isa_riscv::AtomicMemoryOp::Xor => rem6_memory::MemoryAtomicOp::Xor,
+                rem6_isa_riscv::AtomicMemoryOp::Or => rem6_memory::MemoryAtomicOp::Or,
+                rem6_isa_riscv::AtomicMemoryOp::And => rem6_memory::MemoryAtomicOp::And,
+                rem6_isa_riscv::AtomicMemoryOp::MinSigned => rem6_memory::MemoryAtomicOp::MinSigned,
+                rem6_isa_riscv::AtomicMemoryOp::MaxSigned => rem6_memory::MemoryAtomicOp::MaxSigned,
+                rem6_isa_riscv::AtomicMemoryOp::MinUnsigned => {
+                    rem6_memory::MemoryAtomicOp::MinUnsigned
+                }
+                rem6_isa_riscv::AtomicMemoryOp::MaxUnsigned => {
+                    rem6_memory::MemoryAtomicOp::MaxUnsigned
+                }
             },
             store_bytes(*value, size),
             ByteMask::full(size).map_err(RiscvCpuError::Memory)?,

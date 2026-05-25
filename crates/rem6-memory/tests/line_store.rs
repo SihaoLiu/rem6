@@ -11,6 +11,9 @@ fn request_id(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(3), sequence)
 }
 
+type AtomicBinary = fn(u64, u64) -> u64;
+type AtomicLogicalCase = (MemoryAtomicOp, AtomicBinary);
+
 fn line_data(base: u8) -> Vec<u8> {
     (0..64).map(|offset| base.wrapping_add(offset)).collect()
 }
@@ -160,6 +163,75 @@ fn line_store_atomic_add_returns_old_bytes_and_writes_wrapped_sum() {
         &store.line_data(Address::new(0x1000)).unwrap()[8..16],
         &0x1010_1010_1010_1010u64.to_le_bytes()
     );
+}
+
+#[test]
+fn line_store_atomic_logical_ops_return_old_bytes_and_write_bitwise_result() {
+    let cases: [AtomicLogicalCase; 3] = [
+        (MemoryAtomicOp::Xor, |old: u64, operand: u64| old ^ operand),
+        (MemoryAtomicOp::Or, |old: u64, operand: u64| old | operand),
+        (MemoryAtomicOp::And, |old: u64, operand: u64| old & operand),
+    ];
+
+    for (index, (op, expected)) in cases.into_iter().enumerate() {
+        let old = 0xf0f0_0f0f_aaaa_5555u64;
+        let operand = 0x0ff0_f00f_5555_3333u64;
+        let mut line = line_data(0x00);
+        line[8..16].copy_from_slice(&old.to_le_bytes());
+        let mut store = LineMemoryStore::new(layout());
+        store.insert_line(Address::new(0x1000), line).unwrap();
+        let request = atomic_with_op(
+            6 + index as u64,
+            0x1008,
+            op,
+            operand.to_le_bytes().to_vec(),
+            ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+        );
+
+        let response = store.respond(&request).unwrap().unwrap();
+
+        assert_eq!(response.status(), ResponseStatus::Completed);
+        assert_eq!(response.data(), Some(&old.to_le_bytes()[..]));
+        assert_eq!(
+            &store.line_data(Address::new(0x1000)).unwrap()[8..16],
+            &expected(old, operand).to_le_bytes()
+        );
+    }
+}
+
+#[test]
+fn line_store_atomic_min_max_ops_return_old_bytes_and_write_selected_value() {
+    let negative = 0xffff_ffff_ffff_fff0u64;
+    let positive = 7u64;
+    let cases: [(MemoryAtomicOp, u64, u64, u64); 4] = [
+        (MemoryAtomicOp::MinSigned, negative, positive, negative),
+        (MemoryAtomicOp::MaxSigned, negative, positive, positive),
+        (MemoryAtomicOp::MinUnsigned, negative, positive, positive),
+        (MemoryAtomicOp::MaxUnsigned, negative, positive, negative),
+    ];
+
+    for (index, (op, old, operand, expected)) in cases.into_iter().enumerate() {
+        let mut line = line_data(0x00);
+        line[8..16].copy_from_slice(&old.to_le_bytes());
+        let mut store = LineMemoryStore::new(layout());
+        store.insert_line(Address::new(0x1000), line).unwrap();
+        let request = atomic_with_op(
+            9 + index as u64,
+            0x1008,
+            op,
+            operand.to_le_bytes().to_vec(),
+            ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+        );
+
+        let response = store.respond(&request).unwrap().unwrap();
+
+        assert_eq!(response.status(), ResponseStatus::Completed);
+        assert_eq!(response.data(), Some(&old.to_le_bytes()[..]));
+        assert_eq!(
+            &store.line_data(Address::new(0x1000)).unwrap()[8..16],
+            &expected.to_le_bytes()
+        );
+    }
 }
 
 #[test]

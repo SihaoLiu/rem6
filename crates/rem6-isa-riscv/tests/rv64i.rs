@@ -372,6 +372,99 @@ fn hart_reports_atomic_add_access_without_mutating_register() {
 }
 
 #[test]
+fn hart_reports_atomic_logical_accesses_without_mutating_register() {
+    let cases = [
+        (0x04, AtomicMemoryOp::Xor, 0x6c00),
+        (0x08, AtomicMemoryOp::Or, 0x7000),
+        (0x0c, AtomicMemoryOp::And, 0x7400),
+    ];
+
+    for (funct5, op, pc) in cases {
+        let mut hart = RiscvHartState::new(pc);
+        hart.write(reg(2), 0x9008);
+        hart.write(reg(6), 0x0ff0_f00f_5555_3333);
+
+        let instruction =
+            RiscvInstruction::decode(atomic_type(funct5, true, false, 6, 2, 0x3, 7)).unwrap();
+        assert_eq!(
+            instruction,
+            RiscvInstruction::AtomicMemory {
+                rd: reg(7),
+                rs1: reg(2),
+                rs2: reg(6),
+                width: MemoryWidth::Doubleword,
+                op,
+                acquire: true,
+                release: false,
+            }
+        );
+
+        let atomic = hart.execute(instruction).unwrap();
+        assert_eq!(atomic.next_pc(), pc + 4);
+        assert_eq!(
+            atomic.memory_access(),
+            Some(&MemoryAccessKind::AtomicMemory {
+                rd: reg(7),
+                address: 0x9008,
+                width: MemoryWidth::Doubleword,
+                op,
+                value: 0x0ff0_f00f_5555_3333,
+                acquire: true,
+                release: false,
+            })
+        );
+        assert_eq!(hart.read(reg(7)), 0);
+    }
+}
+
+#[test]
+fn hart_reports_atomic_min_max_accesses_without_mutating_register() {
+    let cases = [
+        (0x10, AtomicMemoryOp::MinSigned, 0x7800),
+        (0x14, AtomicMemoryOp::MaxSigned, 0x7c00),
+        (0x18, AtomicMemoryOp::MinUnsigned, 0x8000),
+        (0x1c, AtomicMemoryOp::MaxUnsigned, 0x8400),
+    ];
+
+    for (funct5, op, pc) in cases {
+        let mut hart = RiscvHartState::new(pc);
+        hart.write(reg(2), 0x9008);
+        hart.write(reg(6), 7);
+
+        let instruction =
+            RiscvInstruction::decode(atomic_type(funct5, false, true, 6, 2, 0x3, 7)).unwrap();
+        assert_eq!(
+            instruction,
+            RiscvInstruction::AtomicMemory {
+                rd: reg(7),
+                rs1: reg(2),
+                rs2: reg(6),
+                width: MemoryWidth::Doubleword,
+                op,
+                acquire: false,
+                release: true,
+            }
+        );
+
+        let atomic = hart.execute(instruction).unwrap();
+        assert_eq!(atomic.next_pc(), pc + 4);
+        assert_eq!(
+            atomic.memory_access(),
+            Some(&MemoryAccessKind::AtomicMemory {
+                rd: reg(7),
+                address: 0x9008,
+                width: MemoryWidth::Doubleword,
+                op,
+                value: 7,
+                acquire: false,
+                release: true,
+            })
+        );
+        assert_eq!(hart.read(reg(7)), 0);
+    }
+}
+
+#[test]
 fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
     let mut hart = RiscvHartState::new(0x7000);
 

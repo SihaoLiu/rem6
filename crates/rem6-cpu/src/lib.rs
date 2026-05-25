@@ -1553,6 +1553,13 @@ impl OutstandingDataAccess {
                 match op {
                     AtomicMemoryOp::Swap => MemoryAtomicOp::Swap,
                     AtomicMemoryOp::Add => MemoryAtomicOp::Add,
+                    AtomicMemoryOp::Xor => MemoryAtomicOp::Xor,
+                    AtomicMemoryOp::Or => MemoryAtomicOp::Or,
+                    AtomicMemoryOp::And => MemoryAtomicOp::And,
+                    AtomicMemoryOp::MinSigned => MemoryAtomicOp::MinSigned,
+                    AtomicMemoryOp::MaxSigned => MemoryAtomicOp::MaxSigned,
+                    AtomicMemoryOp::MinUnsigned => MemoryAtomicOp::MinUnsigned,
+                    AtomicMemoryOp::MaxUnsigned => MemoryAtomicOp::MaxUnsigned,
                 },
                 store_bytes(*value, self.size),
                 ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
