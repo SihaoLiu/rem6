@@ -484,6 +484,23 @@ impl WorkloadSuiteExecutionSummary {
         self.maximum_simultaneous_workers() > 1
     }
 
+    pub fn verify_minimum_simultaneous_workers(
+        &self,
+        minimum_workers: usize,
+    ) -> Result<(), WorkloadError> {
+        if minimum_workers == 0 {
+            return Err(WorkloadError::ZeroSuiteParallelismRequirement);
+        }
+        let actual_workers = self.maximum_simultaneous_workers();
+        if actual_workers < minimum_workers {
+            return Err(WorkloadError::SuiteParallelismBelowMinimum {
+                minimum_workers,
+                actual_workers,
+            });
+        }
+        Ok(())
+    }
+
     pub fn worker_summaries(&self) -> Vec<WorkloadSuiteWorkerExecutionSummary> {
         let mut summaries = BTreeMap::new();
         for record in &self.records {

@@ -19,6 +19,10 @@ impl fmt::Display for WorkloadError {
             Self::ZeroWorkloadSuiteWorkers => {
                 write!(formatter, "workload suite worker count must be positive")
             }
+            Self::ZeroSuiteParallelismRequirement => write!(
+                formatter,
+                "workload suite parallelism requirement must be positive"
+            ),
             Self::EmptyResourceId => write!(formatter, "resource id must not be empty"),
             Self::EmptyRouteId => write!(formatter, "route id must not be empty"),
             Self::EmptyEndpoint => write!(formatter, "endpoint id must not be empty"),
@@ -505,6 +509,13 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite execution for {} has start tick {start_tick} after final tick {final_tick}",
                 workload.as_str()
+            ),
+            Self::SuiteParallelismBelowMinimum {
+                minimum_workers,
+                actual_workers,
+            } => write!(
+                formatter,
+                "workload suite execution reached {actual_workers} simultaneous workers, expected at least {minimum_workers}"
             ),
             Self::StatsAfterFinalTick {
                 stats_tick,

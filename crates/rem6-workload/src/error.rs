@@ -37,6 +37,7 @@ pub enum WorkloadError {
     EmptyWorkloadId,
     EmptyWorkloadSuiteId,
     ZeroWorkloadSuiteWorkers,
+    ZeroSuiteParallelismRequirement,
     EmptyResourceId,
     EmptyRouteId,
     EmptyEndpoint,
@@ -352,6 +353,10 @@ pub enum WorkloadError {
         workload: WorkloadId,
         start_tick: Tick,
         final_tick: Tick,
+    },
+    SuiteParallelismBelowMinimum {
+        minimum_workers: usize,
+        actual_workers: usize,
     },
     StatsAfterFinalTick {
         stats_tick: Tick,

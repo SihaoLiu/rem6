@@ -436,6 +436,15 @@ fn workload_suite_execution_summary_records_parallel_windows() {
     assert_eq!(summary.total_completion_ticks(), 75);
     assert_eq!(summary.maximum_simultaneous_workers(), 2);
     assert!(summary.has_parallel_worker_overlap());
+    summary.verify_minimum_simultaneous_workers(2).unwrap();
+    let under_parallel = summary.verify_minimum_simultaneous_workers(3).unwrap_err();
+    assert!(matches!(
+        under_parallel,
+        WorkloadError::SuiteParallelismBelowMinimum {
+            minimum_workers: 3,
+            actual_workers: 2
+        }
+    ));
     assert_eq!(summary.records()[0].start_tick(), 10);
     assert_eq!(summary.records()[0].duration_ticks(), 30);
     summary.verify_against_dispatch(&dispatch).unwrap();
@@ -451,6 +460,25 @@ fn workload_suite_execution_summary_records_parallel_windows() {
     assert_eq!(worker_one.last_final_tick(), Some(50));
     assert_eq!(worker_one.total_completion_ticks(), 30);
     assert_eq!(worker_one.busy_tick_span(), Some(30));
+}
+
+#[test]
+fn workload_suite_execution_summary_rejects_zero_parallelism_requirement() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let suite = WorkloadSuite::builder(suite_id("zero-parallelism"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 20)
+        .unwrap();
+    let error = summary.verify_minimum_simultaneous_workers(0).unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::ZeroSuiteParallelismRequirement
+    ));
 }
 
 #[test]
