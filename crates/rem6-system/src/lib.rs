@@ -908,6 +908,13 @@ impl RiscvSystemRun {
             .collect()
     }
 
+    pub fn parallel_scheduler_final_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.final_frontiers().iter().copied())
+            .collect()
+    }
+
     pub fn parallel_scheduler_ready_partitions(&self) -> Vec<ReadyPartition> {
         self.parallel_scheduler_epochs()
             .into_iter()

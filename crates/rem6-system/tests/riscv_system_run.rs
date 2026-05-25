@@ -566,6 +566,17 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
             .sum::<usize>()
     );
     assert_eq!(
+        run.parallel_scheduler_final_frontiers().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.final_frontiers().len())
+            .sum::<usize>()
+    );
+    assert!(run
+        .parallel_scheduler_final_frontiers()
+        .iter()
+        .all(|frontier| Some(frontier.now()) <= run.final_tick()));
+    assert_eq!(
         run.parallel_scheduler_ready_partitions().len(),
         parallel_epochs
             .iter()
@@ -812,6 +823,13 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
         parallel_epochs
             .iter()
             .map(|epoch| epoch.frontiers().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_final_frontiers().len(),
+        parallel_epochs
+            .iter()
+            .map(|epoch| epoch.final_frontiers().len())
             .sum::<usize>()
     );
     assert_eq!(

@@ -350,7 +350,10 @@ The scheduler records:
 - errors for remote delays below lookahead.
 
 The scheduler must support a debug serial view, but new full-system execution
-paths should call the parallel APIs and record the parallel run summary.
+paths should call the parallel APIs and record the parallel run summary. CPU
+cluster and full-system run records must preserve both the initial and final
+frontiers for each recorded parallel epoch, so higher layers can verify how far
+each partition advanced instead of inferring it from aggregate counts.
 
 ## Message Model
 

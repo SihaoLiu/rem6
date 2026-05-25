@@ -34,6 +34,7 @@ mod multiperspective_perceptron;
 mod parallel_flow;
 mod riscv_activity;
 mod riscv_cluster;
+mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_reservation;
 mod riscv_translation;
@@ -91,9 +92,10 @@ pub use multiperspective_perceptron::{
     MultiperspectivePerceptronTrainingUpdate,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
-pub use riscv_cluster::{
-    RiscvCluster, RiscvClusterDriveEvent, RiscvClusterError, RiscvClusterRun,
-    RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
+pub use riscv_cluster::{RiscvCluster, RiscvClusterError};
+pub use riscv_cluster_run::{
+    RiscvClusterDriveEvent, RiscvClusterRun, RiscvClusterSchedulerEpoch, RiscvClusterStopReason,
+    RiscvClusterTurn,
 };
 pub use riscv_data_access::{
     RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,

@@ -894,12 +894,23 @@ fn riscv_cluster_parallel_fetch_turns_drive_scheduler_epochs() {
         );
         assert_eq!(epoch.ready_partitions(), epoch.plan().ready_partitions());
         assert_eq!(epoch.frontiers(), epoch.plan().frontiers());
+        assert_eq!(epoch.initial_frontiers(), epoch.plan().frontiers());
+        assert_eq!(epoch.final_frontier_count(), epoch.plan().frontier_count());
+        assert!(epoch
+            .final_frontiers()
+            .iter()
+            .all(|frontier| frontier.now() == epoch.summary().final_tick()));
         assert_eq!(epoch.serial_blockers(), epoch.plan().serial_blockers());
         assert!(epoch.serial_blockers().is_empty());
         assert_eq!(
             epoch.frontier(PartitionId::new(0)),
             epoch.plan().frontier(PartitionId::new(0))
         );
+        assert_eq!(
+            epoch.initial_frontier(PartitionId::new(0)),
+            epoch.plan().frontier(PartitionId::new(0))
+        );
+        assert!(epoch.final_frontier(PartitionId::new(0)).is_some());
         assert!(epoch
             .parallel_dispatches()
             .iter()
@@ -1107,6 +1118,13 @@ fn riscv_cluster_run_collects_parallel_epoch_records() {
         epochs
             .iter()
             .map(|epoch| epoch.frontiers().len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        run.parallel_scheduler_final_frontiers().len(),
+        epochs
+            .iter()
+            .map(|epoch| epoch.final_frontiers().len())
             .sum::<usize>()
     );
     assert_eq!(
