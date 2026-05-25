@@ -1,10 +1,15 @@
 mod clock;
 mod event;
+mod progress;
 mod scheduler;
 mod wait_for;
 
 pub use clock::{ClockDomain, ClockError, Cycles};
 pub use event::{ClockScheduleError, EventId, EventQueue, ScheduleError};
+pub use progress::{
+    LivelockDiagnostic, LivelockTransitionKind, LivelockTransitionKindCount, ProgressMonitor,
+    ProgressMonitorError, ProgressMonitorSnapshot, ProgressWindowSnapshot,
+};
 pub use scheduler::{
     ConservativeRunSummary, EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan,
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
