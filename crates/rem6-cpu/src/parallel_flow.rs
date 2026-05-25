@@ -11,15 +11,7 @@ where
     for flow in flows {
         merged
             .entry((flow.source(), flow.target()))
-            .and_modify(|stored| {
-                *stored = ParallelRemoteFlowRecord::new(
-                    stored.source(),
-                    stored.target(),
-                    stored.send_count() + flow.send_count(),
-                    stored.first_tick().min(flow.first_tick()),
-                    stored.last_tick().max(flow.last_tick()),
-                );
-            })
+            .and_modify(|stored| *stored = stored.merged_with(flow))
             .or_insert(flow);
     }
     merged.into_values().collect()

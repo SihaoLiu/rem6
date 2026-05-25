@@ -202,3 +202,45 @@ fn cluster_run_reports_parallel_scheduler_remote_flows() {
     assert_eq!(run.parallel_scheduler_remote_flow_count(core1, memory), 1);
     assert_eq!(run.parallel_scheduler_remote_flow_count(memory, core0), 0);
 }
+
+#[test]
+fn cluster_run_preserves_remote_flow_delay_bounds_across_epochs() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let mut first_scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+    first_scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    let first_plan = first_scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let first_recorded = first_scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    let mut second_scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 8, 1).unwrap();
+    second_scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 8, |_| {}).unwrap();
+        })
+        .unwrap();
+    let second_plan = second_scheduler
+        .plan_next_parallel_epoch()
+        .unwrap()
+        .unwrap();
+    let second_recorded = second_scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let run = RiscvClusterRun::new(
+        vec![
+            RiscvClusterTurn::parallel_scheduler(first_plan, first_recorded),
+            RiscvClusterTurn::parallel_scheduler(second_plan, second_recorded),
+        ],
+        RiscvClusterStopReason::StopCondition,
+    );
+
+    let flows = run.parallel_scheduler_remote_flows();
+    assert_eq!(flows.len(), 1);
+    assert_eq!(flows[0].source(), source);
+    assert_eq!(flows[0].target(), target);
+    assert_eq!(flows[0].send_count(), 2);
+    assert_eq!(flows[0].first_tick(), 4);
+    assert_eq!(flows[0].last_tick(), 8);
+    assert_eq!(flows[0].delay_bounds(), Some((4, 8)));
+}
