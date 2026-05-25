@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 
 use rem6_fabric::{QosQueuedRequest, QosRequestId};
 use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError, Tick};
-use rem6_memory::{MemoryBarrierSet, MemoryOperation};
 
 use crate::{
-    MemoryTraceEvent, MemoryTraceKind, MemoryTransport, PreparedParallelTransaction,
+    ordering, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, PreparedParallelTransaction,
     RequestDelivery, ResponseSink, TargetBatchOutcome, TargetOutcome, TransportEndpointId,
     TransportError,
 };
@@ -469,60 +468,6 @@ fn direct_qos_transaction_is_order_blocked(
 ) -> bool {
     let (candidate_order, candidate) = &group[candidate_index];
     group.iter().any(|(other_order, other)| {
-        other_order < candidate_order && same_request_agent(other, candidate) && {
-            barrier_orders_before(
-                candidate.request.ordering().before(),
-                other.request.operation(),
-            ) || barrier_orders_after(
-                other.request.ordering().after(),
-                candidate.request.operation(),
-            )
-        }
+        other_order < candidate_order && ordering::transaction_orders_before(other, candidate)
     })
-}
-
-fn same_request_agent(
-    first: &PreparedParallelTransaction,
-    second: &PreparedParallelTransaction,
-) -> bool {
-    first.request.id().agent() == second.request.id().agent()
-}
-
-fn barrier_orders_before(barrier: Option<MemoryBarrierSet>, operation: MemoryOperation) -> bool {
-    barrier.is_some_and(|barrier| barrier_matches_operation(barrier, operation))
-}
-
-fn barrier_orders_after(barrier: Option<MemoryBarrierSet>, operation: MemoryOperation) -> bool {
-    barrier.is_some_and(|barrier| barrier_matches_operation(barrier, operation))
-}
-
-fn barrier_matches_operation(barrier: MemoryBarrierSet, operation: MemoryOperation) -> bool {
-    (barrier.read() && operation_reads_for_ordering(operation))
-        || (barrier.write() && operation_writes_for_ordering(operation))
-}
-
-fn operation_reads_for_ordering(operation: MemoryOperation) -> bool {
-    matches!(
-        operation,
-        MemoryOperation::InstructionFetch
-            | MemoryOperation::ReadShared
-            | MemoryOperation::ReadUnique
-            | MemoryOperation::Atomic
-            | MemoryOperation::PrefetchRead
-    )
-}
-
-fn operation_writes_for_ordering(operation: MemoryOperation) -> bool {
-    matches!(
-        operation,
-        MemoryOperation::ReadUnique
-            | MemoryOperation::Write
-            | MemoryOperation::Upgrade
-            | MemoryOperation::Atomic
-            | MemoryOperation::PrefetchWrite
-            | MemoryOperation::WritebackClean
-            | MemoryOperation::WritebackDirty
-            | MemoryOperation::CleanEvict
-            | MemoryOperation::Invalidate
-    )
 }

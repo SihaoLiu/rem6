@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
-    FabricPacket, FabricPacketId, FabricPath, FabricQosRequest, FabricWaitForMarker,
-    QosFixedPriorityPolicy, QosQueueArbiter, VirtualNetworkId,
+    FabricPacket, FabricPacketId, FabricPath, FabricWaitForMarker, QosFixedPriorityPolicy,
+    QosQueueArbiter, VirtualNetworkId,
 };
 pub use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -16,6 +16,7 @@ use rem6_kernel::{
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_topology::{Endpoint, Topology, TopologyError, TopologyPath};
 
+mod ordering;
 mod parallel_qos;
 
 type ParallelRequestResponder =
@@ -1026,7 +1027,7 @@ impl MemoryTransport {
                 transaction.route.request_virtual_network(),
             )
             .map_err(TransportError::Fabric)?;
-            fabric_requests.push((
+            fabric_requests.push(ordering::OrderedFabricQosRequest::new(
                 index,
                 packet,
                 path.clone(),
@@ -1046,19 +1047,11 @@ impl MemoryTransport {
         let transfers = if let Some(arbiter) = &self.qos_arbiter {
             let mut fabric = fabric.lock().expect("fabric lock");
             let mut arbiter = arbiter.lock().expect("QoS arbiter lock");
-            fabric.transmit_qos_batch(
+            ordering::transmit_ordered_qos_fabric_batch(
                 now,
-                fabric_requests.iter().enumerate().map(
-                    |(order, (_, packet, path, requestor, priority))| {
-                        FabricQosRequest::new(
-                            *requestor,
-                            *priority,
-                            order as u64,
-                            packet.clone(),
-                            path.clone(),
-                        )
-                    },
-                ),
+                &transactions,
+                &fabric_requests,
+                &mut fabric,
                 &mut arbiter,
             )
         } else {
@@ -1066,7 +1059,7 @@ impl MemoryTransport {
                 now,
                 fabric_requests
                     .iter()
-                    .map(|(_, packet, path, _, _)| (packet.clone(), path.clone())),
+                    .map(|request| (request.packet().clone(), request.path().clone())),
             )
         }
         .map_err(TransportError::Fabric)?;
@@ -1081,9 +1074,9 @@ impl MemoryTransport {
             })
             .collect::<Result<BTreeMap<_, _>, TransportError>>()?;
 
-        for (index, packet, _, _, _) in fabric_requests {
-            delays[index] = arrivals
-                .remove(&packet.id())
+        for request in fabric_requests {
+            delays[request.transaction_index()] = arrivals
+                .remove(&request.packet().id())
                 .expect("fabric batch returns every accepted packet");
         }
 
