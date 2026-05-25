@@ -694,25 +694,17 @@ logic.
 The near-term work should favor slices that strengthen the shared runtime
 rather than merely add isolated features.
 
-### MSI Full-System Data Backend
-
-Add an MSI full-system data-cache backend using the same bridge shape as the
-MESI and MOESI backends, then identify the shared response conversion that can
-be collapsed into a protocol-neutral adapter. Required proof:
-
-- failing full-system MSI data test first;
-- green test through partitioned coherence harness;
-- system run reports coherence fabric and DRAM activity;
-- cache state and data value assertions prove the protocol path is used;
-- no changes to topology definitions are required to swap the backend.
-
 ### Protocol-Neutral Data Adapter
 
-Refactor MESI, MOESI, and MSI data-cache response handling behind a common
-adapter trait or typed enum only after the MSI path is green. Required proof:
+MSI, MESI, MOESI, and CHI full-system topology data-cache paths should share
+response extraction, response-delay conversion, run-record capture, and
+transport outcome construction. The adapter boundary must still keep
+per-protocol error variants and snoop invalidation rules explicit. Required
+proof:
 
-- existing MESI and MOESI full-system tests stay green;
-- MSI full-system test stays green;
+- existing MSI, MESI, MOESI, and CHI full-system topology data-cache tests stay
+  green;
+- the shared response harness covers all four partitioned coherence harnesses;
 - error variants remain protocol-specific enough for diagnosis;
 - no protocol engine imports `rem6-system`.
 
