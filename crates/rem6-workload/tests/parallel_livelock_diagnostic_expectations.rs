@@ -218,6 +218,78 @@ fn workload_result_queries_livelock_diagnostics_by_subject() {
 }
 
 #[test]
+fn workload_result_summarizes_livelock_diagnostic_transition_kinds() {
+    let scheduler_diagnostic = livelock_diagnostic(
+        component("cpu-progress-loop"),
+        3,
+        [
+            (LivelockTransitionKind::ProtocolRetry, 0),
+            (LivelockTransitionKind::ProtocolRetry, 1),
+            (LivelockTransitionKind::QueueRotation, 2),
+        ],
+    );
+    let data_cache_diagnostic = livelock_diagnostic(
+        component("cache-progress-loop"),
+        3,
+        [
+            (LivelockTransitionKind::MessageRetry, 3),
+            (LivelockTransitionKind::MessageRetry, 4),
+            (LivelockTransitionKind::ProtocolRetry, 5),
+        ],
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(3, [scheduler_diagnostic])
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(3, [data_cache_diagnostic]);
+
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        2,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
+            LivelockTransitionKind::MessageRetry,
+        ),
+        0,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_transition_kind_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 2),
+            (LivelockTransitionKind::QueueRotation, 1),
+        ],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 1),
+            (LivelockTransitionKind::MessageRetry, 2),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_transition_count_by_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        3,
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_transition_count_by_kind(
+            LivelockTransitionKind::ResourceArbitration,
+        ),
+        0,
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_transition_kind_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 3),
+            (LivelockTransitionKind::QueueRotation, 1),
+            (LivelockTransitionKind::MessageRetry, 2),
+        ],
+    );
+}
+
+#[test]
 fn workload_manifest_records_livelock_transition_threshold() {
     let thresholded =
         expected_clean_with_livelock_threshold(WorkloadParallelDiagnosticScope::FullSystem, 3);
