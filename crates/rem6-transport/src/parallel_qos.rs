@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use rem6_fabric::{QosQueuedRequest, QosRequestId};
 use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError, Tick};
+use rem6_memory::{MemoryBarrierSet, MemoryOperation};
 
 use crate::{
     MemoryTraceEvent, MemoryTraceKind, MemoryTransport, PreparedParallelTransaction,
@@ -115,10 +116,13 @@ impl MemoryTransport {
         let mut ordered = Vec::with_capacity(pending.len());
 
         while !pending.is_empty() {
+            let eligible_indexes = eligible_direct_qos_transactions(&pending);
             let queue = pending
                 .iter()
                 .enumerate()
-                .map(|(order, (_, transaction))| {
+                .filter(|(index, _)| eligible_indexes.contains(index))
+                .enumerate()
+                .map(|(order, (_, (_, transaction)))| {
                     QosQueuedRequest::new(
                         QosRequestId::new(transaction.request.id().sequence()),
                         transaction.qos_requestor,
@@ -132,7 +136,7 @@ impl MemoryTransport {
             let grant = arbiter
                 .grant(&queue)
                 .expect("nonempty direct QoS queue must produce a grant");
-            ordered.push(pending.remove(grant.queue_index()));
+            ordered.push(pending.remove(eligible_indexes[grant.queue_index()]));
         }
 
         ordered
@@ -441,4 +445,84 @@ fn record_direct_request_trace(
     }
 
     Ok(())
+}
+
+fn eligible_direct_qos_transactions(group: &[(usize, PreparedParallelTransaction)]) -> Vec<usize> {
+    let eligible = group
+        .iter()
+        .enumerate()
+        .filter_map(|(candidate_index, _)| {
+            (!direct_qos_transaction_is_order_blocked(candidate_index, group))
+                .then_some(candidate_index)
+        })
+        .collect::<Vec<_>>();
+    debug_assert!(
+        !eligible.is_empty(),
+        "oldest direct QoS transaction is always ordering-eligible"
+    );
+    eligible
+}
+
+fn direct_qos_transaction_is_order_blocked(
+    candidate_index: usize,
+    group: &[(usize, PreparedParallelTransaction)],
+) -> bool {
+    let (candidate_order, candidate) = &group[candidate_index];
+    group.iter().any(|(other_order, other)| {
+        other_order < candidate_order && same_request_agent(other, candidate) && {
+            barrier_orders_before(
+                candidate.request.ordering().before(),
+                other.request.operation(),
+            ) || barrier_orders_after(
+                other.request.ordering().after(),
+                candidate.request.operation(),
+            )
+        }
+    })
+}
+
+fn same_request_agent(
+    first: &PreparedParallelTransaction,
+    second: &PreparedParallelTransaction,
+) -> bool {
+    first.request.id().agent() == second.request.id().agent()
+}
+
+fn barrier_orders_before(barrier: Option<MemoryBarrierSet>, operation: MemoryOperation) -> bool {
+    barrier.is_some_and(|barrier| barrier_matches_operation(barrier, operation))
+}
+
+fn barrier_orders_after(barrier: Option<MemoryBarrierSet>, operation: MemoryOperation) -> bool {
+    barrier.is_some_and(|barrier| barrier_matches_operation(barrier, operation))
+}
+
+fn barrier_matches_operation(barrier: MemoryBarrierSet, operation: MemoryOperation) -> bool {
+    (barrier.read() && operation_reads_for_ordering(operation))
+        || (barrier.write() && operation_writes_for_ordering(operation))
+}
+
+fn operation_reads_for_ordering(operation: MemoryOperation) -> bool {
+    matches!(
+        operation,
+        MemoryOperation::InstructionFetch
+            | MemoryOperation::ReadShared
+            | MemoryOperation::ReadUnique
+            | MemoryOperation::Atomic
+            | MemoryOperation::PrefetchRead
+    )
+}
+
+fn operation_writes_for_ordering(operation: MemoryOperation) -> bool {
+    matches!(
+        operation,
+        MemoryOperation::ReadUnique
+            | MemoryOperation::Write
+            | MemoryOperation::Upgrade
+            | MemoryOperation::Atomic
+            | MemoryOperation::PrefetchWrite
+            | MemoryOperation::WritebackClean
+            | MemoryOperation::WritebackDirty
+            | MemoryOperation::CleanEvict
+            | MemoryOperation::Invalidate
+    )
 }
