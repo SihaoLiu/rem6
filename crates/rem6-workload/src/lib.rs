@@ -23,6 +23,7 @@ mod resource_payload;
 mod result;
 mod result_collect;
 mod result_partition_activity;
+mod suite;
 mod topology;
 mod workload_result;
 
@@ -73,6 +74,10 @@ pub use resource_payload::{WorkloadResolvedResources, WorkloadResourcePayload};
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
+};
+pub use suite::{
+    WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteEntry, WorkloadSuiteId,
+    WorkloadSuiteIdentity, WorkloadSuiteReplayPlan, WorkloadSuiteResult, WorkloadSuiteResultEntry,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,

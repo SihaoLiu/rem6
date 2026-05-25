@@ -4,11 +4,11 @@ use rem6_kernel::Tick;
 use rem6_memory::MemoryError;
 
 use crate::{
-    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
+    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadId, WorkloadManifestIdentity,
     WorkloadParallelBatchScope, WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
     WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
-    WorkloadRouteLatency,
+    WorkloadRouteLatency, WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -35,6 +35,7 @@ pub enum WorkloadError {
     Boot(BootError),
     Memory(MemoryError),
     EmptyWorkloadId,
+    EmptyWorkloadSuiteId,
     EmptyResourceId,
     EmptyRouteId,
     EmptyEndpoint,
@@ -300,6 +301,30 @@ pub enum WorkloadError {
         requestor: QosRequestorId,
     },
     ManifestIdentityMismatch {
+        expected: WorkloadManifestIdentity,
+        actual: WorkloadManifestIdentity,
+    },
+    WorkloadSuiteIdentityMismatch {
+        expected: WorkloadSuiteIdentity,
+        actual: WorkloadSuiteIdentity,
+    },
+    DuplicateSuiteWorkload {
+        workload: WorkloadId,
+    },
+    DuplicateSuiteManifest {
+        manifest: WorkloadManifestIdentity,
+    },
+    DuplicateSuiteWorkloadResult {
+        workload: WorkloadId,
+    },
+    MissingSuiteWorkloadResult {
+        workload: WorkloadId,
+    },
+    UnexpectedSuiteWorkloadResult {
+        workload: WorkloadId,
+    },
+    SuiteWorkloadResultManifestMismatch {
+        workload: WorkloadId,
         expected: WorkloadManifestIdentity,
         actual: WorkloadManifestIdentity,
     },

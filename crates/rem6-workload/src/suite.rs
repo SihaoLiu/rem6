@@ -1,0 +1,304 @@
+use std::collections::BTreeMap;
+
+use crate::{
+    WorkloadError, WorkloadId, WorkloadManifest, WorkloadManifestIdentity, WorkloadReplayPlan,
+    WorkloadResult,
+};
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WorkloadSuiteId(String);
+
+impl WorkloadSuiteId {
+    pub fn new(value: impl Into<String>) -> Result<Self, WorkloadError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(WorkloadError::EmptyWorkloadSuiteId);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WorkloadSuiteIdentity(String);
+
+impl WorkloadSuiteIdentity {
+    fn new(hash: u64) -> Self {
+        Self(format!("ws-{hash:016x}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuite {
+    id: WorkloadSuiteId,
+    entries: Vec<WorkloadSuiteEntry>,
+    identity: WorkloadSuiteIdentity,
+}
+
+impl WorkloadSuite {
+    pub fn builder(id: WorkloadSuiteId) -> WorkloadSuiteBuilder {
+        WorkloadSuiteBuilder::new(id)
+    }
+
+    pub const fn id(&self) -> &WorkloadSuiteId {
+        &self.id
+    }
+
+    pub fn identity(&self) -> WorkloadSuiteIdentity {
+        self.identity.clone()
+    }
+
+    pub fn entries(&self) -> &[WorkloadSuiteEntry] {
+        &self.entries
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteEntry {
+    manifest: WorkloadManifest,
+}
+
+impl WorkloadSuiteEntry {
+    fn new(manifest: WorkloadManifest) -> Self {
+        Self { manifest }
+    }
+
+    pub fn workload_id(&self) -> &WorkloadId {
+        self.manifest.id()
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest.identity()
+    }
+
+    pub const fn manifest(&self) -> &WorkloadManifest {
+        &self.manifest
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteBuilder {
+    id: WorkloadSuiteId,
+    manifests: Vec<WorkloadManifest>,
+}
+
+impl WorkloadSuiteBuilder {
+    fn new(id: WorkloadSuiteId) -> Self {
+        Self {
+            id,
+            manifests: Vec::new(),
+        }
+    }
+
+    pub fn add_manifest(mut self, manifest: WorkloadManifest) -> Result<Self, WorkloadError> {
+        if self
+            .manifests
+            .iter()
+            .any(|existing| existing.id() == manifest.id())
+        {
+            return Err(WorkloadError::DuplicateSuiteWorkload {
+                workload: manifest.id().clone(),
+            });
+        }
+        let identity = manifest.identity();
+        if self
+            .manifests
+            .iter()
+            .any(|existing| existing.identity() == identity)
+        {
+            return Err(WorkloadError::DuplicateSuiteManifest { manifest: identity });
+        }
+        self.manifests.push(manifest);
+        Ok(self)
+    }
+
+    pub fn build(mut self) -> Result<WorkloadSuite, WorkloadError> {
+        self.manifests.sort_by_key(|manifest| manifest.id().clone());
+        let entries = self
+            .manifests
+            .into_iter()
+            .map(WorkloadSuiteEntry::new)
+            .collect::<Vec<_>>();
+        let identity = suite_identity(&self.id, &entries);
+        Ok(WorkloadSuite {
+            id: self.id,
+            entries,
+            identity,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteReplayPlan {
+    suite_identity: WorkloadSuiteIdentity,
+    plans: Vec<WorkloadReplayPlan>,
+}
+
+impl WorkloadSuiteReplayPlan {
+    pub fn from_suite(suite: &WorkloadSuite) -> Result<Self, WorkloadError> {
+        let plans = suite
+            .entries()
+            .iter()
+            .map(|entry| WorkloadReplayPlan::from_manifest(entry.manifest()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            suite_identity: suite.identity(),
+            plans,
+        })
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub fn plans(&self) -> &[WorkloadReplayPlan] {
+        &self.plans
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteResult {
+    suite_identity: WorkloadSuiteIdentity,
+    results: Vec<WorkloadSuiteResultEntry>,
+}
+
+impl WorkloadSuiteResult {
+    pub const fn new(suite_identity: WorkloadSuiteIdentity) -> Self {
+        Self {
+            suite_identity,
+            results: Vec::new(),
+        }
+    }
+
+    pub fn add_result(
+        mut self,
+        workload_id: WorkloadId,
+        result: WorkloadResult,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .results
+            .iter()
+            .any(|entry| entry.workload_id() == &workload_id)
+        {
+            return Err(WorkloadError::DuplicateSuiteWorkloadResult {
+                workload: workload_id,
+            });
+        }
+        self.results
+            .push(WorkloadSuiteResultEntry::new(workload_id, result));
+        self.results
+            .sort_by_key(|entry| entry.workload_id().clone());
+        Ok(self)
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub fn results(&self) -> &[WorkloadSuiteResultEntry] {
+        &self.results
+    }
+
+    pub fn verify_against(&self, suite: &WorkloadSuite) -> Result<(), WorkloadError> {
+        let expected_suite_identity = suite.identity();
+        if self.suite_identity != expected_suite_identity {
+            return Err(WorkloadError::WorkloadSuiteIdentityMismatch {
+                expected: expected_suite_identity,
+                actual: self.suite_identity.clone(),
+            });
+        }
+
+        let mut expected_manifests = BTreeMap::new();
+        for entry in suite.entries() {
+            expected_manifests.insert(entry.workload_id().clone(), entry.manifest_identity());
+        }
+
+        for result in &self.results {
+            let Some(expected) = expected_manifests.get(result.workload_id()) else {
+                return Err(WorkloadError::UnexpectedSuiteWorkloadResult {
+                    workload: result.workload_id().clone(),
+                });
+            };
+            let actual = result.result().manifest_identity();
+            if &actual != expected {
+                return Err(WorkloadError::SuiteWorkloadResultManifestMismatch {
+                    workload: result.workload_id().clone(),
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+        }
+
+        for workload in expected_manifests.keys() {
+            if !self
+                .results
+                .iter()
+                .any(|result| result.workload_id() == workload)
+            {
+                return Err(WorkloadError::MissingSuiteWorkloadResult {
+                    workload: workload.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteResultEntry {
+    workload_id: WorkloadId,
+    result: WorkloadResult,
+}
+
+impl WorkloadSuiteResultEntry {
+    fn new(workload_id: WorkloadId, result: WorkloadResult) -> Self {
+        Self {
+            workload_id,
+            result,
+        }
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub const fn result(&self) -> &WorkloadResult {
+        &self.result
+    }
+}
+
+fn suite_identity(id: &WorkloadSuiteId, entries: &[WorkloadSuiteEntry]) -> WorkloadSuiteIdentity {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    hash_str(&mut hash, "workload_suite.v1");
+    hash_str(&mut hash, id.as_str());
+    hash_u64(&mut hash, entries.len() as u64);
+    for entry in entries {
+        hash_str(&mut hash, entry.workload_id().as_str());
+        hash_str(&mut hash, entry.manifest_identity().as_str());
+    }
+    WorkloadSuiteIdentity::new(hash)
+}
+
+fn hash_str(hash: &mut u64, value: &str) {
+    hash_u64(hash, value.len() as u64);
+    hash_bytes(hash, value.as_bytes());
+}
+
+fn hash_u64(hash: &mut u64, value: u64) {
+    hash_bytes(hash, &value.to_le_bytes());
+}
+
+fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}

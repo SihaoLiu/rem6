@@ -13,6 +13,9 @@ impl fmt::Display for WorkloadError {
             Self::Boot(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::EmptyWorkloadId => write!(formatter, "workload id must not be empty"),
+            Self::EmptyWorkloadSuiteId => {
+                write!(formatter, "workload suite id must not be empty")
+            }
             Self::EmptyResourceId => write!(formatter, "resource id must not be empty"),
             Self::EmptyRouteId => write!(formatter, "route id must not be empty"),
             Self::EmptyEndpoint => write!(formatter, "endpoint id must not be empty"),
@@ -413,6 +416,48 @@ impl fmt::Display for WorkloadError {
             Self::ManifestIdentityMismatch { expected, actual } => write!(
                 formatter,
                 "workload result belongs to manifest {}, expected {}",
+                actual.as_str(),
+                expected.as_str()
+            ),
+            Self::WorkloadSuiteIdentityMismatch { expected, actual } => write!(
+                formatter,
+                "workload suite result belongs to suite {}, expected {}",
+                actual.as_str(),
+                expected.as_str()
+            ),
+            Self::DuplicateSuiteWorkload { workload } => write!(
+                formatter,
+                "workload suite contains duplicate workload {}",
+                workload.as_str()
+            ),
+            Self::DuplicateSuiteManifest { manifest } => write!(
+                formatter,
+                "workload suite contains duplicate manifest {}",
+                manifest.as_str()
+            ),
+            Self::DuplicateSuiteWorkloadResult { workload } => write!(
+                formatter,
+                "workload suite result contains duplicate workload {}",
+                workload.as_str()
+            ),
+            Self::MissingSuiteWorkloadResult { workload } => write!(
+                formatter,
+                "workload suite result is missing workload {}",
+                workload.as_str()
+            ),
+            Self::UnexpectedSuiteWorkloadResult { workload } => write!(
+                formatter,
+                "workload suite result contains unexpected workload {}",
+                workload.as_str()
+            ),
+            Self::SuiteWorkloadResultManifestMismatch {
+                workload,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload suite result for {} belongs to manifest {}, expected {}",
+                workload.as_str(),
                 actual.as_str(),
                 expected.as_str()
             ),
