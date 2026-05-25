@@ -809,6 +809,85 @@ fn workload_suite_dispatch_timeline_verifies_planned_occupancy_contracts() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_verifies_minimum_occupancy_workers() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-minimum-occupancy-workers"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    timeline.verify_minimum_occupancy_worker_count(1).unwrap();
+    let zero_error = timeline
+        .verify_minimum_occupancy_worker_count(0)
+        .unwrap_err();
+    assert!(matches!(
+        zero_error,
+        WorkloadError::ZeroSuiteParallelismRequirement
+    ));
+    let occupancy_error = timeline
+        .verify_minimum_occupancy_worker_count(2)
+        .unwrap_err();
+    assert!(matches!(
+        occupancy_error,
+        WorkloadError::SuiteParallelismBelowMinimum {
+            minimum_workers: 2,
+            actual_workers: 1
+        }
+    ));
+
+    let single_suite = WorkloadSuite::builder(suite_id("planned-minimum-occupancy-unused"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let single_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&single_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    single_timeline
+        .verify_minimum_occupancy_worker_count(1)
+        .unwrap();
+    let single_error = single_timeline
+        .verify_minimum_occupancy_worker_count(2)
+        .unwrap_err();
+    assert!(matches!(
+        single_error,
+        WorkloadError::SuiteParallelismBelowMinimum {
+            minimum_workers: 2,
+            actual_workers: 1
+        }
+    ));
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_accepts_planned_execution_expectation() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

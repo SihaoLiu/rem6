@@ -636,6 +636,23 @@ impl WorkloadSuiteDispatchTimeline {
         Ok(())
     }
 
+    pub fn verify_minimum_occupancy_worker_count(
+        &self,
+        minimum_workers: usize,
+    ) -> Result<(), WorkloadError> {
+        if minimum_workers == 0 {
+            return Err(WorkloadError::ZeroSuiteParallelismRequirement);
+        }
+        let actual_workers = self.minimum_occupancy_worker_count().unwrap_or(0);
+        if actual_workers < minimum_workers {
+            return Err(WorkloadError::SuiteParallelismBelowMinimum {
+                minimum_workers,
+                actual_workers,
+            });
+        }
+        Ok(())
+    }
+
     pub fn to_execution_summary(&self) -> Result<WorkloadSuiteExecutionSummary, WorkloadError> {
         let mut summary = WorkloadSuiteExecutionSummary::new(self.suite_identity());
         for entry in &self.entries {
