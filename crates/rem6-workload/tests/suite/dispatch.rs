@@ -721,6 +721,94 @@ fn workload_suite_dispatch_timeline_summarizes_planned_occupancy_metrics() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_verifies_planned_occupancy_contracts() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-occupancy-contract"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    timeline.verify_minimum_full_occupancy_ticks(8).unwrap();
+    timeline.verify_maximum_underoccupied_ticks(1).unwrap();
+
+    let full_error = timeline.verify_minimum_full_occupancy_ticks(9).unwrap_err();
+    assert!(matches!(
+        full_error,
+        WorkloadError::SuitePlannedFullOccupancyTicksBelowMinimum {
+            minimum_ticks: 9,
+            actual_ticks: 8
+        }
+    ));
+
+    let underoccupied_error = timeline.verify_maximum_underoccupied_ticks(0).unwrap_err();
+    assert!(matches!(
+        underoccupied_error,
+        WorkloadError::SuitePlannedUnderoccupiedTicksAboveMaximum {
+            maximum_ticks: 0,
+            actual_ticks: 1
+        }
+    ));
+
+    let single_suite = WorkloadSuite::builder(suite_id("planned-occupancy-contract-unused"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let single_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&single_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    let serial_full_error = single_timeline
+        .verify_minimum_full_occupancy_ticks(1)
+        .unwrap_err();
+    assert!(matches!(
+        serial_full_error,
+        WorkloadError::SuitePlannedFullOccupancyTicksBelowMinimum {
+            minimum_ticks: 1,
+            actual_ticks: 0
+        }
+    ));
+    let serial_underoccupied_error = single_timeline
+        .verify_maximum_underoccupied_ticks(9)
+        .unwrap_err();
+    assert!(matches!(
+        serial_underoccupied_error,
+        WorkloadError::SuitePlannedUnderoccupiedTicksAboveMaximum {
+            maximum_ticks: 9,
+            actual_ticks: 10
+        }
+    ));
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_accepts_planned_execution_expectation() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

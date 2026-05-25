@@ -614,6 +614,20 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite planned worker utilization {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
             ),
+            Self::SuitePlannedFullOccupancyTicksBelowMinimum {
+                minimum_ticks,
+                actual_ticks,
+            } => write!(
+                formatter,
+                "workload suite planned full occupancy ticks {actual_ticks} is below minimum {minimum_ticks}"
+            ),
+            Self::SuitePlannedUnderoccupiedTicksAboveMaximum {
+                maximum_ticks,
+                actual_ticks,
+            } => write!(
+                formatter,
+                "workload suite planned underoccupied ticks {actual_ticks} is above maximum {maximum_ticks}"
+            ),
             Self::ZeroSuiteExecutionRatioDenominator => write!(
                 formatter,
                 "workload suite execution ratio denominator must be positive"

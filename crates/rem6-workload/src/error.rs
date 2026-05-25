@@ -420,6 +420,14 @@ pub enum WorkloadError {
         actual_numerator: Tick,
         actual_denominator: Tick,
     },
+    SuitePlannedFullOccupancyTicksBelowMinimum {
+        minimum_ticks: Tick,
+        actual_ticks: Tick,
+    },
+    SuitePlannedUnderoccupiedTicksAboveMaximum {
+        maximum_ticks: Tick,
+        actual_ticks: Tick,
+    },
     ZeroSuiteExecutionRatioDenominator,
     StatsAfterFinalTick {
         stats_tick: Tick,

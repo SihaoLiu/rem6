@@ -608,6 +608,34 @@ impl WorkloadSuiteDispatchTimeline {
         .ok()
     }
 
+    pub fn verify_minimum_full_occupancy_ticks(
+        &self,
+        minimum_ticks: Tick,
+    ) -> Result<(), WorkloadError> {
+        let actual_ticks = self.full_occupancy_ticks();
+        if actual_ticks < minimum_ticks {
+            return Err(WorkloadError::SuitePlannedFullOccupancyTicksBelowMinimum {
+                minimum_ticks,
+                actual_ticks,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn verify_maximum_underoccupied_ticks(
+        &self,
+        maximum_ticks: Tick,
+    ) -> Result<(), WorkloadError> {
+        let actual_ticks = self.underoccupied_ticks();
+        if actual_ticks > maximum_ticks {
+            return Err(WorkloadError::SuitePlannedUnderoccupiedTicksAboveMaximum {
+                maximum_ticks,
+                actual_ticks,
+            });
+        }
+        Ok(())
+    }
+
     pub fn to_execution_summary(&self) -> Result<WorkloadSuiteExecutionSummary, WorkloadError> {
         let mut summary = WorkloadSuiteExecutionSummary::new(self.suite_identity());
         for entry in &self.entries {
