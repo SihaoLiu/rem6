@@ -282,6 +282,52 @@ fn workload_replay_plan_rejects_unexpected_parallel_remote_send() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_actual_parallel_remote_send() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(expected_send(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            3,
+            11,
+            0,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelRemoteSend {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            source_tick: 3,
+            delivery_tick: 11,
+            order: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_duplicate_parallel_remote_send_expectations() {
     let duplicate = replay_plan()
         .add_expected_parallel_remote_send(expected_send(

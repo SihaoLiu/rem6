@@ -302,6 +302,51 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(expected_timeline(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0)],
+            1,
+        ))
+        .unwrap();
+    let duplicate_timeline = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0)],
+                1,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0)],
+                1,
+            ),
+        ]);
+    let duplicate = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(duplicate_timeline);
+
+    assert_eq!(
+        plan.verify_result(&duplicate).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 0,
+            horizon: 4,
+            partitions: vec![0],
+            worker_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_records() {
     let zero_worker = WorkloadExpectedParallelBatchTimelineRecord::new(
         WorkloadParallelRemoteFlowScope::Scheduler,

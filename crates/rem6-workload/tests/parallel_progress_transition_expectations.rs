@@ -365,3 +365,50 @@ fn workload_replay_plan_rejects_unexpected_parallel_progress_transition() {
         ),
     );
 }
+
+#[test]
+fn workload_replay_plan_rejects_duplicate_actual_parallel_progress_transition() {
+    let plan = replay_plan()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            subject("cpu-scheduler"),
+            LivelockTransitionKind::SchedulerEpoch,
+            3,
+            0,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_progress_transitions([
+            actual_transition(
+                0,
+                subject("cpu-scheduler"),
+                LivelockTransitionKind::SchedulerEpoch,
+                3,
+                0,
+            ),
+            actual_transition(
+                0,
+                subject("cpu-scheduler"),
+                LivelockTransitionKind::SchedulerEpoch,
+                3,
+                0,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        expectation_error(
+            WorkloadParallelProgressTransitionExpectationFailure::UnexpectedRecord,
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            subject("cpu-scheduler"),
+            LivelockTransitionKind::SchedulerEpoch,
+            3,
+            0,
+        ),
+    );
+}

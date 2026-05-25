@@ -192,14 +192,11 @@ fn unexpected_parallel_batch_timeline_record(
     expected_records: &[WorkloadExpectedParallelBatchTimelineRecord],
     actual_records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Option<WorkloadParallelBatchTimelineRecord> {
-    actual_records
-        .iter()
-        .find(|actual| {
-            !expected_records
-                .iter()
-                .any(|expected| expected.matches_record(actual))
-        })
-        .cloned()
+    first_unmatched_actual(
+        expected_records,
+        actual_records.iter().cloned(),
+        |expected, actual| expected.matches_record(actual),
+    )
 }
 
 fn expected_parallel_progress_transitions_for_scope(
@@ -232,21 +229,11 @@ fn unexpected_parallel_progress_transition(
     expected_transitions: &[WorkloadExpectedParallelProgressTransition],
     actual_transitions: &[ParallelProgressTransitionRecord],
 ) -> Option<ParallelProgressTransitionRecord> {
-    let mut matched_expectations = vec![false; expected_transitions.len()];
-    for actual in actual_transitions {
-        let matching_index = expected_transitions
-            .iter()
-            .enumerate()
-            .find(|(index, expected)| {
-                !matched_expectations[*index] && expected.matches_record(actual)
-            })
-            .map(|(index, _)| index);
-        match matching_index {
-            Some(index) => matched_expectations[index] = true,
-            None => return Some(actual.clone()),
-        }
-    }
-    None
+    first_unmatched_actual(
+        expected_transitions,
+        actual_transitions.iter().cloned(),
+        |expected, actual| expected.matches_record(actual),
+    )
 }
 
 fn expected_parallel_remote_sends_for_scope(
@@ -281,21 +268,11 @@ fn unexpected_parallel_remote_send(
     expected_sends: &[WorkloadExpectedParallelRemoteSend],
     actual_sends: &[ParallelRemoteSendRecord],
 ) -> Option<ParallelRemoteSendRecord> {
-    let mut matched_expectations = vec![false; expected_sends.len()];
-    for actual in actual_sends {
-        let matching_index = expected_sends
-            .iter()
-            .enumerate()
-            .find(|(index, expected)| {
-                !matched_expectations[*index] && expected.matches_record(*actual)
-            })
-            .map(|(index, _)| index);
-        match matching_index {
-            Some(index) => matched_expectations[index] = true,
-            None => return Some(*actual),
-        }
-    }
-    None
+    first_unmatched_actual(
+        expected_sends,
+        actual_sends.iter().copied(),
+        |expected, actual| expected.matches_record(*actual),
+    )
 }
 
 pub(crate) fn verify_expected_parallel_remote_flows(
@@ -776,6 +753,28 @@ fn unexpected_parallel_remote_flow_timing(
             .iter()
             .any(|expected| expected.matches_timing_record(*actual))
     })
+}
+
+fn first_unmatched_actual<Expected, Actual>(
+    expected_records: &[Expected],
+    actual_records: impl IntoIterator<Item = Actual>,
+    matches_record: impl Fn(&Expected, &Actual) -> bool,
+) -> Option<Actual> {
+    let mut matched_expectations = vec![false; expected_records.len()];
+    for actual in actual_records {
+        let matching_index = expected_records
+            .iter()
+            .enumerate()
+            .find(|(index, expected)| {
+                !matched_expectations[*index] && matches_record(expected, &actual)
+            })
+            .map(|(index, _)| index);
+        match matching_index {
+            Some(index) => matched_expectations[index] = true,
+            None => return Some(actual),
+        }
+    }
+    None
 }
 
 pub(crate) fn verify_expected_clean_parallel_diagnostics(

@@ -422,7 +422,9 @@ replay output keeps the precise occupancy evidence behind each compressed
 parallel summary. Workload manifests may now declare exact scheduler,
 data-cache scheduler, or full-system batch timeline records, and replay
 verification rejects missing or unexpected records instead of accepting only
-aggregate occupancy evidence.
+aggregate occupancy evidence. Exact replay contracts use multiset matching:
+an extra duplicate remote-send, progress-transition, or batch-timeline record
+is unexpected even if an otherwise identical expected record exists.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
