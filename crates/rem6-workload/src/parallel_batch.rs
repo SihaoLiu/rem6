@@ -208,6 +208,28 @@ pub(crate) fn parallel_batch_count_at_or_above(
         .sum()
 }
 
+pub(crate) fn parallel_batch_activity_count_at_or_above(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    sets: &[WorkloadParallelBatchPartitionSet],
+    minimum_worker_count: usize,
+) -> usize {
+    if counts.is_empty() {
+        parallel_batch_partition_set_count_at_or_above(sets, minimum_worker_count)
+    } else {
+        parallel_batch_count_at_or_above(counts, minimum_worker_count)
+    }
+}
+
+fn parallel_batch_partition_set_count_at_or_above(
+    sets: &[WorkloadParallelBatchPartitionSet],
+    minimum_worker_count: usize,
+) -> usize {
+    sets.iter()
+        .filter(|set| set.partitions().len() >= minimum_worker_count)
+        .map(WorkloadParallelBatchPartitionSet::batch_count)
+        .sum()
+}
+
 pub(crate) fn max_parallel_batch_worker_count(
     counts: &[WorkloadParallelBatchWorkerCount],
 ) -> usize {

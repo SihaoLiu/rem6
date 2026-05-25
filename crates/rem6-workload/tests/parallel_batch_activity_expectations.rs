@@ -1,10 +1,11 @@
 use rem6_boot::BootImage;
+use rem6_kernel::PartitionId;
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchActivity, WorkloadId,
-    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -49,6 +50,10 @@ fn expected_activity(
 ) -> WorkloadExpectedParallelBatchActivity {
     WorkloadExpectedParallelBatchActivity::new(scope, minimum_worker_count, minimum_batch_count)
         .unwrap()
+}
+
+fn partition(index: u32) -> PartitionId {
+    PartitionId::new(index)
 }
 
 #[test]
@@ -198,6 +203,69 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_batches() {
             actual_batch_count: 1,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_derives_batch_activity_from_partition_sets() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-batch-activity-from-partitions"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_batch_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            6,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            3,
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            11,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([partition(0), partition(1)], 4),
+            WorkloadParallelBatchPartitionSet::new([partition(0), partition(2), partition(4)], 2),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new(
+                [partition(10), partition(11), partition(12)],
+                3,
+            ),
+            WorkloadParallelBatchPartitionSet::new(
+                [partition(10), partition(13), partition(14), partition(15)],
+                1,
+            ),
+            WorkloadParallelBatchPartitionSet::new([partition(12), partition(15)], 1),
+        ]);
+
+    assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 6);
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_count_at_or_above(3),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_at_or_above(2),
+        11,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]

@@ -30,7 +30,8 @@ isolated bugs:
   synchronization and, for timing mode, accepted timing deviation. rem6
   therefore treats partition ownership, lookahead, deterministic merge order,
   per-partition snapshots, scheduler epoch and dispatch progress, bounded
-  empty-epoch exposure, verifiable multi-worker batch activity, exact same-batch
+  empty-epoch exposure, verifiable multi-worker batch activity derived from
+  worker histograms or exact partition-set histograms, exact same-batch
   partition-set activity, and sustained same-batch streak activity as core
   kernel contracts.
 - Configuration and experiment reproducibility are too script-dependent in
@@ -412,7 +413,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   validation of exact expected remote-flow counts and first/last tick windows,
   minimum scheduler epoch and dispatch progress, maximum scheduler idle epochs,
   minimum max-worker use, minimum total-worker activity,
-  minimum multi-worker batch activity, exact batch partition-set activity,
+  minimum multi-worker batch activity derived from worker-count or partition-set
+  evidence, exact batch partition-set activity,
   sustained same-batch partition-set streak activity, minimum active partition
   counts, per-partition activity minima, data-cache run attribution
   expectations, data-cache run-accounting consistency, data-cache protocol
