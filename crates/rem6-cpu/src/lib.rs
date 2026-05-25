@@ -1518,7 +1518,7 @@ impl OutstandingDataAccess {
 
     fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
         let line_layout = self.line_layout.expect("memory data access line layout");
-        match &self.access {
+        let request = match &self.access {
             MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
                 MemoryRequest::read_shared(
                     self.request_id,
@@ -1566,7 +1566,8 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-        }
+        }?;
+        Ok(request.with_ordering(riscv_data_access::memory_request_ordering(&self.access)))
     }
 
     fn mmio_request(&self) -> Result<MmioRequest, RiscvCpuError> {

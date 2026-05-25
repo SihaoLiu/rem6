@@ -129,6 +129,64 @@ pub enum MemoryAtomicOp {
     MaxUnsigned,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryBarrierSet {
+    read: bool,
+    write: bool,
+}
+
+impl MemoryBarrierSet {
+    pub const fn new(read: bool, write: bool) -> Self {
+        Self { read, write }
+    }
+
+    pub const fn memory() -> Self {
+        Self {
+            read: true,
+            write: true,
+        }
+    }
+
+    pub const fn read(self) -> bool {
+        self.read
+    }
+
+    pub const fn write(self) -> bool {
+        self.write
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryAccessOrdering {
+    before: Option<MemoryBarrierSet>,
+    after: Option<MemoryBarrierSet>,
+}
+
+impl MemoryAccessOrdering {
+    pub const fn new(before: Option<MemoryBarrierSet>, after: Option<MemoryBarrierSet>) -> Self {
+        Self { before, after }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            before: None,
+            after: None,
+        }
+    }
+
+    pub const fn before(self) -> Option<MemoryBarrierSet> {
+        self.before
+    }
+
+    pub const fn after(self) -> Option<MemoryBarrierSet> {
+        self.after
+    }
+
+    pub const fn is_ordered(self) -> bool {
+        self.before.is_some() || self.after.is_some()
+    }
+}
+
 impl MemoryOperation {
     pub const fn coherence_intent(self) -> CoherenceIntent {
         match self {
@@ -1096,6 +1154,7 @@ pub struct MemoryRequest {
     operation: MemoryOperation,
     range: AddressRange,
     line_layout: CacheLineLayout,
+    ordering: MemoryAccessOrdering,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
@@ -1359,6 +1418,7 @@ impl MemoryRequest {
             operation,
             range,
             line_layout,
+            ordering: MemoryAccessOrdering::none(),
             data: payload.data,
             byte_mask: payload.byte_mask,
             atomic_op: payload.atomic_op,
@@ -1428,6 +1488,15 @@ impl MemoryRequest {
 
     pub const fn operation(&self) -> MemoryOperation {
         self.operation
+    }
+
+    pub const fn ordering(&self) -> MemoryAccessOrdering {
+        self.ordering
+    }
+
+    pub fn with_ordering(mut self, ordering: MemoryAccessOrdering) -> Self {
+        self.ordering = ordering;
+        self
     }
 
     pub const fn coherence_intent(&self) -> CoherenceIntent {

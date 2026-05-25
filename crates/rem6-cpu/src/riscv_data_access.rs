@@ -1,6 +1,8 @@
-use rem6_isa_riscv::{MemoryAccessKind, RiscvMemoryOrdering};
+use rem6_isa_riscv::{MemoryAccessKind, RiscvFenceSet, RiscvMemoryOrdering};
 use rem6_kernel::{PartitionId, Tick};
-use rem6_memory::{AccessSize, Address, MemoryOperation, MemoryRequestId};
+use rem6_memory::{
+    AccessSize, Address, MemoryAccessOrdering, MemoryBarrierSet, MemoryOperation, MemoryRequestId,
+};
 use rem6_mmio::MmioRoute;
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
@@ -245,4 +247,16 @@ impl RiscvDataAccessEvent {
     pub fn data(&self) -> Option<&[u8]> {
         self.data.as_deref()
     }
+}
+
+pub(crate) fn memory_request_ordering(access: &MemoryAccessKind) -> MemoryAccessOrdering {
+    let ordering = access.memory_ordering();
+    MemoryAccessOrdering::new(
+        ordering.before().map(memory_barrier_set),
+        ordering.after().map(memory_barrier_set),
+    )
+}
+
+fn memory_barrier_set(fence: RiscvFenceSet) -> MemoryBarrierSet {
+    MemoryBarrierSet::new(fence.read(), fence.write())
 }

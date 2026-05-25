@@ -1,6 +1,7 @@
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, MemoryError,
-    MemoryOperation, MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryResponse,
+    ResponseStatus,
 };
 
 fn line_layout() -> CacheLineLayout {
@@ -49,6 +50,32 @@ fn request_reports_cross_line_accesses() {
     assert_eq!(request.line_address(), Address::new(0x1000));
     assert_eq!(request.line_offset(), 62);
     assert_eq!(request.line_span(), 2);
+}
+
+#[test]
+fn request_default_ordering_is_empty_and_builder_preserves_edges() {
+    let request = MemoryRequest::read_shared(
+        request_id(15),
+        Address::new(0x2000),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(request.ordering(), MemoryAccessOrdering::none());
+
+    let ordered = request.with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        Some(MemoryBarrierSet::memory()),
+    ));
+
+    assert_eq!(
+        ordered.ordering(),
+        MemoryAccessOrdering::new(
+            Some(MemoryBarrierSet::memory()),
+            Some(MemoryBarrierSet::memory())
+        )
+    );
 }
 
 #[test]
