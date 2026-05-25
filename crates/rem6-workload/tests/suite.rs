@@ -3,9 +3,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchLoadExpectation,
-    WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchWeight, WorkloadSuiteExecutionEfficiency,
-    WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
-    WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchTimeline, WorkloadSuiteDispatchWeight,
+    WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
+    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 
 #[path = "suite/dispatch.rs"]

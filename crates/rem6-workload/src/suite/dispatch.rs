@@ -575,6 +575,24 @@ impl WorkloadSuiteDispatchTimeline {
             .unwrap_or(0)
     }
 
+    pub fn verify_minimum_occupancy_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+        minimum_ticks: Tick,
+    ) -> Result<(), WorkloadError> {
+        let actual_ticks = self.occupancy_ticks_for_worker_count(worker_count);
+        if actual_ticks < minimum_ticks {
+            return Err(
+                WorkloadError::SuitePlannedOccupancyWorkerCountTicksBelowMinimum {
+                    worker_count,
+                    minimum_ticks,
+                    actual_ticks,
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub fn occupancy_idle_worker_ticks(&self) -> Tick {
         self.occupancy_windows()
             .iter()

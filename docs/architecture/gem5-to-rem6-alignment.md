@@ -48,8 +48,8 @@ isolated bugs:
   planned-load expectations, planned dispatch timelines, planned
   timeline-derived execution summaries, planned timeline expectation checks,
   planned timeline wall-clock, worker-idle, occupancy-window, occupancy
-  utilization, worker-count tick histograms, sustained-occupancy,
-  full-occupancy, and underoccupied-tick
+  utilization, worker-count tick histograms, worker-count tick threshold
+  contracts, sustained-occupancy, full-occupancy, and underoccupied-tick
   evidence, suite result-derived execution evidence, per-workload result
   start/final windows, worker-level suite completion summaries, round-robin or
   weighted suite dispatch plans, dispatch-declared suite execution

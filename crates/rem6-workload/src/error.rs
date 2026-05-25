@@ -424,6 +424,11 @@ pub enum WorkloadError {
         minimum_ticks: Tick,
         actual_ticks: Tick,
     },
+    SuitePlannedOccupancyWorkerCountTicksBelowMinimum {
+        worker_count: usize,
+        minimum_ticks: Tick,
+        actual_ticks: Tick,
+    },
     SuitePlannedUnderoccupiedTicksAboveMaximum {
         maximum_ticks: Tick,
         actual_ticks: Tick,
