@@ -135,7 +135,7 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(result.parallel_execution_summary(), Some(&summary));
     assert_eq!(summary.scheduler_epoch_count(), 3);
     assert_eq!(summary.scheduler_empty_epoch_count(), 1);
-    assert_eq!(summary.scheduler_dispatch_count(), 7);
+    assert_eq!(summary.scheduler_dispatch_count(), 8);
     assert_eq!(summary.scheduler_batch_count(), 5);
     assert_eq!(summary.active_scheduler_partition_count(), 4);
     assert_eq!(summary.max_parallel_scheduler_workers(), 2);
@@ -208,14 +208,14 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.data_cache_parallel_run_count(), 7);
     assert_eq!(summary.data_cache_parallel_scheduler_epoch_count(), 9);
     assert_eq!(summary.data_cache_parallel_scheduler_empty_epoch_count(), 2);
-    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 35);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 13);
     assert_eq!(
         summary.active_data_cache_parallel_scheduler_partition_count(),
         6
     );
     assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
-    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 21);
+    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 35);
     assert_eq!(
         summary.data_cache_parallel_scheduler_batch_worker_counts(),
         &[
@@ -438,10 +438,10 @@ fn workload_result_records_parallel_execution_summary() {
         summary.full_system_parallel_scheduler_empty_epoch_count(),
         3
     );
-    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 18);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 43);
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);
-    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 36);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 50);
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_counts(),
         vec![

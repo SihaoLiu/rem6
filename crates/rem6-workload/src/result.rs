@@ -744,17 +744,15 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn scheduler_dispatch_count(&self) -> usize {
-        if self.scheduler_dispatch_count != 0 {
-            self.scheduler_dispatch_count
-        } else {
+        self.scheduler_dispatch_count.max(
             total_parallel_batch_activity_worker_count(
                 &self.parallel_scheduler_batch_worker_counts,
                 &self.parallel_scheduler_batch_partition_sets,
             )
             .max(parallel_partition_dispatch_count(
                 &self.parallel_scheduler_partition_activities,
-            ))
-        }
+            )),
+        )
     }
 
     pub const fn scheduler_batch_count(&self) -> usize {
@@ -781,17 +779,15 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn total_parallel_scheduler_workers(&self) -> usize {
-        if self.total_parallel_scheduler_workers != 0 {
-            self.total_parallel_scheduler_workers
-        } else {
+        self.total_parallel_scheduler_workers.max(
             total_parallel_batch_activity_worker_count(
                 &self.parallel_scheduler_batch_worker_counts,
                 &self.parallel_scheduler_batch_partition_sets,
             )
             .max(parallel_partition_worker_count(
                 &self.parallel_scheduler_partition_activities,
-            ))
-        }
+            )),
+        )
     }
 
     pub const fn parallel_scheduler_progress_transition_count(&self) -> usize {
@@ -952,17 +948,15 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn data_cache_parallel_scheduler_dispatch_count(&self) -> usize {
-        if self.data_cache_parallel_scheduler_dispatch_count != 0 {
-            self.data_cache_parallel_scheduler_dispatch_count
-        } else {
+        self.data_cache_parallel_scheduler_dispatch_count.max(
             total_parallel_batch_activity_worker_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
             )
             .max(parallel_partition_dispatch_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
-            ))
-        }
+            )),
+        )
     }
 
     pub const fn data_cache_parallel_scheduler_batch_count(&self) -> usize {
@@ -990,17 +984,15 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn data_cache_parallel_scheduler_total_workers(&self) -> usize {
-        if self.data_cache_parallel_scheduler_total_workers != 0 {
-            self.data_cache_parallel_scheduler_total_workers
-        } else {
+        self.data_cache_parallel_scheduler_total_workers.max(
             total_parallel_batch_activity_worker_count(
                 &self.data_cache_parallel_scheduler_batch_worker_counts,
                 &self.data_cache_parallel_scheduler_batch_partition_sets,
             )
             .max(parallel_partition_worker_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
-            ))
-        }
+            )),
+        )
     }
 
     pub fn data_cache_parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {

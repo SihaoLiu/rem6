@@ -312,6 +312,58 @@ fn workload_replay_plan_derives_dispatch_progress_from_batch_evidence() {
 }
 
 #[test]
+fn workload_replay_plan_uses_stronger_dispatch_evidence_than_aggregate_counts() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("scheduler-progress-prefers-stronger-evidence"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            6,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            0,
+            7,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            13,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(1, 0, 2, 1)
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [PartitionId::new(0), PartitionId::new(1)],
+            3,
+        )])
+        .with_data_cache_parallel_counts(1, 1, 3, 1, 1)
+        .with_data_cache_parallel_scheduler_partition_activities([(
+            PartitionId::new(10),
+            ParallelPartitionActivity::new(1, 7, 4),
+        )]);
+
+    assert_eq!(summary.scheduler_dispatch_count(), 6);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 7);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 13);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_scheduler_progress() {
     let zero = WorkloadExpectedParallelSchedulerProgress::new(
         WorkloadParallelRemoteFlowScope::Scheduler,

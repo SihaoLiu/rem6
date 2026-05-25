@@ -62,9 +62,10 @@ isolated bugs:
   those flow records. Workload manifests and replay plans can declare exact
   expected remote-flow counts, exact remote-flow first/last tick windows,
   minimum max-worker use derived from aggregate, worker-count, or exact
-  partition-set evidence, minimum total-worker activity derived from aggregate,
-  worker-count, exact partition-set, or per-partition evidence, minimum scheduler
-  epoch progress plus dispatch progress from aggregate counts, batch-histogram,
+  partition-set evidence, minimum total-worker activity derived from the
+  strongest available aggregate, worker-count, exact partition-set, or
+  per-partition evidence, minimum scheduler epoch progress plus dispatch
+  progress from the strongest available aggregate counts, batch-histogram,
   exact partition-set, or per-partition evidence, per-partition worker and
   dispatch activity derived from exact partition-set histograms, and
   non-overcounting same-scope activity evidence merges, maximum scheduler empty
@@ -412,17 +413,17 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   scheduler, merged full-system remote-flow records, scheduler epoch,
   empty-epoch, dispatch counts, progress-free transition counts,
   declared-threshold livelock diagnostic counts, merged resource and
-  full-system deadlock diagnostic counts, total-worker counts derived from
-  aggregate, batch-histogram, exact partition-set, or per-partition worker evidence, exact batch
+  full-system deadlock diagnostic counts, total-worker counts derived from the
+  strongest available aggregate, batch-histogram, exact partition-set, or per-partition worker evidence, exact batch
   partition-set histograms, maximum
   consecutive partition-set streaks, per-partition activity summaries,
   replay-plan
   validation of exact expected remote-flow counts and first/last tick windows,
-  minimum scheduler epoch progress plus dispatch progress from aggregate counts,
-  batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
+  minimum scheduler epoch progress plus dispatch progress from the strongest
+  available aggregate counts, batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
   minimum max-worker use derived from aggregate, worker-count, or exact
-  partition-set evidence, minimum total-worker activity derived from aggregate,
-  worker-count, exact partition-set, or per-partition evidence,
+  partition-set evidence, minimum total-worker activity derived from the
+  strongest available aggregate, worker-count, exact partition-set, or per-partition evidence,
   minimum multi-worker batch activity derived from worker-count or partition-set
   evidence, exact batch partition-set activity,
   sustained same-batch partition-set streak activity, minimum active partition

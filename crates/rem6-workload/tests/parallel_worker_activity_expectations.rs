@@ -338,6 +338,61 @@ fn workload_replay_plan_derives_total_workers_from_partition_sets() {
 }
 
 #[test]
+fn workload_replay_plan_uses_stronger_worker_evidence_than_aggregate_counts() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-worker-activity-prefers-stronger-evidence"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            6,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            7,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            13,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_worker_count(2)
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [PartitionId::new(0), PartitionId::new(1)],
+            3,
+        )])
+        .with_data_cache_parallel_worker_count(3)
+        .with_data_cache_parallel_scheduler_partition_activities([
+            (
+                PartitionId::new(10),
+                ParallelPartitionActivity::new(4, 1, 5),
+            ),
+            (
+                PartitionId::new(11),
+                ParallelPartitionActivity::new(3, 1, 5),
+            ),
+        ]);
+
+    assert_eq!(summary.total_parallel_scheduler_workers(), 6);
+    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 7);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 13);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_worker_activity() {
     let zero =
         WorkloadExpectedParallelWorkerActivity::new(WorkloadParallelRemoteFlowScope::Scheduler, 0)
