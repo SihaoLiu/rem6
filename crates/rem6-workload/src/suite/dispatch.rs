@@ -6,7 +6,7 @@ use crate::{WorkloadError, WorkloadId, WorkloadManifestIdentity};
 
 use super::{
     WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionRatio, WorkloadSuiteExecutionSummary,
-    WorkloadSuiteIdentity, WorkloadSuiteReplayPlan,
+    WorkloadSuiteIdentity, WorkloadSuiteReplayPlan, WorkloadSuiteWorkerExecutionSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -521,6 +521,19 @@ impl WorkloadSuiteDispatchTimeline {
             )?;
         }
         Ok(summary)
+    }
+
+    pub fn worker_summaries(
+        &self,
+    ) -> Result<Vec<WorkloadSuiteWorkerExecutionSummary>, WorkloadError> {
+        Ok(self.to_execution_summary()?.worker_summaries())
+    }
+
+    pub fn worker_summary(
+        &self,
+        worker_index: usize,
+    ) -> Result<Option<WorkloadSuiteWorkerExecutionSummary>, WorkloadError> {
+        Ok(self.to_execution_summary()?.worker_summary(worker_index))
     }
 
     pub fn verify_against_expectation(
