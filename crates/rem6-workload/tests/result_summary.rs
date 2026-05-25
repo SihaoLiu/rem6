@@ -1,5 +1,6 @@
 use rem6_boot::BootImage;
 use rem6_fabric::{QosPriority, QosRequestorId};
+use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
@@ -45,8 +46,17 @@ fn workload_result_records_parallel_execution_summary() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_scheduler_counts(3, 1, 7, 5)
         .with_scheduler_partitions(4, 2)
+        .with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 2, 5, 11),
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 3, 3, 17),
+            ParallelRemoteFlowRecord::new(PartitionId::new(1), PartitionId::new(3), 0, 9, 9),
+        ])
         .with_riscv_core_counts(2, 2, 4, 3, 1, 2)
         .with_data_cache_parallel_counts(7, 9, 11, 13, 3)
+        .with_data_cache_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 7, 19, 23),
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 1, 13, 29),
+        ])
         .with_data_cache_run_attribution(6, 1)
         .with_data_cache_protocol_counts([
             WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Moesi, 3),
@@ -80,6 +90,25 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.scheduler_batch_count(), 5);
     assert_eq!(summary.active_scheduler_partition_count(), 4);
     assert_eq!(summary.max_parallel_scheduler_workers(), 2);
+    assert_eq!(
+        summary.parallel_scheduler_remote_flows(),
+        &[ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(2),
+            5,
+            3,
+            17,
+        )],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_flow_count(PartitionId::new(0), PartitionId::new(2)),
+        5,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_flow_count(PartitionId::new(2), PartitionId::new(0)),
+        0,
+    );
+    assert!(summary.has_parallel_scheduler_remote_flows());
     assert_eq!(summary.riscv_core_count(), 2);
     assert_eq!(summary.active_riscv_core_count(), 2);
     assert_eq!(summary.riscv_fetch_issue_count(), 4);
@@ -92,6 +121,24 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 13);
     assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_flows(),
+        &[ParallelRemoteFlowRecord::new(
+            PartitionId::new(4),
+            PartitionId::new(5),
+            8,
+            13,
+            29,
+        )],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_flow_count(
+            PartitionId::new(4),
+            PartitionId::new(5),
+        ),
+        8,
+    );
+    assert!(summary.has_data_cache_parallel_scheduler_remote_flows());
     assert_eq!(summary.attributed_data_cache_parallel_run_count(), 6);
     assert_eq!(summary.unattributed_data_cache_parallel_run_count(), 1);
     assert_eq!(
@@ -210,6 +257,28 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_flows(),
+        vec![
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 5, 3, 17),
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 8, 13, 29),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_flow_count(
+            PartitionId::new(0),
+            PartitionId::new(2),
+        ),
+        5,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_flow_count(
+            PartitionId::new(4),
+            PartitionId::new(5),
+        ),
+        8,
+    );
+    assert!(summary.has_full_system_parallel_scheduler_remote_flows());
     assert!(summary.has_full_system_parallel_scheduler_work());
     assert!(summary.has_parallel_scheduler_work());
     assert!(summary.has_data_cache_parallel_work());

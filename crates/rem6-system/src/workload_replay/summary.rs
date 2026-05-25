@@ -50,6 +50,7 @@ pub(super) fn parallel_execution_summary(
             run.active_parallel_scheduler_partition_count(),
             run.max_parallel_scheduler_workers(),
         )
+        .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_riscv_core_counts(
             topology.riscv_cores().len(),
             cpu_activities.len(),
@@ -64,6 +65,9 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_dispatch_count(),
             run.data_cache_parallel_scheduler_batch_count(),
             run.data_cache_parallel_scheduler_max_workers(),
+        )
+        .with_data_cache_parallel_scheduler_remote_flows(
+            run.data_cache_parallel_scheduler_remote_flows(),
         )
         .with_data_cache_run_attribution(
             run.attributed_data_cache_parallel_run_count(),
@@ -185,6 +189,7 @@ mod tests {
         DramQosTurnaroundPolicy, DramTargetActivity, DramTiming,
     };
     use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
+    use rem6_kernel::{PartitionId, PartitionedScheduler};
     use rem6_memory::{
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
         MemoryTargetId,
@@ -193,7 +198,7 @@ mod tests {
     use super::*;
     use crate::workload_replay::{WorkloadGpuDmaActivity, WorkloadReplayActivityRefs};
     use crate::workload_replay_heterogeneous::{WorkloadAcceleratorActivity, WorkloadGpuActivity};
-    use crate::RiscvSystemRunStopReason;
+    use crate::{RiscvClusterTurn, RiscvSystemRunStopReason};
 
     fn layout() -> CacheLineLayout {
         CacheLineLayout::new(64).unwrap()
@@ -287,5 +292,60 @@ mod tests {
             summary.dram_qos_requestor_byte_count(QosRequestorId::new(7)),
             16,
         );
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_scheduler_remote_flows() {
+        let source = PartitionId::new(0);
+        let target = PartitionId::new(1);
+        let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap();
+        scheduler
+            .schedule_parallel_at(source, 0, move |context| {
+                context.schedule_remote_after(target, 4, |_| {}).unwrap();
+            })
+            .unwrap();
+        let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+        let run = RiscvSystemRun::new(
+            vec![RiscvClusterTurn::parallel_scheduler(plan, recorded)],
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 8 },
+        );
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+        );
+
+        assert_eq!(
+            summary.parallel_scheduler_remote_flow_count(source, target),
+            1
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_remote_flow_count(source, target),
+            1,
+        );
+        let flows = summary.full_system_parallel_scheduler_remote_flows();
+        assert_eq!(flows.len(), 1);
+        assert_eq!(flows[0].source(), source);
+        assert_eq!(flows[0].target(), target);
+        assert_eq!(flows[0].send_count(), 1);
+        assert!(summary.has_full_system_parallel_scheduler_remote_flows());
     }
 }

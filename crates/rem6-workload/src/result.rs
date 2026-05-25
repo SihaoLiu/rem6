@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
+use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
@@ -122,6 +123,7 @@ pub struct WorkloadParallelExecutionSummary {
     scheduler_batch_count: usize,
     active_scheduler_partition_count: usize,
     max_parallel_scheduler_workers: usize,
+    parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     riscv_core_count: usize,
     active_riscv_core_count: usize,
     riscv_fetch_issue_count: usize,
@@ -133,6 +135,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_dispatch_count: usize,
     data_cache_parallel_scheduler_batch_count: usize,
     data_cache_parallel_scheduler_max_workers: usize,
+    data_cache_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     attributed_data_cache_parallel_run_count: usize,
     unattributed_data_cache_parallel_run_count: usize,
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
@@ -215,6 +218,14 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_parallel_scheduler_remote_flows(
+        mut self,
+        flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    ) -> Self {
+        self.parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
     pub const fn with_riscv_core_counts(
         mut self,
         core_count: usize,
@@ -246,6 +257,14 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_parallel_scheduler_dispatch_count = scheduler_dispatch_count;
         self.data_cache_parallel_scheduler_batch_count = scheduler_batch_count;
         self.data_cache_parallel_scheduler_max_workers = scheduler_max_workers;
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_remote_flows(
+        mut self,
+        flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
         self
     }
 
@@ -484,6 +503,22 @@ impl WorkloadParallelExecutionSummary {
         self.max_parallel_scheduler_workers
     }
 
+    pub fn parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
+        &self.parallel_scheduler_remote_flows
+    }
+
+    pub fn parallel_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_flow_count(&self.parallel_scheduler_remote_flows, source, target)
+    }
+
+    pub fn has_parallel_scheduler_remote_flows(&self) -> bool {
+        !self.parallel_scheduler_remote_flows.is_empty()
+    }
+
     pub const fn riscv_core_count(&self) -> usize {
         self.riscv_core_count
     }
@@ -533,6 +568,26 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn data_cache_parallel_scheduler_max_workers(&self) -> usize {
         self.data_cache_parallel_scheduler_max_workers
+    }
+
+    pub fn data_cache_parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
+        &self.data_cache_parallel_scheduler_remote_flows
+    }
+
+    pub fn data_cache_parallel_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_flow_count(
+            &self.data_cache_parallel_scheduler_remote_flows,
+            source,
+            target,
+        )
+    }
+
+    pub fn has_data_cache_parallel_scheduler_remote_flows(&self) -> bool {
+        !self.data_cache_parallel_scheduler_remote_flows.is_empty()
     }
 
     pub const fn attributed_data_cache_parallel_run_count(&self) -> usize {
@@ -985,6 +1040,30 @@ impl WorkloadParallelExecutionSummary {
         }
     }
 
+    pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flows(
+            self.parallel_scheduler_remote_flows.iter().copied().chain(
+                self.data_cache_parallel_scheduler_remote_flows
+                    .iter()
+                    .copied(),
+            ),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        self.parallel_scheduler_remote_flow_count(source, target)
+            + self.data_cache_parallel_scheduler_remote_flow_count(source, target)
+    }
+
+    pub fn has_full_system_parallel_scheduler_remote_flows(&self) -> bool {
+        self.has_parallel_scheduler_remote_flows()
+            || self.has_data_cache_parallel_scheduler_remote_flows()
+    }
+
     pub const fn has_full_system_parallel_scheduler_work(&self) -> bool {
         self.has_parallel_scheduler_work() || self.has_data_cache_parallel_work()
     }
@@ -1020,6 +1099,42 @@ fn collect_priority_summaries(
             WorkloadDramQosPrioritySummary::new(priority, access_count, byte_count)
         })
         .collect()
+}
+
+fn collect_parallel_remote_flows(
+    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+) -> Vec<ParallelRemoteFlowRecord> {
+    let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
+    for flow in flows {
+        if flow.send_count() == 0 {
+            continue;
+        }
+        by_route
+            .entry((flow.source(), flow.target()))
+            .and_modify(|stored| {
+                *stored = ParallelRemoteFlowRecord::new(
+                    stored.source(),
+                    stored.target(),
+                    stored.send_count() + flow.send_count(),
+                    stored.first_tick().min(flow.first_tick()),
+                    stored.last_tick().max(flow.last_tick()),
+                );
+            })
+            .or_insert(flow);
+    }
+    by_route.into_values().collect()
+}
+
+fn parallel_remote_flow_count(
+    flows: &[ParallelRemoteFlowRecord],
+    source: PartitionId,
+    target: PartitionId,
+) -> usize {
+    flows
+        .iter()
+        .find(|flow| flow.source() == source && flow.target() == target)
+        .map(|flow| flow.send_count())
+        .unwrap_or(0)
 }
 
 fn collect_requestor_summaries(
