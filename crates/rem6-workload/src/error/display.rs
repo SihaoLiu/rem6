@@ -1021,6 +1021,16 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch activity to reach at least {minimum_batch_count} batches at {minimum_worker_count} workers, got {actual_batch_count}",
                 scope.as_str()
             ),
+            Self::ParallelBatchWorkerCountBelowMinimum {
+                scope,
+                worker_count,
+                minimum_batch_count,
+                actual_batch_count,
+            } => write!(
+                formatter,
+                "{} batch worker-count bucket {worker_count} has {actual_batch_count} batches, below {minimum_batch_count}",
+                scope.as_str()
+            ),
             Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
                 formatter,
                 "expected {} batch partition set {} must include at least 2 partitions",

@@ -421,9 +421,9 @@ addition. Full-system activity only adds after the CPU scheduler and
 data-cache/coherence scheduler have been summarized separately. Workload
 result summary accessors also choose the strongest available aggregate or
 fine-grained evidence for batch count, dispatch progress, max-worker use,
-thresholded multi-worker batch activity, and total-worker activity, so a lower
-aggregate or worker-count counter cannot hide detailed partition-set execution
-records.
+thresholded multi-worker batch activity, exact worker-count bucket activity,
+and total-worker activity, so a lower aggregate or worker-count counter cannot
+hide detailed partition-set execution records.
 The system-run object exposes batch-worker, exact partition-set, and
 same-partition-set streak summaries directly for CPU-scheduler, data-cache
 scheduler, and merged full-system scopes, so simulation diagnostics can inspect

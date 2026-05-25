@@ -8,11 +8,12 @@ use rem6_kernel::{
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
-    WorkloadDramQosRequestorSummary, WorkloadId, WorkloadManifest,
+    WorkloadDramQosRequestorSummary, WorkloadError, WorkloadId, WorkloadManifest,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1219,6 +1220,25 @@ fn workload_result_derives_parallel_activity_from_batch_partition_streaks() {
     assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 5);
     assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(3), 2);
     assert_eq!(
+        summary.parallel_scheduler_batch_count_for_worker_count(2),
+        3
+    );
+    assert_eq!(
+        summary.parallel_scheduler_batch_count_for_worker_count(3),
+        2
+    );
+    assert_eq!(
+        summary.parallel_scheduler_batch_count_for_worker_count(4),
+        0
+    );
+    summary
+        .verify_minimum_parallel_batch_count_for_worker_count(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            3,
+        )
+        .unwrap();
+    assert_eq!(
         summary.parallel_scheduler_partition_activity(PartitionId::new(0)),
         Some(ParallelPartitionActivity::with_remote_counts(3, 3, 0, 0, 0)),
     );
@@ -1233,6 +1253,14 @@ fn workload_result_derives_parallel_activity_from_batch_partition_streaks() {
     );
     assert_eq!(
         summary.data_cache_parallel_scheduler_batch_count_at_or_above(3),
+        1,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_count_for_worker_count(2),
+        4,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_count_for_worker_count(3),
         1,
     );
     assert_eq!(
@@ -1251,5 +1279,29 @@ fn workload_result_derives_parallel_activity_from_batch_partition_streaks() {
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_count_at_or_above(3),
         3,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(2),
+        7,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(3),
+        3,
+    );
+    let exact_bucket_error = summary
+        .verify_minimum_parallel_batch_count_for_worker_count(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            3,
+            4,
+        )
+        .unwrap_err();
+    assert_eq!(
+        exact_bucket_error,
+        WorkloadError::ParallelBatchWorkerCountBelowMinimum {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            worker_count: 3,
+            minimum_batch_count: 4,
+            actual_batch_count: 3,
+        },
     );
 }

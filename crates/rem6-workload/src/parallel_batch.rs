@@ -330,6 +330,17 @@ pub(crate) fn parallel_batch_count_at_or_above(
         .sum()
 }
 
+pub(crate) fn parallel_batch_count_for_worker_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    worker_count: usize,
+) -> usize {
+    counts
+        .iter()
+        .filter(|count| count.worker_count() == worker_count)
+        .map(WorkloadParallelBatchWorkerCount::batch_count)
+        .sum()
+}
+
 pub(crate) fn parallel_batch_activity_count_at_or_above(
     counts: &[WorkloadParallelBatchWorkerCount],
     sets: &[WorkloadParallelBatchPartitionSet],
@@ -339,6 +350,19 @@ pub(crate) fn parallel_batch_activity_count_at_or_above(
     parallel_batch_count_at_or_above(counts, minimum_worker_count).max(
         parallel_batch_partition_set_count_at_or_above(sets, minimum_worker_count).max(
             parallel_batch_partition_streak_count_at_or_above(streaks, minimum_worker_count),
+        ),
+    )
+}
+
+pub(crate) fn parallel_batch_activity_count_for_worker_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+    worker_count: usize,
+) -> usize {
+    parallel_batch_count_for_worker_count(counts, worker_count).max(
+        parallel_batch_partition_set_count_for_worker_count(sets, worker_count).max(
+            parallel_batch_partition_streak_count_for_worker_count(streaks, worker_count),
         ),
     )
 }
@@ -353,6 +377,16 @@ fn parallel_batch_partition_set_count_at_or_above(
         .sum()
 }
 
+fn parallel_batch_partition_set_count_for_worker_count(
+    sets: &[WorkloadParallelBatchPartitionSet],
+    worker_count: usize,
+) -> usize {
+    sets.iter()
+        .filter(|set| set.partitions().len() == worker_count)
+        .map(WorkloadParallelBatchPartitionSet::batch_count)
+        .sum()
+}
+
 fn parallel_batch_partition_streak_count_at_or_above(
     streaks: &[WorkloadParallelBatchPartitionStreak],
     minimum_worker_count: usize,
@@ -360,6 +394,17 @@ fn parallel_batch_partition_streak_count_at_or_above(
     streaks
         .iter()
         .filter(|streak| streak.partitions().len() >= minimum_worker_count)
+        .map(WorkloadParallelBatchPartitionStreak::consecutive_batch_count)
+        .sum()
+}
+
+fn parallel_batch_partition_streak_count_for_worker_count(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+    worker_count: usize,
+) -> usize {
+    streaks
+        .iter()
+        .filter(|streak| streak.partitions().len() == worker_count)
         .map(WorkloadParallelBatchPartitionStreak::consecutive_batch_count)
         .sum()
 }

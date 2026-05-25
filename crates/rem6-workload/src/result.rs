@@ -28,8 +28,8 @@ use crate::result_partition_activity::{
     parallel_partition_activity_for_partition, parallel_partition_dispatch_count,
     parallel_partition_worker_count,
 };
-
 mod batch_timeline;
+mod batch_worker_count;
 mod full_system_parallel;
 mod progress;
 mod remote_endpoints;

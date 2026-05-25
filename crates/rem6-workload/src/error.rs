@@ -817,6 +817,12 @@ pub enum WorkloadError {
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
+    ParallelBatchWorkerCountBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        worker_count: usize,
+        minimum_batch_count: usize,
+        actual_batch_count: usize,
+    },
     InvalidExpectedParallelBatchPartitionSet {
         scope: WorkloadParallelRemoteFlowScope,
         partitions: Vec<u32>,
