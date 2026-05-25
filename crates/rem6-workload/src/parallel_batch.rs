@@ -280,6 +280,33 @@ pub(crate) fn total_parallel_batch_activity_worker_count(
     }
 }
 
+pub(crate) fn parallel_batch_active_partition_count(
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    let mut partitions = BTreeSet::new();
+    collect_parallel_batch_active_partitions(&mut partitions, sets);
+    partitions.len()
+}
+
+pub(crate) fn combined_parallel_batch_active_partition_count(
+    left: &[WorkloadParallelBatchPartitionSet],
+    right: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    let mut partitions = BTreeSet::new();
+    collect_parallel_batch_active_partitions(&mut partitions, left);
+    collect_parallel_batch_active_partitions(&mut partitions, right);
+    partitions.len()
+}
+
+fn collect_parallel_batch_active_partitions(
+    partitions: &mut BTreeSet<PartitionId>,
+    sets: &[WorkloadParallelBatchPartitionSet],
+) {
+    for set in sets {
+        partitions.extend(set.partitions().iter().copied());
+    }
+}
+
 fn total_parallel_batch_partition_set_worker_count(
     sets: &[WorkloadParallelBatchPartitionSet],
 ) -> usize {

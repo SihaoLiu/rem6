@@ -3,8 +3,9 @@ use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, Partition
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionUse, WorkloadId,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -274,6 +275,66 @@ fn workload_replay_plan_derives_active_partitions_from_remote_flows() {
     assert_eq!(
         summary.active_full_system_parallel_scheduler_partition_count(),
         5,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_active_partitions_from_batch_partition_sets() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-partitions-from-batch-partition-sets"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            8,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 2),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(2),
+                    PartitionId::new(3),
+                    PartitionId::new(4),
+                ],
+                1,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(4), PartitionId::new(5)], 3),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(6), PartitionId::new(7)], 1),
+        ]);
+
+    assert_eq!(summary.active_scheduler_partition_count(), 5);
+    assert_eq!(
+        summary.active_data_cache_parallel_scheduler_partition_count(),
+        4,
+    );
+    assert_eq!(
+        summary.active_full_system_parallel_scheduler_partition_count(),
+        8,
     );
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);

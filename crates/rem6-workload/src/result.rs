@@ -8,10 +8,11 @@ use rem6_kernel::{
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
     collect_parallel_batch_partition_streaks_from_sequence, collect_parallel_batch_worker_counts,
-    max_parallel_batch_activity_worker_count, parallel_batch_activity_count_at_or_above,
-    parallel_batch_count_for_partition_set, parallel_batch_streak_count_for_partition_set,
-    total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
+    max_parallel_batch_activity_worker_count, parallel_batch_active_partition_count,
+    parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
+    parallel_batch_streak_count_for_partition_set, total_parallel_batch_activity_worker_count,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flows,
@@ -761,6 +762,9 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn active_scheduler_partition_count(&self) -> usize {
         self.active_scheduler_partition_count
+            .max(parallel_batch_active_partition_count(
+                &self.parallel_scheduler_batch_partition_sets,
+            ))
             .max(parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
                 &self.parallel_scheduler_remote_flows,
@@ -960,6 +964,9 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn active_data_cache_parallel_scheduler_partition_count(&self) -> usize {
         self.active_data_cache_parallel_scheduler_partition_count
+            .max(parallel_batch_active_partition_count(
+                &self.data_cache_parallel_scheduler_batch_partition_sets,
+            ))
             .max(parallel_active_partition_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
                 &self.data_cache_parallel_scheduler_remote_flows,

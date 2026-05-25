@@ -4,9 +4,9 @@ use rem6_kernel::{
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
-    collect_parallel_batch_worker_counts, normalize_partition_set,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchWorkerCount,
+    collect_parallel_batch_worker_counts, combined_parallel_batch_active_partition_count,
+    normalize_partition_set, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
@@ -37,6 +37,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
         self.active_full_system_parallel_scheduler_partition_count
+            .max(combined_parallel_batch_active_partition_count(
+                &self.parallel_scheduler_batch_partition_sets,
+                &self.data_cache_parallel_scheduler_batch_partition_sets,
+            ))
             .max(combined_parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
                 &self.parallel_scheduler_remote_flows,
