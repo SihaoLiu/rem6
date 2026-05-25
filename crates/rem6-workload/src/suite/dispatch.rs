@@ -559,6 +559,22 @@ impl WorkloadSuiteDispatchTimeline {
             .sum()
     }
 
+    pub fn occupancy_worker_count_tick_histogram(&self) -> BTreeMap<usize, Tick> {
+        let mut histogram: BTreeMap<usize, Tick> = BTreeMap::new();
+        for window in self.occupancy_windows() {
+            let ticks = histogram.entry(window.active_worker_count()).or_insert(0);
+            *ticks = (*ticks).saturating_add(window.duration_ticks());
+        }
+        histogram
+    }
+
+    pub fn occupancy_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        self.occupancy_worker_count_tick_histogram()
+            .get(&worker_count)
+            .copied()
+            .unwrap_or(0)
+    }
+
     pub fn occupancy_idle_worker_ticks(&self) -> Tick {
         self.occupancy_windows()
             .iter()

@@ -721,6 +721,68 @@ fn workload_suite_dispatch_timeline_summarizes_planned_occupancy_metrics() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_reports_occupancy_worker_count_ticks() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-occupancy-histogram"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    let histogram = timeline.occupancy_worker_count_tick_histogram();
+
+    assert_eq!(histogram.len(), 2);
+    assert_eq!(histogram.get(&1), Some(&1));
+    assert_eq!(histogram.get(&2), Some(&8));
+    assert_eq!(timeline.occupancy_ticks_for_worker_count(0), 0);
+    assert_eq!(timeline.occupancy_ticks_for_worker_count(1), 1);
+    assert_eq!(timeline.occupancy_ticks_for_worker_count(2), 8);
+    assert_eq!(timeline.occupancy_ticks_for_worker_count(3), 0);
+
+    let single_suite = WorkloadSuite::builder(suite_id("planned-occupancy-histogram-unused"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let single_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&single_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+    let single_histogram = single_timeline.occupancy_worker_count_tick_histogram();
+
+    assert_eq!(single_histogram.len(), 1);
+    assert_eq!(single_histogram.get(&1), Some(&10));
+    assert_eq!(single_timeline.occupancy_ticks_for_worker_count(1), 10);
+    assert_eq!(single_timeline.occupancy_ticks_for_worker_count(2), 0);
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_verifies_planned_occupancy_contracts() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");
