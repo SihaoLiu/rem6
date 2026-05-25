@@ -7,6 +7,7 @@ use rem6_system::{RiscvWorkloadReplay, RiscvWorkloadReplayError};
 use rem6_workload::{
     HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDataCacheProtocol,
+    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
     WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadHostEvent,
     WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
@@ -852,6 +853,12 @@ fn replay_manifest_with_cached_accelerator_dma_copy() -> WorkloadManifest {
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
+    .add_expected_data_cache_protocol_run_count(
+        WorkloadExpectedDataCacheProtocolRunCount::new(WorkloadDataCacheProtocol::Msi, 1).unwrap(),
+    )
+    .unwrap()
+    .add_expected_data_cache_run_attribution(WorkloadExpectedDataCacheRunAttribution::new(1, 0))
+    .unwrap()
     .add_host_event(WorkloadHostEvent::new(
         0,
         HostEventIntent::Stop {

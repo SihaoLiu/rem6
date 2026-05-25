@@ -394,6 +394,7 @@ pub enum WorkloadError {
     DuplicateExpectedDataCacheProtocolRunCount {
         protocol: WorkloadDataCacheProtocol,
     },
+    DuplicateExpectedDataCacheRunAttribution,
     MissingDataCacheProtocolSummary {
         protocol: WorkloadDataCacheProtocol,
         minimum_run_count: usize,
@@ -402,6 +403,18 @@ pub enum WorkloadError {
         protocol: WorkloadDataCacheProtocol,
         minimum_run_count: usize,
         actual_run_count: usize,
+    },
+    MissingDataCacheRunAttributionSummary {
+        minimum_attributed_run_count: usize,
+        maximum_unattributed_run_count: usize,
+    },
+    ExpectedDataCacheRunAttributionBelowMinimum {
+        minimum_attributed_run_count: usize,
+        actual_attributed_run_count: usize,
+    },
+    ExpectedDataCacheRunAttributionAboveMaximum {
+        maximum_unattributed_run_count: usize,
+        actual_unattributed_run_count: usize,
     },
     MissingParallelWorkerSummary {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1194,6 +1207,10 @@ impl fmt::Display for WorkloadError {
                 "expected {} data-cache protocol run count is already declared",
                 protocol.as_str()
             ),
+            Self::DuplicateExpectedDataCacheRunAttribution => write!(
+                formatter,
+                "expected data-cache run attribution is already declared"
+            ),
             Self::MissingDataCacheProtocolSummary {
                 protocol,
                 minimum_run_count,
@@ -1210,6 +1227,27 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "expected {} data-cache protocol to run at least {minimum_run_count} times, got {actual_run_count}",
                 protocol.as_str()
+            ),
+            Self::MissingDataCacheRunAttributionSummary {
+                minimum_attributed_run_count,
+                maximum_unattributed_run_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected data-cache run attribution with at least {minimum_attributed_run_count} attributed runs and at most {maximum_unattributed_run_count} unattributed runs"
+            ),
+            Self::ExpectedDataCacheRunAttributionBelowMinimum {
+                minimum_attributed_run_count,
+                actual_attributed_run_count,
+            } => write!(
+                formatter,
+                "expected data-cache run attribution to reach at least {minimum_attributed_run_count} attributed runs, got {actual_attributed_run_count}"
+            ),
+            Self::ExpectedDataCacheRunAttributionAboveMaximum {
+                maximum_unattributed_run_count,
+                actual_unattributed_run_count,
+            } => write!(
+                formatter,
+                "expected data-cache run attribution to keep unattributed runs at or below {maximum_unattributed_run_count}, got {actual_unattributed_run_count}"
             ),
             Self::ZeroExpectedParallelSchedulerProgress { scope } => write!(
                 formatter,

@@ -3,14 +3,14 @@ use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopol
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
-    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelRemoteFlowScope, WorkloadResource,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -28,6 +28,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedCleanParallelDiagnostics],
     pub(crate) expected_data_cache_protocol_run_counts:
         &'a [WorkloadExpectedDataCacheProtocolRunCount],
+    pub(crate) expected_data_cache_run_attribution:
+        Option<&'a WorkloadExpectedDataCacheRunAttribution>,
     pub(crate) expected_parallel_remote_flows: &'a [WorkloadExpectedParallelRemoteFlow],
     pub(crate) expected_parallel_remote_flow_timings:
         &'a [WorkloadExpectedParallelRemoteFlowTiming],
@@ -91,6 +93,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     for expected in input.expected_data_cache_protocol_run_counts {
         hash_expected_data_cache_protocol_run_count(&mut hash, *expected);
     }
+    hash_expected_data_cache_run_attribution(&mut hash, input.expected_data_cache_run_attribution);
     hash_u64(&mut hash, input.expected_parallel_remote_flows.len() as u64);
     for expected in input.expected_parallel_remote_flows {
         hash_expected_parallel_remote_flow(&mut hash, *expected);
@@ -179,6 +182,20 @@ fn hash_expected_data_cache_protocol_run_count(
 ) {
     hash_str(hash, expected.protocol().as_str());
     hash_u64(hash, expected.minimum_run_count() as u64);
+}
+
+fn hash_expected_data_cache_run_attribution(
+    hash: &mut u64,
+    expected: Option<&WorkloadExpectedDataCacheRunAttribution>,
+) {
+    match expected {
+        Some(expected) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, expected.minimum_attributed_run_count() as u64);
+            hash_u64(hash, expected.maximum_unattributed_run_count() as u64);
+        }
+        None => hash_u64(hash, 0),
+    }
 }
 
 fn hash_expected_parallel_remote_flow(

@@ -9,11 +9,11 @@ use rem6_system::{
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
-    WorkloadExpectedDataCacheProtocolRunCount, WorkloadHostActionSummary, WorkloadHostEvent,
-    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
+    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -856,6 +856,8 @@ fn replay_manifest_with_data_cache_load(
         .add_expected_data_cache_protocol_run_count(
             WorkloadExpectedDataCacheProtocolRunCount::new(protocol, 1).unwrap(),
         )
+        .unwrap()
+        .add_expected_data_cache_run_attribution(WorkloadExpectedDataCacheRunAttribution::new(1, 0))
         .unwrap()
         .add_host_event(WorkloadHostEvent::new(
             0,

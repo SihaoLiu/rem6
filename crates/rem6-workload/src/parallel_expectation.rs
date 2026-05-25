@@ -143,6 +143,42 @@ impl WorkloadExpectedDataCacheProtocolRunCount {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedDataCacheRunAttribution {
+    minimum_attributed_run_count: usize,
+    maximum_unattributed_run_count: usize,
+}
+
+impl WorkloadExpectedDataCacheRunAttribution {
+    pub const fn new(
+        minimum_attributed_run_count: usize,
+        maximum_unattributed_run_count: usize,
+    ) -> Self {
+        Self {
+            minimum_attributed_run_count,
+            maximum_unattributed_run_count,
+        }
+    }
+
+    pub const fn minimum_attributed_run_count(self) -> usize {
+        self.minimum_attributed_run_count
+    }
+
+    pub const fn maximum_unattributed_run_count(self) -> usize {
+        self.maximum_unattributed_run_count
+    }
+
+    pub(crate) fn actual_counts(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> (usize, usize) {
+        (
+            summary.attributed_data_cache_parallel_run_count(),
+            summary.unattributed_data_cache_parallel_run_count(),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelRemoteFlow {
     scope: WorkloadParallelRemoteFlowScope,
     source: PartitionId,

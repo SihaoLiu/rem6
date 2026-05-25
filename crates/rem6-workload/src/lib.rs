@@ -39,13 +39,13 @@ pub use parallel_batch::{
 };
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
-    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
-    WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -257,6 +257,7 @@ pub struct WorkloadManifest {
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
+    expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -332,6 +333,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedDataCacheProtocolRunCount] {
         &self.expected_data_cache_protocol_run_counts
+    }
+
+    pub fn expected_data_cache_run_attribution(
+        &self,
+    ) -> Option<&WorkloadExpectedDataCacheRunAttribution> {
+        self.expected_data_cache_run_attribution.as_ref()
     }
 
     pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
@@ -414,6 +421,7 @@ pub struct WorkloadManifestBuilder {
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
+    expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -440,6 +448,7 @@ impl WorkloadManifestBuilder {
             host_events: Vec::new(),
             expected_clean_parallel_diagnostics: Vec::new(),
             expected_data_cache_protocol_run_counts: Vec::new(),
+            expected_data_cache_run_attribution: None,
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
@@ -499,6 +508,17 @@ impl WorkloadManifestBuilder {
         self.expected_data_cache_protocol_run_counts.push(expected);
         self.expected_data_cache_protocol_run_counts
             .sort_by_key(|count| count.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_data_cache_run_attribution(
+        mut self,
+        expected: WorkloadExpectedDataCacheRunAttribution,
+    ) -> Result<Self, WorkloadError> {
+        if self.expected_data_cache_run_attribution.is_some() {
+            return Err(WorkloadError::DuplicateExpectedDataCacheRunAttribution);
+        }
+        self.expected_data_cache_run_attribution = Some(expected);
         Ok(self)
     }
 
@@ -818,6 +838,7 @@ impl WorkloadManifestBuilder {
             host_events: &self.host_events,
             expected_clean_parallel_diagnostics: &self.expected_clean_parallel_diagnostics,
             expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
+            expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
@@ -843,6 +864,7 @@ impl WorkloadManifestBuilder {
             host_events: self.host_events,
             expected_clean_parallel_diagnostics: self.expected_clean_parallel_diagnostics,
             expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
+            expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
@@ -875,6 +897,7 @@ pub struct WorkloadReplayPlan {
     planned_stop_reason: Option<String>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
+    expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -908,6 +931,9 @@ impl WorkloadReplayPlan {
             expected_data_cache_protocol_run_counts: manifest
                 .expected_data_cache_protocol_run_counts()
                 .to_vec(),
+            expected_data_cache_run_attribution: manifest
+                .expected_data_cache_run_attribution()
+                .copied(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             expected_parallel_remote_flow_timings: manifest
                 .expected_parallel_remote_flow_timings()
@@ -1005,6 +1031,23 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedDataCacheProtocolRunCount] {
         &self.expected_data_cache_protocol_run_counts
+    }
+
+    pub fn add_expected_data_cache_run_attribution(
+        mut self,
+        expected: WorkloadExpectedDataCacheRunAttribution,
+    ) -> Result<Self, WorkloadError> {
+        if self.expected_data_cache_run_attribution.is_some() {
+            return Err(WorkloadError::DuplicateExpectedDataCacheRunAttribution);
+        }
+        self.expected_data_cache_run_attribution = Some(expected);
+        Ok(self)
+    }
+
+    pub fn expected_data_cache_run_attribution(
+        &self,
+    ) -> Option<&WorkloadExpectedDataCacheRunAttribution> {
+        self.expected_data_cache_run_attribution.as_ref()
     }
 
     pub fn add_expected_parallel_remote_flow(
@@ -1331,11 +1374,12 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;
+        replay_verify::verify_expected_data_cache_run_attribution(self, result)?;
         replay_verify::verify_expected_parallel_scheduler_progress(self, result)?;
         replay_verify::verify_expected_parallel_scheduler_idle_bounds(self, result)?;
-        self.verify_expected_parallel_batch_activity(result)?;
-        self.verify_expected_parallel_batch_partition_sets(result)?;
-        self.verify_expected_parallel_batch_partition_streaks(result)?;
+        replay_verify::verify_expected_parallel_batch_activity(self, result)?;
+        replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
+        replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
@@ -1595,100 +1639,6 @@ impl WorkloadReplayPlan {
                     minimum_total_workers: expected.minimum_total_workers(),
                     actual_total_workers,
                 });
-            }
-        }
-        Ok(())
-    }
-
-    fn verify_expected_parallel_batch_activity(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_parallel_batch_activity.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = self.expected_parallel_batch_activity[0];
-            return Err(WorkloadError::MissingParallelBatchActivitySummary {
-                scope: expected.scope(),
-                minimum_worker_count: expected.minimum_worker_count(),
-                minimum_batch_count: expected.minimum_batch_count(),
-            });
-        };
-
-        for expected in &self.expected_parallel_batch_activity {
-            let actual_batch_count = expected.actual_batch_count(summary);
-            if actual_batch_count < expected.minimum_batch_count() {
-                return Err(WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
-                    scope: expected.scope(),
-                    minimum_worker_count: expected.minimum_worker_count(),
-                    minimum_batch_count: expected.minimum_batch_count(),
-                    actual_batch_count,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn verify_expected_parallel_batch_partition_sets(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_parallel_batch_partition_sets.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = &self.expected_parallel_batch_partition_sets[0];
-            return Err(WorkloadError::MissingParallelBatchPartitionSetSummary {
-                scope: expected.scope(),
-                partitions: expected.partition_indexes(),
-                minimum_batch_count: expected.minimum_batch_count(),
-            });
-        };
-
-        for expected in &self.expected_parallel_batch_partition_sets {
-            let actual_batch_count = expected.actual_batch_count(summary);
-            if actual_batch_count < expected.minimum_batch_count() {
-                return Err(
-                    WorkloadError::ExpectedParallelBatchPartitionSetBelowMinimum {
-                        scope: expected.scope(),
-                        partitions: expected.partition_indexes(),
-                        minimum_batch_count: expected.minimum_batch_count(),
-                        actual_batch_count,
-                    },
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn verify_expected_parallel_batch_partition_streaks(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_parallel_batch_partition_streaks.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = &self.expected_parallel_batch_partition_streaks[0];
-            return Err(WorkloadError::MissingParallelBatchPartitionStreakSummary {
-                scope: expected.scope(),
-                partitions: expected.partition_indexes(),
-                minimum_consecutive_batch_count: expected.minimum_consecutive_batch_count(),
-            });
-        };
-
-        for expected in &self.expected_parallel_batch_partition_streaks {
-            let actual_consecutive_batch_count = expected.actual_consecutive_batch_count(summary);
-            if actual_consecutive_batch_count < expected.minimum_consecutive_batch_count() {
-                return Err(
-                    WorkloadError::ExpectedParallelBatchPartitionStreakBelowMinimum {
-                        scope: expected.scope(),
-                        partitions: expected.partition_indexes(),
-                        minimum_consecutive_batch_count: expected.minimum_consecutive_batch_count(),
-                        actual_consecutive_batch_count,
-                    },
-                );
             }
         }
         Ok(())

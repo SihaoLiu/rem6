@@ -59,6 +59,37 @@ pub(crate) fn verify_expected_data_cache_protocol_run_counts(
     Ok(())
 }
 
+pub(crate) fn verify_expected_data_cache_run_attribution(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let Some(expected) = plan.expected_data_cache_run_attribution() else {
+        return Ok(());
+    };
+    let Some(summary) = result.parallel_execution_summary() else {
+        return Err(WorkloadError::MissingDataCacheRunAttributionSummary {
+            minimum_attributed_run_count: expected.minimum_attributed_run_count(),
+            maximum_unattributed_run_count: expected.maximum_unattributed_run_count(),
+        });
+    };
+
+    let (actual_attributed_run_count, actual_unattributed_run_count) =
+        expected.actual_counts(summary);
+    if actual_attributed_run_count < expected.minimum_attributed_run_count() {
+        return Err(WorkloadError::ExpectedDataCacheRunAttributionBelowMinimum {
+            minimum_attributed_run_count: expected.minimum_attributed_run_count(),
+            actual_attributed_run_count,
+        });
+    }
+    if actual_unattributed_run_count > expected.maximum_unattributed_run_count() {
+        return Err(WorkloadError::ExpectedDataCacheRunAttributionAboveMaximum {
+            maximum_unattributed_run_count: expected.maximum_unattributed_run_count(),
+            actual_unattributed_run_count,
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_scheduler_progress(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
@@ -88,6 +119,103 @@ pub(crate) fn verify_expected_parallel_scheduler_progress(
                     actual_epoch_count,
                     minimum_dispatch_count: expected.minimum_dispatch_count(),
                     actual_dispatch_count,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_batch_activity(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_activity = plan.expected_parallel_batch_activity();
+    if expected_activity.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_activity[0];
+        return Err(WorkloadError::MissingParallelBatchActivitySummary {
+            scope: expected.scope(),
+            minimum_worker_count: expected.minimum_worker_count(),
+            minimum_batch_count: expected.minimum_batch_count(),
+        });
+    };
+
+    for expected in expected_activity {
+        let actual_batch_count = expected.actual_batch_count(summary);
+        if actual_batch_count < expected.minimum_batch_count() {
+            return Err(WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
+                scope: expected.scope(),
+                minimum_worker_count: expected.minimum_worker_count(),
+                minimum_batch_count: expected.minimum_batch_count(),
+                actual_batch_count,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_batch_partition_sets(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_sets = plan.expected_parallel_batch_partition_sets();
+    if expected_sets.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = &expected_sets[0];
+        return Err(WorkloadError::MissingParallelBatchPartitionSetSummary {
+            scope: expected.scope(),
+            partitions: expected.partition_indexes(),
+            minimum_batch_count: expected.minimum_batch_count(),
+        });
+    };
+
+    for expected in expected_sets {
+        let actual_batch_count = expected.actual_batch_count(summary);
+        if actual_batch_count < expected.minimum_batch_count() {
+            return Err(
+                WorkloadError::ExpectedParallelBatchPartitionSetBelowMinimum {
+                    scope: expected.scope(),
+                    partitions: expected.partition_indexes(),
+                    minimum_batch_count: expected.minimum_batch_count(),
+                    actual_batch_count,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_parallel_batch_partition_streaks(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_streaks = plan.expected_parallel_batch_partition_streaks();
+    if expected_streaks.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = &expected_streaks[0];
+        return Err(WorkloadError::MissingParallelBatchPartitionStreakSummary {
+            scope: expected.scope(),
+            partitions: expected.partition_indexes(),
+            minimum_consecutive_batch_count: expected.minimum_consecutive_batch_count(),
+        });
+    };
+
+    for expected in expected_streaks {
+        let actual_consecutive_batch_count = expected.actual_consecutive_batch_count(summary);
+        if actual_consecutive_batch_count < expected.minimum_consecutive_batch_count() {
+            return Err(
+                WorkloadError::ExpectedParallelBatchPartitionStreakBelowMinimum {
+                    scope: expected.scope(),
+                    partitions: expected.partition_indexes(),
+                    minimum_consecutive_batch_count: expected.minimum_consecutive_batch_count(),
+                    actual_consecutive_batch_count,
                 },
             );
         }
