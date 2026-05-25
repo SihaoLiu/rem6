@@ -683,9 +683,10 @@ fn merge_partition_activity(
     let previous = activities.remove(&partition).unwrap_or_default();
     activities.insert(
         partition,
-        ParallelPartitionActivity::new(
+        ParallelPartitionActivity::with_remote_send_count(
             previous.worker_count() + activity.worker_count(),
             previous.dispatch_count() + activity.dispatch_count(),
+            previous.remote_send_count() + activity.remote_send_count(),
             previous
                 .max_pending_events()
                 .max(activity.max_pending_events()),

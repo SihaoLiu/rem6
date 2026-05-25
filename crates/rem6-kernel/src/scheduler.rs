@@ -12,9 +12,9 @@ mod state;
 
 pub use state::{
     EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
-    ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot,
-    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
-    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
+    ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier,
+    PartitionSnapshot, PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary,
+    RecordedRunSummary, ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -890,12 +890,12 @@ impl PartitionedScheduler {
         }
 
         dispatches.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
-        let record = ParallelEpochBatchRecord::new(
-            horizon,
-            workers,
-            dispatches.clone(),
-            remote_events.len(),
-        );
+        let remote_sends = remote_events
+            .iter()
+            .map(|event| ParallelRemoteSendRecord::new(event.source, event.target, event.tick))
+            .collect();
+        let record =
+            ParallelEpochBatchRecord::new(horizon, workers, dispatches.clone(), remote_sends);
 
         Ok(ParallelBatchResult {
             executed_events,

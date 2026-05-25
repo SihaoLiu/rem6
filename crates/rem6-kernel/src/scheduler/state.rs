@@ -91,7 +91,7 @@ pub struct ParallelEpochBatchRecord {
     horizon: Tick,
     workers: Vec<ParallelWorkerRecord>,
     dispatches: Vec<SchedulerDispatchRecord>,
-    remote_send_count: usize,
+    remote_sends: Vec<ParallelRemoteSendRecord>,
 }
 
 impl ParallelEpochBatchRecord {
@@ -99,13 +99,13 @@ impl ParallelEpochBatchRecord {
         horizon: Tick,
         workers: Vec<ParallelWorkerRecord>,
         dispatches: Vec<SchedulerDispatchRecord>,
-        remote_send_count: usize,
+        remote_sends: Vec<ParallelRemoteSendRecord>,
     ) -> Self {
         Self {
             horizon,
             workers,
             dispatches,
-            remote_send_count,
+            remote_sends,
         }
     }
 
@@ -143,7 +143,18 @@ impl ParallelEpochBatchRecord {
     }
 
     pub fn remote_send_count(&self) -> usize {
-        self.remote_send_count
+        self.remote_sends.len()
+    }
+
+    pub fn remote_sends(&self) -> &[ParallelRemoteSendRecord] {
+        &self.remote_sends
+    }
+
+    pub fn remote_send_count_for_partition(&self, partition: PartitionId) -> usize {
+        self.remote_sends
+            .iter()
+            .filter(|record| record.source() == partition)
+            .count()
     }
 
     pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
@@ -223,10 +234,40 @@ impl ParallelWorkerRecord {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ParallelRemoteSendRecord {
+    source: PartitionId,
+    target: PartitionId,
+    tick: Tick,
+}
+
+impl ParallelRemoteSendRecord {
+    pub const fn new(source: PartitionId, target: PartitionId, tick: Tick) -> Self {
+        Self {
+            source,
+            target,
+            tick,
+        }
+    }
+
+    pub const fn source(self) -> PartitionId {
+        self.source
+    }
+
+    pub const fn target(self) -> PartitionId {
+        self.target
+    }
+
+    pub const fn tick(self) -> Tick {
+        self.tick
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ParallelPartitionActivity {
     worker_count: usize,
     dispatch_count: usize,
+    remote_send_count: usize,
     max_pending_events: usize,
 }
 
@@ -236,9 +277,19 @@ impl ParallelPartitionActivity {
         dispatch_count: usize,
         max_pending_events: usize,
     ) -> Self {
+        Self::with_remote_send_count(worker_count, dispatch_count, 0, max_pending_events)
+    }
+
+    pub const fn with_remote_send_count(
+        worker_count: usize,
+        dispatch_count: usize,
+        remote_send_count: usize,
+        max_pending_events: usize,
+    ) -> Self {
         Self {
             worker_count,
             dispatch_count,
+            remote_send_count,
             max_pending_events,
         }
     }
@@ -251,12 +302,16 @@ impl ParallelPartitionActivity {
         self.dispatch_count
     }
 
+    pub const fn remote_send_count(self) -> usize {
+        self.remote_send_count
+    }
+
     pub const fn max_pending_events(self) -> usize {
         self.max_pending_events
     }
 
     pub const fn has_activity(self) -> bool {
-        self.worker_count != 0 || self.dispatch_count != 0
+        self.worker_count != 0 || self.dispatch_count != 0 || self.remote_send_count != 0
     }
 
     fn record_worker(&mut self, worker: ParallelWorkerRecord) {
@@ -268,10 +323,15 @@ impl ParallelPartitionActivity {
         self.dispatch_count += 1;
     }
 
+    fn record_remote_send(&mut self) {
+        self.remote_send_count += 1;
+    }
+
     fn merge(self, other: Self) -> Self {
         Self {
             worker_count: self.worker_count + other.worker_count,
             dispatch_count: self.dispatch_count + other.dispatch_count,
+            remote_send_count: self.remote_send_count + other.remote_send_count,
             max_pending_events: self.max_pending_events.max(other.max_pending_events),
         }
     }
@@ -801,6 +861,12 @@ where
                 .entry(dispatch.partition())
                 .or_default()
                 .record_dispatch();
+        }
+        for remote_send in batch.remote_sends() {
+            activities
+                .entry(remote_send.source())
+                .or_default()
+                .record_remote_send();
         }
     }
     activities
