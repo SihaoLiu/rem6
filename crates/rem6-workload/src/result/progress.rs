@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
     LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId, Tick, WaitForNode,
@@ -56,6 +56,15 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn parallel_scheduler_progress_transition_kind_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.parallel_scheduler_progress_transitions,
+            |transition| transition.kind(),
+        )
+    }
+
     pub fn parallel_scheduler_progress_transition_kinds(&self) -> Vec<LivelockTransitionKind> {
         collect_progress_transition_kinds(&self.parallel_scheduler_progress_transitions)
     }
@@ -90,6 +99,15 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn parallel_scheduler_progress_transition_partition_summaries(
+        &self,
+    ) -> Vec<(PartitionId, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.parallel_scheduler_progress_transitions,
+            |transition| transition.partition(),
+        )
+    }
+
     pub fn parallel_scheduler_progress_transition_partitions(&self) -> Vec<PartitionId> {
         collect_progress_transition_partitions(&self.parallel_scheduler_progress_transitions)
     }
@@ -118,6 +136,15 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_records(
             &self.parallel_scheduler_progress_transitions,
             |transition| transition.subject() == subject,
+        )
+    }
+
+    pub fn parallel_scheduler_progress_transition_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.parallel_scheduler_progress_transitions,
+            |transition| transition.subject().clone(),
         )
     }
 
@@ -161,6 +188,15 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_progress_transition_kind_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.data_cache_parallel_scheduler_progress_transitions,
+            |transition| transition.kind(),
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_progress_transition_kinds(
         &self,
     ) -> Vec<LivelockTransitionKind> {
@@ -197,6 +233,15 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_progress_transition_partition_summaries(
+        &self,
+    ) -> Vec<(PartitionId, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.data_cache_parallel_scheduler_progress_transitions,
+            |transition| transition.partition(),
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_progress_transition_partitions(&self) -> Vec<PartitionId> {
         collect_progress_transition_partitions(
             &self.data_cache_parallel_scheduler_progress_transitions,
@@ -230,6 +275,15 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_records(
             &self.data_cache_parallel_scheduler_progress_transitions,
             |transition| transition.subject() == subject,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_progress_transition_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.data_cache_parallel_scheduler_progress_transitions,
+            |transition| transition.subject().clone(),
         )
     }
 
@@ -279,6 +333,15 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn full_system_progress_transition_kind_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            self.full_system_progress_transition_iter(),
+            |transition| transition.kind(),
+        )
+    }
+
     pub fn full_system_progress_transition_kinds(&self) -> Vec<LivelockTransitionKind> {
         collect_progress_transition_kinds(self.full_system_progress_transition_iter())
     }
@@ -312,6 +375,15 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn full_system_progress_transition_partition_summaries(
+        &self,
+    ) -> Vec<(PartitionId, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            self.full_system_progress_transition_iter(),
+            |transition| transition.partition(),
+        )
+    }
+
     pub fn full_system_progress_transition_partitions(&self) -> Vec<PartitionId> {
         collect_progress_transition_partitions(self.full_system_progress_transition_iter())
     }
@@ -336,6 +408,15 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_records(
             self.full_system_progress_transition_iter(),
             |transition| transition.subject() == subject,
+        )
+    }
+
+    pub fn full_system_progress_transition_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            self.full_system_progress_transition_iter(),
+            |transition| transition.subject().clone(),
         )
     }
 
@@ -436,6 +517,32 @@ fn collect_progress_transition_records<'a>(
             .filter(|transition| predicate(transition))
             .cloned(),
     )
+}
+
+fn collect_progress_transition_summaries<'a, K>(
+    transitions: impl IntoIterator<Item = &'a ParallelProgressTransitionRecord>,
+    mut key: impl FnMut(&ParallelProgressTransitionRecord) -> K,
+) -> Vec<(K, usize, Tick, Tick)>
+where
+    K: Ord,
+{
+    let mut summaries = BTreeMap::<K, (usize, Tick, Tick)>::new();
+    for transition in transitions {
+        summaries
+            .entry(key(transition))
+            .and_modify(|summary| {
+                summary.0 += 1;
+                summary.1 = summary.1.min(transition.tick());
+                summary.2 = summary.2.max(transition.tick());
+            })
+            .or_insert((1, transition.tick(), transition.tick()));
+    }
+    summaries
+        .into_iter()
+        .map(|(dimension, (count, first_tick, last_tick))| {
+            (dimension, count, first_tick, last_tick)
+        })
+        .collect()
 }
 
 fn collect_progress_transition_kinds<'a>(

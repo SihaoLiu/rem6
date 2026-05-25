@@ -381,3 +381,88 @@ fn workload_result_returns_parallel_progress_transition_records_by_dimension() {
         .parallel_scheduler_progress_transition_records_by_subject(&data_cache_scheduler)
         .is_empty());
 }
+
+#[test]
+fn workload_result_summarizes_parallel_progress_transition_dimensions() {
+    let cpu_scheduler = subject("cpu-scheduler");
+    let shared_retry = subject("shared-retry-loop");
+    let data_cache_scheduler = subject("data-cache-scheduler");
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_progress_transitions([
+            transition(
+                3,
+                cpu_scheduler.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                11,
+                2,
+            ),
+            transition(
+                1,
+                shared_retry.clone(),
+                LivelockTransitionKind::SchedulerEpoch,
+                4,
+                0,
+            ),
+            transition(
+                3,
+                cpu_scheduler.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                9,
+                1,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_progress_transitions([
+            transition(
+                7,
+                data_cache_scheduler.clone(),
+                LivelockTransitionKind::QueueRotation,
+                18,
+                1,
+            ),
+            transition(
+                1,
+                shared_retry.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                14,
+                0,
+            ),
+            transition(
+                7,
+                data_cache_scheduler.clone(),
+                LivelockTransitionKind::QueueRotation,
+                13,
+                0,
+            ),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_progress_transition_kind_summaries(),
+        vec![
+            (LivelockTransitionKind::SchedulerEpoch, 1, 4, 4),
+            (LivelockTransitionKind::ProtocolRetry, 2, 9, 11),
+        ],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_progress_transition_partition_summaries(),
+        vec![
+            (PartitionId::new(1), 1, 14, 14),
+            (PartitionId::new(7), 2, 13, 18),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_progress_transition_kind_summaries(),
+        vec![
+            (LivelockTransitionKind::SchedulerEpoch, 1, 4, 4),
+            (LivelockTransitionKind::ProtocolRetry, 3, 9, 14),
+            (LivelockTransitionKind::QueueRotation, 2, 13, 18),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_progress_transition_subject_summaries(),
+        vec![
+            (cpu_scheduler, 2, 9, 11),
+            (data_cache_scheduler, 2, 13, 18),
+            (shared_retry, 2, 4, 14),
+        ],
+    );
+}
