@@ -146,6 +146,7 @@ pub struct WorkloadParallelExecutionSummary {
     riscv_scheduled_trap_count: usize,
     data_cache_parallel_run_count: usize,
     data_cache_parallel_scheduler_epoch_count: usize,
+    data_cache_parallel_scheduler_empty_epoch_count: usize,
     data_cache_parallel_scheduler_dispatch_count: usize,
     data_cache_parallel_scheduler_batch_count: usize,
     active_data_cache_parallel_scheduler_partition_count: usize,
@@ -339,6 +340,14 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_parallel_scheduler_dispatch_count = scheduler_dispatch_count;
         self.data_cache_parallel_scheduler_batch_count = scheduler_batch_count;
         self.data_cache_parallel_scheduler_max_workers = scheduler_max_workers;
+        self
+    }
+
+    pub const fn with_data_cache_parallel_empty_epoch_count(
+        mut self,
+        empty_epoch_count: usize,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_empty_epoch_count = empty_epoch_count;
         self
     }
 
@@ -781,6 +790,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn data_cache_parallel_scheduler_epoch_count(&self) -> usize {
         self.data_cache_parallel_scheduler_epoch_count
+    }
+
+    pub const fn data_cache_parallel_scheduler_empty_epoch_count(&self) -> usize {
+        self.data_cache_parallel_scheduler_empty_epoch_count
     }
 
     pub const fn data_cache_parallel_scheduler_dispatch_count(&self) -> usize {
@@ -1319,6 +1332,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
         self.scheduler_epoch_count + self.data_cache_parallel_scheduler_epoch_count
+    }
+
+    pub const fn full_system_parallel_scheduler_empty_epoch_count(&self) -> usize {
+        self.scheduler_empty_epoch_count + self.data_cache_parallel_scheduler_empty_epoch_count
     }
 
     pub const fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {

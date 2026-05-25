@@ -63,6 +63,7 @@ fn workload_result_records_parallel_execution_summary() {
         ])
         .with_riscv_core_counts(2, 2, 4, 3, 1, 2)
         .with_data_cache_parallel_counts(7, 9, 11, 13, 3)
+        .with_data_cache_parallel_empty_epoch_count(2)
         .with_data_cache_parallel_partitions(6)
         .with_data_cache_parallel_worker_count(21)
         .with_data_cache_parallel_scheduler_batch_worker_counts([
@@ -169,6 +170,7 @@ fn workload_result_records_parallel_execution_summary() {
     assert!(summary.has_riscv_core_activity());
     assert_eq!(summary.data_cache_parallel_run_count(), 7);
     assert_eq!(summary.data_cache_parallel_scheduler_epoch_count(), 9);
+    assert_eq!(summary.data_cache_parallel_scheduler_empty_epoch_count(), 2);
     assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 11);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 13);
     assert_eq!(
@@ -347,6 +349,10 @@ fn workload_result_records_parallel_execution_summary() {
     );
     assert!(summary.has_resource_activity());
     assert_eq!(summary.full_system_parallel_scheduler_epoch_count(), 12);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_empty_epoch_count(),
+        3
+    );
     assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);

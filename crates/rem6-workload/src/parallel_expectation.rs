@@ -452,6 +452,51 @@ impl WorkloadExpectedParallelSchedulerProgress {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelSchedulerIdleBound {
+    scope: WorkloadParallelRemoteFlowScope,
+    maximum_empty_epoch_count: usize,
+}
+
+impl WorkloadExpectedParallelSchedulerIdleBound {
+    pub const fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        maximum_empty_epoch_count: usize,
+    ) -> Self {
+        Self {
+            scope,
+            maximum_empty_epoch_count,
+        }
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn maximum_empty_epoch_count(self) -> usize {
+        self.maximum_empty_epoch_count
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) const fn actual_empty_epoch_count(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> usize {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => summary.scheduler_empty_epoch_count(),
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_empty_epoch_count()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_empty_epoch_count()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchActivity {
     scope: WorkloadParallelRemoteFlowScope,
     minimum_worker_count: usize,

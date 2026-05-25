@@ -1494,6 +1494,19 @@ fn workload_replay_routes_data_load_through_declared_cache_protocols() {
             summary.data_cache_parallel_run_count_for_protocol(workload_protocol),
             1,
         );
+        assert_eq!(
+            summary.data_cache_parallel_scheduler_empty_epoch_count(),
+            outcome
+                .run()
+                .data_cache_parallel_scheduler_empty_epoch_count(),
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_empty_epoch_count(),
+            summary.scheduler_empty_epoch_count()
+                + outcome
+                    .run()
+                    .data_cache_parallel_scheduler_empty_epoch_count(),
+        );
         assert!(summary.has_data_cache_parallel_work());
         plan.verify_result(outcome.result()).unwrap();
     }

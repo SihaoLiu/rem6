@@ -12,6 +12,7 @@ mod identity;
 mod parallel_batch;
 mod parallel_expectation;
 mod qos;
+mod replay_verify;
 mod resource_payload;
 mod result;
 mod topology;
@@ -41,9 +42,9 @@ pub use parallel_expectation::{
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
-    WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -259,6 +260,7 @@ pub struct WorkloadManifest {
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
+    expected_parallel_scheduler_idle_bounds: Vec<WorkloadExpectedParallelSchedulerIdleBound>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
@@ -348,6 +350,12 @@ impl WorkloadManifest {
         &self.expected_parallel_scheduler_progress
     }
 
+    pub fn expected_parallel_scheduler_idle_bounds(
+        &self,
+    ) -> &[WorkloadExpectedParallelSchedulerIdleBound] {
+        &self.expected_parallel_scheduler_idle_bounds
+    }
+
     pub fn expected_parallel_batch_activity(&self) -> &[WorkloadExpectedParallelBatchActivity] {
         &self.expected_parallel_batch_activity
     }
@@ -402,6 +410,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
+    expected_parallel_scheduler_idle_bounds: Vec<WorkloadExpectedParallelSchedulerIdleBound>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
@@ -426,6 +435,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_worker_activity: Vec::new(),
             expected_parallel_scheduler_progress: Vec::new(),
+            expected_parallel_scheduler_idle_bounds: Vec::new(),
             expected_parallel_batch_activity: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
@@ -539,6 +549,25 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_scheduler_progress.push(expected);
         self.expected_parallel_scheduler_progress
             .sort_by_key(|progress| progress.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_scheduler_idle_bound(
+        mut self,
+        expected: WorkloadExpectedParallelSchedulerIdleBound,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_scheduler_idle_bounds
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelSchedulerIdleBound {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_scheduler_idle_bounds.push(expected);
+        self.expected_parallel_scheduler_idle_bounds
+            .sort_by_key(|bound| bound.sort_key());
         Ok(self)
     }
 
@@ -764,6 +793,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
             expected_parallel_scheduler_progress: &self.expected_parallel_scheduler_progress,
+            expected_parallel_scheduler_idle_bounds: &self.expected_parallel_scheduler_idle_bounds,
             expected_parallel_batch_activity: &self.expected_parallel_batch_activity,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
@@ -787,6 +817,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
             expected_parallel_scheduler_progress: self.expected_parallel_scheduler_progress,
+            expected_parallel_scheduler_idle_bounds: self.expected_parallel_scheduler_idle_bounds,
             expected_parallel_batch_activity: self.expected_parallel_batch_activity,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
@@ -817,6 +848,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
+    expected_parallel_scheduler_idle_bounds: Vec<WorkloadExpectedParallelSchedulerIdleBound>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
@@ -851,6 +883,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_scheduler_progress: manifest
                 .expected_parallel_scheduler_progress()
+                .to_vec(),
+            expected_parallel_scheduler_idle_bounds: manifest
+                .expected_parallel_scheduler_idle_bounds()
                 .to_vec(),
             expected_parallel_batch_activity: manifest.expected_parallel_batch_activity().to_vec(),
             expected_parallel_batch_partition_sets: manifest
@@ -1035,6 +1070,31 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_scheduler_progress
     }
 
+    pub fn add_expected_parallel_scheduler_idle_bound(
+        mut self,
+        expected: WorkloadExpectedParallelSchedulerIdleBound,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_scheduler_idle_bounds
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelSchedulerIdleBound {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_scheduler_idle_bounds.push(expected);
+        self.expected_parallel_scheduler_idle_bounds
+            .sort_by_key(|bound| bound.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_scheduler_idle_bounds(
+        &self,
+    ) -> &[WorkloadExpectedParallelSchedulerIdleBound] {
+        &self.expected_parallel_scheduler_idle_bounds
+    }
+
     pub fn add_expected_parallel_batch_activity(
         mut self,
         expected: WorkloadExpectedParallelBatchActivity,
@@ -1211,6 +1271,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         self.verify_expected_parallel_scheduler_progress(result)?;
+        replay_verify::verify_expected_parallel_scheduler_idle_bounds(self, result)?;
         self.verify_expected_parallel_batch_activity(result)?;
         self.verify_expected_parallel_batch_partition_sets(result)?;
         self.verify_expected_parallel_batch_partition_streaks(result)?;

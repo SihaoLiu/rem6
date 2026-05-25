@@ -143,8 +143,9 @@ The invariants below apply to production components in the workspace.
 
 12. Observability is a runtime feature.
     Each run summary must expose enough information to explain where time went:
-    scheduler epochs, active partitions, fabric transfers, DRAM accesses,
-    coherence transactions, device work, host actions, and stop reason.
+    scheduler epochs, empty epochs, active partitions, fabric transfers, DRAM
+    accesses, coherence transactions, device work, host actions, and stop
+    reason.
 
 13. Backpressure is modeled explicitly.
     Queues, credits, MSHRs, transaction buffers, DRAM banks, NoC virtual

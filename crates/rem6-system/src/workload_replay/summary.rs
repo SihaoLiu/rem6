@@ -84,6 +84,9 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_batch_count(),
             run.data_cache_parallel_scheduler_max_workers(),
         )
+        .with_data_cache_parallel_empty_epoch_count(
+            run.data_cache_parallel_scheduler_empty_epoch_count(),
+        )
         .with_data_cache_parallel_partitions(
             run.active_data_cache_parallel_scheduler_partition_count(),
         )

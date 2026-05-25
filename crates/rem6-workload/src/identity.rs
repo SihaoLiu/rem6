@@ -6,10 +6,10 @@ use crate::{
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelRemoteFlowScope, WorkloadResource,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -32,6 +32,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_parallel_worker_activity: &'a [WorkloadExpectedParallelWorkerActivity],
     pub(crate) expected_parallel_scheduler_progress:
         &'a [WorkloadExpectedParallelSchedulerProgress],
+    pub(crate) expected_parallel_scheduler_idle_bounds:
+        &'a [WorkloadExpectedParallelSchedulerIdleBound],
     pub(crate) expected_parallel_batch_activity: &'a [WorkloadExpectedParallelBatchActivity],
     pub(crate) expected_parallel_batch_partition_sets:
         &'a [WorkloadExpectedParallelBatchPartitionSet],
@@ -107,6 +109,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_scheduler_progress {
         hash_expected_parallel_scheduler_progress(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_scheduler_idle_bounds.len() as u64,
+    );
+    for expected in input.expected_parallel_scheduler_idle_bounds {
+        hash_expected_parallel_scheduler_idle_bound(&mut hash, *expected);
     }
     hash_u64(
         &mut hash,
@@ -200,6 +209,14 @@ fn hash_expected_parallel_scheduler_progress(
     hash_parallel_remote_flow_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_epoch_count() as u64);
     hash_u64(hash, expected.minimum_dispatch_count() as u64);
+}
+
+fn hash_expected_parallel_scheduler_idle_bound(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelSchedulerIdleBound,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, expected.maximum_empty_epoch_count() as u64);
 }
 
 fn hash_expected_parallel_batch_activity(

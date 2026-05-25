@@ -412,10 +412,17 @@ pub enum WorkloadError {
     DuplicateExpectedParallelSchedulerProgress {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    DuplicateExpectedParallelSchedulerIdleBound {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
     MissingParallelSchedulerProgressSummary {
         scope: WorkloadParallelRemoteFlowScope,
         minimum_epoch_count: usize,
         minimum_dispatch_count: usize,
+    },
+    MissingParallelSchedulerIdleSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        maximum_empty_epoch_count: usize,
     },
     ExpectedParallelSchedulerProgressBelowMinimum {
         scope: WorkloadParallelRemoteFlowScope,
@@ -423,6 +430,11 @@ pub enum WorkloadError {
         actual_epoch_count: usize,
         minimum_dispatch_count: usize,
         actual_dispatch_count: usize,
+    },
+    ExpectedParallelSchedulerIdleAboveMaximum {
+        scope: WorkloadParallelRemoteFlowScope,
+        maximum_empty_epoch_count: usize,
+        actual_empty_epoch_count: usize,
     },
     InvalidExpectedParallelBatchWorkerCount {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1167,6 +1179,11 @@ impl fmt::Display for WorkloadError {
                 "expected {} scheduler progress is already declared",
                 scope.as_str()
             ),
+            Self::DuplicateExpectedParallelSchedulerIdleBound { scope } => write!(
+                formatter,
+                "expected {} scheduler idle bound is already declared",
+                scope.as_str()
+            ),
             Self::MissingParallelSchedulerProgressSummary {
                 scope,
                 minimum_epoch_count,
@@ -1174,6 +1191,14 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "missing parallel summary for expected {} scheduler progress with at least {minimum_epoch_count} epochs and {minimum_dispatch_count} dispatches",
+                scope.as_str()
+            ),
+            Self::MissingParallelSchedulerIdleSummary {
+                scope,
+                maximum_empty_epoch_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} scheduler idle bound with at most {maximum_empty_epoch_count} empty epochs",
                 scope.as_str()
             ),
             Self::ExpectedParallelSchedulerProgressBelowMinimum {
@@ -1185,6 +1210,15 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} scheduler progress to reach at least {minimum_epoch_count} epochs and {minimum_dispatch_count} dispatches, got {actual_epoch_count} epochs and {actual_dispatch_count} dispatches",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelSchedulerIdleAboveMaximum {
+                scope,
+                maximum_empty_epoch_count,
+                actual_empty_epoch_count,
+            } => write!(
+                formatter,
+                "expected {} scheduler idle bound to allow at most {maximum_empty_epoch_count} empty epochs, got {actual_empty_epoch_count}",
                 scope.as_str()
             ),
             Self::InvalidExpectedParallelBatchWorkerCount {
