@@ -610,6 +610,169 @@ fn workload_suite_dispatch_timeline_materializes_planned_execution_summary() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_accepts_planned_execution_expectation() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-timeline-contract"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap();
+    let timeline = plan.planned_execution_timeline().unwrap();
+    let expectation = WorkloadSuiteExecutionExpectation::new(suite.identity(), 2)
+        .unwrap()
+        .with_minimum_parallel_speedup(WorkloadSuiteExecutionEfficiency::ratio(17, 9).unwrap())
+        .with_minimum_worker_utilization(WorkloadSuiteExecutionEfficiency::ratio(17, 18).unwrap());
+
+    timeline.verify_against_expectation(&expectation).unwrap();
+}
+
+#[test]
+fn workload_suite_dispatch_timeline_rejects_underplanned_expectation() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("underplanned-timeline-contract"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let other_suite = WorkloadSuite::builder(suite_id("other-timeline-contract"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 1).unwrap(),
+        ],
+    )
+    .unwrap();
+    let timeline = plan.planned_execution_timeline().unwrap();
+
+    let identity_error = timeline
+        .verify_against_expectation(
+            &WorkloadSuiteExecutionExpectation::new(other_suite.identity(), 2).unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        identity_error,
+        WorkloadError::WorkloadSuiteIdentityMismatch { expected, actual }
+            if expected == other_suite.identity() && actual == suite.identity()
+    ));
+
+    let worker_error = timeline
+        .verify_against_expectation(
+            &WorkloadSuiteExecutionExpectation::new(suite.identity(), 3).unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        worker_error,
+        WorkloadError::SuiteDispatchWorkerCountMismatch {
+            expected: 3,
+            actual: 2
+        }
+    ));
+
+    let serial_suite = WorkloadSuite::builder(suite_id("serial-planned-timeline"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let serial_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&serial_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+    let parallelism_error = serial_timeline
+        .verify_against_expectation(
+            &WorkloadSuiteExecutionExpectation::new(serial_suite.identity(), 2).unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        parallelism_error,
+        WorkloadError::SuiteParallelismBelowMinimum {
+            minimum_workers: 2,
+            actual_workers: 1
+        }
+    ));
+
+    let speedup_error = timeline
+        .verify_against_expectation(
+            &WorkloadSuiteExecutionExpectation::new(suite.identity(), 2)
+                .unwrap()
+                .with_minimum_parallel_speedup(
+                    WorkloadSuiteExecutionEfficiency::ratio(3, 2).unwrap(),
+                ),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        speedup_error,
+        WorkloadError::SuitePlannedParallelSpeedupBelowMinimum {
+            minimum_numerator: 3,
+            minimum_denominator: 2,
+            actual_numerator: 12,
+            actual_denominator: 10
+        }
+    ));
+
+    let utilization_error = timeline
+        .verify_against_expectation(
+            &WorkloadSuiteExecutionExpectation::new(suite.identity(), 2)
+                .unwrap()
+                .with_minimum_worker_utilization(
+                    WorkloadSuiteExecutionEfficiency::ratio(3, 4).unwrap(),
+                ),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        utilization_error,
+        WorkloadError::SuitePlannedWorkerUtilizationBelowMinimum {
+            minimum_numerator: 3,
+            minimum_denominator: 4,
+            actual_numerator: 12,
+            actual_denominator: 20
+        }
+    ));
+}
+
+#[test]
 fn workload_suite_dispatch_plan_requires_estimates_for_planned_timeline() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

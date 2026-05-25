@@ -523,6 +523,77 @@ impl WorkloadSuiteDispatchTimeline {
         Ok(summary)
     }
 
+    pub fn verify_against_expectation(
+        &self,
+        expectation: &WorkloadSuiteExecutionExpectation,
+    ) -> Result<(), WorkloadError> {
+        let expected_suite_identity = expectation.suite_identity();
+        if self.suite_identity != expected_suite_identity {
+            return Err(WorkloadError::WorkloadSuiteIdentityMismatch {
+                expected: expected_suite_identity,
+                actual: self.suite_identity(),
+            });
+        }
+        if self.worker_count() != expectation.worker_count() {
+            return Err(WorkloadError::SuiteDispatchWorkerCountMismatch {
+                expected: expectation.worker_count(),
+                actual: self.worker_count(),
+            });
+        }
+
+        let actual_workers = self.maximum_simultaneous_workers();
+        if actual_workers < expectation.minimum_simultaneous_workers() {
+            return Err(WorkloadError::SuiteParallelismBelowMinimum {
+                minimum_workers: expectation.minimum_simultaneous_workers(),
+                actual_workers,
+            });
+        }
+
+        if expectation.minimum_parallel_speedup().is_some()
+            || expectation.minimum_worker_utilization().is_some()
+        {
+            let efficiency = self
+                .to_execution_summary()?
+                .execution_efficiency(self.worker_count())?;
+            if let Some(minimum_speedup) = expectation.minimum_parallel_speedup() {
+                let actual_speedup =
+                    efficiency
+                        .parallel_speedup_ratio()
+                        .unwrap_or(WorkloadSuiteExecutionRatio {
+                            numerator: 0,
+                            denominator: 1,
+                        });
+                if !actual_speedup.meets_or_exceeds(minimum_speedup) {
+                    return Err(WorkloadError::SuitePlannedParallelSpeedupBelowMinimum {
+                        minimum_numerator: minimum_speedup.numerator(),
+                        minimum_denominator: minimum_speedup.denominator(),
+                        actual_numerator: actual_speedup.numerator(),
+                        actual_denominator: actual_speedup.denominator(),
+                    });
+                }
+            }
+            if let Some(minimum_utilization) = expectation.minimum_worker_utilization() {
+                let actual_utilization =
+                    efficiency
+                        .worker_utilization_ratio()
+                        .unwrap_or(WorkloadSuiteExecutionRatio {
+                            numerator: 0,
+                            denominator: 1,
+                        });
+                if !actual_utilization.meets_or_exceeds(minimum_utilization) {
+                    return Err(WorkloadError::SuitePlannedWorkerUtilizationBelowMinimum {
+                        minimum_numerator: minimum_utilization.numerator(),
+                        minimum_denominator: minimum_utilization.denominator(),
+                        actual_numerator: actual_utilization.numerator(),
+                        actual_denominator: actual_utilization.denominator(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn verify_execution_summary(
         &self,
         summary: &WorkloadSuiteExecutionSummary,
