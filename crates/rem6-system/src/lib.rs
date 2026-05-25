@@ -36,6 +36,7 @@ mod riscv_checkpoint;
 mod riscv_run_activity;
 mod riscv_run_translation;
 mod scheduler_checkpoint;
+mod system_run_parallel_batch;
 mod system_run_progress;
 mod system_run_qos;
 mod system_run_remote_flow;
