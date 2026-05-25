@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use crate::scheduler::{ConservativeRunSummary, PartitionEventId, PartitionId, RunSummary};
-use crate::Tick;
+use crate::{
+    LivelockTransitionKind, ProgressMonitor, ProgressMonitorError, ProgressMonitorSnapshot, Tick,
+    WaitForNode,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EpochPlan {
@@ -92,6 +95,7 @@ pub struct ParallelEpochBatchRecord {
     workers: Vec<ParallelWorkerRecord>,
     dispatches: Vec<SchedulerDispatchRecord>,
     remote_sends: Vec<ParallelRemoteSendRecord>,
+    progress_transitions: Vec<ParallelProgressTransitionRecord>,
 }
 
 impl ParallelEpochBatchRecord {
@@ -100,12 +104,14 @@ impl ParallelEpochBatchRecord {
         workers: Vec<ParallelWorkerRecord>,
         dispatches: Vec<SchedulerDispatchRecord>,
         remote_sends: Vec<ParallelRemoteSendRecord>,
+        progress_transitions: Vec<ParallelProgressTransitionRecord>,
     ) -> Self {
         Self {
             horizon,
             workers,
             dispatches,
             remote_sends,
+            progress_transitions,
         }
     }
 
@@ -148,6 +154,28 @@ impl ParallelEpochBatchRecord {
 
     pub fn remote_sends(&self) -> &[ParallelRemoteSendRecord] {
         &self.remote_sends
+    }
+
+    pub fn progress_transitions(&self) -> &[ParallelProgressTransitionRecord] {
+        &self.progress_transitions
+    }
+
+    pub fn progress_transition_count(&self) -> usize {
+        self.progress_transitions.len()
+    }
+
+    pub fn progress_transition_count_for_partition(&self, partition: PartitionId) -> usize {
+        self.progress_transitions
+            .iter()
+            .filter(|record| record.partition() == partition)
+            .count()
+    }
+
+    pub fn progress_transition_count_by_kind(&self, kind: LivelockTransitionKind) -> usize {
+        self.progress_transitions
+            .iter()
+            .filter(|record| record.kind() == kind)
+            .count()
     }
 
     pub fn remote_send_count_for_partition(&self, partition: PartitionId) -> usize {
@@ -242,6 +270,53 @@ impl ParallelWorkerRecord {
 
     pub const fn pending_events(self) -> usize {
         self.pending_events
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParallelProgressTransitionRecord {
+    partition: PartitionId,
+    subject: WaitForNode,
+    kind: LivelockTransitionKind,
+    tick: Tick,
+    order: u64,
+}
+
+impl ParallelProgressTransitionRecord {
+    pub const fn new(
+        partition: PartitionId,
+        subject: WaitForNode,
+        kind: LivelockTransitionKind,
+        tick: Tick,
+        order: u64,
+    ) -> Self {
+        Self {
+            partition,
+            subject,
+            kind,
+            tick,
+            order,
+        }
+    }
+
+    pub const fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn subject(&self) -> &WaitForNode {
+        &self.subject
+    }
+
+    pub const fn kind(&self) -> LivelockTransitionKind {
+        self.kind
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn order(&self) -> u64 {
+        self.order
     }
 }
 
@@ -718,6 +793,34 @@ impl RecordedRunSummary {
         )
     }
 
+    pub fn progress_transition_count(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::progress_transition_count)
+            .sum()
+    }
+
+    pub fn progress_transition_count_by_kind(&self, kind: LivelockTransitionKind) -> usize {
+        self.batches
+            .iter()
+            .map(|batch| batch.progress_transition_count_by_kind(kind))
+            .sum()
+    }
+
+    pub fn progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
+        self.batches
+            .iter()
+            .flat_map(|batch| batch.progress_transitions().iter().cloned())
+            .collect()
+    }
+
+    pub fn progress_monitor_snapshot(
+        &self,
+        threshold: u64,
+    ) -> Result<ProgressMonitorSnapshot, ProgressMonitorError> {
+        progress_monitor_snapshot(threshold, self.progress_transitions())
+    }
+
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
     }
@@ -942,6 +1045,34 @@ impl RecordedConservativeRunSummary {
         }))
     }
 
+    pub fn progress_transition_count(&self) -> usize {
+        self.epochs
+            .iter()
+            .map(RecordedRunSummary::progress_transition_count)
+            .sum()
+    }
+
+    pub fn progress_transition_count_by_kind(&self, kind: LivelockTransitionKind) -> usize {
+        self.epochs
+            .iter()
+            .map(|epoch| epoch.progress_transition_count_by_kind(kind))
+            .sum()
+    }
+
+    pub fn progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
+        self.epochs
+            .iter()
+            .flat_map(RecordedRunSummary::progress_transitions)
+            .collect()
+    }
+
+    pub fn progress_monitor_snapshot(
+        &self,
+        threshold: u64,
+    ) -> Result<ProgressMonitorSnapshot, ProgressMonitorError> {
+        progress_monitor_snapshot(threshold, self.progress_transitions())
+    }
+
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
     }
@@ -1035,6 +1166,24 @@ fn merge_parallel_partition_activities(
             .and_modify(|stored| *stored = stored.merge(activity))
             .or_insert(activity);
     }
+}
+
+fn progress_monitor_snapshot<I>(
+    threshold: u64,
+    transitions: I,
+) -> Result<ProgressMonitorSnapshot, ProgressMonitorError>
+where
+    I: IntoIterator<Item = ParallelProgressTransitionRecord>,
+{
+    let mut monitor = ProgressMonitor::with_transition_threshold(threshold)?;
+    for transition in transitions {
+        monitor.record_transition(
+            transition.subject().clone(),
+            transition.kind(),
+            transition.tick(),
+        )?;
+    }
+    Ok(monitor.snapshot())
 }
 
 fn collect_parallel_remote_flows<'a, I>(remote_sends: I) -> Vec<ParallelRemoteFlowRecord>

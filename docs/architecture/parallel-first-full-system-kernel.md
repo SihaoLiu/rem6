@@ -247,8 +247,11 @@ livelock monitor observes repeated transitions without useful work.
 The livelock monitor is also typed state. It records the subject being watched,
 the transition kind, the active progress-free transition window, the last useful
 work tick, and a deterministic diagnostic once a declared transition threshold
-is reached. Useful work resets the active window so retry-heavy but productive
-models do not look like livelock.
+is reached. Parallel scheduler workers can emit typed progress-free transition
+records during callback execution; batch, epoch, and run summaries aggregate
+those records deterministically and can replay them into a monitor snapshot.
+Useful work resets the active window so retry-heavy but productive models do not
+look like livelock.
 
 Tests for each integration layer should cover both outcomes:
 
@@ -257,6 +260,7 @@ Tests for each integration layer should cover both outcomes:
 - repeated blocking on the same dependency updates observation counts;
 - an injected dependency cycle reports a deadlock diagnostic;
 - repeated progress-free transitions report a livelock diagnostic;
+- parallel worker progress records aggregate into run-level monitor snapshots;
 - useful work clears the active progress-free transition window;
 - unrelated dependencies remain in the graph when one resource resolves.
 

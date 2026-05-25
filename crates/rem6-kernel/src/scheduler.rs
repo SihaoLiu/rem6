@@ -6,16 +6,16 @@ use std::mem;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::thread;
 
-use crate::Tick;
+use crate::{LivelockTransitionKind, Tick, WaitForNode};
 
 mod state;
 
 pub use state::{
     EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
-    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord,
-    PartitionFrontier, PartitionSnapshot, PendingEventSnapshot, ReadyPartition,
-    RecordedConservativeRunSummary, RecordedRunSummary, ScheduledEventKind,
-    SchedulerDispatchRecord, SchedulerSnapshot,
+    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot,
+    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
+    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -876,11 +876,13 @@ impl PartitionedScheduler {
         let mut dispatches = Vec::new();
         let mut latest_partition_tick = self.now;
         let mut remote_events = Vec::new();
+        let mut progress_transitions = Vec::new();
         for result in results {
             executed_events += result.executed_events;
             dispatches.extend(result.dispatches);
             latest_partition_tick = latest_partition_tick.max(result.queue.now);
             remote_events.extend(result.remote_events);
+            progress_transitions.extend(result.progress_transitions);
             self.partitions[result.index] = result.queue;
         }
 
@@ -891,14 +893,21 @@ impl PartitionedScheduler {
         }
 
         dispatches.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
+        progress_transitions
+            .sort_by_key(|record| (record.tick(), record.partition(), record.order()));
         let remote_sends = remote_events
             .iter()
             .map(|event| {
                 ParallelRemoteSendRecord::new(event.source, event.target, event.tick, event.order)
             })
             .collect();
-        let record =
-            ParallelEpochBatchRecord::new(horizon, workers, dispatches.clone(), remote_sends);
+        let record = ParallelEpochBatchRecord::new(
+            horizon,
+            workers,
+            dispatches.clone(),
+            remote_sends,
+            progress_transitions,
+        );
 
         Ok(ParallelBatchResult {
             executed_events,
@@ -1050,6 +1059,8 @@ pub struct ParallelSchedulerContext<'a> {
     queue: &'a mut PartitionQueue,
     remote_events: &'a mut Vec<RemoteScheduledEvent>,
     next_remote_order: &'a mut u64,
+    progress_transitions: &'a mut Vec<ParallelProgressTransitionRecord>,
+    next_progress_order: &'a mut u64,
     partition: PartitionId,
     partition_count: u32,
     min_remote_delay: Tick,
@@ -1063,6 +1074,23 @@ impl ParallelSchedulerContext<'_> {
 
     pub fn partition(&self) -> PartitionId {
         self.partition
+    }
+
+    pub fn record_progress_transition(
+        &mut self,
+        subject: WaitForNode,
+        kind: LivelockTransitionKind,
+    ) {
+        let order = *self.next_progress_order;
+        *self.next_progress_order += 1;
+        self.progress_transitions
+            .push(ParallelProgressTransitionRecord::new(
+                self.partition,
+                subject,
+                kind,
+                self.now,
+                order,
+            ));
     }
 
     pub fn schedule_local_after<F>(
@@ -1153,6 +1181,7 @@ struct ParallelPartitionResult {
     executed_events: usize,
     dispatches: Vec<SchedulerDispatchRecord>,
     remote_events: Vec<RemoteScheduledEvent>,
+    progress_transitions: Vec<ParallelProgressTransitionRecord>,
     error: Option<SchedulerError>,
 }
 
@@ -1181,8 +1210,10 @@ fn run_parallel_partition(
 ) -> ParallelPartitionResult {
     let mut executed_events = 0;
     let mut next_remote_order = 0;
+    let mut next_progress_order = 0;
     let mut dispatches = Vec::new();
     let mut remote_events = Vec::new();
+    let mut progress_transitions = Vec::new();
 
     while queue.peek_tick().is_some_and(|tick| tick <= horizon) {
         let mut event = queue.pop_next().expect("partition has pending event");
@@ -1200,6 +1231,7 @@ fn run_parallel_partition(
                     executed_events,
                     dispatches,
                     remote_events,
+                    progress_transitions,
                     error: Some(SchedulerError::SerialEventInParallelEpoch {
                         partition,
                         tick: event.tick,
@@ -1210,11 +1242,14 @@ fn run_parallel_partition(
                 let rollback_next_id = queue.next_id;
                 let rollback_next_order = queue.next_order;
                 let rollback_remote_len = remote_events.len();
+                let rollback_progress_len = progress_transitions.len();
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     let mut context = ParallelSchedulerContext {
                         queue: &mut queue,
                         remote_events: &mut remote_events,
                         next_remote_order: &mut next_remote_order,
+                        progress_transitions: &mut progress_transitions,
+                        next_progress_order: &mut next_progress_order,
                         partition,
                         partition_count,
                         min_remote_delay,
@@ -1225,12 +1260,14 @@ fn run_parallel_partition(
                 if result.is_err() {
                     queue.rollback_scheduled_events(rollback_next_id, rollback_next_order);
                     remote_events.truncate(rollback_remote_len);
+                    progress_transitions.truncate(rollback_progress_len);
                     return ParallelPartitionResult {
                         index,
                         queue,
                         executed_events,
                         dispatches,
                         remote_events,
+                        progress_transitions,
                         error: Some(SchedulerError::ParallelWorkerPanicked { partition }),
                     };
                 }
@@ -1250,6 +1287,7 @@ fn run_parallel_partition(
         executed_events,
         dispatches,
         remote_events,
+        progress_transitions,
         error: None,
     }
 }
