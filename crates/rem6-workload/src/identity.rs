@@ -510,6 +510,7 @@ fn hash_expected_parallel_batch_worker_ticks(
     expected: WorkloadExpectedParallelBatchWorkerTicks,
 ) {
     hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_worker_ticks());
 }
 

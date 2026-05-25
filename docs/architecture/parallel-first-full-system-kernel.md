@@ -108,7 +108,7 @@ backed by tests, traces, or explicit runtime records.
 
 | gem5 pressure | rem6 countermeasure | Required evidence |
 | --- | --- | --- |
-| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require batch count, dispatch progress, exact progress-free transition records, worker activity derived from the strongest available aggregate, batch histogram, exact partition-set histogram, same-partition-set streak, or per-partition activity evidence, sustained minimum-worker tick streak evidence, minimum batch worker-tick evidence computed as `worker_count * duration_ticks`, per-partition remote activity derived from remote-send records or remote-flow records, remote-flow count and timing evidence derived from remote-send records when aggregate flow records are absent or weaker, initial or final frontier minima, and worker-use evidence. |
+| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require batch count, dispatch progress, exact progress-free transition records, worker activity derived from the strongest available aggregate, batch histogram, exact partition-set histogram, same-partition-set streak, or per-partition activity evidence, sustained minimum-worker tick streak evidence, minimum thresholded batch worker-tick evidence computed as `worker_count * duration_ticks` after filtering by a declared minimum worker count, per-partition remote activity derived from remote-send records or remote-flow records, remote-flow count and timing evidence derived from remote-send records when aggregate flow records are absent or weaker, initial or final frontier minima, and worker-use evidence. |
 | Parallel extensions are added around an older serial core. | Every core, cache, directory bank, NoC tile, memory channel, GPU unit, and accelerator engine has partition ownership. | Topology tests reject components without a partition, and run summaries report active partitions from aggregate counts, exact batch partition-set unions, activity-derived partition unions, remote-send endpoints, or remote-flow source/target unions. Summary work flags are also driven by typed partition evidence and frontier records rather than by worker aggregates alone. |
 | Classic cache and Ruby coherence stacks are split. | Memory, cache, coherence, NoC, and DRAM use one transaction and message vocabulary. | Cross-crate tests move CPU, GPU, and DMA traffic through the same transport path, and workload replay manifests can require attributed data-cache runs with no unattributed bridge activity, internally consistent data-cache run accounting, and recorded MSI/MESI/MOESI/CHI data-cache protocol runs. |
 | Ruby protocols encode topology and protocol behavior together. | Protocol crates own state machines; topology and transport crates own placement and routing. | Protocol tests run without topology, and topology tests swap protocol backends without changing routes. |
@@ -425,12 +425,12 @@ result summary accessors also choose the strongest available aggregate or
 fine-grained evidence for batch count, dispatch progress, max-worker use,
 thresholded multi-worker batch activity, exact worker-count bucket activity,
 minimum-worker tick activity, sustained minimum-worker tick streak activity,
-batch worker-tick activity, and total-worker activity, so a lower aggregate or
+thresholded batch worker-tick activity, and total-worker activity, so a lower aggregate or
 worker-count counter cannot hide detailed partition-set execution records.
 The system-run object exposes batch-worker summaries, duration-weighted
 worker-count tick summaries, exact worker-count batch and tick queries,
 minimum-worker batch, duration-weighted tick, longest tick-streak, and
-batch worker-tick queries, exact partition-set summaries, and
+thresholded batch worker-tick queries, exact partition-set summaries, and
 same-partition-set streak summaries directly
 for CPU-scheduler, data-cache scheduler, and merged full-system scopes, so
 simulation diagnostics can inspect parallel occupancy before workload replay
@@ -459,10 +459,11 @@ Workload manifests may now declare exact scheduler, data-cache scheduler, or
 full-system exact worker-count bucket contracts, duration-weighted worker-count
 tick bucket contracts, minimum-worker duration-weighted tick activity
 contracts, sustained minimum-worker tick-streak contracts, minimum batch
-worker-tick contracts, and batch timeline records. Replay verification rejects
+worker-tick contracts under a declared minimum worker count, and batch timeline
+records. Replay verification rejects
 underfilled exact worker buckets, underfilled worker-count tick buckets,
 underfilled minimum-worker tick activity, underfilled sustained minimum-worker
-tick streaks, underfilled batch worker-ticks, and missing or unexpected
+tick streaks, underfilled thresholded batch worker-ticks, and missing or unexpected
 timeline records instead of accepting only aggregate occupancy evidence. Exact
 replay contracts use multiset matching: an extra duplicate
 remote-send, progress-transition, or batch-timeline record is unexpected even if

@@ -788,6 +788,22 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         20
     );
     assert_eq!(
+        summary.parallel_scheduler_batch_worker_ticks_at_or_above(2),
+        8,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(2),
+        8,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(2),
+        16,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(3),
+        0,
+    );
+    assert_eq!(
         summary.parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
         4,
     );

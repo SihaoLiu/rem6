@@ -1180,6 +1180,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
         let expected = expected_worker_ticks[0];
         return Err(WorkloadError::MissingParallelBatchWorkerTicksSummary {
             scope: expected.scope(),
+            minimum_worker_count: expected.minimum_worker_count(),
             minimum_worker_ticks: expected.minimum_worker_ticks(),
         });
     };
@@ -1190,6 +1191,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
             return Err(
                 WorkloadError::ExpectedParallelBatchWorkerTicksBelowMinimum {
                     scope: expected.scope(),
+                    minimum_worker_count: expected.minimum_worker_count(),
                     minimum_worker_ticks: expected.minimum_worker_ticks(),
                     actual_worker_ticks,
                 },

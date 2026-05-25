@@ -266,6 +266,7 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchWorkerTicks {
     scope: WorkloadParallelRemoteFlowScope,
+    minimum_worker_count: usize,
     minimum_worker_ticks: Tick,
 }
 
@@ -275,10 +276,38 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
         minimum_worker_ticks: Tick,
     ) -> Result<Self, WorkloadError> {
         if minimum_worker_ticks == 0 {
-            return Err(WorkloadError::ZeroExpectedParallelBatchWorkerTicks { scope });
+            return Err(WorkloadError::ZeroExpectedParallelBatchWorkerTicks {
+                scope,
+                minimum_worker_count: 1,
+            });
         }
         Ok(Self {
             scope,
+            minimum_worker_count: 1,
+            minimum_worker_ticks,
+        })
+    }
+
+    pub fn new_at_or_above(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+        minimum_worker_ticks: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_worker_count < 2 {
+            return Err(WorkloadError::InvalidExpectedParallelBatchWorkerTicks {
+                scope,
+                minimum_worker_count,
+            });
+        }
+        if minimum_worker_ticks == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelBatchWorkerTicks {
+                scope,
+                minimum_worker_count,
+            });
+        }
+        Ok(Self {
+            scope,
+            minimum_worker_count,
             minimum_worker_ticks,
         })
     }
@@ -287,25 +316,31 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
         self.scope
     }
 
+    pub const fn minimum_worker_count(self) -> usize {
+        self.minimum_worker_count
+    }
+
     pub const fn minimum_worker_ticks(self) -> Tick {
         self.minimum_worker_ticks
     }
 
-    pub(crate) const fn sort_key(self) -> u8 {
-        self.scope.sort_rank()
+    pub(crate) const fn sort_key(self) -> (u8, usize) {
+        (self.scope.sort_rank(), self.minimum_worker_count)
     }
 
     pub(crate) fn actual_worker_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Tick {
         match self.scope {
             WorkloadParallelRemoteFlowScope::Scheduler => {
-                summary.parallel_scheduler_batch_worker_ticks()
+                summary.parallel_scheduler_batch_worker_ticks_at_or_above(self.minimum_worker_count)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
-                summary.data_cache_parallel_scheduler_batch_worker_ticks()
-            }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
-                summary.full_system_parallel_scheduler_batch_worker_ticks()
-            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+                .data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(
+                    self.minimum_worker_count,
+                ),
+            WorkloadParallelRemoteFlowScope::FullSystem => summary
+                .full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
+                    self.minimum_worker_count,
+                ),
         }
     }
 }
@@ -443,6 +478,7 @@ impl WorkloadManifestBuilder {
         {
             return Err(WorkloadError::DuplicateExpectedParallelBatchWorkerTicks {
                 scope: expected.scope(),
+                minimum_worker_count: expected.minimum_worker_count(),
             });
         }
         self.expected_parallel_batch_worker_ticks.push(expected);
@@ -577,6 +613,7 @@ impl WorkloadReplayPlan {
         {
             return Err(WorkloadError::DuplicateExpectedParallelBatchWorkerTicks {
                 scope: expected.scope(),
+                minimum_worker_count: expected.minimum_worker_count(),
             });
         }
         self.expected_parallel_batch_worker_ticks.push(expected);

@@ -928,18 +928,26 @@ pub enum WorkloadError {
         minimum_consecutive_ticks: Tick,
         actual_consecutive_ticks: Tick,
     },
+    InvalidExpectedParallelBatchWorkerTicks {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+    },
     ZeroExpectedParallelBatchWorkerTicks {
         scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
     },
     DuplicateExpectedParallelBatchWorkerTicks {
         scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
     },
     MissingParallelBatchWorkerTicksSummary {
         scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
         minimum_worker_ticks: Tick,
     },
     ExpectedParallelBatchWorkerTicksBelowMinimum {
         scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
         minimum_worker_ticks: Tick,
         actual_worker_ticks: Tick,
     },

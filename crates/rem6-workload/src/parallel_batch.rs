@@ -259,6 +259,21 @@ pub(crate) fn parallel_batch_worker_ticks(records: &[WorkloadParallelBatchTimeli
         .fold(0, Tick::saturating_add)
 }
 
+pub(crate) fn parallel_batch_worker_ticks_at_or_above(
+    records: &[WorkloadParallelBatchTimelineRecord],
+    minimum_worker_count: usize,
+) -> Tick {
+    records
+        .iter()
+        .filter(|record| record.worker_count() >= minimum_worker_count)
+        .map(|record| {
+            record
+                .duration_ticks()
+                .saturating_mul(record.worker_count() as Tick)
+        })
+        .fold(0, Tick::saturating_add)
+}
+
 pub(crate) fn parallel_batch_longest_tick_streak_at_or_above(
     records: &[WorkloadParallelBatchTimelineRecord],
     minimum_worker_count: usize,

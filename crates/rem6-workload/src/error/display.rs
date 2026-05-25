@@ -1225,31 +1225,47 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch worker-count tick streak to reach at least {minimum_consecutive_ticks} consecutive ticks at {minimum_worker_count} workers, got {actual_consecutive_ticks}",
                 scope.as_str()
             ),
-            Self::ZeroExpectedParallelBatchWorkerTicks { scope } => write!(
+            Self::InvalidExpectedParallelBatchWorkerTicks {
+                scope,
+                minimum_worker_count,
+            } => write!(
                 formatter,
-                "expected {} batch worker-ticks must require positive worker-ticks",
+                "expected {} batch worker-ticks must require at least 2 workers for thresholded contracts, got {minimum_worker_count}",
                 scope.as_str()
             ),
-            Self::DuplicateExpectedParallelBatchWorkerTicks { scope } => write!(
+            Self::ZeroExpectedParallelBatchWorkerTicks {
+                scope,
+                minimum_worker_count,
+            } => write!(
                 formatter,
-                "expected {} batch worker-ticks is already declared",
+                "expected {} batch worker-ticks with minimum worker count {minimum_worker_count} must require positive worker-ticks",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelBatchWorkerTicks {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-ticks with minimum worker count {minimum_worker_count} is already declared",
                 scope.as_str()
             ),
             Self::MissingParallelBatchWorkerTicksSummary {
                 scope,
+                minimum_worker_count,
                 minimum_worker_ticks,
             } => write!(
                 formatter,
-                "missing parallel summary for expected {} batch worker-ticks with at least {minimum_worker_ticks} worker-ticks",
+                "missing parallel summary for expected {} batch worker-ticks with at least {minimum_worker_ticks} worker-ticks and minimum worker count {minimum_worker_count}",
                 scope.as_str()
             ),
             Self::ExpectedParallelBatchWorkerTicksBelowMinimum {
                 scope,
+                minimum_worker_count,
                 minimum_worker_ticks,
                 actual_worker_ticks,
             } => write!(
                 formatter,
-                "expected {} batch worker-ticks to reach at least {minimum_worker_ticks}, got {actual_worker_ticks}",
+                "expected {} batch worker-ticks to reach at least {minimum_worker_ticks} with minimum worker count {minimum_worker_count}, got {actual_worker_ticks}",
                 scope.as_str()
             ),
             Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(

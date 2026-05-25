@@ -133,6 +133,16 @@ impl RiscvSystemRun {
         batch_worker_ticks(self.parallel_scheduler_batch_timeline())
     }
 
+    pub fn parallel_scheduler_batch_worker_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        batch_worker_ticks_at_or_above(
+            self.parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn parallel_scheduler_longest_batch_tick_streak_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -167,6 +177,16 @@ impl RiscvSystemRun {
         batch_worker_ticks(self.data_cache_parallel_scheduler_batch_timeline())
     }
 
+    pub fn data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        batch_worker_ticks_at_or_above(
+            self.data_cache_parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -199,6 +219,16 @@ impl RiscvSystemRun {
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
         batch_worker_ticks(self.full_system_parallel_scheduler_batch_timeline())
+    }
+
+    pub fn full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        batch_worker_ticks_at_or_above(
+            self.full_system_parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -424,6 +454,21 @@ fn batch_worker_ticks(
 ) -> Tick {
     records
         .into_iter()
+        .map(|record| {
+            record
+                .duration_ticks()
+                .saturating_mul(record.worker_count() as Tick)
+        })
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_ticks_at_or_above(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    minimum_worker_count: usize,
+) -> Tick {
+    records
+        .into_iter()
+        .filter(|record| record.worker_count() >= minimum_worker_count)
         .map(|record| {
             record
                 .duration_ticks()

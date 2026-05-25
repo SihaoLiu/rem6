@@ -393,6 +393,20 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     assert_eq!(run.parallel_scheduler_batch_worker_ticks(), 4);
     assert_eq!(run.data_cache_parallel_scheduler_batch_worker_ticks(), 16);
     assert_eq!(run.full_system_parallel_scheduler_batch_worker_ticks(), 20);
+    assert_eq!(run.parallel_scheduler_batch_worker_ticks_at_or_above(1), 4);
+    assert_eq!(run.parallel_scheduler_batch_worker_ticks_at_or_above(2), 0);
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(2),
+        16,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(2),
+        16,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(3),
+        0,
+    );
     assert_eq!(
         run.parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
         4,
