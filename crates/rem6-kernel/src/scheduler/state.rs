@@ -386,6 +386,8 @@ pub struct ParallelRemoteFlowRecord {
     send_count: usize,
     first_tick: Tick,
     last_tick: Tick,
+    minimum_delay: Option<Tick>,
+    maximum_delay: Option<Tick>,
 }
 
 impl ParallelRemoteFlowRecord {
@@ -402,6 +404,28 @@ impl ParallelRemoteFlowRecord {
             send_count,
             first_tick,
             last_tick,
+            minimum_delay: None,
+            maximum_delay: None,
+        }
+    }
+
+    pub const fn with_delay_bounds(
+        source: PartitionId,
+        target: PartitionId,
+        send_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+        minimum_delay: Tick,
+        maximum_delay: Tick,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            send_count,
+            first_tick,
+            last_tick,
+            minimum_delay: Some(minimum_delay),
+            maximum_delay: Some(maximum_delay),
         }
     }
 
@@ -425,20 +449,72 @@ impl ParallelRemoteFlowRecord {
         self.last_tick
     }
 
+    pub const fn minimum_delay(self) -> Option<Tick> {
+        self.minimum_delay
+    }
+
+    pub const fn maximum_delay(self) -> Option<Tick> {
+        self.maximum_delay
+    }
+
+    pub const fn delay_bounds(self) -> Option<(Tick, Tick)> {
+        match (self.minimum_delay, self.maximum_delay) {
+            (Some(minimum_delay), Some(maximum_delay)) => Some((minimum_delay, maximum_delay)),
+            _ => None,
+        }
+    }
+
+    pub fn merged_with(self, other: Self) -> Self {
+        let delay_bounds = merge_remote_flow_delay_bounds(self, other);
+        Self {
+            source: self.source,
+            target: self.target,
+            send_count: self.send_count + other.send_count,
+            first_tick: self.first_tick.min(other.first_tick),
+            last_tick: self.last_tick.max(other.last_tick),
+            minimum_delay: delay_bounds.map(|(minimum_delay, _)| minimum_delay),
+            maximum_delay: delay_bounds.map(|(_, maximum_delay)| maximum_delay),
+        }
+    }
+
     fn from_send(send: ParallelRemoteSendRecord) -> Self {
-        Self::new(
+        Self::with_delay_bounds(
             send.source(),
             send.target(),
             1,
             send.delivery_tick(),
             send.delivery_tick(),
+            send.delay(),
+            send.delay(),
         )
     }
 
-    fn record_send(&mut self, tick: Tick) {
+    fn record_send(&mut self, send: ParallelRemoteSendRecord) {
         self.send_count += 1;
-        self.first_tick = self.first_tick.min(tick);
-        self.last_tick = self.last_tick.max(tick);
+        self.first_tick = self.first_tick.min(send.delivery_tick());
+        self.last_tick = self.last_tick.max(send.delivery_tick());
+        let delay = send.delay();
+        self.minimum_delay = Some(
+            self.minimum_delay
+                .map_or(delay, |minimum_delay| minimum_delay.min(delay)),
+        );
+        self.maximum_delay = Some(
+            self.maximum_delay
+                .map_or(delay, |maximum_delay| maximum_delay.max(delay)),
+        );
+    }
+}
+
+fn merge_remote_flow_delay_bounds(
+    left: ParallelRemoteFlowRecord,
+    right: ParallelRemoteFlowRecord,
+) -> Option<(Tick, Tick)> {
+    match (left.delay_bounds(), right.delay_bounds()) {
+        (Some((left_minimum, left_maximum)), Some((right_minimum, right_maximum))) => Some((
+            left_minimum.min(right_minimum),
+            left_maximum.max(right_maximum),
+        )),
+        _ => None,
     }
 }
 
@@ -1256,7 +1332,7 @@ where
     for send in remote_sends {
         flows
             .entry((send.source(), send.target()))
-            .and_modify(|flow| flow.record_send(send.tick()))
+            .and_modify(|flow| flow.record_send(*send))
             .or_insert_with(|| ParallelRemoteFlowRecord::from_send(*send));
     }
     flows.into_values().collect()

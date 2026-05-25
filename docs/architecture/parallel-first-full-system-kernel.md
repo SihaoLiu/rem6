@@ -349,6 +349,7 @@ The scheduler records:
 - progress-free transition count before livelock thresholding;
 - event kind, tick, partition, and deterministic local identity;
 - remote send source tick, delivery tick, and explicit delay;
+- remote flow count, delivery tick window, and optional min/max delay bounds;
 - errors for serial events inside a parallel epoch;
 - errors for remote delays below lookahead.
 

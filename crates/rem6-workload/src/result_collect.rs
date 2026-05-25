@@ -37,15 +37,7 @@ pub(crate) fn collect_parallel_remote_flows(
         }
         by_route
             .entry((flow.source(), flow.target()))
-            .and_modify(|stored| {
-                *stored = ParallelRemoteFlowRecord::new(
-                    stored.source(),
-                    stored.target(),
-                    stored.send_count() + flow.send_count(),
-                    stored.first_tick().min(flow.first_tick()),
-                    stored.last_tick().max(flow.last_tick()),
-                );
-            })
+            .and_modify(|stored| *stored = stored.merged_with(flow))
             .or_insert(flow);
     }
     by_route.into_values().collect()

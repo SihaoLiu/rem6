@@ -1156,6 +1156,37 @@ fn scheduler_recorded_parallel_runner_reports_remote_flow_matrix() {
 }
 
 #[test]
+fn scheduler_recorded_parallel_runner_reports_remote_flow_delay_bounds() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source, 2, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+            context
+                .schedule_local_after(3, move |context| {
+                    context.schedule_remote_after(target, 7, |_| {}).unwrap();
+                })
+                .unwrap();
+        })
+        .unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let flows = run.remote_flows();
+
+    assert_eq!(flows.len(), 1);
+    assert_eq!(flows[0].source(), source);
+    assert_eq!(flows[0].target(), target);
+    assert_eq!(flows[0].send_count(), 2);
+    assert_eq!(flows[0].first_tick(), 6);
+    assert_eq!(flows[0].last_tick(), 12);
+    assert_eq!(flows[0].minimum_delay(), Some(4));
+    assert_eq!(flows[0].maximum_delay(), Some(7));
+    assert_eq!(flows[0].delay_bounds(), Some((4, 7)));
+}
+
+#[test]
 fn scheduler_recorded_parallel_epoch_reports_empty_batches_without_ready_workers() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
