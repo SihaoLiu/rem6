@@ -3,7 +3,7 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchPlan,
-    WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -226,4 +226,98 @@ fn workload_suite_dispatch_plan_rejects_zero_workers() {
     .unwrap_err();
 
     assert!(matches!(error, WorkloadError::ZeroWorkloadSuiteWorkers));
+}
+
+#[test]
+fn workload_suite_execution_summary_verifies_dispatch_records() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("execution"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_completion(beta.id().clone(), beta.identity(), 1, 1, 30)
+        .unwrap()
+        .add_completion(alpha.id().clone(), alpha.identity(), 0, 0, 20)
+        .unwrap();
+
+    assert_eq!(summary.records()[0].workload_id(), alpha.id());
+    assert_eq!(summary.records()[0].final_tick(), 20);
+    assert_eq!(summary.records()[1].workload_id(), beta.id());
+    assert_eq!(summary.maximum_final_tick(), Some(30));
+    summary.verify_against_dispatch(&dispatch).unwrap();
+}
+
+#[test]
+fn workload_suite_execution_summary_rejects_dispatch_drift() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-drift"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    let missing = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_completion(alpha.id().clone(), alpha.identity(), 0, 0, 20)
+        .unwrap()
+        .verify_against_dispatch(&dispatch)
+        .unwrap_err();
+    assert!(matches!(
+        missing,
+        WorkloadError::MissingSuiteDispatchCompletion { workload } if workload == *beta.id()
+    ));
+
+    let unexpected = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_completion(alpha.id().clone(), alpha.identity(), 0, 0, 20)
+        .unwrap()
+        .add_completion(gamma.id().clone(), gamma.identity(), 2, 0, 40)
+        .unwrap()
+        .verify_against_dispatch(&dispatch)
+        .unwrap_err();
+    assert!(matches!(
+        unexpected,
+        WorkloadError::UnexpectedSuiteDispatchCompletion { workload } if workload == *gamma.id()
+    ));
+
+    let wrong_worker = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_completion(alpha.id().clone(), alpha.identity(), 0, 1, 20)
+        .unwrap()
+        .add_completion(beta.id().clone(), beta.identity(), 1, 1, 30)
+        .unwrap()
+        .verify_against_dispatch(&dispatch)
+        .unwrap_err();
+    assert!(matches!(
+        wrong_worker,
+        WorkloadError::SuiteDispatchWorkerMismatch { workload, expected, actual }
+            if workload == *alpha.id() && expected == 0 && actual == 1
+    ));
+
+    let duplicate = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_completion(alpha.id().clone(), alpha.identity(), 0, 0, 20)
+        .unwrap()
+        .add_completion(alpha.id().clone(), alpha.identity(), 0, 0, 22)
+        .unwrap_err();
+    assert!(matches!(
+        duplicate,
+        WorkloadError::DuplicateSuiteDispatchCompletion { workload } if workload == *alpha.id()
+    ));
 }

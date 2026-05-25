@@ -68,9 +68,9 @@ The following public sources shape this design:
   creation, limited guest-host communication, and external scripting for
   multiple workloads as reproducibility problems. rem6 treats typed guest-host
   calls and manifest-declared guest-host responses as normal host-control
-  traffic, and treats workload suites plus dispatch records as deterministic
-  manifest data, so custom monitor/control events and multi-workload
-  orchestration do not need ad hoc external scripts:
+  traffic, and treats workload suites, dispatch records, and execution
+  summaries as deterministic manifest data, so custom monitor/control events
+  and multi-workload orchestration do not need ad hoc external scripts:
   <https://arxiv.org/abs/2512.13479>
 - Recent gem5 call-stack profiling work identifies layered runtime complexity
   and hard-to-pinpoint coherence deadlock and livelock:

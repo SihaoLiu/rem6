@@ -318,16 +318,35 @@ pub enum WorkloadError {
     DuplicateSuiteWorkloadResult {
         workload: WorkloadId,
     },
+    DuplicateSuiteDispatchCompletion {
+        workload: WorkloadId,
+    },
     MissingSuiteWorkloadResult {
         workload: WorkloadId,
     },
+    MissingSuiteDispatchCompletion {
+        workload: WorkloadId,
+    },
     UnexpectedSuiteWorkloadResult {
+        workload: WorkloadId,
+    },
+    UnexpectedSuiteDispatchCompletion {
         workload: WorkloadId,
     },
     SuiteWorkloadResultManifestMismatch {
         workload: WorkloadId,
         expected: WorkloadManifestIdentity,
         actual: WorkloadManifestIdentity,
+    },
+    SuiteDispatchOrderMismatch {
+        workload: WorkloadId,
+        expected: usize,
+        actual: usize,
+    },
+    SuiteDispatchWorkerMismatch {
+        workload: WorkloadId,
+        expected: usize,
+        actual: usize,
     },
     StatsAfterFinalTick {
         stats_tick: Tick,

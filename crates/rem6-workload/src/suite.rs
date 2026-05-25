@@ -300,6 +300,174 @@ impl WorkloadSuiteDispatchRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteExecutionSummary {
+    suite_identity: WorkloadSuiteIdentity,
+    records: Vec<WorkloadSuiteExecutionRecord>,
+}
+
+impl WorkloadSuiteExecutionSummary {
+    pub const fn new(suite_identity: WorkloadSuiteIdentity) -> Self {
+        Self {
+            suite_identity,
+            records: Vec::new(),
+        }
+    }
+
+    pub fn add_completion(
+        mut self,
+        workload_id: WorkloadId,
+        manifest_identity: WorkloadManifestIdentity,
+        dispatch_order: usize,
+        worker_index: usize,
+        final_tick: u64,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .records
+            .iter()
+            .any(|record| record.workload_id() == &workload_id)
+        {
+            return Err(WorkloadError::DuplicateSuiteDispatchCompletion {
+                workload: workload_id,
+            });
+        }
+
+        self.records.push(WorkloadSuiteExecutionRecord::new(
+            workload_id,
+            manifest_identity,
+            dispatch_order,
+            worker_index,
+            final_tick,
+        ));
+        self.records
+            .sort_by_key(WorkloadSuiteExecutionRecord::dispatch_order);
+        Ok(self)
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub fn records(&self) -> &[WorkloadSuiteExecutionRecord] {
+        &self.records
+    }
+
+    pub fn maximum_final_tick(&self) -> Option<u64> {
+        self.records
+            .iter()
+            .map(WorkloadSuiteExecutionRecord::final_tick)
+            .max()
+    }
+
+    pub fn verify_against_dispatch(
+        &self,
+        dispatch: &WorkloadSuiteDispatchPlan,
+    ) -> Result<(), WorkloadError> {
+        let expected_suite_identity = dispatch.suite_identity();
+        if self.suite_identity != expected_suite_identity {
+            return Err(WorkloadError::WorkloadSuiteIdentityMismatch {
+                expected: expected_suite_identity,
+                actual: self.suite_identity.clone(),
+            });
+        }
+
+        let mut expected_records = BTreeMap::new();
+        for record in dispatch.records() {
+            expected_records.insert(record.workload_id().clone(), record);
+        }
+
+        for record in &self.records {
+            let Some(expected) = expected_records.get(record.workload_id()) else {
+                return Err(WorkloadError::UnexpectedSuiteDispatchCompletion {
+                    workload: record.workload_id().clone(),
+                });
+            };
+            if record.manifest_identity() != expected.manifest_identity() {
+                return Err(WorkloadError::SuiteWorkloadResultManifestMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected.manifest_identity(),
+                    actual: record.manifest_identity(),
+                });
+            }
+            if record.dispatch_order() != expected.dispatch_order() {
+                return Err(WorkloadError::SuiteDispatchOrderMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected.dispatch_order(),
+                    actual: record.dispatch_order(),
+                });
+            }
+            if record.worker_index() != expected.worker_index() {
+                return Err(WorkloadError::SuiteDispatchWorkerMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected.worker_index(),
+                    actual: record.worker_index(),
+                });
+            }
+        }
+
+        for workload in expected_records.keys() {
+            if !self
+                .records
+                .iter()
+                .any(|record| record.workload_id() == workload)
+            {
+                return Err(WorkloadError::MissingSuiteDispatchCompletion {
+                    workload: workload.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteExecutionRecord {
+    workload_id: WorkloadId,
+    manifest_identity: WorkloadManifestIdentity,
+    dispatch_order: usize,
+    worker_index: usize,
+    final_tick: u64,
+}
+
+impl WorkloadSuiteExecutionRecord {
+    fn new(
+        workload_id: WorkloadId,
+        manifest_identity: WorkloadManifestIdentity,
+        dispatch_order: usize,
+        worker_index: usize,
+        final_tick: u64,
+    ) -> Self {
+        Self {
+            workload_id,
+            manifest_identity,
+            dispatch_order,
+            worker_index,
+            final_tick,
+        }
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+
+    pub const fn dispatch_order(&self) -> usize {
+        self.dispatch_order
+    }
+
+    pub const fn worker_index(&self) -> usize {
+        self.worker_index
+    }
+
+    pub const fn final_tick(&self) -> u64 {
+        self.final_tick
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadSuiteResult {
     suite_identity: WorkloadSuiteIdentity,
     results: Vec<WorkloadSuiteResultEntry>,

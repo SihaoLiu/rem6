@@ -443,14 +443,29 @@ impl fmt::Display for WorkloadError {
                 "workload suite result contains duplicate workload {}",
                 workload.as_str()
             ),
+            Self::DuplicateSuiteDispatchCompletion { workload } => write!(
+                formatter,
+                "workload suite execution contains duplicate workload {}",
+                workload.as_str()
+            ),
             Self::MissingSuiteWorkloadResult { workload } => write!(
                 formatter,
                 "workload suite result is missing workload {}",
                 workload.as_str()
             ),
+            Self::MissingSuiteDispatchCompletion { workload } => write!(
+                formatter,
+                "workload suite execution is missing workload {}",
+                workload.as_str()
+            ),
             Self::UnexpectedSuiteWorkloadResult { workload } => write!(
                 formatter,
                 "workload suite result contains unexpected workload {}",
+                workload.as_str()
+            ),
+            Self::UnexpectedSuiteDispatchCompletion { workload } => write!(
+                formatter,
+                "workload suite execution contains unexpected workload {}",
                 workload.as_str()
             ),
             Self::SuiteWorkloadResultManifestMismatch {
@@ -463,6 +478,24 @@ impl fmt::Display for WorkloadError {
                 workload.as_str(),
                 actual.as_str(),
                 expected.as_str()
+            ),
+            Self::SuiteDispatchOrderMismatch {
+                workload,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload suite execution for {} used dispatch order {actual}, expected {expected}",
+                workload.as_str()
+            ),
+            Self::SuiteDispatchWorkerMismatch {
+                workload,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload suite execution for {} used worker {actual}, expected {expected}",
+                workload.as_str()
             ),
             Self::StatsAfterFinalTick {
                 stats_tick,
