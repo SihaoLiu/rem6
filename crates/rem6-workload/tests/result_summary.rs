@@ -504,6 +504,56 @@ fn workload_result_records_parallel_execution_summary() {
 }
 
 #[test]
+fn workload_result_full_system_frontiers_merge_partitions_conservatively() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_frontiers(
+            [
+                PartitionFrontier::new(PartitionId::new(0), 8, 16, Some(12), 1),
+                PartitionFrontier::new(PartitionId::new(1), 4, 12, None, 0),
+            ],
+            [
+                PartitionFrontier::new(PartitionId::new(0), 16, 24, None, 0),
+                PartitionFrontier::new(PartitionId::new(1), 12, 20, Some(18), 2),
+            ],
+        )
+        .with_data_cache_parallel_scheduler_frontiers(
+            [
+                PartitionFrontier::new(PartitionId::new(0), 6, 14, Some(10), 3),
+                PartitionFrontier::new(PartitionId::new(2), 3, 9, Some(7), 1),
+            ],
+            [
+                PartitionFrontier::new(PartitionId::new(0), 15, 22, Some(21), 4),
+                PartitionFrontier::new(PartitionId::new(2), 9, 17, None, 0),
+            ],
+        );
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontiers(),
+        vec![
+            PartitionFrontier::new(PartitionId::new(0), 6, 14, Some(10), 3),
+            PartitionFrontier::new(PartitionId::new(1), 4, 12, None, 0),
+            PartitionFrontier::new(PartitionId::new(2), 3, 9, Some(7), 1),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontiers(),
+        vec![
+            PartitionFrontier::new(PartitionId::new(0), 15, 22, Some(21), 4),
+            PartitionFrontier::new(PartitionId::new(1), 12, 20, Some(18), 2),
+            PartitionFrontier::new(PartitionId::new(2), 9, 17, None, 0),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontier_count(),
+        3
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontier_count(),
+        3
+    );
+}
+
+#[test]
 fn workload_result_records_parallel_batch_partition_streaks_from_ordered_batches() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_batch_partition_streak_sequence([

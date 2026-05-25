@@ -67,6 +67,38 @@ pub(crate) fn collect_partition_frontiers(
     frontiers
 }
 
+pub(crate) fn collect_conservative_partition_frontiers(
+    frontiers: impl IntoIterator<Item = PartitionFrontier>,
+) -> Vec<PartitionFrontier> {
+    let mut by_partition = BTreeMap::<PartitionId, PartitionFrontier>::new();
+    for frontier in frontiers {
+        by_partition
+            .entry(frontier.partition())
+            .and_modify(|stored| *stored = merge_partition_frontiers(*stored, frontier))
+            .or_insert(frontier);
+    }
+    by_partition.into_values().collect()
+}
+
+fn merge_partition_frontiers(
+    left: PartitionFrontier,
+    right: PartitionFrontier,
+) -> PartitionFrontier {
+    let next_tick = match (left.next_tick(), right.next_tick()) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    };
+    PartitionFrontier::new(
+        left.partition(),
+        left.now().min(right.now()),
+        left.safe_until().min(right.safe_until()),
+        next_tick,
+        left.pending_events().max(right.pending_events()),
+    )
+}
+
 pub(crate) fn parallel_remote_flow_count(
     flows: &[ParallelRemoteFlowRecord],
     source: PartitionId,

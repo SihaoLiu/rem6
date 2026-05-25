@@ -14,9 +14,9 @@ use crate::parallel_batch::{
     WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
-    collect_parallel_partition_activities, collect_parallel_remote_flows,
-    collect_partition_frontiers, collect_priority_summaries, collect_requestor_summaries,
-    parallel_remote_flow_count,
+    collect_conservative_partition_frontiers, collect_parallel_partition_activities,
+    collect_parallel_remote_flows, collect_partition_frontiers, collect_priority_summaries,
+    collect_requestor_summaries, parallel_remote_flow_count,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1630,7 +1630,7 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_initial_frontiers(&self) -> Vec<PartitionFrontier> {
-        collect_partition_frontiers(
+        collect_conservative_partition_frontiers(
             self.parallel_scheduler_initial_frontiers
                 .iter()
                 .copied()
@@ -1643,7 +1643,7 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_final_frontiers(&self) -> Vec<PartitionFrontier> {
-        collect_partition_frontiers(
+        collect_conservative_partition_frontiers(
             self.parallel_scheduler_final_frontiers
                 .iter()
                 .copied()
@@ -1656,13 +1656,12 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_initial_frontier_count(&self) -> usize {
-        self.parallel_scheduler_initial_frontier_count()
-            + self.data_cache_parallel_scheduler_initial_frontier_count()
+        self.full_system_parallel_scheduler_initial_frontiers()
+            .len()
     }
 
     pub fn full_system_parallel_scheduler_final_frontier_count(&self) -> usize {
-        self.parallel_scheduler_final_frontier_count()
-            + self.data_cache_parallel_scheduler_final_frontier_count()
+        self.full_system_parallel_scheduler_final_frontiers().len()
     }
 
     pub fn has_full_system_parallel_scheduler_frontiers(&self) -> bool {

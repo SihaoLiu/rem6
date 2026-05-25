@@ -2,7 +2,10 @@ use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
 };
 
-use crate::{WorkloadDataCacheProtocol, WorkloadError, WorkloadParallelExecutionSummary};
+use crate::{
+    result_collect::collect_conservative_partition_frontiers, WorkloadDataCacheProtocol,
+    WorkloadError, WorkloadParallelExecutionSummary,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadParallelRemoteFlowScope {
@@ -230,31 +233,9 @@ fn find_frontier<I>(frontiers: I, partition: PartitionId) -> Option<PartitionFro
 where
     I: IntoIterator<Item = PartitionFrontier>,
 {
-    frontiers.into_iter().fold(None, |stored, frontier| {
-        if frontier.partition() != partition {
-            return stored;
-        }
-        Some(match stored {
-            Some(stored) => conservative_frontier(stored, frontier),
-            None => frontier,
-        })
-    })
-}
-
-fn conservative_frontier(left: PartitionFrontier, right: PartitionFrontier) -> PartitionFrontier {
-    let next_tick = match (left.next_tick(), right.next_tick()) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(left), None) => Some(left),
-        (None, Some(right)) => Some(right),
-        (None, None) => None,
-    };
-    PartitionFrontier::new(
-        left.partition(),
-        left.now().min(right.now()),
-        left.safe_until().min(right.safe_until()),
-        next_tick,
-        left.pending_events().max(right.pending_events()),
-    )
+    collect_conservative_partition_frontiers(frontiers)
+        .into_iter()
+        .find(|frontier| frontier.partition() == partition)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

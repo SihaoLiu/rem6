@@ -360,9 +360,12 @@ result summaries must retain those frontiers separately from aggregate worker
 and batch counts. Workload result summaries also expose aggregate full-system
 frontier views so verification can reason about the combined CPU and
 data-cache/coherence conservative horizon without discarding per-subsystem
-records. Workload manifests may declare required initial or final frontier
-minima for specific partitions and scopes, turning conservative-frontier
-progress into a replay contract rather than an informal trace inspection.
+records. Those full-system frontier views merge same-partition CPU and
+data-cache scheduler records conservatively instead of reporting whichever
+subsystem progressed further. Workload manifests may declare required initial
+or final frontier minima for specific partitions and scopes, turning
+conservative-frontier progress into a replay contract rather than an informal
+trace inspection.
 
 ## Message Model
 
