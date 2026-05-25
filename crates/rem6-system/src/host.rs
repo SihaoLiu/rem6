@@ -6,7 +6,7 @@ use rem6_checkpoint::{
     CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
 };
 use rem6_kernel::Tick;
-use rem6_stats::{StatSnapshot, StatsRegistry, StatsResetRecord};
+use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, DramMemoryCheckpointBank, ExecutionMode,
@@ -30,7 +30,7 @@ pub enum SystemActionOutcome {
         command: String,
     },
     StatsReset(StatsResetRecord),
-    StatsSnapshot(StatSnapshot),
+    StatsDump(StatDumpRecord),
     Checkpoint {
         tick: Tick,
         event: GuestEventId,
@@ -685,8 +685,8 @@ impl SystemActionExecutor {
                 .map_err(SystemError::Stats),
             HostAction::DumpStats => self
                 .stats
-                .try_snapshot(record.tick())
-                .map(SystemActionOutcome::StatsSnapshot)
+                .try_dump(record.tick())
+                .map(SystemActionOutcome::StatsDump)
                 .map_err(SystemError::Stats),
             HostAction::SwitchExecutionMode { target, mode } => {
                 let previous_mode = self.execution_modes.insert(target.clone(), *mode);

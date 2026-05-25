@@ -1333,7 +1333,7 @@ fn workload_replay_executes_planned_host_actions() {
     host_summary.record_stats_reset();
     host_summary.record_checkpoint();
     host_summary.record_checkpoint_restore();
-    host_summary.record_stats_snapshot();
+    host_summary.record_stats_dump();
     host_summary.record_execution_mode_switch();
     host_summary.record_stop();
     assert_eq!(outcome.result().host_action_summary(), Some(&host_summary));
@@ -1349,8 +1349,8 @@ fn workload_replay_executes_planned_host_actions() {
     )));
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,
-        SystemActionOutcome::StatsSnapshot(snapshot)
-            if snapshot.tick() == 2 && snapshot.reset_tick() == 1
+        SystemActionOutcome::StatsDump(record)
+            if record.tick() == 2 && record.reset_tick() == 1
     )));
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,

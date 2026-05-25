@@ -291,6 +291,19 @@ impl StatId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StatDumpId(u64);
+
+impl StatDumpId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatSample {
     id: StatId,
@@ -537,6 +550,38 @@ impl StatSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatDumpRecord {
+    id: StatDumpId,
+    snapshot: StatSnapshot,
+}
+
+impl StatDumpRecord {
+    pub const fn new(id: StatDumpId, snapshot: StatSnapshot) -> Self {
+        Self { id, snapshot }
+    }
+
+    pub const fn id(&self) -> StatDumpId {
+        self.id
+    }
+
+    pub const fn snapshot(&self) -> &StatSnapshot {
+        &self.snapshot
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.snapshot.tick()
+    }
+
+    pub const fn epoch(&self) -> u64 {
+        self.snapshot.epoch()
+    }
+
+    pub const fn reset_tick(&self) -> Tick {
+        self.snapshot.reset_tick()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsResetRecord {
     tick: Tick,
     epoch: u64,
@@ -568,22 +613,26 @@ impl StatsResetRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsRegistry {
     next_id: u64,
+    next_dump_id: u64,
     epoch: u64,
     reset_tick: Tick,
     paths: BTreeSet<String>,
     descriptors: BTreeMap<StatId, StatDescriptor>,
     counters: BTreeMap<StatId, u64>,
+    dump_records: Vec<StatDumpRecord>,
 }
 
 impl StatsRegistry {
     pub fn new() -> Self {
         Self {
             next_id: 0,
+            next_dump_id: 0,
             epoch: 0,
             reset_tick: 0,
             paths: BTreeSet::new(),
             descriptors: BTreeMap::new(),
             counters: BTreeMap::new(),
+            dump_records: Vec::new(),
         }
     }
 
@@ -664,6 +713,27 @@ impl StatsRegistry {
             self.reset_tick,
             samples,
         ))
+    }
+
+    pub fn dump(&mut self, tick: Tick) -> StatDumpRecord {
+        self.try_dump(tick)
+            .expect("dump tick must be at or after the last reset")
+    }
+
+    pub fn try_dump(&mut self, tick: Tick) -> Result<StatDumpRecord, StatsError> {
+        let snapshot = self.try_snapshot(tick)?;
+        let id = StatDumpId::new(self.next_dump_id);
+        self.next_dump_id = self
+            .next_dump_id
+            .checked_add(1)
+            .ok_or(StatsError::DumpSequenceOverflow)?;
+        let record = StatDumpRecord::new(id, snapshot);
+        self.dump_records.push(record.clone());
+        Ok(record)
+    }
+
+    pub fn dump_records(&self) -> &[StatDumpRecord] {
+        &self.dump_records
     }
 
     pub fn reset(&mut self, tick: Tick) -> StatsResetRecord {
@@ -772,6 +842,7 @@ pub enum StatsError {
         listener: ProbeListenerId,
     },
     ProbeSequenceOverflow,
+    DumpSequenceOverflow,
 }
 
 impl fmt::Display for StatsError {
@@ -863,6 +934,7 @@ impl fmt::Display for StatsError {
                 point.get()
             ),
             Self::ProbeSequenceOverflow => write!(formatter, "probe event sequence overflowed"),
+            Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
         }
     }
 }

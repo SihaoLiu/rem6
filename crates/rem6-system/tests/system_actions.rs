@@ -15,7 +15,10 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
 use rem6_mmio::{MmioRequest, MmioRequestId};
-use rem6_stats::{StatSample, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord};
+use rem6_stats::{
+    StatDumpId, StatDumpRecord, StatSample, StatSnapshot, StatsError, StatsRegistry,
+    StatsResetRecord,
+};
 use rem6_system::{
     ClintCheckpointBank, ClintCheckpointPort, DramMemoryCheckpointBank, DramMemoryCheckpointPort,
     ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
@@ -322,12 +325,27 @@ fn system_action_executor_applies_stats_reset_and_dump_actions() {
     );
     assert_eq!(
         executor.apply(&dump).unwrap(),
-        SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
-            14,
-            1,
-            10,
-            vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
+        SystemActionOutcome::StatsDump(StatDumpRecord::new(
+            StatDumpId::new(0),
+            StatSnapshot::new(
+                14,
+                1,
+                10,
+                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
+            ),
         ))
+    );
+    assert_eq!(
+        executor.stats().dump_records(),
+        &[StatDumpRecord::new(
+            StatDumpId::new(0),
+            StatSnapshot::new(
+                14,
+                1,
+                10,
+                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
+            ),
+        )]
     );
 }
 
@@ -1419,24 +1437,42 @@ fn system_run_controller_executes_delivered_stats_events() {
         .unwrap();
     assert_eq!(
         dump_outcomes,
-        vec![SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
-            48,
-            1,
-            40,
-            vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+        vec![SystemActionOutcome::StatsDump(StatDumpRecord::new(
+            StatDumpId::new(0),
+            StatSnapshot::new(
+                48,
+                1,
+                40,
+                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+            ),
         ))]
     );
     assert_eq!(
         controller.action_outcomes(),
         &[
             SystemActionOutcome::StatsReset(StatsResetRecord::new(40, 1, vec![(insts, 11)])),
-            SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
+            SystemActionOutcome::StatsDump(StatDumpRecord::new(
+                StatDumpId::new(0),
+                StatSnapshot::new(
+                    48,
+                    1,
+                    40,
+                    vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
+                ),
+            )),
+        ]
+    );
+    assert_eq!(
+        executor.stats().dump_records(),
+        &[StatDumpRecord::new(
+            StatDumpId::new(0),
+            StatSnapshot::new(
                 48,
                 1,
                 40,
                 vec![StatSample::new(insts, "cpu0.committed_insts", "count", 5)],
-            )),
-        ]
+            ),
+        )]
     );
 }
 
@@ -1749,11 +1785,14 @@ fn system_host_event_port_delivers_and_executes_actions() {
         controller.run().action_outcomes(),
         &[
             SystemActionOutcome::StatsReset(StatsResetRecord::new(7, 1, vec![(insts, 9)])),
-            SystemActionOutcome::StatsSnapshot(StatSnapshot::new(
-                11,
-                1,
-                7,
-                vec![StatSample::new(insts, "cpu0.committed_insts", "count", 4)],
+            SystemActionOutcome::StatsDump(StatDumpRecord::new(
+                StatDumpId::new(0),
+                StatSnapshot::new(
+                    11,
+                    1,
+                    7,
+                    vec![StatSample::new(insts, "cpu0.committed_insts", "count", 4)],
+                ),
             )),
         ]
     );

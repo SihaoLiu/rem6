@@ -1,8 +1,8 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatId, StatSample, StatSnapshot, StatSnapshotDelta, StatsError,
-    StatsRegistry, StatsResetRecord,
+    StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatSample, StatSnapshot,
+    StatSnapshotDelta, StatsError, StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -288,6 +288,82 @@ fn stats_snapshot_delta_rejects_schema_drift() {
             current_unit: "ops".to_string(),
         },
     );
+}
+
+#[test]
+fn stats_registry_records_typed_dump_history() {
+    let mut stats = StatsRegistry::new();
+    let insts = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    let mem_reads = stats.register_counter("system.mem_reads", "count").unwrap();
+
+    stats.increment(insts, 10).unwrap();
+    stats.increment(mem_reads, 4).unwrap();
+    let first_dump = stats.try_dump(100).unwrap();
+    assert_eq!(
+        first_dump,
+        StatDumpRecord::new(
+            StatDumpId::new(0),
+            StatSnapshot::new(
+                100,
+                0,
+                0,
+                vec![
+                    StatSample::new(insts, "cpu0.committed_insts", "count", 10),
+                    StatSample::new(mem_reads, "system.mem_reads", "count", 4),
+                ],
+            ),
+        )
+    );
+
+    stats.increment(insts, 5).unwrap();
+    let second_dump = stats.dump(120);
+    assert_eq!(second_dump.id(), StatDumpId::new(1));
+    assert_eq!(
+        second_dump.snapshot(),
+        &StatSnapshot::new(
+            120,
+            0,
+            0,
+            vec![
+                StatSample::new(insts, "cpu0.committed_insts", "count", 15),
+                StatSample::new(mem_reads, "system.mem_reads", "count", 4),
+            ],
+        )
+    );
+
+    stats.reset(130);
+    stats.increment(mem_reads, 2).unwrap();
+    let reset_scope_dump = stats.dump(140);
+    assert_eq!(reset_scope_dump.id(), StatDumpId::new(2));
+    assert_eq!(reset_scope_dump.snapshot().epoch(), 1);
+    assert_eq!(reset_scope_dump.snapshot().reset_tick(), 130);
+    assert_eq!(
+        stats.dump_records(),
+        &[first_dump, second_dump, reset_scope_dump]
+    );
+}
+
+#[test]
+fn stats_registry_rejects_dump_before_reset_without_recording_history() {
+    let mut stats = StatsRegistry::new();
+    let insts = stats.register_counter("cpu0.cycles", "cycles").unwrap();
+    stats.increment(insts, 7).unwrap();
+    stats.reset(50);
+
+    assert_eq!(
+        stats.try_dump(49).unwrap_err(),
+        StatsError::SnapshotBeforeReset {
+            tick: 49 as Tick,
+            reset_tick: 50,
+        },
+    );
+    assert!(stats.dump_records().is_empty());
+
+    let valid_dump = stats.dump(50);
+    assert_eq!(valid_dump.id(), StatDumpId::new(0));
+    assert_eq!(stats.dump_records(), &[valid_dump]);
 }
 
 #[test]

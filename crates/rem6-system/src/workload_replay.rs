@@ -1304,8 +1304,8 @@ impl RiscvWorkloadReplay {
                 SystemActionOutcome::StatsReset(_) => {
                     host_action_summary.record_stats_reset();
                 }
-                SystemActionOutcome::StatsSnapshot(_) => {
-                    host_action_summary.record_stats_snapshot();
+                SystemActionOutcome::StatsDump(_) => {
+                    host_action_summary.record_stats_dump();
                 }
                 SystemActionOutcome::Checkpoint { manifest, .. } => {
                     host_action_summary.record_checkpoint();

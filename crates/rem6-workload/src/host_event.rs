@@ -82,7 +82,7 @@ pub struct WorkloadHostActionSummary {
     total_action_count: usize,
     injected_command_count: usize,
     stats_reset_count: usize,
-    stats_snapshot_count: usize,
+    stats_dump_count: usize,
     checkpoint_count: usize,
     checkpoint_restore_count: usize,
     execution_mode_switch_count: usize,
@@ -100,9 +100,9 @@ impl WorkloadHostActionSummary {
         self.stats_reset_count += 1;
     }
 
-    pub fn record_stats_snapshot(&mut self) {
+    pub fn record_stats_dump(&mut self) {
         self.total_action_count += 1;
-        self.stats_snapshot_count += 1;
+        self.stats_dump_count += 1;
     }
 
     pub fn record_checkpoint(&mut self) {
@@ -137,8 +137,8 @@ impl WorkloadHostActionSummary {
         self.stats_reset_count
     }
 
-    pub const fn stats_snapshot_count(&self) -> usize {
-        self.stats_snapshot_count
+    pub const fn stats_dump_count(&self) -> usize {
+        self.stats_dump_count
     }
 
     pub const fn checkpoint_count(&self) -> usize {
