@@ -38,9 +38,10 @@ isolated bugs:
   Python tracebacks. gem5 documentation directs users to different debugging
   paths depending on which layer raised the problem. rem6 therefore returns
   typed validation errors at subsystem boundaries, returns typed scheduler
-  errors for parallel worker failures, records handoff summaries, and requires
-  tests for invalid platform, memory, and workload state before broad
-  compatibility claims.
+  errors for parallel worker failures without discarding the partition's
+  remaining queued work, records handoff summaries, and requires tests for
+  invalid platform, memory, and workload state before broad compatibility
+  claims.
 - Observability and statistics need stronger contracts. A gem5 issue about
   stats reset explicitly calls out missing reset tests and user confusion from
   inconsistent stats. rem6 therefore treats statistics, activity, wait-for
@@ -197,7 +198,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, and typed parallel-worker failure reporting exist. |
+| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, and typed parallel-worker failure reporting that preserves remaining partition events exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, and probe event snapshots exist. Broader power-controller and external-analysis adapter breadth remains open. |

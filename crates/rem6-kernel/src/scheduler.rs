@@ -3,6 +3,7 @@ use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 use std::mem;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -833,7 +834,7 @@ impl PartitionedScheduler {
             partition_queues.push((index, partition, queue));
         }
 
-        let results = thread::scope(|scope| {
+        let (results, first_error) = thread::scope(|scope| {
             let mut handles = Vec::with_capacity(partition_queues.len());
 
             for (index, partition, queue) in partition_queues {
@@ -858,9 +859,11 @@ impl PartitionedScheduler {
             let mut first_error = None;
             for (partition, handle) in handles {
                 match handle.join() {
-                    Ok(Ok(result)) => results.push(result),
-                    Ok(Err(error)) => {
-                        first_error.get_or_insert(error);
+                    Ok(result) => {
+                        if let Some(error) = result.error.clone() {
+                            first_error.get_or_insert(error);
+                        }
+                        results.push(result);
                     }
                     Err(_) => {
                         first_error
@@ -869,8 +872,8 @@ impl PartitionedScheduler {
                 }
             }
 
-            first_error.map_or(Ok(results), Err)
-        })?;
+            (results, first_error)
+        });
 
         let mut executed_events = 0;
         let mut dispatches = Vec::new();
@@ -879,6 +882,11 @@ impl PartitionedScheduler {
             dispatches.extend(result.dispatches);
             self.partitions[result.index] = result.queue;
         }
+
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+
         dispatches.sort_by_key(|record| (record.tick(), record.partition(), record.id().local()));
         let record = ParallelEpochBatchRecord::new(horizon, workers, dispatches.clone());
 
@@ -1139,6 +1147,7 @@ struct ParallelPartitionResult {
     queue: PartitionQueue,
     executed_events: usize,
     dispatches: Vec<SchedulerDispatchRecord>,
+    error: Option<SchedulerError>,
 }
 
 struct ParallelBatchResult {
@@ -1164,7 +1173,7 @@ fn run_parallel_partition(
     min_remote_delay: Tick,
     partition_count: u32,
     remote_events: Arc<Mutex<Vec<RemoteScheduledEvent>>>,
-) -> Result<ParallelPartitionResult, SchedulerError> {
+) -> ParallelPartitionResult {
     let mut executed_events = 0;
     let mut next_remote_order = 0;
     let mut dispatches = Vec::new();
@@ -1179,22 +1188,39 @@ fn run_parallel_partition(
 
         match callback {
             PartitionEventCallback::Serial(_) => {
-                return Err(SchedulerError::SerialEventInParallelEpoch {
-                    partition,
-                    tick: event.tick,
-                });
+                return ParallelPartitionResult {
+                    index,
+                    queue,
+                    executed_events,
+                    dispatches,
+                    error: Some(SchedulerError::SerialEventInParallelEpoch {
+                        partition,
+                        tick: event.tick,
+                    }),
+                };
             }
             PartitionEventCallback::Parallel(callback) => {
-                let mut context = ParallelSchedulerContext {
-                    queue: &mut queue,
-                    remote_events: &remote_events,
-                    next_remote_order: &mut next_remote_order,
-                    partition,
-                    partition_count,
-                    min_remote_delay,
-                    now: event.tick,
-                };
-                callback(&mut context);
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let mut context = ParallelSchedulerContext {
+                        queue: &mut queue,
+                        remote_events: &remote_events,
+                        next_remote_order: &mut next_remote_order,
+                        partition,
+                        partition_count,
+                        min_remote_delay,
+                        now: event.tick,
+                    };
+                    callback(&mut context);
+                }));
+                if result.is_err() {
+                    return ParallelPartitionResult {
+                        index,
+                        queue,
+                        executed_events,
+                        dispatches,
+                        error: Some(SchedulerError::ParallelWorkerPanicked { partition }),
+                    };
+                }
                 executed_events += 1;
                 dispatches.push(SchedulerDispatchRecord::new(
                     event.id,
@@ -1205,12 +1231,13 @@ fn run_parallel_partition(
         }
     }
 
-    Ok(ParallelPartitionResult {
+    ParallelPartitionResult {
         index,
         queue,
         executed_events,
         dispatches,
-    })
+        error: None,
+    }
 }
 
 struct PartitionQueue {
