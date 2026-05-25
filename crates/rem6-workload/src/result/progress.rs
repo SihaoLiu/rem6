@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use rem6_kernel::{
-    LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId, WaitForNode,
+    LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId, Tick, WaitForNode,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -50,6 +50,16 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_kinds(&self.parallel_scheduler_progress_transitions)
     }
 
+    pub fn parallel_scheduler_progress_transition_tick_window_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.parallel_scheduler_progress_transitions,
+            |transition| transition.kind() == kind,
+        )
+    }
+
     pub fn parallel_scheduler_progress_transition_count_by_partition(
         &self,
         partition: PartitionId,
@@ -64,6 +74,16 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_partitions(&self.parallel_scheduler_progress_transitions)
     }
 
+    pub fn parallel_scheduler_progress_transition_tick_window_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.parallel_scheduler_progress_transitions,
+            |transition| transition.partition() == partition,
+        )
+    }
+
     pub fn parallel_scheduler_progress_transition_count_by_subject(
         &self,
         subject: &WaitForNode,
@@ -73,6 +93,16 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn parallel_scheduler_progress_transition_subjects(&self) -> Vec<WaitForNode> {
         collect_progress_transition_subjects(&self.parallel_scheduler_progress_transitions)
+    }
+
+    pub fn parallel_scheduler_progress_transition_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.parallel_scheduler_progress_transitions,
+            |transition| transition.subject() == subject,
+        )
     }
 
     pub fn data_cache_parallel_scheduler_progress_transitions(
@@ -97,6 +127,16 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_kinds(&self.data_cache_parallel_scheduler_progress_transitions)
     }
 
+    pub fn data_cache_parallel_scheduler_progress_transition_tick_window_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.data_cache_parallel_scheduler_progress_transitions,
+            |transition| transition.kind() == kind,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_progress_transition_count_by_partition(
         &self,
         partition: PartitionId,
@@ -113,6 +153,16 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_progress_transition_tick_window_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.data_cache_parallel_scheduler_progress_transitions,
+            |transition| transition.partition() == partition,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_progress_transition_count_by_subject(
         &self,
         subject: &WaitForNode,
@@ -126,6 +176,16 @@ impl WorkloadParallelExecutionSummary {
     pub fn data_cache_parallel_scheduler_progress_transition_subjects(&self) -> Vec<WaitForNode> {
         collect_progress_transition_subjects(
             &self.data_cache_parallel_scheduler_progress_transitions,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_progress_transition_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.data_cache_parallel_scheduler_progress_transitions,
+            |transition| transition.subject() == subject,
         )
     }
 
@@ -153,6 +213,15 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_kinds(self.full_system_progress_transition_iter())
     }
 
+    pub fn full_system_progress_transition_tick_window_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(self.full_system_progress_transition_iter(), |transition| {
+            transition.kind() == kind
+        })
+    }
+
     pub fn full_system_progress_transition_count_by_partition(
         &self,
         partition: PartitionId,
@@ -167,12 +236,30 @@ impl WorkloadParallelExecutionSummary {
         collect_progress_transition_partitions(self.full_system_progress_transition_iter())
     }
 
+    pub fn full_system_progress_transition_tick_window_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(self.full_system_progress_transition_iter(), |transition| {
+            transition.partition() == partition
+        })
+    }
+
     pub fn full_system_progress_transition_count_by_subject(&self, subject: &WaitForNode) -> usize {
         progress_transition_count_by_subject(self.full_system_progress_transition_iter(), subject)
     }
 
     pub fn full_system_progress_transition_subjects(&self) -> Vec<WaitForNode> {
         collect_progress_transition_subjects(self.full_system_progress_transition_iter())
+    }
+
+    pub fn full_system_progress_transition_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(self.full_system_progress_transition_iter(), |transition| {
+            transition.subject() == subject
+        })
     }
 
     pub fn has_parallel_scheduler_progress_transitions(&self) -> bool {
@@ -228,6 +315,25 @@ fn progress_transition_count_by_subject<'a>(
         .into_iter()
         .filter(|transition| transition.subject() == subject)
         .count()
+}
+
+fn progress_transition_tick_window<'a>(
+    transitions: impl IntoIterator<Item = &'a ParallelProgressTransitionRecord>,
+    mut predicate: impl FnMut(&ParallelProgressTransitionRecord) -> bool,
+) -> Option<(Tick, Tick)> {
+    let mut window: Option<(Tick, Tick)> = None;
+    for transition in transitions {
+        if predicate(transition) {
+            window = Some(match window {
+                Some((first_tick, last_tick)) => (
+                    first_tick.min(transition.tick()),
+                    last_tick.max(transition.tick()),
+                ),
+                None => (transition.tick(), transition.tick()),
+            });
+        }
+    }
+    window
 }
 
 fn collect_progress_transition_kinds<'a>(
