@@ -150,15 +150,36 @@ impl WorkloadExpectedResourceActivity {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedCleanParallelDiagnostics {
     scope: WorkloadParallelDiagnosticScope,
+    livelock_transition_threshold: Option<u64>,
 }
 
 impl WorkloadExpectedCleanParallelDiagnostics {
     pub const fn new(scope: WorkloadParallelDiagnosticScope) -> Self {
-        Self { scope }
+        Self {
+            scope,
+            livelock_transition_threshold: None,
+        }
     }
 
     pub const fn scope(self) -> WorkloadParallelDiagnosticScope {
         self.scope
+    }
+
+    pub fn with_livelock_transition_threshold(
+        mut self,
+        threshold: u64,
+    ) -> Result<Self, WorkloadError> {
+        if threshold == 0 {
+            return Err(WorkloadError::ZeroExpectedLivelockTransitionThreshold {
+                scope: self.scope,
+            });
+        }
+        self.livelock_transition_threshold = Some(threshold);
+        Ok(self)
+    }
+
+    pub const fn livelock_transition_threshold(self) -> Option<u64> {
+        self.livelock_transition_threshold
     }
 
     pub(crate) const fn sort_key(self) -> u8 {

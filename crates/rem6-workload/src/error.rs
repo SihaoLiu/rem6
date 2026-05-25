@@ -585,6 +585,9 @@ pub enum WorkloadError {
     DuplicateExpectedCleanParallelDiagnostics {
         scope: WorkloadParallelDiagnosticScope,
     },
+    ZeroExpectedLivelockTransitionThreshold {
+        scope: WorkloadParallelDiagnosticScope,
+    },
     ZeroExpectedResourceActivity {
         scope: WorkloadResourceActivityScope,
     },
@@ -1527,6 +1530,11 @@ impl fmt::Display for WorkloadError {
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(
                 formatter,
                 "expected {} clean parallel diagnostics is already declared",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedLivelockTransitionThreshold { scope } => write!(
+                formatter,
+                "expected {} livelock transition threshold must be positive",
                 scope.as_str()
             ),
             Self::ZeroExpectedResourceActivity { scope } => write!(

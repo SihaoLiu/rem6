@@ -36,6 +36,15 @@ fn expected_clean(
     WorkloadExpectedCleanParallelDiagnostics::new(scope)
 }
 
+fn expected_clean_with_livelock_threshold(
+    scope: WorkloadParallelDiagnosticScope,
+    threshold: u64,
+) -> WorkloadExpectedCleanParallelDiagnostics {
+    WorkloadExpectedCleanParallelDiagnostics::new(scope)
+        .with_livelock_transition_threshold(threshold)
+        .unwrap()
+}
+
 fn replay_plan() -> WorkloadReplayPlan {
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("parallel-livelock-diagnostics"), boot_image())
@@ -83,6 +92,50 @@ fn workload_result_records_parallel_livelock_diagnostics() {
     assert!(!productive_retry_summary.has_parallel_scheduler_livelock_diagnostics());
     assert!(!productive_retry_summary.has_data_cache_parallel_scheduler_livelock_diagnostics());
     assert!(!productive_retry_summary.has_full_system_diagnostics());
+}
+
+#[test]
+fn workload_manifest_records_livelock_transition_threshold() {
+    let thresholded =
+        expected_clean_with_livelock_threshold(WorkloadParallelDiagnosticScope::FullSystem, 3);
+    assert_eq!(thresholded.livelock_transition_threshold(), Some(3));
+
+    let manifest = rem6_workload::WorkloadManifest::builder(id("livelock-threshold"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_expected_clean_parallel_diagnostics(thresholded)
+        .unwrap()
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    assert_eq!(
+        plan.expected_clean_parallel_diagnostics()[0].livelock_transition_threshold(),
+        Some(3),
+    );
+
+    let unthresholded =
+        rem6_workload::WorkloadManifest::builder(id("livelock-threshold"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_clean_parallel_diagnostics(expected_clean(
+                WorkloadParallelDiagnosticScope::FullSystem,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    assert_ne!(manifest.identity(), unthresholded.identity());
+
+    assert_eq!(
+        WorkloadExpectedCleanParallelDiagnostics::new(WorkloadParallelDiagnosticScope::FullSystem)
+            .with_livelock_transition_threshold(0)
+            .unwrap_err(),
+        WorkloadError::ZeroExpectedLivelockTransitionThreshold {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+        },
+    );
 }
 
 #[test]

@@ -180,6 +180,13 @@ fn hash_expected_clean_parallel_diagnostics(
     expected: WorkloadExpectedCleanParallelDiagnostics,
 ) {
     hash_str(hash, expected.scope().as_str());
+    match expected.livelock_transition_threshold() {
+        Some(threshold) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, threshold);
+        }
+        None => hash_u64(hash, 0),
+    }
 }
 
 fn hash_expected_data_cache_protocol_run_count(

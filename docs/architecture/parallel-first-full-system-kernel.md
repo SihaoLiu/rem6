@@ -262,8 +262,10 @@ work tick, and a deterministic diagnostic once a declared transition threshold
 is reached. Parallel scheduler workers can emit typed progress-free transition
 records during callback execution; batch, epoch, and run summaries aggregate
 those records deterministically and can replay them into a monitor snapshot.
-Useful work resets the active window so retry-heavy but productive models do not
-look like livelock.
+Workload clean-diagnostic expectations may declare the transition threshold; a
+replay summary uses the lowest declared threshold so a stricter diagnostic scope
+cannot be hidden by a looser one. Useful work resets the active window so
+retry-heavy but productive models do not look like livelock.
 
 Tests for each integration layer should cover both outcomes:
 
