@@ -713,10 +713,7 @@ impl WorkloadExpectedParallelWorkerActivity {
         self.scope.sort_rank()
     }
 
-    pub(crate) const fn actual_total_workers(
-        self,
-        summary: &WorkloadParallelExecutionSummary,
-    ) -> usize {
+    pub(crate) fn actual_total_workers(self, summary: &WorkloadParallelExecutionSummary) -> usize {
         match self.scope {
             WorkloadParallelRemoteFlowScope::Scheduler => {
                 summary.total_parallel_scheduler_workers()

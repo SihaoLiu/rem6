@@ -10,8 +10,8 @@ use crate::parallel_batch::{
     collect_parallel_batch_partition_streaks_from_sequence, collect_parallel_batch_worker_counts,
     max_parallel_batch_worker_count, normalize_partition_set, parallel_batch_count_at_or_above,
     parallel_batch_count_for_partition_set, parallel_batch_streak_count_for_partition_set,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchWorkerCount,
+    total_parallel_batch_worker_count, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
@@ -754,8 +754,12 @@ impl WorkloadParallelExecutionSummary {
             ))
     }
 
-    pub const fn total_parallel_scheduler_workers(&self) -> usize {
-        self.total_parallel_scheduler_workers
+    pub fn total_parallel_scheduler_workers(&self) -> usize {
+        if self.total_parallel_scheduler_workers != 0 {
+            self.total_parallel_scheduler_workers
+        } else {
+            total_parallel_batch_worker_count(&self.parallel_scheduler_batch_worker_counts)
+        }
     }
 
     pub const fn parallel_scheduler_progress_transition_count(&self) -> usize {
@@ -926,8 +930,14 @@ impl WorkloadParallelExecutionSummary {
             ))
     }
 
-    pub const fn data_cache_parallel_scheduler_total_workers(&self) -> usize {
-        self.data_cache_parallel_scheduler_total_workers
+    pub fn data_cache_parallel_scheduler_total_workers(&self) -> usize {
+        if self.data_cache_parallel_scheduler_total_workers != 0 {
+            self.data_cache_parallel_scheduler_total_workers
+        } else {
+            total_parallel_batch_worker_count(
+                &self.data_cache_parallel_scheduler_batch_worker_counts,
+            )
+        }
     }
 
     pub fn data_cache_parallel_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
@@ -1543,8 +1553,8 @@ impl WorkloadParallelExecutionSummary {
             .max(self.data_cache_parallel_scheduler_max_workers())
     }
 
-    pub const fn full_system_parallel_scheduler_total_workers(&self) -> usize {
-        self.total_parallel_scheduler_workers + self.data_cache_parallel_scheduler_total_workers
+    pub fn full_system_parallel_scheduler_total_workers(&self) -> usize {
+        self.total_parallel_scheduler_workers() + self.data_cache_parallel_scheduler_total_workers()
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_counts(

@@ -2,8 +2,9 @@ use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelWorkerActivity, WorkloadId,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -175,6 +176,53 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_workers() {
             actual_total_workers: 7,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_derives_total_workers_from_batch_histograms() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-worker-activity-from-batches"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            10,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            11,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            21,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 3),
+            WorkloadParallelBatchWorkerCount::new(4, 1),
+        ])
+        .with_data_cache_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+            WorkloadParallelBatchWorkerCount::new(5, 1),
+        ]);
+
+    assert_eq!(summary.total_parallel_scheduler_workers(), 10);
+    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 11);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 21);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]
