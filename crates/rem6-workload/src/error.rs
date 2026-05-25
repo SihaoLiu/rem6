@@ -6,8 +6,9 @@ use rem6_kernel::Tick;
 use rem6_memory::MemoryError;
 
 use crate::{
-    error_support::format_partition_indexes, WorkloadDataCacheProtocol, WorkloadExecutionMode,
-    WorkloadManifestIdentity, WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    error_support::{format_partition_indexes, format_remote_traffic_error},
+    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
     WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency,
 };
@@ -351,6 +352,12 @@ pub enum WorkloadError {
         source: u32,
         target: u32,
         expected_send_count: usize,
+        actual_send_count: usize,
+    },
+    UnexpectedParallelRemoteFlow {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
         actual_send_count: usize,
     },
     MissingParallelRemoteSendSummary {
@@ -1154,93 +1161,17 @@ impl fmt::Display for WorkloadError {
             Self::UnexpectedStopReason { actual } => {
                 write!(formatter, "stop reason {actual} was not planned")
             }
-            Self::ZeroExpectedParallelRemoteFlowCount {
-                scope,
-                source,
-                target,
-            } => write!(
-                formatter,
-                "expected {} remote flow {source}->{target} must have a positive send count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelRemoteFlow {
-                scope,
-                source,
-                target,
-            } => write!(
-                formatter,
-                "expected {} remote flow {source}->{target} is already declared",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelRemoteSend {
-                scope,
-                source,
-                target,
-                source_tick,
-                delivery_tick,
-                order,
-            } => write!(
-                formatter,
-                "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelExecutionSummary {
-                scope,
-                source,
-                target,
-                expected_send_count,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} remote flow {source}->{target} with {expected_send_count} sends",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelRemoteFlowCountMismatch {
-                scope,
-                source,
-                target,
-                expected_send_count,
-                actual_send_count,
-            } => write!(
-                formatter,
-                "expected {} remote flow {source}->{target} to have {expected_send_count} sends, got {actual_send_count}",
-                scope.as_str()
-            ),
-            Self::MissingParallelRemoteSendSummary {
-                scope,
-                source,
-                target,
-                source_tick,
-                delivery_tick,
-                order,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order}",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelRemoteSendMissing {
-                scope,
-                source,
-                target,
-                source_tick,
-                delivery_tick,
-                order,
-            } => write!(
-                formatter,
-                "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} was not recorded",
-                scope.as_str()
-            ),
-            Self::UnexpectedParallelRemoteSend {
-                scope,
-                source,
-                target,
-                source_tick,
-                delivery_tick,
-                order,
-            } => write!(
-                formatter,
-                "unexpected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order}",
-                scope.as_str()
-            ),
+            Self::ZeroExpectedParallelRemoteFlowCount { .. }
+            | Self::DuplicateExpectedParallelRemoteFlow { .. }
+            | Self::DuplicateExpectedParallelRemoteSend { .. }
+            | Self::MissingParallelExecutionSummary { .. }
+            | Self::ExpectedParallelRemoteFlowCountMismatch { .. }
+            | Self::UnexpectedParallelRemoteFlow { .. }
+            | Self::MissingParallelRemoteSendSummary { .. }
+            | Self::ExpectedParallelRemoteSendMissing { .. }
+            | Self::UnexpectedParallelRemoteSend { .. } => {
+                format_remote_traffic_error(self, formatter)
+            }
             Self::InvalidExpectedParallelRemoteFlowTimingWindow {
                 scope,
                 source,

@@ -394,8 +394,8 @@ trace inspection.
 They may also require individual remote-send records, remote-flow delivery
 windows, and optional min/max delay bounds, turning cross-partition timing into
 replayable evidence instead of an aggregate traffic count. Remote-send
-expectations are exact per declared scope: replay rejects missing records and
-additional records in that scope.
+and remote-flow expectations are exact per declared scope: replay rejects
+missing records and additional records in that scope.
 
 ## Message Model
 

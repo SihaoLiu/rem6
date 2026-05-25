@@ -516,6 +516,12 @@ impl WorkloadExpectedParallelRemoteFlow {
             }
         }
     }
+
+    pub(crate) fn matches_record(self, flow: ParallelRemoteFlowRecord) -> bool {
+        flow.source() == self.source
+            && flow.target() == self.target
+            && flow.send_count() == self.send_count
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

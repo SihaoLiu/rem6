@@ -165,6 +165,36 @@ fn workload_replay_plan_rejects_missing_or_mismatched_parallel_remote_flow() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_unexpected_parallel_remote_flow() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 3, 7),
+            ParallelRemoteFlowRecord::new(PartitionId::new(2), PartitionId::new(3), 1, 11, 11),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelRemoteFlow {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            actual_send_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_parallel_remote_flow_expectations() {
     let zero = WorkloadExpectedParallelRemoteFlow::new(
         WorkloadParallelRemoteFlowScope::FullSystem,
