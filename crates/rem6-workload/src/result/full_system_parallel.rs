@@ -26,7 +26,9 @@ use super::WorkloadParallelExecutionSummary;
 
 impl WorkloadParallelExecutionSummary {
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
-        self.scheduler_epoch_count + self.data_cache_parallel_scheduler_epoch_count
+        self.scheduler_epoch_count
+            + self.data_cache_parallel_scheduler_epoch_count
+            + self.dma_scheduler_epoch_count()
     }
 
     pub const fn full_system_parallel_scheduler_empty_epoch_count(&self) -> usize {
@@ -34,17 +36,20 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
-        self.scheduler_dispatch_count() + self.data_cache_parallel_scheduler_dispatch_count()
+        self.scheduler_dispatch_count()
+            + self.data_cache_parallel_scheduler_dispatch_count()
+            + self.dma_scheduler_dispatch_count()
     }
 
     pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {
-        (self.scheduler_batch_count() + self.data_cache_parallel_scheduler_batch_count()).max(
-            strongest_parallel_batch_count(
-                &[],
-                &[],
-                &self.full_system_parallel_scheduler_batch_partition_streaks,
-            ),
-        )
+        (self.scheduler_batch_count()
+            + self.data_cache_parallel_scheduler_batch_count()
+            + self.dma_scheduler_batch_count())
+        .max(strongest_parallel_batch_count(
+            &[],
+            &[],
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        ))
     }
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
@@ -299,6 +304,7 @@ impl WorkloadParallelExecutionSummary {
         self.active_full_system_parallel_scheduler_partition_count() != 0
             || self.has_parallel_scheduler_work()
             || self.has_data_cache_parallel_work()
+            || self.has_dma_parallel_work()
     }
 
     pub fn has_parallel_scheduler_work(&self) -> bool {
@@ -331,5 +337,12 @@ impl WorkloadParallelExecutionSummary {
                 .is_empty()
             || self.has_data_cache_parallel_scheduler_remote_sends()
             || self.has_data_cache_parallel_scheduler_frontiers()
+    }
+
+    pub fn has_dma_parallel_work(&self) -> bool {
+        self.dma_scheduler_epoch_count() != 0
+            || self.dma_scheduler_dispatch_count() != 0
+            || self.dma_scheduler_batch_count() != 0
+            || self.dma_scheduler_batch_worker_ticks() != 0
     }
 }

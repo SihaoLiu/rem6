@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets_from_timeline,
     collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_timeline,
@@ -90,7 +92,20 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<(usize, Tick)> {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        collect_parallel_batch_worker_count_tick_summaries(&timeline)
+        collect_batch_worker_count_tick_summaries(
+            collect_parallel_batch_worker_count_tick_summaries(&timeline)
+                .into_iter()
+                .chain(
+                    self.gpu_dma_scheduler_batch_worker_count_tick_summaries()
+                        .iter()
+                        .copied(),
+                )
+                .chain(
+                    self.accelerator_dma_scheduler_batch_worker_count_tick_summaries()
+                        .iter()
+                        .copied(),
+                ),
+        )
     }
 
     pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
@@ -178,6 +193,7 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_ticks_for_worker_count(&timeline, worker_count)
+            .saturating_add(self.dma_scheduler_batch_ticks_for_worker_count(worker_count))
     }
 
     pub fn full_system_parallel_scheduler_batch_ticks_at_or_above(
@@ -186,11 +202,13 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count)
+            .saturating_add(self.dma_scheduler_batch_ticks_at_or_above(minimum_worker_count))
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_worker_ticks(&timeline)
+            .saturating_add(self.dma_scheduler_batch_worker_ticks())
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
@@ -199,6 +217,7 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count)
+            .saturating_add(self.dma_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count))
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -223,4 +242,18 @@ fn collect_scoped_parallel_batch_timeline(
             record.worker_count(),
         )
     }))
+}
+
+fn collect_batch_worker_count_tick_summaries(
+    summaries: impl IntoIterator<Item = (usize, Tick)>,
+) -> Vec<(usize, Tick)> {
+    let mut by_worker_count = BTreeMap::<usize, Tick>::new();
+    for (worker_count, ticks) in summaries {
+        if worker_count == 0 || ticks == 0 {
+            continue;
+        }
+        let stored = by_worker_count.entry(worker_count).or_default();
+        *stored = stored.saturating_add(ticks);
+    }
+    by_worker_count.into_iter().collect()
 }

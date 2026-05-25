@@ -97,6 +97,20 @@ impl WorkloadParallelExecutionSummary {
         &self.gpu_dma_scheduler_batch_worker_count_ticks
     }
 
+    pub fn gpu_dma_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        batch_ticks_for_worker_count(
+            &self.gpu_dma_scheduler_batch_worker_count_ticks,
+            worker_count,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_ticks_at_or_above(
+            &self.gpu_dma_scheduler_batch_worker_count_ticks,
+            minimum_worker_count,
+        )
+    }
+
     pub fn gpu_dma_scheduler_batch_worker_ticks(&self) -> Tick {
         batch_worker_ticks(&self.gpu_dma_scheduler_batch_worker_count_ticks)
     }
@@ -205,6 +219,26 @@ impl WorkloadParallelExecutionSummary {
         &self.accelerator_dma_scheduler_batch_worker_count_ticks
     }
 
+    pub fn accelerator_dma_scheduler_batch_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> Tick {
+        batch_ticks_for_worker_count(
+            &self.accelerator_dma_scheduler_batch_worker_count_ticks,
+            worker_count,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_batch_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        batch_ticks_at_or_above(
+            &self.accelerator_dma_scheduler_batch_worker_count_ticks,
+            minimum_worker_count,
+        )
+    }
+
     pub fn accelerator_dma_scheduler_batch_worker_ticks(&self) -> Tick {
         batch_worker_ticks(&self.accelerator_dma_scheduler_batch_worker_count_ticks)
     }
@@ -250,6 +284,20 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_dma_scheduler_batch_count + self.accelerator_dma_scheduler_batch_count
     }
 
+    pub fn dma_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        self.gpu_dma_scheduler_batch_ticks_for_worker_count(worker_count)
+            .saturating_add(
+                self.accelerator_dma_scheduler_batch_ticks_for_worker_count(worker_count),
+            )
+    }
+
+    pub fn dma_scheduler_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        self.gpu_dma_scheduler_batch_ticks_at_or_above(minimum_worker_count)
+            .saturating_add(
+                self.accelerator_dma_scheduler_batch_ticks_at_or_above(minimum_worker_count),
+            )
+    }
+
     pub fn dma_scheduler_batch_worker_ticks(&self) -> Tick {
         self.gpu_dma_scheduler_batch_worker_ticks()
             .saturating_add(self.accelerator_dma_scheduler_batch_worker_ticks())
@@ -290,6 +338,22 @@ fn collect_batch_worker_count_ticks(
         *stored = stored.saturating_add(ticks);
     }
     by_worker_count.into_iter().collect()
+}
+
+fn batch_ticks_for_worker_count(summaries: &[(usize, Tick)], worker_count: usize) -> Tick {
+    summaries
+        .iter()
+        .filter(|(stored_worker_count, _)| *stored_worker_count == worker_count)
+        .map(|(_, ticks)| *ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_ticks_at_or_above(summaries: &[(usize, Tick)], minimum_worker_count: usize) -> Tick {
+    summaries
+        .iter()
+        .filter(|(worker_count, _)| *worker_count >= minimum_worker_count)
+        .map(|(_, ticks)| *ticks)
+        .fold(0, Tick::saturating_add)
 }
 
 fn batch_worker_ticks(summaries: &[(usize, Tick)]) -> Tick {

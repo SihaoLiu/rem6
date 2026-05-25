@@ -946,6 +946,18 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
         summary.gpu_dma_scheduler_batch_worker_ticks()
             + summary.accelerator_dma_scheduler_batch_worker_ticks(),
     );
+    assert!(
+        summary.full_system_parallel_scheduler_batch_count()
+            >= summary.scheduler_batch_count()
+                + summary.data_cache_parallel_scheduler_batch_count()
+                + summary.dma_scheduler_batch_count()
+    );
+    assert!(
+        summary.full_system_parallel_scheduler_batch_worker_ticks()
+            >= summary.parallel_scheduler_batch_worker_ticks()
+                + summary.data_cache_parallel_scheduler_batch_worker_ticks()
+                + summary.dma_scheduler_batch_worker_ticks()
+    );
     assert!(summary.gpu_dma_wait_for_edge_count() >= 1);
     assert!(summary.accelerator_dma_wait_for_edge_count() >= 1);
     assert_eq!(
