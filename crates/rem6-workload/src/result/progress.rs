@@ -135,9 +135,7 @@ impl WorkloadParallelExecutionSummary {
         &self,
         kind: LivelockTransitionKind,
     ) -> Option<(Tick, Tick)> {
-        livelock_diagnostic_tick_window(&self.scheduler_livelock_diagnostics, |diagnostic| {
-            diagnostic.transition_count_by_kind(kind) != 0
-        })
+        livelock_diagnostic_transition_kind_tick_window(&self.scheduler_livelock_diagnostics, kind)
     }
 
     pub fn parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
@@ -151,6 +149,14 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<(LivelockTransitionKind, u64)> {
         collect_livelock_diagnostic_transition_kind_summaries(&self.scheduler_livelock_diagnostics)
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, u64, Tick, Tick)> {
+        collect_livelock_diagnostic_transition_kind_window_summaries(
+            &self.scheduler_livelock_diagnostics,
+        )
     }
 
     pub fn data_cache_parallel_scheduler_livelock_diagnostics(&self) -> &[LivelockDiagnostic] {
@@ -215,9 +221,9 @@ impl WorkloadParallelExecutionSummary {
         &self,
         kind: LivelockTransitionKind,
     ) -> Option<(Tick, Tick)> {
-        livelock_diagnostic_tick_window(
+        livelock_diagnostic_transition_kind_tick_window(
             &self.data_cache_parallel_scheduler_livelock_diagnostics,
-            |diagnostic| diagnostic.transition_count_by_kind(kind) != 0,
+            kind,
         )
     }
 
@@ -235,6 +241,14 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<(LivelockTransitionKind, u64)> {
         collect_livelock_diagnostic_transition_kind_summaries(
+            &self.data_cache_parallel_scheduler_livelock_diagnostics,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, u64, Tick, Tick)> {
+        collect_livelock_diagnostic_transition_kind_window_summaries(
             &self.data_cache_parallel_scheduler_livelock_diagnostics,
         )
     }
@@ -299,9 +313,7 @@ impl WorkloadParallelExecutionSummary {
         kind: LivelockTransitionKind,
     ) -> Option<(Tick, Tick)> {
         let diagnostics = self.full_system_livelock_diagnostics();
-        livelock_diagnostic_tick_window(&diagnostics, |diagnostic| {
-            diagnostic.transition_count_by_kind(kind) != 0
-        })
+        livelock_diagnostic_transition_kind_tick_window(&diagnostics, kind)
     }
 
     pub fn full_system_livelock_diagnostic_transition_count_by_kind(
@@ -317,6 +329,13 @@ impl WorkloadParallelExecutionSummary {
     ) -> Vec<(LivelockTransitionKind, u64)> {
         let diagnostics = self.full_system_livelock_diagnostics();
         collect_livelock_diagnostic_transition_kind_summaries(&diagnostics)
+    }
+
+    pub fn full_system_livelock_diagnostic_transition_kind_window_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, u64, Tick, Tick)> {
+        let diagnostics = self.full_system_livelock_diagnostics();
+        collect_livelock_diagnostic_transition_kind_window_summaries(&diagnostics)
     }
 
     pub fn parallel_scheduler_progress_transition_count_by_kind(
@@ -972,6 +991,27 @@ fn livelock_diagnostic_transition_count_by_kind<'a>(
         .sum()
 }
 
+fn livelock_diagnostic_transition_kind_tick_window<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    kind: LivelockTransitionKind,
+) -> Option<(Tick, Tick)> {
+    let mut window: Option<(Tick, Tick)> = None;
+    for diagnostic in diagnostics {
+        for count in diagnostic.transition_kind_counts() {
+            if count.kind() == kind {
+                window = Some(match window {
+                    Some((first_tick, last_tick)) => (
+                        first_tick.min(count.first_transition_tick()),
+                        last_tick.max(count.last_transition_tick()),
+                    ),
+                    None => (count.first_transition_tick(), count.last_transition_tick()),
+                });
+            }
+        }
+    }
+    window
+}
+
 fn collect_livelock_diagnostic_transition_kind_summaries<'a>(
     diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
 ) -> Vec<(LivelockTransitionKind, u64)> {
@@ -982,4 +1022,42 @@ fn collect_livelock_diagnostic_transition_kind_summaries<'a>(
         }
     }
     summaries.into_iter().collect()
+}
+
+fn collect_livelock_diagnostic_transition_kind_window_summaries<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+) -> Vec<(LivelockTransitionKind, usize, u64, Tick, Tick)> {
+    let mut summaries = BTreeMap::<LivelockTransitionKind, (usize, u64, Tick, Tick)>::new();
+    for diagnostic in diagnostics {
+        for count in diagnostic.transition_kind_counts() {
+            summaries
+                .entry(count.kind())
+                .and_modify(|summary| {
+                    summary.0 += 1;
+                    summary.1 += count.count();
+                    summary.2 = summary.2.min(count.first_transition_tick());
+                    summary.3 = summary.3.max(count.last_transition_tick());
+                })
+                .or_insert((
+                    1,
+                    count.count(),
+                    count.first_transition_tick(),
+                    count.last_transition_tick(),
+                ));
+        }
+    }
+    summaries
+        .into_iter()
+        .map(
+            |(kind, (diagnostic_count, transition_count, first_tick, last_tick))| {
+                (
+                    kind,
+                    diagnostic_count,
+                    transition_count,
+                    first_tick,
+                    last_tick,
+                )
+            },
+        )
+        .collect()
 }

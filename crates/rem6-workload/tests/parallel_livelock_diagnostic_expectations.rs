@@ -342,6 +342,55 @@ fn workload_result_summarizes_livelock_diagnostic_transition_kinds() {
 }
 
 #[test]
+fn workload_result_summarizes_livelock_diagnostic_transition_kind_windows() {
+    let scheduler_diagnostic = livelock_diagnostic(
+        component("cpu-progress-loop"),
+        3,
+        [
+            (LivelockTransitionKind::ProtocolRetry, 10),
+            (LivelockTransitionKind::ProtocolRetry, 13),
+            (LivelockTransitionKind::QueueRotation, 20),
+        ],
+    );
+    let data_cache_diagnostic = livelock_diagnostic(
+        component("cache-progress-loop"),
+        3,
+        [
+            (LivelockTransitionKind::MessageRetry, 3),
+            (LivelockTransitionKind::MessageRetry, 4),
+            (LivelockTransitionKind::ProtocolRetry, 8),
+        ],
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(3, [scheduler_diagnostic])
+        .with_data_cache_parallel_scheduler_livelock_diagnostic_records(3, [data_cache_diagnostic]);
+
+    assert_eq!(
+        summary.parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 1, 2, 10, 13),
+            (LivelockTransitionKind::QueueRotation, 1, 1, 20, 20),
+        ],
+    );
+    assert_eq!(
+        summary
+            .data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 1, 1, 8, 8),
+            (LivelockTransitionKind::MessageRetry, 1, 2, 3, 4),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_livelock_diagnostic_transition_kind_window_summaries(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 2, 3, 8, 13),
+            (LivelockTransitionKind::QueueRotation, 1, 1, 20, 20),
+            (LivelockTransitionKind::MessageRetry, 1, 2, 3, 4),
+        ],
+    );
+}
+
+#[test]
 fn workload_result_queries_livelock_diagnostics_by_transition_kind() {
     let cpu_subject = component("cpu-progress-loop");
     let queue_subject = component("scheduler-queue-loop");
@@ -489,7 +538,7 @@ fn workload_result_reports_livelock_diagnostic_tick_windows() {
         summary.full_system_livelock_diagnostic_tick_window_by_transition_kind(
             LivelockTransitionKind::ProtocolRetry,
         ),
-        Some((3, 13)),
+        Some((8, 13)),
     );
     assert_eq!(
         summary.full_system_livelock_diagnostic_tick_window_by_transition_kind(

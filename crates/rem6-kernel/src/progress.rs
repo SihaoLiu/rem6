@@ -29,11 +29,23 @@ impl LivelockTransitionKind {
 pub struct LivelockTransitionKindCount {
     kind: LivelockTransitionKind,
     count: u64,
+    first_transition_tick: Tick,
+    last_transition_tick: Tick,
 }
 
 impl LivelockTransitionKindCount {
-    const fn new(kind: LivelockTransitionKind, count: u64) -> Self {
-        Self { kind, count }
+    const fn new(
+        kind: LivelockTransitionKind,
+        count: u64,
+        first_transition_tick: Tick,
+        last_transition_tick: Tick,
+    ) -> Self {
+        Self {
+            kind,
+            count,
+            first_transition_tick,
+            last_transition_tick,
+        }
     }
 
     pub const fn kind(&self) -> LivelockTransitionKind {
@@ -42,6 +54,14 @@ impl LivelockTransitionKindCount {
 
     pub const fn count(&self) -> u64 {
         self.count
+    }
+
+    pub const fn first_transition_tick(&self) -> Tick {
+        self.first_transition_tick
+    }
+
+    pub const fn last_transition_tick(&self) -> Tick {
+        self.last_transition_tick
     }
 }
 
@@ -288,7 +308,7 @@ struct ProgressWindow {
     subject: WaitForNode,
     threshold: u64,
     transition_count: u64,
-    transition_kinds: BTreeMap<LivelockTransitionKind, u64>,
+    transition_kinds: BTreeMap<LivelockTransitionKind, ProgressTransitionKindWindow>,
     first_transition_tick: Option<Tick>,
     last_transition_tick: Option<Tick>,
     last_useful_tick: Option<Tick>,
@@ -309,7 +329,10 @@ impl ProgressWindow {
 
     fn record_transition(&mut self, kind: LivelockTransitionKind, tick: Tick) {
         self.transition_count += 1;
-        *self.transition_kinds.entry(kind).or_insert(0) += 1;
+        self.transition_kinds
+            .entry(kind)
+            .or_insert_with(|| ProgressTransitionKindWindow::new(tick))
+            .record_transition(tick);
         self.first_transition_tick = Some(
             self.first_transition_tick
                 .map_or(tick, |first| first.min(tick)),
@@ -329,11 +352,41 @@ impl ProgressWindow {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProgressTransitionKindWindow {
+    count: u64,
+    first_transition_tick: Tick,
+    last_transition_tick: Tick,
+}
+
+impl ProgressTransitionKindWindow {
+    const fn new(tick: Tick) -> Self {
+        Self {
+            count: 0,
+            first_transition_tick: tick,
+            last_transition_tick: tick,
+        }
+    }
+
+    fn record_transition(&mut self, tick: Tick) {
+        self.count += 1;
+        self.first_transition_tick = self.first_transition_tick.min(tick);
+        self.last_transition_tick = self.last_transition_tick.max(tick);
+    }
+}
+
 fn transition_kind_counts(
-    counts: &BTreeMap<LivelockTransitionKind, u64>,
+    counts: &BTreeMap<LivelockTransitionKind, ProgressTransitionKindWindow>,
 ) -> Vec<LivelockTransitionKindCount> {
     counts
         .iter()
-        .map(|(kind, count)| LivelockTransitionKindCount::new(*kind, *count))
+        .map(|(kind, count)| {
+            LivelockTransitionKindCount::new(
+                *kind,
+                count.count,
+                count.first_transition_tick,
+                count.last_transition_tick,
+            )
+        })
         .collect()
 }

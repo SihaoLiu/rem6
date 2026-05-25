@@ -270,7 +270,7 @@ data-cache scheduler, and merged full-system progress deterministic dimension
 lists, per-dimension record slices, counts, tick windows, and compact summaries
 by transition kind, partition, and subject. Workload result summaries preserve
 the same evidence shape plus threshold-driven livelock diagnostic records,
-counts, subject queries, transition-kind summaries, and kind-filtered
+counts, subject queries, transition-kind summaries with exact kind tick windows, and kind-filtered
 diagnostic records plus subject summaries and diagnostic tick windows for
 CPU-scheduler, data-cache scheduler, and merged full-system scopes before workload replay translates them into
 manifest-verifiable result summaries; clean-diagnostic violations include the
@@ -405,10 +405,10 @@ transition records with kind, partition, and subject result counts, remote-flow
 delivery windows, and optional min/max delay bounds, turning cross-partition
 timing and livelock evidence into replayable data instead of aggregate counters.
 Result summaries expose livelock diagnostic subject queries, transition-kind
-summaries, subject summaries, kind-filtered records, and tick windows across the
+summaries with exact kind tick windows, subject summaries, kind-filtered records, and tick windows across the
 same scopes so replay failures and post-run analysis can point to the stalled
 component, diagnostic count, transition count, dominant transition kind, and
-bounded time interval rather than only the aggregate counter.
+bounded kind-specific time interval rather than only the aggregate counter.
 Remote-send records are strong enough to
 derive route-level flow count, first/last delivery tick, and delay-bound
 evidence when an aggregate remote-flow record is absent or weaker than the
@@ -620,7 +620,7 @@ work.
 | Statistics | Tests for registry-owned stat groups, self-describing group catalogs on snapshots, dumps, and deltas, checked counter descriptions, structured counter scope/name identity, path grammar, structured unit and rate grammar, monotonic reset behavior, typed dump records, schema-and-reset-scope-checked deltas, and aggregation into system summaries. |
 | Power | Tests for power domains, expression inputs, stat snapshot and core stats-delta bindings, thermal coupling, and invalid scope or schema rejection. |
 | Deadlock diagnostics | Tests that create a wait-for cycle and assert a bounded diagnostic. |
-| Livelock diagnostics | Tests that create repeated progress-free transitions, assert exact replay records, subject queries, subject summaries, kind summaries, kind-filtered records, tick windows, and bounded diagnostics. |
+| Livelock diagnostics | Tests that create repeated progress-free transitions, assert exact replay records, subject queries, subject summaries, kind summaries with exact kind windows, kind-filtered records, tick windows, and bounded diagnostics. |
 
 ## Disallowed Patterns
 

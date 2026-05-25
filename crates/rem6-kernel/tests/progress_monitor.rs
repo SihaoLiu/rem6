@@ -45,6 +45,15 @@ fn progress_monitor_reports_livelock_after_repeated_transitions_without_work() {
         diagnostic.transition_count_by_kind(LivelockTransitionKind::QueueRotation),
         1,
     );
+    let kind_counts = diagnostic.transition_kind_counts();
+    assert_eq!(kind_counts[0].kind(), LivelockTransitionKind::ProtocolRetry);
+    assert_eq!(kind_counts[0].count(), 2);
+    assert_eq!(kind_counts[0].first_transition_tick(), 10);
+    assert_eq!(kind_counts[0].last_transition_tick(), 14);
+    assert_eq!(kind_counts[1].kind(), LivelockTransitionKind::QueueRotation);
+    assert_eq!(kind_counts[1].count(), 1);
+    assert_eq!(kind_counts[1].first_transition_tick(), 12);
+    assert_eq!(kind_counts[1].last_transition_tick(), 12);
     assert_eq!(monitor.diagnostics(), vec![diagnostic.clone()]);
 
     let snapshot = monitor.snapshot();
