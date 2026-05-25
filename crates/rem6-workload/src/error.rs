@@ -506,6 +506,33 @@ impl fmt::Display for WorkloadError {
                 "expected {} remote flow {source}->{target} to have {expected_send_count} sends, got {actual_send_count}",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelWorkerCount { scope } => write!(
+                formatter,
+                "expected {} worker use must require a positive maximum worker count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelWorkerUse { scope } => write!(
+                formatter,
+                "expected {} worker use is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelWorkerSummary {
+                scope,
+                minimum_max_workers,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} worker use with at least {minimum_max_workers} workers",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelWorkerCountBelowMinimum {
+                scope,
+                minimum_max_workers,
+                actual_max_workers,
+            } => write!(
+                formatter,
+                "expected {} worker use to reach at least {minimum_max_workers} workers, got {actual_max_workers}",
+                scope.as_str()
+            ),
         }
     }
 }

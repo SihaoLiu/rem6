@@ -95,3 +95,51 @@ impl WorkloadExpectedParallelRemoteFlow {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelWorkerUse {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_max_workers: usize,
+}
+
+impl WorkloadExpectedParallelWorkerUse {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_max_workers: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_max_workers == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelWorkerCount { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_max_workers,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_max_workers(self) -> usize {
+        self.minimum_max_workers
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) const fn actual_max_workers(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> usize {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => summary.max_parallel_scheduler_workers(),
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_max_workers()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_max_workers()
+            }
+        }
+    }
+}

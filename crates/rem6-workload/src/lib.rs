@@ -23,7 +23,8 @@ pub use heterogeneous::{
 };
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_expectation::{
-    WorkloadExpectedParallelRemoteFlow, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelWorkerUse,
+    WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -472,6 +473,7 @@ pub struct WorkloadManifest {
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     checkpoint_lineage: Option<CheckpointLineage>,
     identity: WorkloadManifestIdentity,
 }
@@ -530,6 +532,10 @@ impl WorkloadManifest {
         &self.expected_parallel_remote_flows
     }
 
+    pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
+        &self.expected_parallel_worker_use
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -553,6 +559,7 @@ pub struct WorkloadManifestBuilder {
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -567,6 +574,7 @@ impl WorkloadManifestBuilder {
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
             expected_parallel_remote_flows: Vec::new(),
+            expected_parallel_worker_use: Vec::new(),
             checkpoint_lineage: None,
         }
     }
@@ -577,6 +585,25 @@ impl WorkloadManifestBuilder {
             return Err(WorkloadError::DuplicateResource { resource: id });
         }
         self.resources.insert(id, resource);
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_worker_use(
+        mut self,
+        expected: WorkloadExpectedParallelWorkerUse,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_worker_use
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelWorkerUse {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_worker_use.push(expected);
+        self.expected_parallel_worker_use
+            .sort_by_key(|worker_use| worker_use.sort_key());
         Ok(self)
     }
 
@@ -696,6 +723,7 @@ impl WorkloadManifestBuilder {
             required_resources: &required_resources,
             host_events: &self.host_events,
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
+            expected_parallel_worker_use: &self.expected_parallel_worker_use,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
         });
 
@@ -708,6 +736,7 @@ impl WorkloadManifestBuilder {
             required_resources,
             host_events: self.host_events,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
+            expected_parallel_worker_use: self.expected_parallel_worker_use,
             checkpoint_lineage: self.checkpoint_lineage,
             identity,
         })
@@ -727,6 +756,7 @@ pub struct WorkloadReplayPlan {
     planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -744,6 +774,7 @@ impl WorkloadReplayPlan {
             planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
+            expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
         })
@@ -818,6 +849,29 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_remote_flows
     }
 
+    pub fn add_expected_parallel_worker_use(
+        mut self,
+        expected: WorkloadExpectedParallelWorkerUse,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_worker_use
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelWorkerUse {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_worker_use.push(expected);
+        self.expected_parallel_worker_use
+            .sort_by_key(|worker_use| worker_use.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
+        &self.expected_parallel_worker_use
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -837,6 +891,7 @@ impl WorkloadReplayPlan {
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         self.verify_expected_parallel_remote_flows(result)?;
+        self.verify_expected_parallel_worker_use(result)?;
         Ok(())
     }
 
@@ -992,6 +1047,34 @@ impl WorkloadReplayPlan {
                     target: expected.target().index(),
                     expected_send_count: expected.send_count(),
                     actual_send_count,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_expected_parallel_worker_use(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_worker_use.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_parallel_worker_use[0];
+            return Err(WorkloadError::MissingParallelWorkerSummary {
+                scope: expected.scope(),
+                minimum_max_workers: expected.minimum_max_workers(),
+            });
+        };
+
+        for expected in &self.expected_parallel_worker_use {
+            let actual_max_workers = expected.actual_max_workers(summary);
+            if actual_max_workers < expected.minimum_max_workers() {
+                return Err(WorkloadError::ExpectedParallelWorkerCountBelowMinimum {
+                    scope: expected.scope(),
+                    minimum_max_workers: expected.minimum_max_workers(),
+                    actual_max_workers,
                 });
             }
         }
@@ -1482,6 +1565,21 @@ pub enum WorkloadError {
         target: u32,
         expected_send_count: usize,
         actual_send_count: usize,
+    },
+    ZeroExpectedParallelWorkerCount {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelWorkerUse {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    MissingParallelWorkerSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_max_workers: usize,
+    },
+    ExpectedParallelWorkerCountBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_max_workers: usize,
+        actual_max_workers: usize,
     },
 }
 
