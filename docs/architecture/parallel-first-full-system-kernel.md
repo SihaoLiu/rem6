@@ -37,6 +37,14 @@ The following public sources shape this design:
 - gem5 SLICC documentation describes a protocol DSL that generates C++
   controllers and exposes complex transient-state queue handling:
   <https://www.gem5.org/documentation/general_docs/ruby/slicc/>
+- Historical Parallel M5 notes describe the long-standing desire to replace
+  one global queue with per-object event queues, deterministic parallel
+  execution, barriers, slack, and one event queue per simulation thread:
+  <https://old.gem5.org/Parallel_M5.html>
+- Historical gem5 configuration notes describe existing configurations as hard
+  to learn and hard to maintain, and call out asymmetric clusters and DVFS-style
+  clocks as difficult under the old setup:
+  <https://old.gem5.org/Configuration_musings.html>
 - gem5 checkpoint documentation records that Ruby checkpoints require the MOESI
   hammer protocol because only that protocol can flush caches to memory for
   correct checkpoint state:
@@ -48,6 +56,10 @@ The following public sources shape this design:
 - parti-gem5 identifies gem5's single-threaded simulation kernel as a major
   throughput limit and reports speedups with timing deviations:
   <https://arxiv.org/abs/2308.09445>
+- The gem5 packaging discussion identifies many build and run-time
+  dependencies, numerous compile-time options, and individually managed source
+  builds as a reproducibility and onboarding burden:
+  <https://www.gem5.org/project/2022/05/23/guix.html>
 - Sustainable gem5 Simulations reports large simulation slowdowns and linear
   multi-core time growth from gem5's single-threaded execution:
   <https://www.gem5.org/assets/files/workshop-isca-2023/slides/sustainable-gem5-simulations.pdf>
@@ -322,6 +334,7 @@ The scheduler records:
 - active partitions;
 - partition frontier before and after each epoch;
 - ready partitions selected for dispatch;
+- progress-free transition count before livelock thresholding;
 - event kind, tick, partition, and deterministic local identity;
 - errors for serial events inside a parallel epoch;
 - errors for remote delays below lookahead.

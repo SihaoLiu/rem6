@@ -24,6 +24,9 @@ pub(super) fn parallel_execution_summary(
     let fabric = run.fabric_profile();
     let dram = run.dram_profile();
     let cpu_activities = run.cpu_activities();
+    let scheduler_progress_transition_count = parallel_scheduler_progress_transition_count(run);
+    let data_cache_scheduler_progress_transition_count =
+        data_cache_parallel_scheduler_progress_transition_count(run);
     let riscv_fetch_issue_count = cpu_activities
         .values()
         .map(|activity| activity.fetch_issue_count())
@@ -52,6 +55,7 @@ pub(super) fn parallel_execution_summary(
             run.max_parallel_scheduler_workers(),
         )
         .with_scheduler_worker_count(scheduler.total_parallel_workers())
+        .with_parallel_scheduler_livelock_diagnostics(scheduler_progress_transition_count, 0)
         .with_parallel_scheduler_batch_worker_counts(
             run.parallel_scheduler_batches()
                 .into_iter()
@@ -91,6 +95,10 @@ pub(super) fn parallel_execution_summary(
             run.active_data_cache_parallel_scheduler_partition_count(),
         )
         .with_data_cache_parallel_worker_count(run.data_cache_parallel_scheduler_total_workers())
+        .with_data_cache_parallel_scheduler_livelock_diagnostics(
+            data_cache_scheduler_progress_transition_count,
+            0,
+        )
         .with_data_cache_parallel_scheduler_batch_worker_counts(
             run.data_cache_parallel_scheduler_batches()
                 .into_iter()
@@ -219,6 +227,26 @@ pub(super) fn parallel_execution_summary(
         )
 }
 
+fn parallel_scheduler_progress_transition_count(run: &RiscvSystemRun) -> usize {
+    run.parallel_scheduler_epochs()
+        .into_iter()
+        .map(|epoch| {
+            epoch
+                .batches()
+                .iter()
+                .map(|batch| batch.progress_transition_count())
+                .sum::<usize>()
+        })
+        .sum()
+}
+
+fn data_cache_parallel_scheduler_progress_transition_count(run: &RiscvSystemRun) -> usize {
+    run.data_cache_parallel_scheduler_epochs()
+        .into_iter()
+        .map(|epoch| epoch.progress_transition_count())
+        .sum()
+}
+
 fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
     match protocol {
         RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
@@ -230,12 +258,15 @@ fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDat
 
 #[cfg(test)]
 mod tests {
+    use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
     use rem6_dram::{
         DramController, DramGeometry, DramQosRequest, DramQosSchedulingPolicy,
         DramQosTurnaroundPolicy, DramTargetActivity, DramTiming,
     };
     use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
-    use rem6_kernel::{PartitionId, PartitionedScheduler};
+    use rem6_kernel::{
+        LivelockTransitionKind, PartitionId, PartitionedScheduler, WaitForGraph, WaitForNode,
+    };
     use rem6_memory::{
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
         MemoryTargetId,
@@ -259,6 +290,14 @@ mod tests {
             layout(),
         )
         .unwrap()
+    }
+
+    fn component_wait_node(name: &str) -> WaitForNode {
+        WaitForNode::component(name).unwrap()
+    }
+
+    fn empty_coherence_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
+        ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new())
     }
 
     fn qos_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
@@ -427,5 +466,86 @@ mod tests {
         assert_eq!(flows[0].target(), target);
         assert_eq!(flows[0].send_count(), 1);
         assert!(summary.has_full_system_parallel_scheduler_remote_flows());
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_scheduler_progress_transitions() {
+        let source = PartitionId::new(0);
+        let data_cache = PartitionId::new(2);
+        let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
+        let scheduler_subject = component_wait_node("cpu-scheduler");
+        scheduler
+            .schedule_parallel_at(source, 0, move |context| {
+                context.record_progress_transition(
+                    scheduler_subject,
+                    LivelockTransitionKind::SchedulerEpoch,
+                );
+            })
+            .unwrap();
+        let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+        let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+        let run = RiscvSystemRun::new(
+            vec![RiscvClusterTurn::parallel_scheduler(plan, recorded)],
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 8 },
+        )
+        .with_data_cache_runs(vec![data_cache_run_with_progress(data_cache)]);
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity::default();
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+        );
+
+        assert_eq!(summary.parallel_scheduler_progress_transition_count(), 1);
+        assert_eq!(summary.parallel_scheduler_livelock_diagnostic_count(), 0);
+        assert!(!summary.has_parallel_scheduler_livelock_diagnostics());
+        assert_eq!(
+            summary.data_cache_parallel_scheduler_progress_transition_count(),
+            1,
+        );
+        assert_eq!(
+            summary.data_cache_parallel_scheduler_livelock_diagnostic_count(),
+            0,
+        );
+        assert!(!summary.has_data_cache_parallel_scheduler_livelock_diagnostics());
+        assert_eq!(summary.full_system_progress_transition_count(), 2);
+        assert_eq!(summary.full_system_livelock_diagnostic_count(), 0);
+        assert!(!summary.has_full_system_diagnostics());
+    }
+
+    fn data_cache_run_with_progress(partition: PartitionId) -> ParallelCoherenceRunSummary {
+        let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
+        let subject = component_wait_node("data-cache-scheduler");
+        scheduler
+            .schedule_parallel_at(partition, 0, move |context| {
+                context.record_progress_transition(subject, LivelockTransitionKind::QueueRotation);
+            })
+            .unwrap();
+
+        ParallelCoherenceRunSummary::new(
+            scheduler.run_until_idle_parallel_recorded().unwrap(),
+            0,
+            0,
+            0,
+            Vec::new(),
+            Vec::new(),
+            empty_coherence_wait_for_graphs(),
+        )
     }
 }

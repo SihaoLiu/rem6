@@ -71,8 +71,9 @@ isolated bugs:
   scheduler progress, scheduler idle drift, real parallel occupancy, sustained
   worker activity, sustained multi-worker batch execution, exact same-batch
   partition co-execution, sustained same-batch co-execution, per-partition
-  participation, fabric/DRAM resource use, and wait-for/deadlock cleanliness
-  are observable and verifiable without replaying callbacks.
+  participation, progress-free transition volume, fabric/DRAM resource use,
+  and wait-for/deadlock/livelock cleanliness are observable and verifiable
+  without replaying callbacks.
 - Observability and statistics need stronger contracts. A gem5 issue about
   stats reset explicitly calls out missing reset tests and user confusion from
   inconsistent stats. rem6 therefore treats statistics, activity, wait-for
@@ -233,7 +234,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, worker-local remote outboxes, ordered remote-send records, source-target remote-flow records carried through RISC-V cluster, full-system, and workload-result summaries, scheduler epoch, empty-epoch, and dispatch counts, batch worker-count histograms, exact batch partition-set histograms, and maximum consecutive partition-set streaks carried into workload summaries, manifest-owned and result-verifiable expected remote-flow counts and first/last tick windows, minimum scheduler progress contracts, maximum scheduler idle contracts, minimum max-worker contracts, total-worker activity contracts, multi-worker batch activity contracts, exact batch partition-set contracts, sustained same-batch streak contracts, active-partition contracts, per-partition activity contracts, clean diagnostic contracts, source and target partition counts in recorded parallel summaries, and typed parallel-worker failure reporting that preserves remaining partition events, keeps executed-time visibility, commits successful callbacks' remote messages, and rolls back local and remote events scheduled by the panicked callback exist. |
+| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, worker-local remote outboxes, ordered remote-send records, source-target remote-flow records carried through RISC-V cluster, full-system, and workload-result summaries, scheduler epoch, empty-epoch, and dispatch counts, CPU scheduler, data-cache scheduler, and merged full-system progress-free transition counts plus livelock diagnostic counts carried into workload summaries, batch worker-count histograms, exact batch partition-set histograms, and maximum consecutive partition-set streaks carried into workload summaries, manifest-owned and result-verifiable expected remote-flow counts and first/last tick windows, minimum scheduler progress contracts, maximum scheduler idle contracts, minimum max-worker contracts, total-worker activity contracts, multi-worker batch activity contracts, exact batch partition-set contracts, sustained same-batch streak contracts, active-partition contracts, per-partition activity contracts, clean diagnostic contracts, source and target partition counts in recorded parallel summaries, and typed parallel-worker failure reporting that preserves remaining partition events, keeps executed-time visibility, commits successful callbacks' remote messages, and rolls back local and remote events scheduled by the panicked callback exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, and probe event snapshots exist. Broader power-controller and external-analysis adapter breadth remains open. |
@@ -396,9 +397,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   workload-result summary tests cover direct DRAM QoS diagnostics over those
   typed activity profiles, plus workload-level CPU scheduler, data-cache
   scheduler, merged full-system remote-flow records, scheduler epoch,
-  empty-epoch, and dispatch counts, total-worker counts, batch worker-count
-  histograms, exact batch partition-set histograms, maximum consecutive
-  partition-set streaks, per-partition activity summaries, replay-plan
+  empty-epoch, dispatch counts, progress-free transition counts, livelock
+  diagnostic counts, total-worker counts, batch worker-count histograms, exact
+  batch partition-set histograms, maximum consecutive partition-set streaks,
+  per-partition activity summaries, replay-plan
   validation of exact expected remote-flow counts and first/last tick windows,
   minimum scheduler epoch and dispatch progress, maximum scheduler idle epochs,
   minimum max-worker use, minimum total-worker activity,
