@@ -521,6 +521,82 @@ impl WorkloadExpectedParallelBatchPartitionSet {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelBatchPartitionStreak {
+    scope: WorkloadParallelRemoteFlowScope,
+    partitions: Vec<PartitionId>,
+    minimum_consecutive_batch_count: usize,
+}
+
+impl WorkloadExpectedParallelBatchPartitionStreak {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: impl IntoIterator<Item = PartitionId>,
+        minimum_consecutive_batch_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        let partitions = collect_partition_set(partitions);
+        if partitions.len() < 2 {
+            return Err(WorkloadError::InvalidExpectedParallelBatchPartitionStreak {
+                scope,
+                partitions: partition_indexes(&partitions),
+            });
+        }
+        if minimum_consecutive_batch_count == 0 {
+            return Err(
+                WorkloadError::ZeroExpectedParallelBatchPartitionStreakCount {
+                    scope,
+                    partitions: partition_indexes(&partitions),
+                },
+            );
+        }
+        Ok(Self {
+            scope,
+            partitions,
+            minimum_consecutive_batch_count,
+        })
+    }
+
+    pub const fn scope(&self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub fn partitions(&self) -> &[PartitionId] {
+        &self.partitions
+    }
+
+    pub const fn minimum_consecutive_batch_count(&self) -> usize {
+        self.minimum_consecutive_batch_count
+    }
+
+    pub(crate) fn sort_key(&self) -> (u8, Vec<PartitionId>) {
+        (self.scope.sort_rank(), self.partitions.clone())
+    }
+
+    pub(crate) fn partition_indexes(&self) -> Vec<u32> {
+        partition_indexes(&self.partitions)
+    }
+
+    pub(crate) fn actual_consecutive_batch_count(
+        &self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> usize {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => summary
+                .parallel_scheduler_max_consecutive_batch_count_for_partition_set(
+                    self.partitions.iter().copied(),
+                ),
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+                .data_cache_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
+                    self.partitions.iter().copied(),
+                ),
+            WorkloadParallelRemoteFlowScope::FullSystem => summary
+                .full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
+                    self.partitions.iter().copied(),
+                ),
+        }
+    }
+}
+
 fn collect_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {
     let mut partitions = partitions.into_iter().collect::<Vec<_>>();
     partitions.sort_unstable();

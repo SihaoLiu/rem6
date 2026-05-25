@@ -5,9 +5,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadId, WorkloadManifest,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadResult,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -410,4 +410,100 @@ fn workload_result_records_parallel_execution_summary() {
     assert!(summary.has_full_system_parallel_scheduler_work());
     assert!(summary.has_parallel_scheduler_work());
     assert!(summary.has_data_cache_parallel_work());
+}
+
+#[test]
+fn workload_result_records_parallel_batch_partition_streaks_from_ordered_batches() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_streak_sequence([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(1), PartitionId::new(0)], 1),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 2),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(2)], 1),
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(1)], 1),
+        ])
+        .with_data_cache_parallel_scheduler_batch_partition_streak_sequence([
+            WorkloadParallelBatchPartitionSet::new([PartitionId::new(0), PartitionId::new(2)], 2),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(1),
+                    PartitionId::new(2),
+                    PartitionId::new(3),
+                ],
+                1,
+            ),
+            WorkloadParallelBatchPartitionSet::new(
+                [
+                    PartitionId::new(3),
+                    PartitionId::new(2),
+                    PartitionId::new(1),
+                ],
+                3,
+            ),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_batch_partition_streaks(),
+        &[
+            WorkloadParallelBatchPartitionStreak::new(
+                [PartitionId::new(0), PartitionId::new(1)],
+                3,
+            ),
+            WorkloadParallelBatchPartitionStreak::new(
+                [PartitionId::new(0), PartitionId::new(2)],
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+            PartitionId::new(0),
+            PartitionId::new(1),
+        ]),
+        3,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_partition_streaks(),
+        &[
+            WorkloadParallelBatchPartitionStreak::new(
+                [PartitionId::new(0), PartitionId::new(2)],
+                2,
+            ),
+            WorkloadParallelBatchPartitionStreak::new(
+                [
+                    PartitionId::new(1),
+                    PartitionId::new(2),
+                    PartitionId::new(3)
+                ],
+                4,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_streaks(),
+        vec![
+            WorkloadParallelBatchPartitionStreak::new(
+                [PartitionId::new(0), PartitionId::new(1)],
+                3,
+            ),
+            WorkloadParallelBatchPartitionStreak::new(
+                [PartitionId::new(0), PartitionId::new(2)],
+                2,
+            ),
+            WorkloadParallelBatchPartitionStreak::new(
+                [
+                    PartitionId::new(1),
+                    PartitionId::new(2),
+                    PartitionId::new(3)
+                ],
+                4,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+            PartitionId::new(0),
+            PartitionId::new(2),
+        ]),
+        2,
+    );
 }

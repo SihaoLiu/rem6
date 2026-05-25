@@ -62,6 +62,11 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
         )
+        .with_parallel_scheduler_batch_partition_streak_sequence(
+            run.parallel_scheduler_batches()
+                .into_iter()
+                .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
+        )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_riscv_core_counts(
@@ -89,6 +94,11 @@ pub(super) fn parallel_execution_summary(
                 .map(|batch| WorkloadParallelBatchWorkerCount::new(batch.worker_count(), 1)),
         )
         .with_data_cache_parallel_scheduler_batch_partition_sets(
+            run.data_cache_parallel_scheduler_batches()
+                .into_iter()
+                .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
+        )
+        .with_data_cache_parallel_scheduler_batch_partition_streak_sequence(
             run.data_cache_parallel_scheduler_batches()
                 .into_iter()
                 .map(|batch| WorkloadParallelBatchPartitionSet::new(batch.worker_partitions(), 1)),
@@ -227,6 +237,7 @@ mod tests {
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
         MemoryTargetId,
     };
+    use rem6_workload::WorkloadParallelBatchPartitionStreak;
 
     use super::*;
     use crate::workload_replay::{WorkloadGpuDmaActivity, WorkloadReplayActivityRefs};
@@ -392,6 +403,19 @@ mod tests {
         );
         assert_eq!(
             summary.full_system_parallel_scheduler_batch_count_for_partition_set([source]),
+            1,
+        );
+        assert_eq!(
+            summary.parallel_scheduler_batch_partition_streaks(),
+            &[
+                WorkloadParallelBatchPartitionStreak::new([source], 1),
+                WorkloadParallelBatchPartitionStreak::new([target], 1),
+            ],
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+                source
+            ]),
             1,
         );
         let flows = summary.full_system_parallel_scheduler_remote_flows();

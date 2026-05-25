@@ -3,12 +3,12 @@ use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopol
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelRemoteFlowScope, WorkloadResource,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -32,6 +32,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_parallel_batch_activity: &'a [WorkloadExpectedParallelBatchActivity],
     pub(crate) expected_parallel_batch_partition_sets:
         &'a [WorkloadExpectedParallelBatchPartitionSet],
+    pub(crate) expected_parallel_batch_partition_streaks:
+        &'a [WorkloadExpectedParallelBatchPartitionStreak],
     pub(crate) expected_parallel_partition_use: &'a [WorkloadExpectedParallelPartitionUse],
     pub(crate) expected_parallel_partition_activity:
         &'a [WorkloadExpectedParallelPartitionActivity],
@@ -109,6 +111,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_batch_partition_sets {
         hash_expected_parallel_batch_partition_set(&mut hash, expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_batch_partition_streaks.len() as u64,
+    );
+    for expected in input.expected_parallel_batch_partition_streaks {
+        hash_expected_parallel_batch_partition_streak(&mut hash, expected);
     }
     hash_u64(
         &mut hash,
@@ -193,6 +202,18 @@ fn hash_expected_parallel_batch_partition_set(
         hash_u64(hash, u64::from(partition.index()));
     }
     hash_u64(hash, expected.minimum_batch_count() as u64);
+}
+
+fn hash_expected_parallel_batch_partition_streak(
+    hash: &mut u64,
+    expected: &WorkloadExpectedParallelBatchPartitionStreak,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, expected.partitions().len() as u64);
+    for partition in expected.partitions() {
+        hash_u64(hash, u64::from(partition.index()));
+    }
+    hash_u64(hash, expected.minimum_consecutive_batch_count() as u64);
 }
 
 fn hash_expected_parallel_partition_use(

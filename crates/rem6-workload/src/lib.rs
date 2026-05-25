@@ -10,6 +10,7 @@ mod error;
 mod heterogeneous;
 mod host_event;
 mod identity;
+mod parallel_batch;
 mod parallel_expectation;
 mod qos;
 mod resource_payload;
@@ -31,13 +32,17 @@ pub use host_event::{
     WorkloadHostActionSummary, WorkloadHostEvent, WorkloadStatsScope,
 };
 use identity::{manifest_identity, ManifestIdentityInput};
+pub use parallel_batch::{
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchWorkerCount,
+};
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
-    WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -46,8 +51,7 @@ pub use qos::{
 pub use resource_payload::{WorkloadResolvedResources, WorkloadResourcePayload};
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
-    WorkloadDramQosRequestorSummary, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
+    WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,
@@ -254,6 +258,7 @@ pub struct WorkloadManifest {
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
+    expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -344,6 +349,12 @@ impl WorkloadManifest {
         &self.expected_parallel_batch_partition_sets
     }
 
+    pub fn expected_parallel_batch_partition_streaks(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchPartitionStreak] {
+        &self.expected_parallel_batch_partition_streaks
+    }
+
     pub fn expected_parallel_partition_use(&self) -> &[WorkloadExpectedParallelPartitionUse] {
         &self.expected_parallel_partition_use
     }
@@ -383,6 +394,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
+    expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -405,6 +417,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_activity: Vec::new(),
             expected_parallel_batch_activity: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
+            expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             expected_parallel_partition_activity: Vec::new(),
             checkpoint_lineage: None,
@@ -516,6 +529,29 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_batch_partition_sets.push(expected);
         self.expected_parallel_batch_partition_sets
             .sort_by_key(|batch_set| batch_set.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_batch_partition_streak(
+        mut self,
+        expected: WorkloadExpectedParallelBatchPartitionStreak,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_partition_streaks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelBatchPartitionStreak {
+                    scope: expected.scope(),
+                    partitions: expected.partition_indexes(),
+                },
+            );
+        }
+        self.expected_parallel_batch_partition_streaks
+            .push(expected);
+        self.expected_parallel_batch_partition_streaks
+            .sort_by_key(|streak| streak.sort_key());
         Ok(self)
     }
 
@@ -699,6 +735,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
             expected_parallel_batch_activity: &self.expected_parallel_batch_activity,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
+            expected_parallel_batch_partition_streaks: &self
+                .expected_parallel_batch_partition_streaks,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
@@ -719,6 +757,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
             expected_parallel_batch_activity: self.expected_parallel_batch_activity,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
+            expected_parallel_batch_partition_streaks: self
+                .expected_parallel_batch_partition_streaks,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage,
@@ -746,6 +786,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
+    expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -778,6 +819,9 @@ impl WorkloadReplayPlan {
             expected_parallel_batch_activity: manifest.expected_parallel_batch_activity().to_vec(),
             expected_parallel_batch_partition_sets: manifest
                 .expected_parallel_batch_partition_sets()
+                .to_vec(),
+            expected_parallel_batch_partition_streaks: manifest
+                .expected_parallel_batch_partition_streaks()
                 .to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
             expected_parallel_partition_activity: manifest
@@ -980,6 +1024,35 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_batch_partition_sets
     }
 
+    pub fn add_expected_parallel_batch_partition_streak(
+        mut self,
+        expected: WorkloadExpectedParallelBatchPartitionStreak,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_partition_streaks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelBatchPartitionStreak {
+                    scope: expected.scope(),
+                    partitions: expected.partition_indexes(),
+                },
+            );
+        }
+        self.expected_parallel_batch_partition_streaks
+            .push(expected);
+        self.expected_parallel_batch_partition_streaks
+            .sort_by_key(|streak| streak.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_batch_partition_streaks(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchPartitionStreak] {
+        &self.expected_parallel_batch_partition_streaks
+    }
+
     pub fn add_expected_parallel_partition_use(
         mut self,
         expected: WorkloadExpectedParallelPartitionUse,
@@ -1078,6 +1151,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_worker_activity(result)?;
         self.verify_expected_parallel_batch_activity(result)?;
         self.verify_expected_parallel_batch_partition_sets(result)?;
+        self.verify_expected_parallel_batch_partition_streaks(result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
         self.verify_expected_clean_parallel_diagnostics(result)?;
@@ -1397,6 +1471,38 @@ impl WorkloadReplayPlan {
                         partitions: expected.partition_indexes(),
                         minimum_batch_count: expected.minimum_batch_count(),
                         actual_batch_count,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_expected_parallel_batch_partition_streaks(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_batch_partition_streaks.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = &self.expected_parallel_batch_partition_streaks[0];
+            return Err(WorkloadError::MissingParallelBatchPartitionStreakSummary {
+                scope: expected.scope(),
+                partitions: expected.partition_indexes(),
+                minimum_consecutive_batch_count: expected.minimum_consecutive_batch_count(),
+            });
+        };
+
+        for expected in &self.expected_parallel_batch_partition_streaks {
+            let actual_consecutive_batch_count = expected.actual_consecutive_batch_count(summary);
+            if actual_consecutive_batch_count < expected.minimum_consecutive_batch_count() {
+                return Err(
+                    WorkloadError::ExpectedParallelBatchPartitionStreakBelowMinimum {
+                        scope: expected.scope(),
+                        partitions: expected.partition_indexes(),
+                        minimum_consecutive_batch_count: expected.minimum_consecutive_batch_count(),
+                        actual_consecutive_batch_count,
                     },
                 );
             }

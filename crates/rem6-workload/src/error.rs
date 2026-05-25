@@ -452,6 +452,29 @@ pub enum WorkloadError {
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
+    InvalidExpectedParallelBatchPartitionStreak {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+    },
+    ZeroExpectedParallelBatchPartitionStreakCount {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+    },
+    DuplicateExpectedParallelBatchPartitionStreak {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+    },
+    MissingParallelBatchPartitionStreakSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+        minimum_consecutive_batch_count: usize,
+    },
+    ExpectedParallelBatchPartitionStreakBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+        minimum_consecutive_batch_count: usize,
+        actual_consecutive_batch_count: usize,
+    },
     ZeroExpectedParallelPartitionCount {
         scope: WorkloadParallelRemoteFlowScope,
     },
@@ -1195,6 +1218,45 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} batch partition set {} to reach at least {minimum_batch_count} batches, got {actual_batch_count}",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::InvalidExpectedParallelBatchPartitionStreak { scope, partitions } => write!(
+                formatter,
+                "expected {} batch partition streak {} must include at least 2 partitions",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::ZeroExpectedParallelBatchPartitionStreakCount { scope, partitions } => write!(
+                formatter,
+                "expected {} batch partition streak {} must require a positive consecutive batch count",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::DuplicateExpectedParallelBatchPartitionStreak { scope, partitions } => write!(
+                formatter,
+                "expected {} batch partition streak {} is already declared",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::MissingParallelBatchPartitionStreakSummary {
+                scope,
+                partitions,
+                minimum_consecutive_batch_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch partition streak {} with at least {minimum_consecutive_batch_count} consecutive batches",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::ExpectedParallelBatchPartitionStreakBelowMinimum {
+                scope,
+                partitions,
+                minimum_consecutive_batch_count,
+                actual_consecutive_batch_count,
+            } => write!(
+                formatter,
+                "expected {} batch partition streak {} to reach at least {minimum_consecutive_batch_count} consecutive batches, got {actual_consecutive_batch_count}",
                 scope.as_str(),
                 format_partition_indexes(partitions)
             ),
