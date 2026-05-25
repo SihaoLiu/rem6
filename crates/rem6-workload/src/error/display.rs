@@ -526,6 +526,10 @@ impl fmt::Display for WorkloadError {
                 "workload suite execution for {} used worker {actual}, expected {expected}",
                 workload.as_str()
             ),
+            Self::SuiteDispatchWorkerCountMismatch { expected, actual } => write!(
+                formatter,
+                "workload suite dispatch load uses {actual} workers, expected {expected}"
+            ),
             Self::SuiteDispatchCompletionWindowInvalid {
                 workload,
                 start_tick,
@@ -580,6 +584,24 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "workload suite worker utilization {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
+            ),
+            Self::SuitePlannedParallelSpeedupBelowMinimum {
+                minimum_numerator,
+                minimum_denominator,
+                actual_numerator,
+                actual_denominator,
+            } => write!(
+                formatter,
+                "workload suite planned speedup {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
+            ),
+            Self::SuitePlannedWorkerUtilizationBelowMinimum {
+                minimum_numerator,
+                minimum_denominator,
+                actual_numerator,
+                actual_denominator,
+            } => write!(
+                formatter,
+                "workload suite planned worker utilization {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
             ),
             Self::ZeroSuiteExecutionRatioDenominator => write!(
                 formatter,

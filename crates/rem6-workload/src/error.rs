@@ -364,6 +364,10 @@ pub enum WorkloadError {
         expected: usize,
         actual: usize,
     },
+    SuiteDispatchWorkerCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
     SuiteDispatchCompletionWindowInvalid {
         workload: WorkloadId,
         start_tick: Tick,
@@ -392,6 +396,18 @@ pub enum WorkloadError {
         actual_denominator: Tick,
     },
     SuiteWorkerUtilizationBelowMinimum {
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+        actual_numerator: Tick,
+        actual_denominator: Tick,
+    },
+    SuitePlannedParallelSpeedupBelowMinimum {
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+        actual_numerator: Tick,
+        actual_denominator: Tick,
+    },
+    SuitePlannedWorkerUtilizationBelowMinimum {
         minimum_numerator: Tick,
         minimum_denominator: Tick,
         actual_numerator: Tick,
