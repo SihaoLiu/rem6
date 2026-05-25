@@ -504,6 +504,36 @@ fn workload_result_records_parallel_execution_summary() {
 }
 
 #[test]
+fn workload_result_marks_typed_parallel_evidence_as_work() {
+    let scheduler_flow =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 3, 11),
+        ]);
+    assert!(scheduler_flow.has_parallel_scheduler_work());
+    assert!(!scheduler_flow.has_data_cache_parallel_work());
+    assert!(scheduler_flow.has_full_system_parallel_scheduler_work());
+
+    let data_cache_frontier = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_frontiers(
+            [PartitionFrontier::new(
+                PartitionId::new(2),
+                5,
+                13,
+                Some(8),
+                1,
+            )],
+            [PartitionFrontier::new(PartitionId::new(2), 13, 21, None, 0)],
+        );
+    assert!(!data_cache_frontier.has_parallel_scheduler_work());
+    assert!(data_cache_frontier.has_data_cache_parallel_work());
+    assert!(data_cache_frontier.has_full_system_parallel_scheduler_work());
+
+    let active_partitions =
+        WorkloadParallelExecutionSummary::default().with_full_system_parallel_partitions(3);
+    assert!(active_partitions.has_full_system_parallel_scheduler_work());
+}
+
+#[test]
 fn workload_result_full_system_frontiers_merge_partitions_conservatively() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_frontiers(

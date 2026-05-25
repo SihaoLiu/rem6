@@ -1748,23 +1748,27 @@ impl WorkloadParallelExecutionSummary {
             || self.has_data_cache_parallel_scheduler_remote_flows()
     }
 
-    pub const fn has_full_system_parallel_scheduler_work(&self) -> bool {
-        self.has_parallel_scheduler_work() || self.has_data_cache_parallel_work()
+    pub fn has_full_system_parallel_scheduler_work(&self) -> bool {
+        self.active_full_system_parallel_scheduler_partition_count() != 0
+            || self.has_parallel_scheduler_work()
+            || self.has_data_cache_parallel_work()
     }
 
-    pub const fn has_parallel_scheduler_work(&self) -> bool {
-        self.scheduler_dispatch_count != 0
+    pub fn has_parallel_scheduler_work(&self) -> bool {
+        self.active_scheduler_partition_count() != 0
+            || self.scheduler_dispatch_count != 0
             || self.scheduler_batch_count != 0
             || self.total_parallel_scheduler_workers != 0
             || self.max_parallel_scheduler_workers != 0
             || !self.parallel_scheduler_batch_worker_counts.is_empty()
             || !self.parallel_scheduler_batch_partition_sets.is_empty()
             || !self.parallel_scheduler_batch_partition_streaks.is_empty()
-            || !self.parallel_scheduler_partition_activities.is_empty()
+            || self.has_parallel_scheduler_frontiers()
     }
 
-    pub const fn has_data_cache_parallel_work(&self) -> bool {
+    pub fn has_data_cache_parallel_work(&self) -> bool {
         self.data_cache_parallel_run_count != 0
+            || self.active_data_cache_parallel_scheduler_partition_count() != 0
             || self.data_cache_parallel_scheduler_dispatch_count != 0
             || self.data_cache_parallel_scheduler_total_workers != 0
             || self.data_cache_parallel_scheduler_max_workers != 0
@@ -1777,8 +1781,6 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .data_cache_parallel_scheduler_batch_partition_streaks
                 .is_empty()
-            || !self
-                .data_cache_parallel_scheduler_partition_activities
-                .is_empty()
+            || self.has_data_cache_parallel_scheduler_frontiers()
     }
 }
