@@ -7,7 +7,8 @@ use rem6_memory::MemoryError;
 
 use crate::{
     error_support::{
-        format_partition_indexes, format_remote_endpoint_error, format_remote_traffic_error,
+        format_partition_indexes, format_remote_delay_error, format_remote_endpoint_error,
+        format_remote_traffic_error,
     },
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
@@ -406,6 +407,33 @@ pub enum WorkloadError {
         source_tick: Tick,
         delivery_tick: Tick,
         order: u64,
+    },
+    ZeroExpectedParallelRemoteDelayFloor {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelRemoteDelayFloor {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    MissingParallelRemoteDelayFloorSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_delay: Tick,
+    },
+    MissingParallelRemoteDelayEvidence {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_delay: Tick,
+    },
+    MissingParallelRemoteFlowDelayEvidence {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        minimum_delay: Tick,
+    },
+    ExpectedParallelRemoteDelayBelowFloor {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        minimum_delay: Tick,
+        actual_minimum_delay: Tick,
     },
     InvalidExpectedParallelRemoteFlowTimingWindow {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1210,104 +1238,20 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedParallelRemoteEndpointsMismatch { .. } => {
                 format_remote_endpoint_error(self, formatter)
             }
-            Self::InvalidExpectedParallelRemoteFlowTimingWindow {
-                scope,
-                source,
-                target,
-                first_tick,
-                last_tick,
-            } => write!(
-                formatter,
-                "expected {} remote flow timing {source}->{target} first tick {first_tick} is after last tick {last_tick}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelRemoteFlowDelayBounds {
-                scope,
-                source,
-                target,
-                minimum_delay,
-                maximum_delay,
-            } => write!(
-                formatter,
-                "expected {} remote flow timing {source}->{target} minimum delay {minimum_delay} is above maximum delay {maximum_delay}",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelRemoteFlowTiming {
-                scope,
-                source,
-                target,
-            } => write!(
-                formatter,
-                "expected {} remote flow timing {source}->{target} is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelRemoteFlowTimingSummary {
-                scope,
-                source,
-                target,
-                expected_send_count,
-                expected_first_tick,
-                expected_last_tick,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} remote flow timing {source}->{target} with {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelRemoteFlowTimingMismatch {
-                scope,
-                source,
-                target,
-                expected_send_count,
-                actual_send_count,
-                expected_first_tick,
-                actual_first_tick,
-                expected_last_tick,
-                actual_last_tick,
-            } => {
-                let actual_first_tick = actual_first_tick
-                    .map(|tick| tick.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                let actual_last_tick = actual_last_tick
-                    .map(|tick| tick.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                write!(
-                    formatter,
-                    "expected {} remote flow timing {source}->{target} to have {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}, got {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
-                    scope.as_str()
-                )
-            }
-            Self::UnexpectedParallelRemoteFlowTiming {
-                scope,
-                source,
-                target,
-                actual_send_count,
-                actual_first_tick,
-                actual_last_tick,
-            } => write!(
-                formatter,
-                "unexpected {} remote flow timing {source}->{target} with {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelRemoteFlowDelayBoundsMismatch {
-                scope,
-                source,
-                target,
-                expected_minimum_delay,
-                actual_minimum_delay,
-                expected_maximum_delay,
-                actual_maximum_delay,
-            } => {
-                let actual_minimum_delay = actual_minimum_delay
-                    .map(|delay| delay.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                let actual_maximum_delay = actual_maximum_delay
-                    .map(|delay| delay.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                write!(
-                    formatter,
-                    "expected {} remote flow timing {source}->{target} delay bounds {expected_minimum_delay} to {expected_maximum_delay}, got {actual_minimum_delay} to {actual_maximum_delay}",
-                    scope.as_str()
-                )
+            Self::ZeroExpectedParallelRemoteDelayFloor { .. }
+            | Self::DuplicateExpectedParallelRemoteDelayFloor { .. }
+            | Self::MissingParallelRemoteDelayFloorSummary { .. }
+            | Self::MissingParallelRemoteDelayEvidence { .. }
+            | Self::MissingParallelRemoteFlowDelayEvidence { .. }
+            | Self::ExpectedParallelRemoteDelayBelowFloor { .. }
+            | Self::InvalidExpectedParallelRemoteFlowTimingWindow { .. }
+            | Self::InvalidExpectedParallelRemoteFlowDelayBounds { .. }
+            | Self::DuplicateExpectedParallelRemoteFlowTiming { .. }
+            | Self::MissingParallelRemoteFlowTimingSummary { .. }
+            | Self::ExpectedParallelRemoteFlowTimingMismatch { .. }
+            | Self::UnexpectedParallelRemoteFlowTiming { .. }
+            | Self::ExpectedParallelRemoteFlowDelayBoundsMismatch { .. } => {
+                format_remote_delay_error(self, formatter)
             }
             Self::ZeroExpectedParallelWorkerCount { scope } => write!(
                 formatter,

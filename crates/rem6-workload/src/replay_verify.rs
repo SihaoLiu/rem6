@@ -204,6 +204,53 @@ fn unexpected_parallel_remote_flow(
     })
 }
 
+pub(crate) fn verify_expected_parallel_remote_delay_floors(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_floors = plan.expected_parallel_remote_delay_floors();
+    if expected_floors.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_floors[0];
+        return Err(WorkloadError::MissingParallelRemoteDelayFloorSummary {
+            scope: expected.scope(),
+            minimum_delay: expected.minimum_delay(),
+        });
+    };
+
+    for expected in expected_floors {
+        let flows = actual_parallel_remote_flows_for_scope(summary, expected.scope());
+        if flows.is_empty() {
+            return Err(WorkloadError::MissingParallelRemoteDelayEvidence {
+                scope: expected.scope(),
+                minimum_delay: expected.minimum_delay(),
+            });
+        }
+        for flow in flows {
+            let Some(actual_minimum_delay) = flow.minimum_delay() else {
+                return Err(WorkloadError::MissingParallelRemoteFlowDelayEvidence {
+                    scope: expected.scope(),
+                    source: flow.source().index(),
+                    target: flow.target().index(),
+                    minimum_delay: expected.minimum_delay(),
+                });
+            };
+            if actual_minimum_delay < expected.minimum_delay() {
+                return Err(WorkloadError::ExpectedParallelRemoteDelayBelowFloor {
+                    scope: expected.scope(),
+                    source: flow.source().index(),
+                    target: flow.target().index(),
+                    minimum_delay: expected.minimum_delay(),
+                    actual_minimum_delay,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_remote_endpoints(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

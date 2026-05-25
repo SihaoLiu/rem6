@@ -12,6 +12,7 @@ mod host_event;
 mod identity;
 mod manifest_parallel_frontier;
 mod manifest_remote_endpoints;
+mod manifest_remote_traffic;
 mod parallel_batch;
 mod parallel_expectation;
 mod qos;
@@ -47,13 +48,13 @@ pub use parallel_expectation::{
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
-    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -268,6 +269,7 @@ pub struct WorkloadManifest {
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
+    expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -353,20 +355,6 @@ impl WorkloadManifest {
         self.expected_data_cache_run_attribution.as_ref()
     }
 
-    pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
-        &self.expected_parallel_remote_flows
-    }
-
-    pub fn expected_parallel_remote_sends(&self) -> &[WorkloadExpectedParallelRemoteSend] {
-        &self.expected_parallel_remote_sends
-    }
-
-    pub fn expected_parallel_remote_flow_timings(
-        &self,
-    ) -> &[WorkloadExpectedParallelRemoteFlowTiming] {
-        &self.expected_parallel_remote_flow_timings
-    }
-
     pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
         &self.expected_parallel_worker_use
     }
@@ -444,6 +432,7 @@ pub struct WorkloadManifestBuilder {
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
+    expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -475,6 +464,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_run_attribution: None,
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_remote_endpoints: Vec::new(),
+            expected_parallel_remote_delay_floors: Vec::new(),
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
@@ -547,51 +537,6 @@ impl WorkloadManifestBuilder {
             return Err(WorkloadError::DuplicateExpectedDataCacheRunAttribution);
         }
         self.expected_data_cache_run_attribution = Some(expected);
-        Ok(self)
-    }
-
-    pub fn add_expected_parallel_remote_flow_timing(
-        mut self,
-        expected: WorkloadExpectedParallelRemoteFlowTiming,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_parallel_remote_flow_timings
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlowTiming {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-            });
-        }
-        self.expected_parallel_remote_flow_timings.push(expected);
-        self.expected_parallel_remote_flow_timings
-            .sort_by_key(|timing| timing.sort_key());
-        Ok(self)
-    }
-
-    pub fn add_expected_parallel_remote_send(
-        mut self,
-        expected: WorkloadExpectedParallelRemoteSend,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_parallel_remote_sends
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedParallelRemoteSend {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-                source_tick: expected.source_tick(),
-                delivery_tick: expected.delivery_tick(),
-                order: expected.order(),
-            });
-        }
-        self.expected_parallel_remote_sends.push(expected);
-        self.expected_parallel_remote_sends
-            .sort_by_key(|send| send.sort_key());
         Ok(self)
     }
 
@@ -802,27 +747,6 @@ impl WorkloadManifestBuilder {
         self
     }
 
-    pub fn add_expected_parallel_remote_flow(
-        mut self,
-        expected: WorkloadExpectedParallelRemoteFlow,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_parallel_remote_flows
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlow {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-            });
-        }
-        self.expected_parallel_remote_flows.push(expected);
-        self.expected_parallel_remote_flows
-            .sort_by_key(|flow| flow.sort_key());
-        Ok(self)
-    }
-
     pub fn with_topology(mut self, topology: WorkloadTopology) -> Self {
         self.topology = Some(topology);
         self
@@ -912,6 +836,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_remote_endpoints: &self.expected_parallel_remote_endpoints,
+            expected_parallel_remote_delay_floors: &self.expected_parallel_remote_delay_floors,
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
@@ -942,6 +867,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_remote_endpoints: self.expected_parallel_remote_endpoints,
+            expected_parallel_remote_delay_floors: self.expected_parallel_remote_delay_floors,
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
@@ -979,6 +905,7 @@ pub struct WorkloadReplayPlan {
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
+    expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -1020,6 +947,9 @@ impl WorkloadReplayPlan {
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             expected_parallel_remote_endpoints: manifest
                 .expected_parallel_remote_endpoints()
+                .to_vec(),
+            expected_parallel_remote_delay_floors: manifest
+                .expected_parallel_remote_delay_floors()
                 .to_vec(),
             expected_parallel_remote_sends: manifest.expected_parallel_remote_sends().to_vec(),
             expected_parallel_remote_flow_timings: manifest
@@ -1139,59 +1069,6 @@ impl WorkloadReplayPlan {
         self.expected_data_cache_run_attribution.as_ref()
     }
 
-    pub fn add_expected_parallel_remote_flow(
-        mut self,
-        expected: WorkloadExpectedParallelRemoteFlow,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_parallel_remote_flows
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlow {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-            });
-        }
-        self.expected_parallel_remote_flows.push(expected);
-        self.expected_parallel_remote_flows
-            .sort_by_key(|flow| flow.sort_key());
-        Ok(self)
-    }
-
-    pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
-        &self.expected_parallel_remote_flows
-    }
-
-    pub fn add_expected_parallel_remote_send(
-        mut self,
-        expected: WorkloadExpectedParallelRemoteSend,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_parallel_remote_sends
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedParallelRemoteSend {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-                source_tick: expected.source_tick(),
-                delivery_tick: expected.delivery_tick(),
-                order: expected.order(),
-            });
-        }
-        self.expected_parallel_remote_sends.push(expected);
-        self.expected_parallel_remote_sends
-            .sort_by_key(|send| send.sort_key());
-        Ok(self)
-    }
-
-    pub fn expected_parallel_remote_sends(&self) -> &[WorkloadExpectedParallelRemoteSend] {
-        &self.expected_parallel_remote_sends
-    }
-
     pub fn add_expected_parallel_worker_use(
         mut self,
         expected: WorkloadExpectedParallelWorkerUse,
@@ -1209,33 +1086,6 @@ impl WorkloadReplayPlan {
         self.expected_parallel_worker_use
             .sort_by_key(|worker_use| worker_use.sort_key());
         Ok(self)
-    }
-
-    pub fn add_expected_parallel_remote_flow_timing(
-        mut self,
-        expected: WorkloadExpectedParallelRemoteFlowTiming,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_parallel_remote_flow_timings
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlowTiming {
-                scope: expected.scope(),
-                source: expected.source().index(),
-                target: expected.target().index(),
-            });
-        }
-        self.expected_parallel_remote_flow_timings.push(expected);
-        self.expected_parallel_remote_flow_timings
-            .sort_by_key(|timing| timing.sort_key());
-        Ok(self)
-    }
-
-    pub fn expected_parallel_remote_flow_timings(
-        &self,
-    ) -> &[WorkloadExpectedParallelRemoteFlowTiming] {
-        &self.expected_parallel_remote_flow_timings
     }
 
     pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
@@ -1513,6 +1363,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_remote_sends(self, result)?;
         replay_verify::verify_expected_parallel_remote_flow_timings(self, result)?;
         replay_verify::verify_expected_parallel_remote_endpoints(self, result)?;
+        replay_verify::verify_expected_parallel_remote_delay_floors(self, result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;

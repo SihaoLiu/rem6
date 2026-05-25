@@ -630,6 +630,39 @@ fn normalize_parallel_endpoint_partitions(
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelRemoteDelayFloor {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_delay: u64,
+}
+
+impl WorkloadExpectedParallelRemoteDelayFloor {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_delay: u64,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_delay == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelRemoteDelayFloor { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_delay,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_delay(self) -> u64 {
+        self.minimum_delay
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelRemoteSend {
     scope: WorkloadParallelRemoteFlowScope,
     source: PartitionId,

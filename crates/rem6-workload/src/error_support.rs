@@ -168,6 +168,161 @@ pub(crate) fn format_remote_endpoint_error(
     }
 }
 
+pub(crate) fn format_remote_delay_error(
+    error: &WorkloadError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    match error {
+        WorkloadError::ZeroExpectedParallelRemoteDelayFloor { scope } => write!(
+            formatter,
+            "expected {} remote delay floor must be positive",
+            scope.as_str()
+        ),
+        WorkloadError::DuplicateExpectedParallelRemoteDelayFloor { scope } => write!(
+            formatter,
+            "expected {} remote delay floor is already declared",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteDelayFloorSummary {
+            scope,
+            minimum_delay,
+        } => write!(
+            formatter,
+            "missing parallel summary for expected {} remote delay floor {minimum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteDelayEvidence {
+            scope,
+            minimum_delay,
+        } => write!(
+            formatter,
+            "missing {} remote delay evidence for expected floor {minimum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteFlowDelayEvidence {
+            scope,
+            source,
+            target,
+            minimum_delay,
+        } => write!(
+            formatter,
+            "missing {} remote flow delay evidence for {source}->{target} against floor {minimum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::ExpectedParallelRemoteDelayBelowFloor {
+            scope,
+            source,
+            target,
+            minimum_delay,
+            actual_minimum_delay,
+        } => write!(
+            formatter,
+            "expected {} remote flow {source}->{target} minimum delay at least {minimum_delay}, got {actual_minimum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidExpectedParallelRemoteFlowTimingWindow {
+            scope,
+            source,
+            target,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "expected {} remote flow timing {source}->{target} first tick {first_tick} is after last tick {last_tick}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidExpectedParallelRemoteFlowDelayBounds {
+            scope,
+            source,
+            target,
+            minimum_delay,
+            maximum_delay,
+        } => write!(
+            formatter,
+            "expected {} remote flow timing {source}->{target} minimum delay {minimum_delay} is above maximum delay {maximum_delay}",
+            scope.as_str()
+        ),
+        WorkloadError::DuplicateExpectedParallelRemoteFlowTiming {
+            scope,
+            source,
+            target,
+        } => write!(
+            formatter,
+            "expected {} remote flow timing {source}->{target} is already declared",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteFlowTimingSummary {
+            scope,
+            source,
+            target,
+            expected_send_count,
+            expected_first_tick,
+            expected_last_tick,
+        } => write!(
+            formatter,
+            "missing parallel summary for expected {} remote flow timing {source}->{target} with {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}",
+            scope.as_str()
+        ),
+        WorkloadError::ExpectedParallelRemoteFlowTimingMismatch {
+            scope,
+            source,
+            target,
+            expected_send_count,
+            actual_send_count,
+            expected_first_tick,
+            actual_first_tick,
+            expected_last_tick,
+            actual_last_tick,
+        } => {
+            let actual_first_tick = actual_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            let actual_last_tick = actual_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            write!(
+                formatter,
+                "expected {} remote flow timing {source}->{target} to have {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}, got {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
+                scope.as_str()
+            )
+        }
+        WorkloadError::UnexpectedParallelRemoteFlowTiming {
+            scope,
+            source,
+            target,
+            actual_send_count,
+            actual_first_tick,
+            actual_last_tick,
+        } => write!(
+            formatter,
+            "unexpected {} remote flow timing {source}->{target} with {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
+            scope.as_str()
+        ),
+        WorkloadError::ExpectedParallelRemoteFlowDelayBoundsMismatch {
+            scope,
+            source,
+            target,
+            expected_minimum_delay,
+            actual_minimum_delay,
+            expected_maximum_delay,
+            actual_maximum_delay,
+        } => {
+            let actual_minimum_delay = actual_minimum_delay
+                .map(|delay| delay.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            let actual_maximum_delay = actual_maximum_delay
+                .map(|delay| delay.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            write!(
+                formatter,
+                "expected {} remote flow timing {source}->{target} delay bounds {expected_minimum_delay} to {expected_maximum_delay}, got {actual_minimum_delay} to {actual_maximum_delay}",
+                scope.as_str()
+            )
+        }
+        _ => unreachable!("unsupported remote delay error"),
+    }
+}
+
 impl Error for WorkloadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
