@@ -476,6 +476,13 @@ impl WorkloadSuiteDispatchTimeline {
             .max()
     }
 
+    pub fn wall_clock_ticks(&self) -> Tick {
+        match (self.minimum_start_tick(), self.maximum_final_tick()) {
+            (Some(start), Some(final_tick)) => final_tick - start,
+            _ => 0,
+        }
+    }
+
     pub fn total_estimated_ticks(&self) -> Tick {
         self.entries
             .iter()
@@ -534,6 +541,28 @@ impl WorkloadSuiteDispatchTimeline {
         worker_index: usize,
     ) -> Result<Option<WorkloadSuiteWorkerExecutionSummary>, WorkloadError> {
         Ok(self.to_execution_summary()?.worker_summary(worker_index))
+    }
+
+    pub fn worker_idle_ticks(&self, worker_index: usize) -> Result<Option<Tick>, WorkloadError> {
+        if worker_index >= self.worker_count() {
+            return Ok(None);
+        }
+
+        let Some(summary) = self.worker_summary(worker_index)? else {
+            return Ok(Some(self.wall_clock_ticks()));
+        };
+
+        Ok(Some(
+            self.wall_clock_ticks()
+                .saturating_sub(summary.total_completion_ticks()),
+        ))
+    }
+
+    pub fn total_worker_idle_ticks(&self) -> Result<Tick, WorkloadError> {
+        Ok(self
+            .to_execution_summary()?
+            .execution_efficiency(self.worker_count())?
+            .idle_worker_ticks())
     }
 
     pub fn verify_against_expectation(

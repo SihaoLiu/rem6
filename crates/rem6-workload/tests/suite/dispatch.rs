@@ -499,6 +499,64 @@ fn workload_suite_dispatch_timeline_reports_planned_worker_summaries() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_reports_planned_worker_idle_ticks() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-worker-idle"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    assert_eq!(timeline.wall_clock_ticks(), 9);
+    assert_eq!(timeline.worker_idle_ticks(0).unwrap(), Some(1));
+    assert_eq!(timeline.worker_idle_ticks(1).unwrap(), Some(0));
+    assert_eq!(timeline.worker_idle_ticks(2).unwrap(), None);
+    assert_eq!(timeline.total_worker_idle_ticks().unwrap(), 1);
+
+    let single_suite = WorkloadSuite::builder(suite_id("planned-worker-idle-unused"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let single_timeline = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &WorkloadSuiteReplayPlan::from_suite(&single_suite).unwrap(),
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 10).unwrap()],
+    )
+    .unwrap()
+    .planned_execution_timeline()
+    .unwrap();
+
+    assert_eq!(single_timeline.wall_clock_ticks(), 10);
+    assert_eq!(single_timeline.worker_idle_ticks(0).unwrap(), Some(0));
+    assert_eq!(single_timeline.worker_idle_ticks(1).unwrap(), Some(10));
+    assert_eq!(single_timeline.worker_idle_ticks(2).unwrap(), None);
+    assert_eq!(single_timeline.total_worker_idle_ticks().unwrap(), 10);
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_accepts_planned_execution_expectation() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");
