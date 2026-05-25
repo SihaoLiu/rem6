@@ -1,3 +1,5 @@
+use rem6_kernel::{ParallelPartitionActivity, PartitionId};
+
 use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
@@ -188,6 +190,65 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_scheduler_progre
             actual_dispatch_count: 11,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_derives_dispatch_progress_from_partition_activity() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("scheduler-progress-from-partition-activity"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            8,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            0,
+            7,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            15,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([
+            (PartitionId::new(0), ParallelPartitionActivity::new(1, 5, 8)),
+            (PartitionId::new(1), ParallelPartitionActivity::new(1, 3, 4)),
+        ])
+        .with_data_cache_parallel_scheduler_partition_activities([
+            (
+                PartitionId::new(10),
+                ParallelPartitionActivity::new(1, 4, 6),
+            ),
+            (
+                PartitionId::new(11),
+                ParallelPartitionActivity::new(1, 3, 3),
+            ),
+        ]);
+
+    assert_eq!(summary.scheduler_dispatch_count(), 8);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 7);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 15);
+    assert!(summary.has_parallel_scheduler_work());
+    assert!(summary.has_data_cache_parallel_work());
+    assert!(summary.has_full_system_parallel_scheduler_work());
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]

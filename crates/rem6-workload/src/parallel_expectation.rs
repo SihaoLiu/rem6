@@ -767,7 +767,7 @@ impl WorkloadExpectedParallelSchedulerProgress {
         self.scope.sort_rank()
     }
 
-    pub(crate) const fn actual_counts(
+    pub(crate) fn actual_counts(
         self,
         summary: &WorkloadParallelExecutionSummary,
     ) -> (usize, usize) {

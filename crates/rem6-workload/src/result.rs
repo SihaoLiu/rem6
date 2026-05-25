@@ -735,8 +735,11 @@ impl WorkloadParallelExecutionSummary {
         self.scheduler_empty_epoch_count
     }
 
-    pub const fn scheduler_dispatch_count(&self) -> usize {
+    pub fn scheduler_dispatch_count(&self) -> usize {
         self.scheduler_dispatch_count
+            .max(parallel_partition_dispatch_count(
+                &self.parallel_scheduler_partition_activities,
+            ))
     }
 
     pub const fn scheduler_batch_count(&self) -> usize {
@@ -911,8 +914,11 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_parallel_scheduler_empty_epoch_count
     }
 
-    pub const fn data_cache_parallel_scheduler_dispatch_count(&self) -> usize {
+    pub fn data_cache_parallel_scheduler_dispatch_count(&self) -> usize {
         self.data_cache_parallel_scheduler_dispatch_count
+            .max(parallel_partition_dispatch_count(
+                &self.data_cache_parallel_scheduler_partition_activities,
+            ))
     }
 
     pub const fn data_cache_parallel_scheduler_batch_count(&self) -> usize {
@@ -1532,8 +1538,8 @@ impl WorkloadParallelExecutionSummary {
         self.scheduler_empty_epoch_count + self.data_cache_parallel_scheduler_empty_epoch_count
     }
 
-    pub const fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
-        self.scheduler_dispatch_count + self.data_cache_parallel_scheduler_dispatch_count
+    pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
+        self.scheduler_dispatch_count() + self.data_cache_parallel_scheduler_dispatch_count()
     }
 
     pub const fn full_system_parallel_scheduler_batch_count(&self) -> usize {
@@ -1737,6 +1743,7 @@ impl WorkloadParallelExecutionSummary {
             || !self.parallel_scheduler_batch_worker_counts.is_empty()
             || !self.parallel_scheduler_batch_partition_sets.is_empty()
             || !self.parallel_scheduler_batch_partition_streaks.is_empty()
+            || !self.parallel_scheduler_partition_activities.is_empty()
     }
 
     pub const fn has_data_cache_parallel_work(&self) -> bool {
@@ -1753,5 +1760,17 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .data_cache_parallel_scheduler_batch_partition_streaks
                 .is_empty()
+            || !self
+                .data_cache_parallel_scheduler_partition_activities
+                .is_empty()
     }
+}
+
+fn parallel_partition_dispatch_count(
+    activities: &[(PartitionId, ParallelPartitionActivity)],
+) -> usize {
+    activities
+        .iter()
+        .map(|(_, activity)| activity.dispatch_count())
+        .sum()
 }
