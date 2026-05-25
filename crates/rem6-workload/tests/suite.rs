@@ -3,8 +3,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchPlan,
-    WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
-    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadSuiteDispatchWeight, WorkloadSuiteExecutionEfficiency,
+    WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
+    WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -211,6 +212,111 @@ fn workload_suite_dispatch_plan_assigns_sorted_manifests_to_workers() {
     assert_eq!(plan.records()[2].workload_id(), gamma.id());
     assert_eq!(plan.records()[2].worker_index(), 0);
     assert_eq!(plan.records()[2].dispatch_order(), 2);
+}
+
+#[test]
+fn workload_suite_dispatch_plan_assigns_weighted_manifests_to_least_loaded_workers() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("weighted-dispatch"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(plan.suite_identity(), suite.identity());
+    assert_eq!(plan.worker_count(), 2);
+    assert_eq!(plan.records()[0].workload_id(), alpha.id());
+    assert_eq!(plan.records()[0].worker_index(), 0);
+    assert_eq!(plan.records()[1].workload_id(), beta.id());
+    assert_eq!(plan.records()[1].worker_index(), 1);
+    assert_eq!(plan.records()[2].workload_id(), delta.id());
+    assert_eq!(plan.records()[2].worker_index(), 1);
+    assert_eq!(plan.records()[3].workload_id(), gamma.id());
+    assert_eq!(plan.records()[3].worker_index(), 1);
+}
+
+#[test]
+fn workload_suite_dispatch_plan_rejects_invalid_weighted_dispatch_inputs() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("bad-weighted-dispatch"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+
+    let zero = WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 0).unwrap_err();
+    assert!(matches!(
+        zero,
+        WorkloadError::ZeroSuiteDispatchWeight { workload } if workload == *alpha.id()
+    ));
+
+    let missing = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 1).unwrap()],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        missing,
+        WorkloadError::MissingSuiteDispatchWeight { workload } if workload == *beta.id()
+    ));
+
+    let duplicate = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 2).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        duplicate,
+        WorkloadError::DuplicateSuiteDispatchWeight { workload } if workload == *alpha.id()
+    ));
+
+    let unexpected = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 1).unwrap(),
+        ],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        unexpected,
+        WorkloadError::UnexpectedSuiteDispatchWeight { workload } if workload == *gamma.id()
+    ));
 }
 
 #[test]

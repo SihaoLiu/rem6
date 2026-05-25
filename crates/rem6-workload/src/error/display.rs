@@ -452,6 +452,11 @@ impl fmt::Display for WorkloadError {
                 "workload suite execution contains duplicate workload {}",
                 workload.as_str()
             ),
+            Self::DuplicateSuiteDispatchWeight { workload } => write!(
+                formatter,
+                "workload suite dispatch has duplicate weight for workload {}",
+                workload.as_str()
+            ),
             Self::MissingSuiteWorkloadResult { workload } => write!(
                 formatter,
                 "workload suite result is missing workload {}",
@@ -462,6 +467,11 @@ impl fmt::Display for WorkloadError {
                 "workload suite execution is missing workload {}",
                 workload.as_str()
             ),
+            Self::MissingSuiteDispatchWeight { workload } => write!(
+                formatter,
+                "workload suite dispatch is missing weight for workload {}",
+                workload.as_str()
+            ),
             Self::UnexpectedSuiteWorkloadResult { workload } => write!(
                 formatter,
                 "workload suite result contains unexpected workload {}",
@@ -470,6 +480,16 @@ impl fmt::Display for WorkloadError {
             Self::UnexpectedSuiteDispatchCompletion { workload } => write!(
                 formatter,
                 "workload suite execution contains unexpected workload {}",
+                workload.as_str()
+            ),
+            Self::UnexpectedSuiteDispatchWeight { workload } => write!(
+                formatter,
+                "workload suite dispatch has unexpected weight for workload {}",
+                workload.as_str()
+            ),
+            Self::ZeroSuiteDispatchWeight { workload } => write!(
+                formatter,
+                "workload suite dispatch weight for workload {} must be positive",
                 workload.as_str()
             ),
             Self::SuiteWorkloadResultManifestMismatch {

@@ -322,16 +322,28 @@ pub enum WorkloadError {
     DuplicateSuiteDispatchCompletion {
         workload: WorkloadId,
     },
+    DuplicateSuiteDispatchWeight {
+        workload: WorkloadId,
+    },
     MissingSuiteWorkloadResult {
         workload: WorkloadId,
     },
     MissingSuiteDispatchCompletion {
         workload: WorkloadId,
     },
+    MissingSuiteDispatchWeight {
+        workload: WorkloadId,
+    },
     UnexpectedSuiteWorkloadResult {
         workload: WorkloadId,
     },
     UnexpectedSuiteDispatchCompletion {
+        workload: WorkloadId,
+    },
+    UnexpectedSuiteDispatchWeight {
+        workload: WorkloadId,
+    },
+    ZeroSuiteDispatchWeight {
         workload: WorkloadId,
     },
     SuiteWorkloadResultManifestMismatch {

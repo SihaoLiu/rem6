@@ -240,6 +240,66 @@ impl WorkloadSuiteDispatchPlan {
         })
     }
 
+    pub fn from_replay_plan_weighted(
+        plan: &WorkloadSuiteReplayPlan,
+        worker_count: usize,
+        weights: &[WorkloadSuiteDispatchWeight],
+    ) -> Result<Self, WorkloadError> {
+        if worker_count == 0 {
+            return Err(WorkloadError::ZeroWorkloadSuiteWorkers);
+        }
+
+        let mut expected_weights = BTreeMap::new();
+        for entry in plan.entries() {
+            expected_weights.insert(entry.workload_id().clone(), None);
+        }
+        for weight in weights {
+            let Some(slot) = expected_weights.get_mut(weight.workload_id()) else {
+                return Err(WorkloadError::UnexpectedSuiteDispatchWeight {
+                    workload: weight.workload_id().clone(),
+                });
+            };
+            if slot.is_some() {
+                return Err(WorkloadError::DuplicateSuiteDispatchWeight {
+                    workload: weight.workload_id().clone(),
+                });
+            }
+            *slot = Some(weight.weight_ticks());
+        }
+
+        let mut worker_loads = vec![0_u64; worker_count];
+        let mut records = Vec::with_capacity(plan.entries().len());
+        for (order, entry) in plan.entries().iter().enumerate() {
+            let Some(weight_ticks) = expected_weights
+                .get(entry.workload_id())
+                .and_then(|weight| *weight)
+            else {
+                return Err(WorkloadError::MissingSuiteDispatchWeight {
+                    workload: entry.workload_id().clone(),
+                });
+            };
+            let worker_index = worker_loads
+                .iter()
+                .enumerate()
+                .min_by_key(|(worker, load)| (**load, *worker))
+                .map(|(worker, _)| worker)
+                .unwrap_or(0);
+            worker_loads[worker_index] = worker_loads[worker_index].saturating_add(weight_ticks);
+            records.push(WorkloadSuiteDispatchRecord::new(
+                entry.workload_id().clone(),
+                entry.manifest_identity(),
+                order,
+                worker_index,
+            ));
+        }
+
+        Ok(Self {
+            suite_identity: plan.suite_identity(),
+            worker_count,
+            records,
+        })
+    }
+
     pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
         self.suite_identity.clone()
     }
@@ -281,6 +341,34 @@ impl WorkloadSuiteDispatchPlan {
             minimum_simultaneous_workers,
         )?
         .for_worker_count(self.worker_count()))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchWeight {
+    workload_id: WorkloadId,
+    weight_ticks: u64,
+}
+
+impl WorkloadSuiteDispatchWeight {
+    pub fn new(workload_id: WorkloadId, weight_ticks: u64) -> Result<Self, WorkloadError> {
+        if weight_ticks == 0 {
+            return Err(WorkloadError::ZeroSuiteDispatchWeight {
+                workload: workload_id,
+            });
+        }
+        Ok(Self {
+            workload_id,
+            weight_ticks,
+        })
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub const fn weight_ticks(&self) -> u64 {
+        self.weight_ticks
     }
 }
 
