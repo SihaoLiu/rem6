@@ -151,6 +151,51 @@ impl PowerExpressionInputs {
         Ok(inputs)
     }
 
+    pub fn from_stat_snapshot_delta(
+        temperature_c: f64,
+        voltage_v: f64,
+        clock_period_ticks: f64,
+        previous: &StatSnapshot,
+        current: &StatSnapshot,
+        bindings: &PowerMetricBindings,
+    ) -> Result<Self, PowerError> {
+        if current.tick() < previous.tick() {
+            return Err(PowerError::PowerStatSnapshotTimeWentBack {
+                previous_tick: previous.tick(),
+                current_tick: current.tick(),
+            });
+        }
+        if previous.epoch() != current.epoch() || previous.reset_tick() != current.reset_tick() {
+            return Err(PowerError::PowerStatSnapshotScopeMismatch {
+                previous_epoch: previous.epoch(),
+                current_epoch: current.epoch(),
+                previous_reset_tick: previous.reset_tick(),
+                current_reset_tick: current.reset_tick(),
+            });
+        }
+
+        let previous_values = stat_sample_values(previous);
+        let current_values = stat_sample_values(current);
+        let mut inputs = Self::new(temperature_c, voltage_v, clock_period_ticks)?;
+        for (metric, stat) in bindings.entries() {
+            let Some(previous_value) = previous_values.get(stat).copied() else {
+                return Err(PowerError::MissingBoundStat { stat: *stat });
+            };
+            let Some(current_value) = current_values.get(stat).copied() else {
+                return Err(PowerError::MissingBoundStat { stat: *stat });
+            };
+            if current_value < previous_value {
+                return Err(PowerError::PowerStatValueWentBack {
+                    stat: *stat,
+                    previous: previous_value,
+                    current: current_value,
+                });
+            }
+            inputs = inputs.with_metric(*metric, (current_value - previous_value) as f64)?;
+        }
+        Ok(inputs)
+    }
+
     pub const fn temperature_c(&self) -> f64 {
         self.temperature_c
     }
@@ -173,6 +218,14 @@ impl PowerExpressionInputs {
     pub fn metrics(&self) -> &BTreeMap<PowerMetricId, f64> {
         &self.metrics
     }
+}
+
+fn stat_sample_values(snapshot: &StatSnapshot) -> BTreeMap<StatId, u64> {
+    snapshot
+        .samples()
+        .iter()
+        .map(|sample| (sample.id(), sample.value()))
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]

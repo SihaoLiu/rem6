@@ -884,6 +884,21 @@ pub enum PowerError {
     MissingBoundStat {
         stat: rem6_stats::StatId,
     },
+    PowerStatSnapshotTimeWentBack {
+        previous_tick: Tick,
+        current_tick: Tick,
+    },
+    PowerStatSnapshotScopeMismatch {
+        previous_epoch: u64,
+        current_epoch: u64,
+        previous_reset_tick: Tick,
+        current_reset_tick: Tick,
+    },
+    PowerStatValueWentBack {
+        stat: rem6_stats::StatId,
+        previous: u64,
+        current: u64,
+    },
     InvalidPowerExpressionResult,
     DuplicatePowerStateExpressionModel {
         state: PowerStateKind,
@@ -987,6 +1002,31 @@ impl fmt::Display for PowerError {
                     stat.get()
                 )
             }
+            Self::PowerStatSnapshotTimeWentBack {
+                previous_tick,
+                current_tick,
+            } => write!(
+                formatter,
+                "power stat snapshot tick {current_tick} is before previous tick {previous_tick}"
+            ),
+            Self::PowerStatSnapshotScopeMismatch {
+                previous_epoch,
+                current_epoch,
+                previous_reset_tick,
+                current_reset_tick,
+            } => write!(
+                formatter,
+                "power stat snapshots use different scopes: previous epoch {previous_epoch} reset {previous_reset_tick}, current epoch {current_epoch} reset {current_reset_tick}"
+            ),
+            Self::PowerStatValueWentBack {
+                stat,
+                previous,
+                current,
+            } => write!(
+                formatter,
+                "power stat {} value {current} is below previous value {previous}",
+                stat.get()
+            ),
             Self::InvalidPowerExpressionResult => {
                 write!(
                     formatter,

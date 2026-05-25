@@ -3,7 +3,7 @@ use rem6_power::{
     PowerExpressionModelSnapshot, PowerMetricBinding, PowerMetricBindings, PowerMetricId,
     PowerModelMode, PowerResidency, PowerStateExpression, PowerStateKind,
 };
-use rem6_stats::{StatId, StatsRegistry};
+use rem6_stats::{StatId, StatSample, StatSnapshot, StatsRegistry};
 
 fn assert_close(actual: f64, expected: f64) {
     assert!(
@@ -253,6 +253,122 @@ fn power_expression_inputs_bind_metrics_from_stats_snapshot() {
         .unwrap_err(),
         PowerError::MissingBoundStat {
             stat: StatId::new(999),
+        },
+    );
+}
+
+#[test]
+fn power_expression_inputs_bind_metric_deltas_from_scoped_stats_snapshots() {
+    let mut stats = StatsRegistry::new();
+    let committed = stats
+        .register_counter("system.cpu0.committed_ops", "Count")
+        .unwrap();
+    let cache_misses = stats
+        .register_counter("system.l2.overall_misses", "Count")
+        .unwrap();
+    stats.increment(committed, 20).unwrap();
+    stats.increment(cache_misses, 5).unwrap();
+    let previous = stats.snapshot(100);
+    stats.increment(committed, 12).unwrap();
+    stats.increment(cache_misses, 2).unwrap();
+    let current = stats.snapshot(140);
+
+    let ops_metric = PowerMetricId::new(1);
+    let miss_metric = PowerMetricId::new(2);
+    let bindings = PowerMetricBindings::new(vec![
+        PowerMetricBinding::new(ops_metric, committed),
+        PowerMetricBinding::new(miss_metric, cache_misses),
+    ])
+    .unwrap();
+    let inputs = PowerExpressionInputs::from_stat_snapshot_delta(
+        45.0, 0.7, 2.0, &previous, &current, &bindings,
+    )
+    .unwrap();
+
+    assert_eq!(inputs.metric(ops_metric).unwrap(), 12.0);
+    assert_eq!(inputs.metric(miss_metric).unwrap(), 2.0);
+    assert_close(
+        PowerExpression::add(
+            PowerExpression::multiply(
+                PowerExpression::metric(ops_metric),
+                PowerExpression::constant(0.25).unwrap(),
+            ),
+            PowerExpression::metric(miss_metric),
+        )
+        .evaluate(&inputs)
+        .unwrap(),
+        5.0,
+    );
+
+    stats.reset(150);
+    stats.increment(committed, 3).unwrap();
+    let reset_scope = stats.snapshot(170);
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0,
+            0.7,
+            2.0,
+            &current,
+            &reset_scope,
+            &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatSnapshotScopeMismatch {
+            previous_epoch: 0,
+            current_epoch: 1,
+            previous_reset_tick: 0,
+            current_reset_tick: 150,
+        },
+    );
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0, 0.7, 2.0, &current, &previous, &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatSnapshotTimeWentBack {
+            previous_tick: 140,
+            current_tick: 100,
+        },
+    );
+}
+
+#[test]
+fn power_expression_inputs_reject_counter_regression_between_stats_snapshots() {
+    let stat = StatId::new(7);
+    let metric = PowerMetricId::new(3);
+    let bindings = PowerMetricBindings::new(vec![PowerMetricBinding::new(metric, stat)]).unwrap();
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::new(
+            stat,
+            "system.cpu0.committed_ops",
+            "Count",
+            12,
+        )],
+    );
+    let current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::new(
+            stat,
+            "system.cpu0.committed_ops",
+            "Count",
+            9,
+        )],
+    );
+
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0, 0.7, 2.0, &previous, &current, &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatValueWentBack {
+            stat,
+            previous: 12,
+            current: 9,
         },
     );
 }
