@@ -1176,7 +1176,7 @@ impl WorkloadExpectedParallelPartitionUse {
         self.scope.sort_rank()
     }
 
-    pub(crate) const fn actual_active_partitions(
+    pub(crate) fn actual_active_partitions(
         self,
         summary: &WorkloadParallelExecutionSummary,
     ) -> usize {

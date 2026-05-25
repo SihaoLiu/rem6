@@ -1,4 +1,5 @@
 use rem6_boot::BootImage;
+use rem6_kernel::{ParallelPartitionActivity, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionUse, WorkloadId,
@@ -171,6 +172,56 @@ fn workload_replay_plan_rejects_missing_or_underused_parallel_partitions() {
             actual_active_partitions: 1,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_derives_full_system_partition_use_from_activity() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-partitions-from-activity"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            3,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([
+            (
+                PartitionId::new(0),
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+            (
+                PartitionId::new(1),
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_partition_activities([
+            (
+                PartitionId::new(1),
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+            (
+                PartitionId::new(2),
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+        ]);
+
+    assert_eq!(
+        summary.active_full_system_parallel_scheduler_partition_count(),
+        3
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]

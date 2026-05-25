@@ -1524,8 +1524,12 @@ impl WorkloadParallelExecutionSummary {
         self.scheduler_batch_count + self.data_cache_parallel_scheduler_batch_count
     }
 
-    pub const fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
+    pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
         self.active_full_system_parallel_scheduler_partition_count
+            .max(
+                self.full_system_parallel_scheduler_partition_activities()
+                    .len(),
+            )
     }
 
     pub const fn full_system_parallel_scheduler_max_workers(&self) -> usize {
