@@ -107,6 +107,54 @@ fn host_checkpoint_refreshes_and_restores_scheduler_state() {
 }
 
 #[test]
+fn host_checkpoint_preserves_scheduler_remote_send_order_identity() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let component = CheckpointComponentId::new("scheduler0").unwrap();
+    let scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap(),
+    ));
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .lock()
+        .unwrap()
+        .run_until_idle_parallel_recorded()
+        .unwrap();
+
+    let port = SchedulerCheckpointPort::new(component.clone(), Arc::clone(&scheduler));
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    port.capture_into(&mut registry).unwrap();
+
+    let restored_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap(),
+    ));
+    SchedulerCheckpointPort::new(component, Arc::clone(&restored_scheduler))
+        .restore_from(&registry)
+        .unwrap();
+
+    let mut restored = restored_scheduler.lock().unwrap();
+    let restored_tick = restored.now();
+    restored
+        .schedule_parallel_at(source, restored_tick, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    let run = restored.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.remote_sends().len(), 1);
+    assert_eq!(run.remote_sends()[0].source(), source);
+    assert_eq!(run.remote_sends()[0].target(), target);
+    assert_eq!(run.remote_sends()[0].order(), 1);
+}
+
+#[test]
 fn host_checkpoint_rejects_scheduler_worker_limit_mismatch_on_restore() {
     let source_component = CheckpointComponentId::new("scheduler0").unwrap();
     let source_scheduler = Arc::new(Mutex::new(

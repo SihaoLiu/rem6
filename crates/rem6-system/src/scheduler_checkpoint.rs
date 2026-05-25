@@ -9,7 +9,7 @@ use rem6_kernel::{
 };
 
 const SCHEDULER_CHUNK: &str = "scheduler";
-const FORMAT_VERSION: u64 = 2;
+const FORMAT_VERSION: u64 = 3;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
@@ -246,6 +246,7 @@ fn encode_snapshot(snapshot: &SchedulerSnapshot) -> Vec<u8> {
         write_u64(&mut payload, partition.now());
         write_u64(&mut payload, partition.next_event_local());
         write_u64(&mut payload, partition.next_event_order());
+        write_u64(&mut payload, partition.next_remote_order());
         write_u64(&mut payload, partition.pending_events().len() as u64);
     }
     payload
@@ -273,17 +274,19 @@ fn decode_snapshot(
         let partition_now = cursor.read_u64("scheduler partition now")?;
         let next_event_local = cursor.read_u64("scheduler next event local")?;
         let next_event_order = cursor.read_u64("scheduler next event order")?;
+        let next_remote_order = cursor.read_u64("scheduler next remote order")?;
         let pending_events = cursor.read_count("scheduler pending event count")?;
         if pending_events != 0 {
             return Err(cursor.invalid(format!(
                 "quiescent scheduler checkpoint contains {pending_events} pending events"
             )));
         }
-        partitions.push(PartitionSnapshot::quiescent(
+        partitions.push(PartitionSnapshot::quiescent_with_remote_order(
             partition,
             partition_now,
             next_event_local,
             next_event_order,
+            next_remote_order,
         ));
     }
     cursor.finish()?;

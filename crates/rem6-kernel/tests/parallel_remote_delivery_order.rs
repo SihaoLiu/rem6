@@ -93,3 +93,66 @@ fn recorded_run_remote_sends_follow_delivery_order_across_epochs() {
     assert_eq!(sends[1].target(), target3);
     assert_eq!(sends[1].delivery_tick(), 20);
 }
+
+#[test]
+fn recorded_remote_send_order_is_source_local_across_epochs() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 10, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(source, 5, move |context| {
+            context.schedule_remote_after(target, 5, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let sends = run.remote_sends();
+
+    assert_eq!(sends.len(), 2);
+    assert_eq!(sends[0].source(), source);
+    assert_eq!(sends[0].target(), target);
+    assert_eq!(sends[0].delivery_tick(), 10);
+    assert_eq!(sends[0].order(), 0);
+    assert_eq!(sends[1].source(), source);
+    assert_eq!(sends[1].target(), target);
+    assert_eq!(sends[1].delivery_tick(), 10);
+    assert_eq!(sends[1].order(), 1);
+}
+
+#[test]
+fn quiescent_snapshot_preserves_remote_send_order_identity() {
+    let source = PartitionId::new(0);
+    let target = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    let snapshot = scheduler.quiescent_snapshot().unwrap();
+    let mut restored = PartitionedScheduler::with_parallel_worker_limit(2, 4, 2).unwrap();
+    restored.restore_quiescent(&snapshot).unwrap();
+
+    restored
+        .schedule_parallel_at(source, restored.now(), move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+
+    let run = restored.run_until_idle_parallel_recorded().unwrap();
+    let sends = run.remote_sends();
+
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].source(), source);
+    assert_eq!(sends[0].target(), target);
+    assert_eq!(sends[0].order(), 1);
+}
