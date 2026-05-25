@@ -1,7 +1,7 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvError,
-    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvTrap,
-    RiscvTrapKind,
+    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
+    RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -609,6 +609,56 @@ fn hart_reports_fence_barriers_without_memory_or_register_side_effects() {
     assert_eq!(fence_i_record.register_writes(), &[]);
     assert_eq!(fence_i_record.memory_access(), None);
     assert_eq!(hart.read(reg(1)), 0x1234);
+}
+
+#[test]
+fn atomic_memory_accesses_report_aq_rl_barrier_ordering() {
+    let no_ordering = MemoryAccessKind::Load {
+        rd: reg(5),
+        address: 0x9008,
+        width: MemoryWidth::Doubleword,
+        signed: false,
+    };
+    assert_eq!(no_ordering.memory_ordering(), RiscvMemoryOrdering::none());
+
+    let release_only = MemoryAccessKind::StoreConditional {
+        rd: reg(7),
+        address: 0x9008,
+        width: MemoryWidth::Doubleword,
+        value: 0x11,
+        acquire: false,
+        release: true,
+    };
+    assert_eq!(
+        release_only.memory_ordering(),
+        RiscvMemoryOrdering::new(Some(RiscvFenceSet::memory()), None)
+    );
+
+    let acquire_only = MemoryAccessKind::LoadReserved {
+        rd: reg(5),
+        address: 0x9008,
+        width: MemoryWidth::Doubleword,
+        acquire: true,
+        release: false,
+    };
+    assert_eq!(
+        acquire_only.memory_ordering(),
+        RiscvMemoryOrdering::new(None, Some(RiscvFenceSet::memory()))
+    );
+
+    let acquire_release = MemoryAccessKind::AtomicMemory {
+        rd: reg(7),
+        address: 0x9008,
+        width: MemoryWidth::Doubleword,
+        op: AtomicMemoryOp::Swap,
+        value: 0x22,
+        acquire: true,
+        release: true,
+    };
+    assert_eq!(
+        acquire_release.memory_ordering(),
+        RiscvMemoryOrdering::new(Some(RiscvFenceSet::memory()), Some(RiscvFenceSet::memory()))
+    );
 }
 
 #[test]

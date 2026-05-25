@@ -1,4 +1,4 @@
-use rem6_isa_riscv::MemoryAccessKind;
+use rem6_isa_riscv::{MemoryAccessKind, RiscvMemoryOrdering};
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, MemoryOperation, MemoryRequestId};
 use rem6_mmio::MmioRoute;
@@ -144,6 +144,10 @@ impl RiscvDataAccessRecord {
             MemoryAccessKind::Store { .. } => MemoryOperation::Write,
         }
     }
+
+    pub fn memory_ordering(&self) -> RiscvMemoryOrdering {
+        self.access.memory_ordering()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,6 +232,10 @@ impl RiscvDataAccessEvent {
 
     pub fn operation(&self) -> MemoryOperation {
         self.record.operation()
+    }
+
+    pub fn memory_ordering(&self) -> RiscvMemoryOrdering {
+        self.record.memory_ordering()
     }
 
     pub fn kind(&self) -> RiscvDataAccessEventKind {

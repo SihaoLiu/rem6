@@ -7,8 +7,8 @@ use rem6_cpu::{
     RiscvDataAccessTarget, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
-    MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction, RiscvTrap,
-    RiscvTrapKind,
+    MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction, RiscvMemoryOrdering,
+    RiscvTrap, RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -1290,6 +1290,14 @@ fn riscv_core_amoswapd_writes_new_value_and_returns_old_value() {
         ]
     );
     assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+    assert_eq!(
+        events[0].memory_ordering(),
+        RiscvMemoryOrdering::new(Some(RiscvFenceSet::memory()), Some(RiscvFenceSet::memory()))
+    );
+    assert_eq!(
+        events[1].memory_ordering(),
+        RiscvMemoryOrdering::new(Some(RiscvFenceSet::memory()), Some(RiscvFenceSet::memory()))
+    );
     assert_eq!(
         events[1].data(),
         Some(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..])

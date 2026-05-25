@@ -78,6 +78,15 @@ impl RiscvFenceSet {
         }
     }
 
+    pub const fn memory() -> Self {
+        Self {
+            input: false,
+            output: false,
+            read: true,
+            write: true,
+        }
+    }
+
     const fn from_bits(bits: u32) -> Self {
         Self {
             input: bits & 0b1000 != 0,
@@ -101,6 +110,37 @@ impl RiscvFenceSet {
 
     pub const fn write(self) -> bool {
         self.write
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvMemoryOrdering {
+    before: Option<RiscvFenceSet>,
+    after: Option<RiscvFenceSet>,
+}
+
+impl RiscvMemoryOrdering {
+    pub const fn new(before: Option<RiscvFenceSet>, after: Option<RiscvFenceSet>) -> Self {
+        Self { before, after }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            before: None,
+            after: None,
+        }
+    }
+
+    pub const fn before(self) -> Option<RiscvFenceSet> {
+        self.before
+    }
+
+    pub const fn after(self) -> Option<RiscvFenceSet> {
+        self.after
+    }
+
+    pub const fn is_ordered(self) -> bool {
+        self.before.is_some() || self.after.is_some()
     }
 }
 
@@ -141,6 +181,30 @@ pub enum MemoryAccessKind {
         width: MemoryWidth,
         value: u64,
     },
+}
+
+impl MemoryAccessKind {
+    pub fn memory_ordering(&self) -> RiscvMemoryOrdering {
+        match self {
+            Self::LoadReserved {
+                acquire, release, ..
+            }
+            | Self::StoreConditional {
+                acquire, release, ..
+            }
+            | Self::AtomicMemory {
+                acquire, release, ..
+            } => aq_rl_ordering(*acquire, *release),
+            Self::Load { .. } | Self::Store { .. } => RiscvMemoryOrdering::none(),
+        }
+    }
+}
+
+fn aq_rl_ordering(acquire: bool, release: bool) -> RiscvMemoryOrdering {
+    RiscvMemoryOrdering::new(
+        release.then_some(RiscvFenceSet::memory()),
+        acquire.then_some(RiscvFenceSet::memory()),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
