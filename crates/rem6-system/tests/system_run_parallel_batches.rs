@@ -322,8 +322,14 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     );
     assert_eq!(run.parallel_scheduler_batch_ticks_for_worker_count(1), 4);
     assert_eq!(run.parallel_scheduler_batch_ticks_for_worker_count(2), 0);
+    assert_eq!(run.parallel_scheduler_batch_ticks_at_or_above(1), 4);
+    assert_eq!(run.parallel_scheduler_batch_ticks_at_or_above(2), 0);
     assert_eq!(
         run.data_cache_parallel_scheduler_batch_ticks_for_worker_count(2),
+        8,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_ticks_at_or_above(2),
         8,
     );
     assert_eq!(
@@ -336,6 +342,18 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         run.full_system_parallel_scheduler_batch_ticks_for_worker_count(3),
+        0,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_ticks_at_or_above(1),
+        12,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_ticks_at_or_above(2),
+        8,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_ticks_at_or_above(3),
         0,
     );
 

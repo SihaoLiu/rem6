@@ -129,6 +129,69 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelBatchWorkerTickActivity {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_worker_count: usize,
+    minimum_ticks: Tick,
+}
+
+impl WorkloadExpectedParallelBatchWorkerTickActivity {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+        minimum_ticks: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_worker_count < 2 {
+            return Err(
+                WorkloadError::InvalidExpectedParallelBatchWorkerTickActivity {
+                    scope,
+                    minimum_worker_count,
+                },
+            );
+        }
+        if minimum_ticks == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelBatchWorkerTickActivity {
+                scope,
+                minimum_worker_count,
+            });
+        }
+        Ok(Self {
+            scope,
+            minimum_worker_count,
+            minimum_ticks,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_worker_count(self) -> usize {
+        self.minimum_worker_count
+    }
+
+    pub const fn minimum_ticks(self) -> Tick {
+        self.minimum_ticks
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, usize) {
+        (self.scope.sort_rank(), self.minimum_worker_count)
+    }
+
+    pub(crate) fn actual_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Tick {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+                .data_cache_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
+            WorkloadParallelRemoteFlowScope::FullSystem => summary
+                .full_system_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
+        }
+    }
+}
+
 impl WorkloadManifest {
     pub fn expected_parallel_batch_worker_buckets(
         &self,
@@ -140,6 +203,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedParallelBatchWorkerTickBucket] {
         &self.expected_parallel_batch_worker_tick_buckets
+    }
+
+    pub fn expected_parallel_batch_worker_tick_activity(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchWorkerTickActivity] {
+        &self.expected_parallel_batch_worker_tick_activity
     }
 }
 
@@ -184,6 +253,29 @@ impl WorkloadManifestBuilder {
             .push(expected);
         self.expected_parallel_batch_worker_tick_buckets
             .sort_by_key(|bucket| bucket.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_batch_worker_tick_activity(
+        mut self,
+        expected: WorkloadExpectedParallelBatchWorkerTickActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_worker_tick_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelBatchWorkerTickActivity {
+                    scope: expected.scope(),
+                    minimum_worker_count: expected.minimum_worker_count(),
+                },
+            );
+        }
+        self.expected_parallel_batch_worker_tick_activity
+            .push(expected);
+        self.expected_parallel_batch_worker_tick_activity
+            .sort_by_key(|activity| activity.sort_key());
         Ok(self)
     }
 }
@@ -242,5 +334,34 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedParallelBatchWorkerTickBucket] {
         &self.expected_parallel_batch_worker_tick_buckets
+    }
+
+    pub fn add_expected_parallel_batch_worker_tick_activity(
+        mut self,
+        expected: WorkloadExpectedParallelBatchWorkerTickActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_worker_tick_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelBatchWorkerTickActivity {
+                    scope: expected.scope(),
+                    minimum_worker_count: expected.minimum_worker_count(),
+                },
+            );
+        }
+        self.expected_parallel_batch_worker_tick_activity
+            .push(expected);
+        self.expected_parallel_batch_worker_tick_activity
+            .sort_by_key(|activity| activity.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_batch_worker_tick_activity(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchWorkerTickActivity] {
+        &self.expected_parallel_batch_worker_tick_activity
     }
 }

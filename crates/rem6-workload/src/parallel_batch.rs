@@ -237,6 +237,17 @@ pub(crate) fn parallel_batch_ticks_for_worker_count(
         .fold(0, Tick::saturating_add)
 }
 
+pub(crate) fn parallel_batch_ticks_at_or_above(
+    records: &[WorkloadParallelBatchTimelineRecord],
+    minimum_worker_count: usize,
+) -> Tick {
+    records
+        .iter()
+        .filter(|record| record.worker_count() >= minimum_worker_count)
+        .map(WorkloadParallelBatchTimelineRecord::duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
 pub(crate) fn collect_parallel_batch_partition_sets_from_timeline(
     records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Vec<WorkloadParallelBatchPartitionSet> {

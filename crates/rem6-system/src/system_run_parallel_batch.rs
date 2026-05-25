@@ -122,6 +122,13 @@ impl RiscvSystemRun {
         batch_ticks_for_worker_count(self.parallel_scheduler_batch_timeline(), worker_count)
     }
 
+    pub fn parallel_scheduler_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_ticks_at_or_above(
+            self.parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_batch_ticks_for_worker_count(
         &self,
         worker_count: usize,
@@ -132,6 +139,16 @@ impl RiscvSystemRun {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_batch_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        batch_ticks_at_or_above(
+            self.data_cache_parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn full_system_parallel_scheduler_batch_ticks_for_worker_count(
         &self,
         worker_count: usize,
@@ -139,6 +156,16 @@ impl RiscvSystemRun {
         batch_ticks_for_worker_count(
             self.full_system_parallel_scheduler_batch_timeline(),
             worker_count,
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        batch_ticks_at_or_above(
+            self.full_system_parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
         )
     }
 
@@ -335,6 +362,17 @@ fn batch_ticks_for_worker_count(
     records
         .into_iter()
         .filter(|record| record.worker_count() == worker_count)
+        .map(|record| record.duration_ticks())
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_ticks_at_or_above(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    minimum_worker_count: usize,
+) -> Tick {
+    records
+        .into_iter()
+        .filter(|record| record.worker_count() >= minimum_worker_count)
         .map(|record| record.duration_ticks())
         .fold(0, Tick::saturating_add)
 }

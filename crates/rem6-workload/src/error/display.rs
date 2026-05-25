@@ -1139,6 +1139,49 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch worker-count tick bucket {worker_count} to reach at least {minimum_ticks} ticks, got {actual_ticks}",
                 scope.as_str()
             ),
+            Self::InvalidExpectedParallelBatchWorkerTickActivity {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick activity must require at least 2 workers, got {minimum_worker_count}",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedParallelBatchWorkerTickActivity {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick activity at {minimum_worker_count} workers must require positive ticks",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelBatchWorkerTickActivity {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick activity at {minimum_worker_count} workers is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelBatchWorkerTickActivitySummary {
+                scope,
+                minimum_worker_count,
+                minimum_ticks,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch worker-count tick activity with at least {minimum_ticks} ticks at {minimum_worker_count} workers",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelBatchWorkerTickActivityBelowMinimum {
+                scope,
+                minimum_worker_count,
+                minimum_ticks,
+                actual_ticks,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick activity to reach at least {minimum_ticks} ticks at {minimum_worker_count} workers, got {actual_ticks}",
+                scope.as_str()
+            ),
             Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
                 formatter,
                 "expected {} batch partition set {} must include at least 2 partitions",

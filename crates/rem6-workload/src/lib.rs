@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_boot::BootImage;
 use rem6_kernel::Tick;
-use rem6_memory::{Address, AddressRange};
 
 mod boot_handoff;
+mod boot_image;
 mod error;
 mod error_support;
 mod heterogeneous;
@@ -30,6 +30,7 @@ mod topology;
 mod workload_result;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
+pub use boot_image::{WorkloadBootImage, WorkloadBootSegment};
 pub use error::{WorkloadError, WorkloadParallelRemoteTrafficConsistencyMismatch};
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
@@ -53,7 +54,8 @@ pub use parallel_batch::{
 };
 pub use parallel_batch_timeline_expectation::WorkloadExpectedParallelBatchTimelineRecord;
 pub use parallel_batch_worker_count_expectation::{
-    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickBucket,
+    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
+    WorkloadExpectedParallelBatchWorkerTickBucket,
 };
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
@@ -213,63 +215,6 @@ impl WorkloadResource {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadBootImage {
-    entry: Address,
-    segments: Vec<WorkloadBootSegment>,
-}
-
-impl WorkloadBootImage {
-    pub fn from_boot_image(image: &BootImage) -> Self {
-        Self {
-            entry: image.entry(),
-            segments: image
-                .segments()
-                .iter()
-                .map(|segment| WorkloadBootSegment::new(segment.range(), segment.data().to_vec()))
-                .collect(),
-        }
-    }
-
-    pub const fn entry(&self) -> Address {
-        self.entry
-    }
-
-    pub fn segments(&self) -> &[WorkloadBootSegment] {
-        &self.segments
-    }
-
-    pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
-        let mut image = BootImage::new(self.entry);
-        for segment in &self.segments {
-            image = image
-                .add_segment(segment.range().start(), segment.data().to_vec())
-                .map_err(WorkloadError::Boot)?;
-        }
-        Ok(image)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadBootSegment {
-    range: AddressRange,
-    data: Vec<u8>,
-}
-
-impl WorkloadBootSegment {
-    pub const fn new(range: AddressRange, data: Vec<u8>) -> Self {
-        Self { range, data }
-    }
-
-    pub const fn range(&self) -> AddressRange {
-        self.range
-    }
-
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadManifest {
     id: WorkloadId,
     boot: WorkloadBootImage,
@@ -297,6 +242,8 @@ pub struct WorkloadManifest {
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_worker_buckets: Vec<WorkloadExpectedParallelBatchWorkerBucket>,
     expected_parallel_batch_worker_tick_buckets: Vec<WorkloadExpectedParallelBatchWorkerTickBucket>,
+    expected_parallel_batch_worker_tick_activity:
+        Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -473,6 +420,8 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_worker_buckets: Vec<WorkloadExpectedParallelBatchWorkerBucket>,
     expected_parallel_batch_worker_tick_buckets: Vec<WorkloadExpectedParallelBatchWorkerTickBucket>,
+    expected_parallel_batch_worker_tick_activity:
+        Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -511,6 +460,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_activity: Vec::new(),
             expected_parallel_batch_worker_buckets: Vec::new(),
             expected_parallel_batch_worker_tick_buckets: Vec::new(),
+            expected_parallel_batch_worker_tick_activity: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_batch_timeline_records: Vec::new(),
@@ -917,6 +867,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_worker_buckets: &self.expected_parallel_batch_worker_buckets,
             expected_parallel_batch_worker_tick_buckets: &self
                 .expected_parallel_batch_worker_tick_buckets,
+            expected_parallel_batch_worker_tick_activity: &self
+                .expected_parallel_batch_worker_tick_activity,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
                 .expected_parallel_batch_partition_streaks,
@@ -957,6 +909,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_worker_buckets: self.expected_parallel_batch_worker_buckets,
             expected_parallel_batch_worker_tick_buckets: self
                 .expected_parallel_batch_worker_tick_buckets,
+            expected_parallel_batch_worker_tick_activity: self
+                .expected_parallel_batch_worker_tick_activity,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
                 .expected_parallel_batch_partition_streaks,
@@ -1002,6 +956,8 @@ pub struct WorkloadReplayPlan {
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_worker_buckets: Vec<WorkloadExpectedParallelBatchWorkerBucket>,
     expected_parallel_batch_worker_tick_buckets: Vec<WorkloadExpectedParallelBatchWorkerTickBucket>,
+    expected_parallel_batch_worker_tick_activity:
+        Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -1070,6 +1026,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_batch_worker_tick_buckets: manifest
                 .expected_parallel_batch_worker_tick_buckets()
+                .to_vec(),
+            expected_parallel_batch_worker_tick_activity: manifest
+                .expected_parallel_batch_worker_tick_activity()
                 .to_vec(),
             expected_parallel_batch_partition_sets: manifest
                 .expected_parallel_batch_partition_sets()
@@ -1517,6 +1476,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_batch_activity(self, result)?;
         replay_verify::verify_expected_parallel_batch_worker_buckets(self, result)?;
         replay_verify::verify_expected_parallel_batch_worker_tick_buckets(self, result)?;
+        replay_verify::verify_expected_parallel_batch_worker_tick_activity(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         replay_verify::verify_expected_parallel_batch_timeline_records(self, result)?;

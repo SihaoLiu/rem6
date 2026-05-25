@@ -424,14 +424,15 @@ data-cache/coherence scheduler have been summarized separately. Workload
 result summary accessors also choose the strongest available aggregate or
 fine-grained evidence for batch count, dispatch progress, max-worker use,
 thresholded multi-worker batch activity, exact worker-count bucket activity,
-and total-worker activity, so a lower aggregate or worker-count counter cannot
-hide detailed partition-set execution records.
+minimum-worker tick activity, and total-worker activity, so a lower aggregate
+or worker-count counter cannot hide detailed partition-set execution records.
 The system-run object exposes batch-worker summaries, duration-weighted
 worker-count tick summaries, exact worker-count batch and tick queries,
-minimum-worker batch queries, exact partition-set summaries, and
-same-partition-set streak summaries directly for CPU-scheduler, data-cache
-scheduler, and merged full-system scopes, so simulation diagnostics can inspect
-parallel occupancy before workload replay translates it into manifest evidence.
+minimum-worker batch and duration-weighted tick queries, exact partition-set
+summaries, and same-partition-set streak summaries directly for CPU-scheduler,
+data-cache scheduler, and merged full-system scopes, so simulation diagnostics
+can inspect parallel occupancy before workload replay translates it into
+manifest evidence.
 The kernel recorded epoch and run summaries expose exact batch worker-count
 summaries, exact worker-count batch queries, and minimum-worker batch queries,
 so the runtime scheduler itself remains the first source of parallel occupancy
@@ -454,10 +455,11 @@ summaries, and streak evidence from them, so replay output keeps the precise
 occupancy evidence behind each compressed parallel summary. Workload manifests
 may now declare exact scheduler, data-cache scheduler, or full-system exact
 worker-count bucket contracts, duration-weighted worker-count tick bucket
-contracts, and batch timeline records. Replay verification rejects underfilled
-exact worker buckets, underfilled worker-count tick buckets, and missing or
-unexpected timeline records instead of accepting only aggregate occupancy
-evidence. Exact replay contracts use multiset matching: an extra duplicate
+contracts, minimum-worker duration-weighted tick activity contracts, and batch
+timeline records. Replay verification rejects underfilled exact worker buckets,
+underfilled worker-count tick buckets, underfilled minimum-worker tick activity,
+and missing or unexpected timeline records instead of accepting only aggregate
+occupancy evidence. Exact replay contracts use multiset matching: an extra duplicate
 remote-send, progress-transition, or batch-timeline record is unexpected even if
 an otherwise identical expected record exists.
 Workload manifests may declare required initial or final frontier minima for
