@@ -304,6 +304,63 @@ impl StatDumpId {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StatPath {
+    spelling: String,
+    segments: Vec<String>,
+}
+
+impl StatPath {
+    pub fn parse(path: impl Into<String>) -> Result<Self, StatPathError> {
+        let spelling = path.into();
+        validate_stat_path(&spelling)?;
+        let segments = spelling.split('.').map(str::to_string).collect();
+        Ok(Self { spelling, segments })
+    }
+
+    pub fn new<I, S>(scope: I, name: impl Into<String>) -> Result<Self, StatPathError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut segments = scope.into_iter().map(Into::into).collect::<Vec<_>>();
+        segments.push(name.into());
+        Self::from_segments(segments)
+    }
+
+    pub fn from_segments(segments: Vec<String>) -> Result<Self, StatPathError> {
+        let spelling = segments.join(".");
+        validate_stat_path(&spelling)?;
+        Ok(Self { spelling, segments })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.spelling
+    }
+
+    pub fn scope(&self) -> &[String] {
+        let name_index = self.segments.len().saturating_sub(1);
+        &self.segments[..name_index]
+    }
+
+    pub fn name(&self) -> &str {
+        self.segments
+            .last()
+            .map(String::as_str)
+            .expect("stat path must have a name segment")
+    }
+
+    pub fn segments(&self) -> &[String] {
+        &self.segments
+    }
+}
+
+impl fmt::Display for StatPath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatUnitKind {
     Cycle,
@@ -433,14 +490,14 @@ impl fmt::Display for StatUnit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatSample {
     id: StatId,
-    path: String,
+    path: StatPath,
     unit: StatUnit,
     value: u64,
 }
 
 impl StatSample {
     pub fn new(id: StatId, path: impl Into<String>, unit: impl Into<String>, value: u64) -> Self {
-        Self::try_new(id, path, unit, value).expect("stat sample unit must be valid")
+        Self::try_new(id, path, unit, value).expect("stat sample descriptor must be valid")
     }
 
     pub fn try_new(
@@ -448,13 +505,28 @@ impl StatSample {
         path: impl Into<String>,
         unit: impl Into<String>,
         value: u64,
-    ) -> Result<Self, StatUnitError> {
+    ) -> Result<Self, StatsError> {
+        let path = path.into();
+        let stat_path = StatPath::parse(path.clone())
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        let unit = unit.into();
+        let stat_unit = StatUnit::parse(unit.clone())
+            .map_err(|reason| StatsError::InvalidUnit { unit, reason })?;
         Ok(Self {
             id,
-            path: path.into(),
-            unit: StatUnit::parse(unit)?,
+            path: stat_path,
+            unit: stat_unit,
             value,
         })
+    }
+
+    pub const fn from_parts(id: StatId, path: StatPath, unit: StatUnit, value: u64) -> Self {
+        Self {
+            id,
+            path,
+            unit,
+            value,
+        }
     }
 
     pub const fn id(&self) -> StatId {
@@ -462,7 +534,19 @@ impl StatSample {
     }
 
     pub fn path(&self) -> &str {
+        self.path.as_str()
+    }
+
+    pub const fn stat_path(&self) -> &StatPath {
         &self.path
+    }
+
+    pub fn scope(&self) -> &[String] {
+        self.path.scope()
+    }
+
+    pub fn name(&self) -> &str {
+        self.path.name()
     }
 
     pub fn unit(&self) -> &str {
@@ -481,7 +565,7 @@ impl StatSample {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatDeltaSample {
     id: StatId,
-    path: String,
+    path: StatPath,
     unit: StatUnit,
     previous_value: u64,
     current_value: u64,
@@ -505,14 +589,36 @@ impl StatDeltaSample {
         unit: impl Into<String>,
         previous_value: u64,
         current_value: u64,
-    ) -> Result<Self, StatUnitError> {
+    ) -> Result<Self, StatsError> {
+        let path = path.into();
+        let stat_path = StatPath::parse(path.clone())
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        let unit = unit.into();
+        let stat_unit = StatUnit::parse(unit.clone())
+            .map_err(|reason| StatsError::InvalidUnit { unit, reason })?;
         Ok(Self {
             id,
-            path: path.into(),
-            unit: StatUnit::parse(unit)?,
+            path: stat_path,
+            unit: stat_unit,
             previous_value,
             current_value,
         })
+    }
+
+    pub const fn from_parts(
+        id: StatId,
+        path: StatPath,
+        unit: StatUnit,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            unit,
+            previous_value,
+            current_value,
+        }
     }
 
     pub const fn id(&self) -> StatId {
@@ -520,7 +626,19 @@ impl StatDeltaSample {
     }
 
     pub fn path(&self) -> &str {
+        self.path.as_str()
+    }
+
+    pub const fn stat_path(&self) -> &StatPath {
         &self.path
+    }
+
+    pub fn scope(&self) -> &[String] {
+        self.path.scope()
+    }
+
+    pub fn name(&self) -> &str {
+        self.path.name()
     }
 
     pub fn unit(&self) -> &str {
@@ -871,16 +989,61 @@ impl StatsRegistry {
         if path.is_empty() {
             return Err(StatsError::EmptyPath);
         }
-        if let Err(reason) = validate_stat_path(&path) {
-            return Err(StatsError::InvalidPath { path, reason });
-        }
-        if self.paths.contains(&path) {
-            return Err(StatsError::DuplicatePath { path });
+        let stat_path = StatPath::parse(path.clone())
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        self.register_counter_path(stat_path, unit)
+    }
+
+    pub fn register_scoped_counter<I, S>(
+        &mut self,
+        scope: I,
+        name: impl Into<String>,
+        unit: impl Into<String>,
+    ) -> Result<StatId, StatsError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_scoped_counter_with_unit(scope, name, unit)
+    }
+
+    pub fn register_scoped_counter_with_unit<I, S>(
+        &mut self,
+        scope: I,
+        name: impl Into<String>,
+        unit: StatUnit,
+    ) -> Result<StatId, StatsError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut segments = scope.into_iter().map(Into::into).collect::<Vec<_>>();
+        segments.push(name.into());
+        let path = segments.join(".");
+        let stat_path = StatPath::from_segments(segments)
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        self.register_counter_path(stat_path, unit)
+    }
+
+    fn register_counter_path(
+        &mut self,
+        path: StatPath,
+        unit: StatUnit,
+    ) -> Result<StatId, StatsError> {
+        if self.paths.contains(path.as_str()) {
+            return Err(StatsError::DuplicatePath {
+                path: path.as_str().to_string(),
+            });
         }
 
         let id = StatId::new(self.next_id);
         self.next_id += 1;
-        self.paths.insert(path.clone());
+        self.paths.insert(path.as_str().to_string());
         self.descriptors.insert(id, StatDescriptor { path, unit });
         self.counters.insert(id, 0);
         Ok(id)
@@ -922,10 +1085,10 @@ impl StatsRegistry {
             .descriptors
             .iter()
             .map(|(id, descriptor)| {
-                StatSample::new(
+                StatSample::from_parts(
                     *id,
                     descriptor.path.clone(),
-                    descriptor.unit.as_str(),
+                    descriptor.unit.clone(),
                     self.counters.get(id).copied().unwrap_or_default(),
                 )
             })
@@ -1093,7 +1256,7 @@ fn stat_unit_symbol_kind(symbol: &str) -> StatUnitKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StatDescriptor {
-    path: String,
+    path: StatPath,
     unit: StatUnit,
 }
 

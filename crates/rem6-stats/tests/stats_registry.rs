@@ -1,8 +1,9 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatPathError, StatSample, StatSnapshot,
-    StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
+    StatDeltaSample, StatDumpId, StatDumpRecord, StatId, StatPath, StatPathError, StatSample,
+    StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
+    StatsResetRecord,
 };
 
 #[test]
@@ -255,6 +256,56 @@ fn stats_registry_records_structured_counter_units_without_consuming_ids_on_bad_
     assert_eq!(sample.id(), bandwidth_per_ipc);
     assert_eq!(sample.unit(), nested_rate.as_str());
     assert_eq!(sample.stat_unit(), &nested_rate);
+}
+
+#[test]
+fn stats_registry_records_scoped_counter_identity_without_string_joining() {
+    let mut stats = StatsRegistry::new();
+
+    assert_eq!(
+        stats
+            .register_scoped_counter(["system", "cpu-0"], "cycles", "Cycle")
+            .unwrap_err(),
+        StatsError::InvalidPath {
+            path: "system.cpu-0.cycles".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "cpu-0".to_string(),
+                character: '-',
+            },
+        },
+    );
+    assert_eq!(
+        stats
+            .register_scoped_counter(["system", "cpu0"], "", "Cycle")
+            .unwrap_err(),
+        StatsError::InvalidPath {
+            path: "system.cpu0.".to_string(),
+            reason: StatPathError::EmptySegment { index: 2 },
+        },
+    );
+
+    let cycles = stats
+        .register_scoped_counter_with_unit(["system", "cpu0"], "cycles", StatUnit::cycle())
+        .unwrap();
+    let scoped_path = StatPath::new(["system", "cpu0"], "cycles").unwrap();
+
+    assert_eq!(cycles, StatId::new(0));
+    assert_eq!(
+        stats
+            .register_counter("system.cpu0.cycles", "Cycle")
+            .unwrap_err(),
+        StatsError::DuplicatePath {
+            path: "system.cpu0.cycles".to_string(),
+        },
+    );
+
+    let snapshot = stats.snapshot(10);
+    let sample = &snapshot.samples()[0];
+    assert_eq!(sample.id(), cycles);
+    assert_eq!(sample.path(), "system.cpu0.cycles");
+    assert_eq!(sample.scope(), ["system".to_string(), "cpu0".to_string()]);
+    assert_eq!(sample.name(), "cycles");
+    assert_eq!(sample.stat_path(), &scoped_path);
 }
 
 #[test]
