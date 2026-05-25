@@ -258,6 +258,87 @@ fn workload_suite_dispatch_plan_assigns_weighted_manifests_to_least_loaded_worke
 }
 
 #[test]
+fn workload_suite_dispatch_plan_reports_weighted_load_efficiency_before_execution() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("weighted-dispatch-load"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let summary = plan.estimated_load_summary().unwrap();
+    let worker_loads = summary.worker_loads();
+
+    assert_eq!(summary.suite_identity(), suite.identity());
+    assert_eq!(summary.worker_count(), 2);
+    assert_eq!(summary.serial_estimated_ticks(), 17);
+    assert_eq!(summary.maximum_worker_estimated_ticks(), 9);
+    assert_eq!(summary.worker_capacity_ticks(), 18);
+    assert_eq!(summary.idle_worker_ticks(), 1);
+    assert_eq!(
+        summary.parallel_speedup_ratio().unwrap(),
+        WorkloadSuiteExecutionEfficiency::ratio(17, 9).unwrap()
+    );
+    assert_eq!(
+        summary.worker_utilization_ratio().unwrap(),
+        WorkloadSuiteExecutionEfficiency::ratio(17, 18).unwrap()
+    );
+    assert_eq!(worker_loads.len(), 2);
+    assert_eq!(worker_loads[0].worker_index(), 0);
+    assert_eq!(worker_loads[0].workload_count(), 1);
+    assert_eq!(worker_loads[0].estimated_ticks(), 8);
+    assert_eq!(worker_loads[1].worker_index(), 1);
+    assert_eq!(worker_loads[1].workload_count(), 3);
+    assert_eq!(worker_loads[1].estimated_ticks(), 9);
+}
+
+#[test]
+fn workload_suite_dispatch_plan_requires_estimates_for_load_summary() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("missing-dispatch-load"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    let error = plan.estimated_load_summary().unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::MissingSuiteDispatchEstimate { workload } if workload == *alpha.id()
+    ));
+}
+
+#[test]
 fn workload_suite_dispatch_plan_rejects_invalid_weighted_dispatch_inputs() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

@@ -467,6 +467,11 @@ impl fmt::Display for WorkloadError {
                 "workload suite execution is missing workload {}",
                 workload.as_str()
             ),
+            Self::MissingSuiteDispatchEstimate { workload } => write!(
+                formatter,
+                "workload suite dispatch is missing estimated ticks for workload {}",
+                workload.as_str()
+            ),
             Self::MissingSuiteDispatchWeight { workload } => write!(
                 formatter,
                 "workload suite dispatch is missing weight for workload {}",

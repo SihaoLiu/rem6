@@ -76,12 +76,13 @@ pub use result::{
     WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
 };
 pub use suite::{
-    WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord,
-    WorkloadSuiteDispatchWeight, WorkloadSuiteEntry, WorkloadSuiteExecutionEfficiency,
-    WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionRatio, WorkloadSuiteExecutionRecord,
-    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteIdentity,
-    WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
-    WorkloadSuiteResultEntry, WorkloadSuiteWorkerExecutionSummary,
+    WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchLoadSummary,
+    WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord, WorkloadSuiteDispatchWeight,
+    WorkloadSuiteEntry, WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
+    WorkloadSuiteExecutionRatio, WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary,
+    WorkloadSuiteId, WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan,
+    WorkloadSuiteResult, WorkloadSuiteResultEntry, WorkloadSuiteWorkerDispatchLoad,
+    WorkloadSuiteWorkerExecutionSummary,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,

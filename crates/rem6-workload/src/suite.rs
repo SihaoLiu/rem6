@@ -229,6 +229,7 @@ impl WorkloadSuiteDispatchPlan {
                     entry.manifest_identity(),
                     order,
                     order % worker_count,
+                    None,
                 )
             })
             .collect();
@@ -290,6 +291,7 @@ impl WorkloadSuiteDispatchPlan {
                 entry.manifest_identity(),
                 order,
                 worker_index,
+                Some(weight_ticks),
             ));
         }
 
@@ -320,6 +322,29 @@ impl WorkloadSuiteDispatchPlan {
         &self.records
     }
 
+    pub fn estimated_load_summary(
+        &self,
+    ) -> Result<WorkloadSuiteDispatchLoadSummary, WorkloadError> {
+        let mut worker_loads = (0..self.worker_count())
+            .map(WorkloadSuiteWorkerDispatchLoad::new)
+            .collect::<Vec<_>>();
+
+        for record in &self.records {
+            let Some(estimated_ticks) = record.estimated_ticks() else {
+                return Err(WorkloadError::MissingSuiteDispatchEstimate {
+                    workload: record.workload_id().clone(),
+                });
+            };
+            worker_loads[record.worker_index()].include(estimated_ticks);
+        }
+
+        Ok(WorkloadSuiteDispatchLoadSummary::new(
+            self.suite_identity(),
+            self.worker_count(),
+            worker_loads,
+        ))
+    }
+
     pub fn execution_expectation(
         &self,
         minimum_simultaneous_workers: usize,
@@ -347,11 +372,11 @@ impl WorkloadSuiteDispatchPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadSuiteDispatchWeight {
     workload_id: WorkloadId,
-    weight_ticks: u64,
+    weight_ticks: Tick,
 }
 
 impl WorkloadSuiteDispatchWeight {
-    pub fn new(workload_id: WorkloadId, weight_ticks: u64) -> Result<Self, WorkloadError> {
+    pub fn new(workload_id: WorkloadId, weight_ticks: Tick) -> Result<Self, WorkloadError> {
         if weight_ticks == 0 {
             return Err(WorkloadError::ZeroSuiteDispatchWeight {
                 workload: workload_id,
@@ -367,8 +392,124 @@ impl WorkloadSuiteDispatchWeight {
         &self.workload_id
     }
 
-    pub const fn weight_ticks(&self) -> u64 {
+    pub const fn weight_ticks(&self) -> Tick {
         self.weight_ticks
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchLoadSummary {
+    suite_identity: WorkloadSuiteIdentity,
+    worker_count: usize,
+    worker_loads: Vec<WorkloadSuiteWorkerDispatchLoad>,
+    serial_estimated_ticks: Tick,
+    maximum_worker_estimated_ticks: Tick,
+    worker_capacity_ticks: Tick,
+    idle_worker_ticks: Tick,
+}
+
+impl WorkloadSuiteDispatchLoadSummary {
+    fn new(
+        suite_identity: WorkloadSuiteIdentity,
+        worker_count: usize,
+        worker_loads: Vec<WorkloadSuiteWorkerDispatchLoad>,
+    ) -> Self {
+        let serial_estimated_ticks = worker_loads
+            .iter()
+            .map(WorkloadSuiteWorkerDispatchLoad::estimated_ticks)
+            .sum();
+        let maximum_worker_estimated_ticks = worker_loads
+            .iter()
+            .map(WorkloadSuiteWorkerDispatchLoad::estimated_ticks)
+            .max()
+            .unwrap_or(0);
+        let worker_capacity_ticks =
+            maximum_worker_estimated_ticks.saturating_mul(worker_count as Tick);
+        let idle_worker_ticks = worker_capacity_ticks.saturating_sub(serial_estimated_ticks);
+        Self {
+            suite_identity,
+            worker_count,
+            worker_loads,
+            serial_estimated_ticks,
+            maximum_worker_estimated_ticks,
+            worker_capacity_ticks,
+            idle_worker_ticks,
+        }
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub fn worker_loads(&self) -> &[WorkloadSuiteWorkerDispatchLoad] {
+        &self.worker_loads
+    }
+
+    pub const fn serial_estimated_ticks(&self) -> Tick {
+        self.serial_estimated_ticks
+    }
+
+    pub const fn maximum_worker_estimated_ticks(&self) -> Tick {
+        self.maximum_worker_estimated_ticks
+    }
+
+    pub const fn worker_capacity_ticks(&self) -> Tick {
+        self.worker_capacity_ticks
+    }
+
+    pub const fn idle_worker_ticks(&self) -> Tick {
+        self.idle_worker_ticks
+    }
+
+    pub fn parallel_speedup_ratio(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        WorkloadSuiteExecutionRatio::new(
+            self.serial_estimated_ticks,
+            self.maximum_worker_estimated_ticks,
+        )
+        .ok()
+    }
+
+    pub fn worker_utilization_ratio(&self) -> Option<WorkloadSuiteExecutionRatio> {
+        WorkloadSuiteExecutionRatio::new(self.serial_estimated_ticks, self.worker_capacity_ticks)
+            .ok()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteWorkerDispatchLoad {
+    worker_index: usize,
+    workload_count: usize,
+    estimated_ticks: Tick,
+}
+
+impl WorkloadSuiteWorkerDispatchLoad {
+    const fn new(worker_index: usize) -> Self {
+        Self {
+            worker_index,
+            workload_count: 0,
+            estimated_ticks: 0,
+        }
+    }
+
+    fn include(&mut self, estimated_ticks: Tick) {
+        self.workload_count += 1;
+        self.estimated_ticks = self.estimated_ticks.saturating_add(estimated_ticks);
+    }
+
+    pub const fn worker_index(&self) -> usize {
+        self.worker_index
+    }
+
+    pub const fn workload_count(&self) -> usize {
+        self.workload_count
+    }
+
+    pub const fn estimated_ticks(&self) -> Tick {
+        self.estimated_ticks
     }
 }
 
@@ -378,6 +519,7 @@ pub struct WorkloadSuiteDispatchRecord {
     manifest_identity: WorkloadManifestIdentity,
     dispatch_order: usize,
     worker_index: usize,
+    estimated_ticks: Option<Tick>,
 }
 
 impl WorkloadSuiteDispatchRecord {
@@ -386,12 +528,14 @@ impl WorkloadSuiteDispatchRecord {
         manifest_identity: WorkloadManifestIdentity,
         dispatch_order: usize,
         worker_index: usize,
+        estimated_ticks: Option<Tick>,
     ) -> Self {
         Self {
             workload_id,
             manifest_identity,
             dispatch_order,
             worker_index,
+            estimated_ticks,
         }
     }
 
@@ -409,6 +553,10 @@ impl WorkloadSuiteDispatchRecord {
 
     pub const fn worker_index(&self) -> usize {
         self.worker_index
+    }
+
+    pub const fn estimated_ticks(&self) -> Option<Tick> {
+        self.estimated_ticks
     }
 }
 

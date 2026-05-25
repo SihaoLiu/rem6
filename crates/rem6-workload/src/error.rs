@@ -331,6 +331,9 @@ pub enum WorkloadError {
     MissingSuiteDispatchCompletion {
         workload: WorkloadId,
     },
+    MissingSuiteDispatchEstimate {
+        workload: WorkloadId,
+    },
     MissingSuiteDispatchWeight {
         workload: WorkloadId,
     },
