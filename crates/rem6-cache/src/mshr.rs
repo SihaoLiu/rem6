@@ -790,23 +790,21 @@ impl MshrQueue {
     }
 
     pub fn ready_handles(&self, tick: u64) -> Vec<MshrHandle> {
-        let mut entries = self
+        let mut pending = self
             .entries
             .iter()
             .filter(|entry| !entry.in_service && entry.ready_tick <= tick)
             .collect::<Vec<_>>();
-        entries.sort_by_key(|entry| {
-            (
-                entry
-                    .effective_qos()
-                    .map(MshrQosClass::priority)
-                    .unwrap_or(u8::MAX),
-                entry.ready_tick,
-                entry.order,
-                entry.handle,
-            )
-        });
-        entries.into_iter().map(|entry| entry.handle).collect()
+        let mut ordered = Vec::with_capacity(pending.len());
+        while !pending.is_empty() {
+            let eligible = ordering_eligible_entries(&pending);
+            let grant_index = eligible
+                .into_iter()
+                .min_by_key(|index| mshr_ready_sort_key(pending[*index]))
+                .expect("ready MSHR eligibility must produce a candidate");
+            ordered.push(pending.remove(grant_index).handle);
+        }
+        ordered
     }
 
     pub fn mark_in_service(
@@ -895,4 +893,45 @@ impl MshrQueue {
         self.next_order = self.next_order.saturating_add(1);
         order
     }
+}
+
+fn ordering_eligible_entries(pending: &[&MshrEntry]) -> Vec<usize> {
+    let eligible = pending
+        .iter()
+        .enumerate()
+        .filter_map(|(candidate_index, candidate)| {
+            let blocked = pending
+                .iter()
+                .any(|other| mshr_entry_orders_before(other, candidate));
+            (!blocked).then_some(candidate_index)
+        })
+        .collect::<Vec<_>>();
+    debug_assert!(
+        !eligible.is_empty(),
+        "oldest ready MSHR entry is always ordering-eligible"
+    );
+    eligible
+}
+
+fn mshr_entry_orders_before(earlier: &MshrEntry, later: &MshrEntry) -> bool {
+    earlier.targets().iter().any(|earlier_target| {
+        later.targets().iter().any(|later_target| {
+            earlier_target.order() < later_target.order()
+                && earlier_target
+                    .request()
+                    .orders_before(later_target.request())
+        })
+    })
+}
+
+fn mshr_ready_sort_key(entry: &MshrEntry) -> (u8, u64, u64, MshrHandle) {
+    (
+        entry
+            .effective_qos()
+            .map(MshrQosClass::priority)
+            .unwrap_or(u8::MAX),
+        entry.ready_tick,
+        entry.order,
+        entry.handle,
+    )
 }

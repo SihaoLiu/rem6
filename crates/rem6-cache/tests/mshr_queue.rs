@@ -1,5 +1,8 @@
 use rem6_cache::{MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetSource};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryAccessOrdering, MemoryBarrierSet,
+    MemoryRequest, MemoryRequestId,
+};
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(64).unwrap()
@@ -13,6 +16,10 @@ fn request(sequence: u64, address: u64) -> MemoryRequest {
         layout(),
     )
     .unwrap()
+}
+
+fn ordered_request(sequence: u64, address: u64, ordering: MemoryAccessOrdering) -> MemoryRequest {
+    request(sequence, address).with_ordering(ordering)
 }
 
 #[test]
@@ -186,6 +193,72 @@ fn mshr_queue_orders_ready_entries_by_qos_and_promotes_merged_targets() {
     assert_eq!(
         restored.ready_handles(10),
         vec![low.handle(), high.handle()]
+    );
+}
+
+#[test]
+fn mshr_queue_preserves_same_agent_release_ordering_for_ready_entries() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(3, 2, 0).unwrap());
+
+    let prior = queue
+        .allocate_or_merge_with_qos(
+            request(10, 0x11000),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(7, 4),
+        )
+        .unwrap();
+    let release = queue
+        .allocate_or_merge_with_qos(
+            ordered_request(
+                11,
+                0x12000,
+                MemoryAccessOrdering::new(Some(MemoryBarrierSet::memory()), None),
+            ),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(7, 0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        queue.ready_handles(10),
+        vec![prior.handle(), release.handle()]
+    );
+}
+
+#[test]
+fn mshr_queue_preserves_same_agent_acquire_ordering_for_ready_entries() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(3, 2, 0).unwrap());
+
+    let acquire = queue
+        .allocate_or_merge_with_qos(
+            ordered_request(
+                12,
+                0x13000,
+                MemoryAccessOrdering::new(None, Some(MemoryBarrierSet::memory())),
+            ),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(7, 4),
+        )
+        .unwrap();
+    let later = queue
+        .allocate_or_merge_with_qos(
+            request(13, 0x14000),
+            10,
+            MshrTargetSource::Demand,
+            true,
+            MshrQosClass::new(7, 0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        queue.ready_handles(10),
+        vec![acquire.handle(), later.handle()]
     );
 }
 
