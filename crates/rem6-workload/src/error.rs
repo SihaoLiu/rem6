@@ -8,8 +8,9 @@ use rem6_memory::MemoryError;
 
 use crate::{
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
+    WorkloadRouteLatency,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -583,6 +584,24 @@ pub enum WorkloadError {
     },
     DuplicateExpectedCleanParallelDiagnostics {
         scope: WorkloadParallelDiagnosticScope,
+    },
+    ZeroExpectedResourceActivity {
+        scope: WorkloadResourceActivityScope,
+    },
+    DuplicateExpectedResourceActivity {
+        scope: WorkloadResourceActivityScope,
+    },
+    MissingResourceActivitySummary {
+        scope: WorkloadResourceActivityScope,
+        minimum_operation_count: usize,
+        minimum_active_resource_count: usize,
+    },
+    ExpectedResourceActivityBelowMinimum {
+        scope: WorkloadResourceActivityScope,
+        minimum_operation_count: usize,
+        actual_operation_count: usize,
+        minimum_active_resource_count: usize,
+        actual_active_resource_count: usize,
     },
     MissingParallelDiagnosticSummary {
         scope: WorkloadParallelDiagnosticScope,
@@ -1507,6 +1526,36 @@ impl fmt::Display for WorkloadError {
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(
                 formatter,
                 "expected {} clean parallel diagnostics is already declared",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedResourceActivity { scope } => write!(
+                formatter,
+                "expected {} resource activity must require a positive operation or active resource count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedResourceActivity { scope } => write!(
+                formatter,
+                "expected {} resource activity is already declared",
+                scope.as_str()
+            ),
+            Self::MissingResourceActivitySummary {
+                scope,
+                minimum_operation_count,
+                minimum_active_resource_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} resource activity with at least {minimum_operation_count} operations and {minimum_active_resource_count} active resources",
+                scope.as_str()
+            ),
+            Self::ExpectedResourceActivityBelowMinimum {
+                scope,
+                minimum_operation_count,
+                actual_operation_count,
+                minimum_active_resource_count,
+                actual_active_resource_count,
+            } => write!(
+                formatter,
+                "expected {} resource activity to reach at least {minimum_operation_count} operations and {minimum_active_resource_count} active resources, got {actual_operation_count} operations and {actual_active_resource_count} active resources",
                 scope.as_str()
             ),
             Self::MissingParallelDiagnosticSummary { scope } => write!(

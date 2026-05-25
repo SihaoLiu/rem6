@@ -45,7 +45,8 @@ pub use parallel_expectation::{
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
     WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
     WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -269,6 +270,7 @@ pub struct WorkloadManifest {
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
+    expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
     identity: WorkloadManifestIdentity,
 }
@@ -397,6 +399,10 @@ impl WorkloadManifest {
         &self.expected_parallel_partition_activity
     }
 
+    pub fn expected_resource_activity(&self) -> &[WorkloadExpectedResourceActivity] {
+        &self.expected_resource_activity
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -433,6 +439,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
+    expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -460,6 +467,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             expected_parallel_partition_activity: Vec::new(),
+            expected_resource_activity: Vec::new(),
             checkpoint_lineage: None,
         }
     }
@@ -721,6 +729,25 @@ impl WorkloadManifestBuilder {
         Ok(self)
     }
 
+    pub fn add_expected_resource_activity(
+        mut self,
+        expected: WorkloadExpectedResourceActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_resource_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedResourceActivity {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_resource_activity.push(expected);
+        self.expected_resource_activity
+            .sort_by_key(|activity| activity.sort_key());
+        Ok(self)
+    }
+
     pub fn add_required_resource(mut self, resource: WorkloadResourceId) -> Self {
         self.required_resources.insert(resource);
         self
@@ -851,6 +878,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_batch_partition_streaks,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
+            expected_resource_activity: &self.expected_resource_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
         });
 
@@ -877,6 +905,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_batch_partition_streaks,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
+            expected_resource_activity: self.expected_resource_activity,
             checkpoint_lineage: self.checkpoint_lineage,
             identity,
         })
@@ -909,6 +938,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
+    expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -959,6 +989,7 @@ impl WorkloadReplayPlan {
             expected_parallel_partition_activity: manifest
                 .expected_parallel_partition_activity()
                 .to_vec(),
+            expected_resource_activity: manifest.expected_resource_activity().to_vec(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
         })
@@ -1351,6 +1382,29 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_partition_activity
     }
 
+    pub fn add_expected_resource_activity(
+        mut self,
+        expected: WorkloadExpectedResourceActivity,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_resource_activity
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedResourceActivity {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_resource_activity.push(expected);
+        self.expected_resource_activity
+            .sort_by_key(|activity| activity.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_resource_activity(&self) -> &[WorkloadExpectedResourceActivity] {
+        &self.expected_resource_activity
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -1383,6 +1437,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
+        replay_verify::verify_expected_resource_activity(self, result)?;
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
         Ok(())
     }

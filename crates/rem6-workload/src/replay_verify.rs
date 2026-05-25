@@ -28,6 +28,41 @@ pub(crate) fn verify_expected_clean_parallel_diagnostics(
     Ok(())
 }
 
+pub(crate) fn verify_expected_resource_activity(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_activity = plan.expected_resource_activity();
+    if expected_activity.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_activity[0];
+        return Err(WorkloadError::MissingResourceActivitySummary {
+            scope: expected.scope(),
+            minimum_operation_count: expected.minimum_operation_count(),
+            minimum_active_resource_count: expected.minimum_active_resource_count(),
+        });
+    };
+
+    for expected in expected_activity {
+        let (actual_operation_count, actual_active_resource_count) =
+            expected.actual_counts(summary);
+        if actual_operation_count < expected.minimum_operation_count()
+            || actual_active_resource_count < expected.minimum_active_resource_count()
+        {
+            return Err(WorkloadError::ExpectedResourceActivityBelowMinimum {
+                scope: expected.scope(),
+                minimum_operation_count: expected.minimum_operation_count(),
+                actual_operation_count,
+                minimum_active_resource_count: expected.minimum_active_resource_count(),
+                actual_active_resource_count,
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_data_cache_protocol_run_counts(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

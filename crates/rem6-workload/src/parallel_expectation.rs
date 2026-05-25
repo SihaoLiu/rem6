@@ -58,6 +58,95 @@ impl WorkloadParallelDiagnosticScope {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadResourceActivityScope {
+    Fabric,
+    Dram,
+    Resource,
+}
+
+impl WorkloadResourceActivityScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fabric => "fabric",
+            Self::Dram => "dram",
+            Self::Resource => "resource",
+        }
+    }
+
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Fabric => 0,
+            Self::Dram => 1,
+            Self::Resource => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedResourceActivity {
+    scope: WorkloadResourceActivityScope,
+    minimum_operation_count: usize,
+    minimum_active_resource_count: usize,
+}
+
+impl WorkloadExpectedResourceActivity {
+    pub fn new(
+        scope: WorkloadResourceActivityScope,
+        minimum_operation_count: usize,
+        minimum_active_resource_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_operation_count == 0 && minimum_active_resource_count == 0 {
+            return Err(WorkloadError::ZeroExpectedResourceActivity { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_operation_count,
+            minimum_active_resource_count,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadResourceActivityScope {
+        self.scope
+    }
+
+    pub const fn minimum_operation_count(self) -> usize {
+        self.minimum_operation_count
+    }
+
+    pub const fn minimum_active_resource_count(self) -> usize {
+        self.minimum_active_resource_count
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) fn actual_counts(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> (usize, usize) {
+        match self.scope {
+            WorkloadResourceActivityScope::Fabric => (
+                summary.fabric_transfer_count(),
+                summary.active_fabric_lane_count(),
+            ),
+            WorkloadResourceActivityScope::Dram => (
+                summary.dram_access_count(),
+                summary.active_dram_target_count(),
+            ),
+            WorkloadResourceActivityScope::Resource => (
+                summary
+                    .fabric_transfer_count()
+                    .saturating_add(summary.dram_access_count()),
+                summary
+                    .active_fabric_lane_count()
+                    .saturating_add(summary.active_dram_target_count()),
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedCleanParallelDiagnostics {
     scope: WorkloadParallelDiagnosticScope,
