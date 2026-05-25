@@ -445,6 +445,10 @@ Workload results retain explicit merged full-system streak evidence instead of
 reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to
 manifest checks.
+GPU and accelerator DMA replay paths also preserve recorded scheduler batch
+counts and duration-weighted worker-tick evidence for their internal read and
+write schedulers, so heterogeneous memory movement does not disappear behind
+copy/completion counters.
 The full-system batch sequence is merged by worker start tick with deterministic
 tie breakers, which prevents a CPU batch between two data-cache batches from
 being hidden by subsystem-local concatenation when sustained occupancy is

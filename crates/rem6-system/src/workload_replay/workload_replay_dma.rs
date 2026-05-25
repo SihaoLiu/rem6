@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorCommandId, AcceleratorDmaCopy, AcceleratorEngineId};
-use rem6_kernel::{PartitionedScheduler, WaitForGraph};
+use rem6_kernel::{PartitionedScheduler, Tick, WaitForGraph};
 use rem6_memory::{
     AccessSize, AddressRange, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
@@ -10,8 +10,8 @@ use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport};
 use rem6_workload::{WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadRouteId, WorkloadTopology};
 
 use super::{
-    cached_memory_response, RiscvWorkloadReplayError, WorkloadDataCacheBackend,
-    WorkloadMemoryBackend,
+    cached_memory_response, dma_scheduler_batch_worker_count_ticks, merge_dma_scheduler_run,
+    RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
 };
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, merge_wait_for_graph, WorkloadAcceleratorRuntime,
@@ -22,6 +22,10 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) copy_count: usize,
     pub(super) completion_count: usize,
     pub(super) active_device_count: usize,
+    pub(super) scheduler_epoch_count: usize,
+    pub(super) scheduler_dispatch_count: usize,
+    pub(super) scheduler_batch_count: usize,
+    pub(super) scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     pub(super) wait_for_edge_count: usize,
     pub(super) deadlock_diagnostic_count: usize,
 }
@@ -55,6 +59,10 @@ pub(super) fn run_accelerator_dma_copies(
         topology.parallel_worker_limit(),
     )
     .map_err(RiscvWorkloadReplayError::Scheduler)?;
+    let mut scheduler_epoch_count = 0;
+    let mut scheduler_dispatch_count = 0;
+    let mut scheduler_batch_count = 0;
+    let mut scheduler_batch_worker_count_ticks = BTreeMap::<usize, Tick>::new();
 
     for copy in topology.accelerator_dma_copies() {
         let engine = AcceleratorEngineId::new(copy.engine());
@@ -79,9 +87,16 @@ pub(super) fn run_accelerator_dma_copies(
             )
             .map_err(RiscvWorkloadReplayError::Accelerator)?;
     }
-    scheduler
-        .run_until_idle_parallel()
+    let read_run = scheduler
+        .run_until_idle_parallel_recorded()
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
+    merge_dma_scheduler_run(
+        &read_run,
+        &mut scheduler_epoch_count,
+        &mut scheduler_dispatch_count,
+        &mut scheduler_batch_count,
+        &mut scheduler_batch_worker_count_ticks,
+    );
 
     for copy in topology.accelerator_dma_copies() {
         let engine = AcceleratorEngineId::new(copy.engine());
@@ -108,9 +123,16 @@ pub(super) fn run_accelerator_dma_copies(
             return Err(RiscvWorkloadReplayError::MissingAcceleratorDmaWrite { engine });
         }
     }
-    scheduler
-        .run_until_idle_parallel()
+    let write_run = scheduler
+        .run_until_idle_parallel_recorded()
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
+    merge_dma_scheduler_run(
+        &write_run,
+        &mut scheduler_epoch_count,
+        &mut scheduler_dispatch_count,
+        &mut scheduler_batch_count,
+        &mut scheduler_batch_worker_count_ticks,
+    );
 
     let after = accelerator_snapshots(devices);
     let mut active_device_count = 0;
@@ -140,6 +162,12 @@ pub(super) fn run_accelerator_dma_copies(
         copy_count: topology.accelerator_dma_copies().len(),
         completion_count,
         active_device_count,
+        scheduler_epoch_count,
+        scheduler_dispatch_count,
+        scheduler_batch_count,
+        scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
+            scheduler_batch_worker_count_ticks,
+        ),
         wait_for_edge_count: 0,
         deadlock_diagnostic_count: 0,
     }

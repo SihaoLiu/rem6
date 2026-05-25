@@ -925,6 +925,27 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
     assert_eq!(summary.gpu_dma_completion_count(), 2);
     assert_eq!(summary.accelerator_dma_copy_count(), 2);
     assert_eq!(summary.accelerator_dma_completion_count(), 2);
+    assert!(summary.gpu_dma_scheduler_batch_count() >= summary.gpu_dma_copy_count());
+    assert!(
+        summary.accelerator_dma_scheduler_batch_count() >= summary.accelerator_dma_copy_count()
+    );
+    assert_eq!(
+        summary.dma_scheduler_batch_count(),
+        summary.gpu_dma_scheduler_batch_count() + summary.accelerator_dma_scheduler_batch_count(),
+    );
+    assert!(
+        summary.gpu_dma_scheduler_batch_worker_ticks()
+            >= summary.gpu_dma_scheduler_batch_count() as u64
+    );
+    assert!(
+        summary.accelerator_dma_scheduler_batch_worker_ticks()
+            >= summary.accelerator_dma_scheduler_batch_count() as u64
+    );
+    assert_eq!(
+        summary.dma_scheduler_batch_worker_ticks(),
+        summary.gpu_dma_scheduler_batch_worker_ticks()
+            + summary.accelerator_dma_scheduler_batch_worker_ticks(),
+    );
     assert!(summary.gpu_dma_wait_for_edge_count() >= 1);
     assert!(summary.accelerator_dma_wait_for_edge_count() >= 1);
     assert_eq!(

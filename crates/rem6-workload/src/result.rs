@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
     LivelockDiagnostic, ParallelPartitionActivity, ParallelProgressTransitionRecord,
-    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
 };
 
 use crate::parallel_batch::{
@@ -31,6 +31,7 @@ use crate::result_partition_activity::{
 mod batch_timeline;
 mod batch_worker_count;
 mod full_system_parallel;
+mod heterogeneous_activity;
 mod progress;
 mod remote_endpoints;
 
@@ -247,6 +248,10 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_copy_count: usize,
     gpu_dma_completion_count: usize,
     active_gpu_dma_device_count: usize,
+    gpu_dma_scheduler_epoch_count: usize,
+    gpu_dma_scheduler_dispatch_count: usize,
+    gpu_dma_scheduler_batch_count: usize,
+    gpu_dma_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     gpu_dma_wait_for_edge_count: usize,
     gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
@@ -258,6 +263,10 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_copy_count: usize,
     accelerator_dma_completion_count: usize,
     active_accelerator_dma_device_count: usize,
+    accelerator_dma_scheduler_epoch_count: usize,
+    accelerator_dma_scheduler_dispatch_count: usize,
+    accelerator_dma_scheduler_batch_count: usize,
+    accelerator_dma_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     accelerator_dma_wait_for_edge_count: usize,
     accelerator_dma_deadlock_diagnostic_count: usize,
 }
@@ -1599,156 +1608,5 @@ impl WorkloadParallelExecutionSummary {
             || self.has_compute_diagnostics()
             || self.has_dma_diagnostics()
             || self.full_system_livelock_diagnostic_count() != 0
-    }
-
-    pub const fn gpu_kernel_launch_count(&self) -> usize {
-        self.gpu_kernel_launch_count
-    }
-
-    pub const fn gpu_trace_event_count(&self) -> usize {
-        self.gpu_trace_event_count
-    }
-
-    pub const fn gpu_workgroup_completion_count(&self) -> usize {
-        self.gpu_workgroup_completion_count
-    }
-
-    pub const fn active_gpu_device_count(&self) -> usize {
-        self.active_gpu_device_count
-    }
-
-    pub const fn has_gpu_compute_activity(&self) -> bool {
-        self.gpu_kernel_launch_count != 0
-            || self.gpu_trace_event_count != 0
-            || self.gpu_workgroup_completion_count != 0
-    }
-
-    pub const fn gpu_compute_wait_for_edge_count(&self) -> usize {
-        self.gpu_compute_wait_for_edge_count
-    }
-
-    pub const fn gpu_compute_deadlock_diagnostic_count(&self) -> usize {
-        self.gpu_compute_deadlock_diagnostic_count
-    }
-
-    pub const fn has_gpu_compute_diagnostics(&self) -> bool {
-        self.gpu_compute_wait_for_edge_count != 0 || self.gpu_compute_deadlock_diagnostic_count != 0
-    }
-
-    pub const fn gpu_dma_copy_count(&self) -> usize {
-        self.gpu_dma_copy_count
-    }
-
-    pub const fn gpu_dma_completion_count(&self) -> usize {
-        self.gpu_dma_completion_count
-    }
-
-    pub const fn active_gpu_dma_device_count(&self) -> usize {
-        self.active_gpu_dma_device_count
-    }
-
-    pub const fn has_gpu_dma_activity(&self) -> bool {
-        self.gpu_dma_copy_count != 0 || self.gpu_dma_completion_count != 0
-    }
-
-    pub const fn gpu_dma_wait_for_edge_count(&self) -> usize {
-        self.gpu_dma_wait_for_edge_count
-    }
-
-    pub const fn gpu_dma_deadlock_diagnostic_count(&self) -> usize {
-        self.gpu_dma_deadlock_diagnostic_count
-    }
-
-    pub const fn has_gpu_dma_diagnostics(&self) -> bool {
-        self.gpu_dma_wait_for_edge_count != 0 || self.gpu_dma_deadlock_diagnostic_count != 0
-    }
-
-    pub const fn accelerator_command_count(&self) -> usize {
-        self.accelerator_command_count
-    }
-
-    pub const fn accelerator_trace_event_count(&self) -> usize {
-        self.accelerator_trace_event_count
-    }
-
-    pub const fn accelerator_completion_count(&self) -> usize {
-        self.accelerator_completion_count
-    }
-
-    pub const fn active_accelerator_device_count(&self) -> usize {
-        self.active_accelerator_device_count
-    }
-
-    pub const fn has_accelerator_compute_activity(&self) -> bool {
-        self.accelerator_command_count != 0
-            || self.accelerator_trace_event_count != 0
-            || self.accelerator_completion_count != 0
-    }
-
-    pub const fn accelerator_compute_wait_for_edge_count(&self) -> usize {
-        self.accelerator_compute_wait_for_edge_count
-    }
-
-    pub const fn accelerator_compute_deadlock_diagnostic_count(&self) -> usize {
-        self.accelerator_compute_deadlock_diagnostic_count
-    }
-
-    pub const fn has_accelerator_compute_diagnostics(&self) -> bool {
-        self.accelerator_compute_wait_for_edge_count != 0
-            || self.accelerator_compute_deadlock_diagnostic_count != 0
-    }
-
-    pub const fn compute_wait_for_edge_count(&self) -> usize {
-        self.gpu_compute_wait_for_edge_count + self.accelerator_compute_wait_for_edge_count
-    }
-
-    pub const fn compute_deadlock_diagnostic_count(&self) -> usize {
-        self.gpu_compute_deadlock_diagnostic_count
-            + self.accelerator_compute_deadlock_diagnostic_count
-    }
-
-    pub const fn has_compute_diagnostics(&self) -> bool {
-        self.has_gpu_compute_diagnostics() || self.has_accelerator_compute_diagnostics()
-    }
-
-    pub const fn accelerator_dma_copy_count(&self) -> usize {
-        self.accelerator_dma_copy_count
-    }
-
-    pub const fn accelerator_dma_completion_count(&self) -> usize {
-        self.accelerator_dma_completion_count
-    }
-
-    pub const fn active_accelerator_dma_device_count(&self) -> usize {
-        self.active_accelerator_dma_device_count
-    }
-
-    pub const fn has_accelerator_dma_activity(&self) -> bool {
-        self.accelerator_dma_copy_count != 0 || self.accelerator_dma_completion_count != 0
-    }
-
-    pub const fn accelerator_dma_wait_for_edge_count(&self) -> usize {
-        self.accelerator_dma_wait_for_edge_count
-    }
-
-    pub const fn accelerator_dma_deadlock_diagnostic_count(&self) -> usize {
-        self.accelerator_dma_deadlock_diagnostic_count
-    }
-
-    pub const fn has_accelerator_dma_diagnostics(&self) -> bool {
-        self.accelerator_dma_wait_for_edge_count != 0
-            || self.accelerator_dma_deadlock_diagnostic_count != 0
-    }
-
-    pub const fn dma_wait_for_edge_count(&self) -> usize {
-        self.gpu_dma_wait_for_edge_count + self.accelerator_dma_wait_for_edge_count
-    }
-
-    pub const fn dma_deadlock_diagnostic_count(&self) -> usize {
-        self.gpu_dma_deadlock_diagnostic_count + self.accelerator_dma_deadlock_diagnostic_count
-    }
-
-    pub const fn has_dma_diagnostics(&self) -> bool {
-        self.has_gpu_dma_diagnostics() || self.has_accelerator_dma_diagnostics()
     }
 }

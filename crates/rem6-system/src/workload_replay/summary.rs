@@ -259,6 +259,16 @@ pub(super) fn parallel_execution_summary(
             activities.gpu_dma.completion_count,
             activities.gpu_dma.active_device_count,
         )
+        .with_gpu_dma_scheduler_counts(
+            activities.gpu_dma.scheduler_epoch_count,
+            activities.gpu_dma.scheduler_dispatch_count,
+            activities.gpu_dma.scheduler_batch_count,
+            activities
+                .gpu_dma
+                .scheduler_batch_worker_count_ticks
+                .iter()
+                .copied(),
+        )
         .with_gpu_dma_diagnostics(
             activities.gpu_dma.wait_for_edge_count,
             activities.gpu_dma.deadlock_diagnostic_count,
@@ -277,6 +287,16 @@ pub(super) fn parallel_execution_summary(
             activities.accelerator_dma.copy_count,
             activities.accelerator_dma.completion_count,
             activities.accelerator_dma.active_device_count,
+        )
+        .with_accelerator_dma_scheduler_counts(
+            activities.accelerator_dma.scheduler_epoch_count,
+            activities.accelerator_dma.scheduler_dispatch_count,
+            activities.accelerator_dma.scheduler_batch_count,
+            activities
+                .accelerator_dma
+                .scheduler_batch_worker_count_ticks
+                .iter()
+                .copied(),
         )
         .with_accelerator_dma_diagnostics(
             activities.accelerator_dma.wait_for_edge_count,
