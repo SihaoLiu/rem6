@@ -68,7 +68,10 @@ impl LineBackingStore {
             }
             MemoryOperation::Atomic => {
                 let data = self.read_slice(request)?;
-                self.apply_write(request)?;
+                let write_data = request
+                    .atomic_write_data(&data)
+                    .map_err(HarnessError::Memory)?;
+                self.apply_write_data(request, &write_data)?;
                 MemoryResponse::completed(request, Some(data)).map_err(HarnessError::Memory)
             }
             MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty => {
@@ -92,13 +95,21 @@ impl LineBackingStore {
     }
 
     fn apply_write(&mut self, request: &MemoryRequest) -> Result<(), HarnessError> {
-        let offset = request.line_offset() as usize;
         let payload =
             request
                 .data()
                 .ok_or(HarnessError::Memory(MemoryError::MissingRequestData {
                     request: request.id(),
                 }))?;
+        self.apply_write_data(request, payload)
+    }
+
+    fn apply_write_data(
+        &mut self,
+        request: &MemoryRequest,
+        payload: &[u8],
+    ) -> Result<(), HarnessError> {
+        let offset = request.line_offset() as usize;
         let mask = request.byte_mask();
         for (index, byte) in payload.iter().enumerate() {
             if mask.is_none_or(|mask| mask.bits()[index]) {

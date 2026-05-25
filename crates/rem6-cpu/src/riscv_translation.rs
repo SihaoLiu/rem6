@@ -587,18 +587,22 @@ fn cpu_translation_request(
                 ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
             )
         }
-        rem6_isa_riscv::MemoryAccessKind::AtomicMemory { address, value, .. } => {
-            CpuTranslationRequest::atomic(
-                translation_id,
-                memory_request_id,
-                data.route(),
-                data.endpoint().clone(),
-                Address::new(*address),
-                size,
-                store_bytes(*value, size),
-                ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
-            )
-        }
+        rem6_isa_riscv::MemoryAccessKind::AtomicMemory {
+            address, value, op, ..
+        } => CpuTranslationRequest::atomic_with_op(
+            translation_id,
+            memory_request_id,
+            data.route(),
+            data.endpoint().clone(),
+            Address::new(*address),
+            size,
+            match op {
+                rem6_isa_riscv::AtomicMemoryOp::Swap => rem6_memory::MemoryAtomicOp::Swap,
+                rem6_isa_riscv::AtomicMemoryOp::Add => rem6_memory::MemoryAtomicOp::Add,
+            },
+            store_bytes(*value, size),
+            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+        ),
     }
     .map_err(RiscvCpuError::DataTranslation)
 }

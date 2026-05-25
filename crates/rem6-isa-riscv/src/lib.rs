@@ -50,6 +50,7 @@ pub enum MemoryWidth {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AtomicMemoryOp {
     Swap,
+    Add,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -358,6 +359,15 @@ fn decode_atomic(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs2: rs2(raw),
             width: MemoryWidth::Doubleword,
             op: AtomicMemoryOp::Swap,
+            acquire: aq(raw),
+            release: rl(raw),
+        }),
+        (0x00, 0x3, _) => Ok(RiscvInstruction::AtomicMemory {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            width: MemoryWidth::Doubleword,
+            op: AtomicMemoryOp::Add,
             acquire: aq(raw),
             release: rl(raw),
         }),

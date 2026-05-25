@@ -3,11 +3,11 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_memory::{
-    AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
-    MemoryRequest, MemoryRequestId, TranslationAccessKind, TranslationAddressSpaceId,
-    TranslationCompletion, TranslationError, TranslationFault, TranslationPageMap,
-    TranslationQueue, TranslationQueueConfig, TranslationQueueSnapshot, TranslationRequest,
-    TranslationRequestId, TranslationResolution, TranslationSegment,
+    AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryError,
+    MemoryOperation, MemoryRequest, MemoryRequestId, TranslationAccessKind,
+    TranslationAddressSpaceId, TranslationCompletion, TranslationError, TranslationFault,
+    TranslationPageMap, TranslationQueue, TranslationQueueConfig, TranslationQueueSnapshot,
+    TranslationRequest, TranslationRequestId, TranslationResolution, TranslationSegment,
     TranslationSegmentedResolution, TranslationTlb, TranslationTlbConfig, TranslationTlbSnapshot,
 };
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
@@ -52,6 +52,7 @@ pub struct CpuTranslationRequest {
     operation: CpuTranslatedMemoryOperation,
     write_data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
+    atomic_op: Option<MemoryAtomicOp>,
 }
 
 impl CpuTranslationRequest {
@@ -73,6 +74,7 @@ impl CpuTranslationRequest {
             CpuTranslatedMemoryOperation::InstructionFetch,
             None,
             None,
+            None,
         )
     }
 
@@ -92,6 +94,7 @@ impl CpuTranslationRequest {
             virtual_address,
             size,
             CpuTranslatedMemoryOperation::Read,
+            None,
             None,
             None,
         )
@@ -118,6 +121,7 @@ impl CpuTranslationRequest {
             CpuTranslatedMemoryOperation::Write,
             Some(write_data),
             Some(byte_mask),
+            None,
         )
     }
 
@@ -132,6 +136,31 @@ impl CpuTranslationRequest {
         write_data: Vec<u8>,
         byte_mask: ByteMask,
     ) -> Result<Self, CpuTranslationFrontendError> {
+        Self::atomic_with_op(
+            translation_id,
+            memory_request_id,
+            route,
+            endpoint,
+            virtual_address,
+            size,
+            MemoryAtomicOp::Swap,
+            write_data,
+            byte_mask,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn atomic_with_op(
+        translation_id: TranslationRequestId,
+        memory_request_id: MemoryRequestId,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+        virtual_address: Address,
+        size: AccessSize,
+        op: MemoryAtomicOp,
+        write_data: Vec<u8>,
+        byte_mask: ByteMask,
+    ) -> Result<Self, CpuTranslationFrontendError> {
         Self::new(
             translation_id,
             memory_request_id,
@@ -142,6 +171,7 @@ impl CpuTranslationRequest {
             CpuTranslatedMemoryOperation::Atomic,
             Some(write_data),
             Some(byte_mask),
+            Some(op),
         )
     }
 
@@ -156,6 +186,7 @@ impl CpuTranslationRequest {
         operation: CpuTranslatedMemoryOperation,
         write_data: Option<Vec<u8>>,
         byte_mask: Option<ByteMask>,
+        atomic_op: Option<MemoryAtomicOp>,
     ) -> Result<Self, CpuTranslationFrontendError> {
         AddressRange::new(virtual_address, size).map_err(CpuTranslationFrontendError::Memory)?;
         match operation {
@@ -200,6 +231,24 @@ impl CpuTranslationRequest {
                 }
             }
         }
+        match (operation, atomic_op) {
+            (CpuTranslatedMemoryOperation::Atomic, Some(_)) => {}
+            (CpuTranslatedMemoryOperation::Atomic, None) => {
+                return Err(CpuTranslationFrontendError::Memory(
+                    MemoryError::MissingAtomicOp {
+                        request: memory_request_id,
+                    },
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(CpuTranslationFrontendError::Memory(
+                    MemoryError::UnexpectedAtomicOp {
+                        request: memory_request_id,
+                    },
+                ));
+            }
+            (_, None) => {}
+        }
 
         Ok(Self {
             address_space: TranslationAddressSpaceId::global(),
@@ -212,6 +261,7 @@ impl CpuTranslationRequest {
             operation,
             write_data,
             byte_mask,
+            atomic_op,
         })
     }
 
@@ -344,10 +394,17 @@ impl CpuTranslatedMemoryRequest {
                 line_layout,
             )
             .map_err(CpuTranslationFrontendError::Memory),
-            CpuTranslatedMemoryOperation::Atomic => MemoryRequest::atomic(
+            CpuTranslatedMemoryOperation::Atomic => MemoryRequest::atomic_with_op(
                 self.request.memory_request_id,
                 self.physical_address,
                 self.request.size,
+                self.request
+                    .atomic_op
+                    .ok_or(CpuTranslationFrontendError::Memory(
+                        MemoryError::MissingAtomicOp {
+                            request: self.request.memory_request_id,
+                        },
+                    ))?,
                 self.request.write_data.clone().ok_or(
                     CpuTranslationFrontendError::MissingWriteData {
                         request: self.request.memory_request_id,
@@ -377,6 +434,7 @@ pub struct CpuTranslatedMemorySegment {
     operation: CpuTranslatedMemoryOperation,
     write_data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
+    atomic_op: Option<MemoryAtomicOp>,
 }
 
 impl CpuTranslatedMemorySegment {
@@ -407,6 +465,7 @@ impl CpuTranslatedMemorySegment {
             operation: request.operation(),
             write_data,
             byte_mask,
+            atomic_op: request.atomic_op,
         })
     }
 
@@ -487,10 +546,15 @@ impl CpuTranslatedMemorySegment {
                 line_layout,
             )
             .map_err(CpuTranslationFrontendError::Memory),
-            CpuTranslatedMemoryOperation::Atomic => MemoryRequest::atomic(
+            CpuTranslatedMemoryOperation::Atomic => MemoryRequest::atomic_with_op(
                 request_id,
                 self.physical_address,
                 self.size,
+                self.atomic_op.ok_or(CpuTranslationFrontendError::Memory(
+                    MemoryError::MissingAtomicOp {
+                        request: self.memory_request_id,
+                    },
+                ))?,
                 self.write_data
                     .clone()
                     .ok_or(CpuTranslationFrontendError::MissingWriteData {

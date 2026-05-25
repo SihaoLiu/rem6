@@ -548,7 +548,10 @@ impl ChiCacheController {
     ) -> Result<MemoryResponse, ChiCacheControllerError> {
         if request.operation() == MemoryOperation::Atomic {
             let data = self.read_slice(request)?;
-            self.apply_store(request)?;
+            let write_data = request
+                .atomic_write_data(&data)
+                .map_err(ChiCacheControllerError::Memory)?;
+            self.apply_store_data(request, &write_data)?;
             return MemoryResponse::completed(request, Some(data))
                 .map_err(ChiCacheControllerError::Memory);
         }
@@ -569,17 +572,25 @@ impl ChiCacheController {
     }
 
     fn apply_store(&mut self, request: &MemoryRequest) -> Result<(), ChiCacheControllerError> {
+        let payload = request.data().ok_or(ChiCacheControllerError::Memory(
+            MemoryError::MissingRequestData {
+                request: request.id(),
+            },
+        ))?;
+        self.apply_store_data(request, payload)
+    }
+
+    fn apply_store_data(
+        &mut self,
+        request: &MemoryRequest,
+        payload: &[u8],
+    ) -> Result<(), ChiCacheControllerError> {
         let offset = self.checked_offset(request)?;
         let line = self.line();
         let data = self
             .data
             .as_mut()
             .ok_or(ChiCacheControllerError::LineDataUnavailable { line })?;
-        let payload = request.data().ok_or(ChiCacheControllerError::Memory(
-            MemoryError::MissingRequestData {
-                request: request.id(),
-            },
-        ))?;
         let mask = request.byte_mask();
 
         for (index, byte) in payload.iter().enumerate() {

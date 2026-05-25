@@ -334,6 +334,44 @@ fn hart_reports_atomic_swap_access_without_mutating_register() {
 }
 
 #[test]
+fn hart_reports_atomic_add_access_without_mutating_register() {
+    let mut hart = RiscvHartState::new(0x6800);
+    hart.write(reg(2), 0x9008);
+    hart.write(reg(6), 0x0102_0304_0506_0708);
+
+    let instruction =
+        RiscvInstruction::decode(atomic_type(0x00, false, true, 6, 2, 0x3, 7)).unwrap();
+    assert_eq!(
+        instruction,
+        RiscvInstruction::AtomicMemory {
+            rd: reg(7),
+            rs1: reg(2),
+            rs2: reg(6),
+            width: MemoryWidth::Doubleword,
+            op: AtomicMemoryOp::Add,
+            acquire: false,
+            release: true,
+        }
+    );
+
+    let atomic = hart.execute(instruction).unwrap();
+    assert_eq!(atomic.next_pc(), 0x6804);
+    assert_eq!(
+        atomic.memory_access(),
+        Some(&MemoryAccessKind::AtomicMemory {
+            rd: reg(7),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+            op: AtomicMemoryOp::Add,
+            value: 0x0102_0304_0506_0708,
+            acquire: false,
+            release: true,
+        })
+    );
+    assert_eq!(hart.read(reg(7)), 0);
+}
+
+#[test]
 fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
     let mut hart = RiscvHartState::new(0x7000);
 

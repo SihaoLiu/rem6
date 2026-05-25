@@ -679,7 +679,10 @@ impl MsiCacheController {
     ) -> Result<MemoryResponse, CacheControllerError> {
         if request.operation() == MemoryOperation::Atomic {
             let data = self.read_slice(request)?;
-            self.apply_store(request)?;
+            let write_data = request
+                .atomic_write_data(&data)
+                .map_err(CacheControllerError::Memory)?;
+            self.apply_store_data(request, &write_data)?;
             return MemoryResponse::completed(request, Some(data))
                 .map_err(CacheControllerError::Memory);
         }
@@ -699,17 +702,25 @@ impl MsiCacheController {
     }
 
     fn apply_store(&mut self, request: &MemoryRequest) -> Result<(), CacheControllerError> {
+        let payload = request.data().ok_or(CacheControllerError::Memory(
+            MemoryError::MissingRequestData {
+                request: request.id(),
+            },
+        ))?;
+        self.apply_store_data(request, payload)
+    }
+
+    fn apply_store_data(
+        &mut self,
+        request: &MemoryRequest,
+        payload: &[u8],
+    ) -> Result<(), CacheControllerError> {
         let offset = self.checked_offset(request)?;
         let line = self.line();
         let data = self
             .data
             .as_mut()
             .ok_or(CacheControllerError::LineDataUnavailable { line })?;
-        let payload = request.data().ok_or(CacheControllerError::Memory(
-            MemoryError::MissingRequestData {
-                request: request.id(),
-            },
-        ))?;
         let mask = request.byte_mask();
 
         for (index, byte) in payload.iter().enumerate() {
@@ -1335,7 +1346,10 @@ impl MesiCacheController {
     ) -> Result<MemoryResponse, MesiCacheControllerError> {
         if request.operation() == MemoryOperation::Atomic {
             let data = self.read_slice(request)?;
-            self.apply_store(request)?;
+            let write_data = request
+                .atomic_write_data(&data)
+                .map_err(MesiCacheControllerError::Memory)?;
+            self.apply_store_data(request, &write_data)?;
             return MemoryResponse::completed(request, Some(data))
                 .map_err(MesiCacheControllerError::Memory);
         }
@@ -1356,17 +1370,25 @@ impl MesiCacheController {
     }
 
     fn apply_store(&mut self, request: &MemoryRequest) -> Result<(), MesiCacheControllerError> {
+        let payload = request.data().ok_or(MesiCacheControllerError::Memory(
+            MemoryError::MissingRequestData {
+                request: request.id(),
+            },
+        ))?;
+        self.apply_store_data(request, payload)
+    }
+
+    fn apply_store_data(
+        &mut self,
+        request: &MemoryRequest,
+        payload: &[u8],
+    ) -> Result<(), MesiCacheControllerError> {
         let offset = self.checked_offset(request)?;
         let line = self.line();
         let data = self
             .data
             .as_mut()
             .ok_or(MesiCacheControllerError::LineDataUnavailable { line })?;
-        let payload = request.data().ok_or(MesiCacheControllerError::Memory(
-            MemoryError::MissingRequestData {
-                request: request.id(),
-            },
-        ))?;
         let mask = request.byte_mask();
 
         for (index, byte) in payload.iter().enumerate() {

@@ -1136,6 +1136,52 @@ fn riscv_core_amoswapd_writes_new_value_and_returns_old_value() {
 }
 
 #[test]
+fn riscv_core_amoaddd_writes_sum_and_returns_old_value() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9008);
+    core.write_register(reg(6), 0x0102_0304_0506_0708);
+    let store = loaded_store_with_data(
+        0x8000,
+        atomic_type(0x00, false, true, 6, 2, 0x3, 7),
+        0x9008,
+        vec![8, 9, 10, 11, 12, 13, 14, 15],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    assert_eq!(core.read_register(reg(7)), 0x0f0e_0d0c_0b0a_0908);
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 8, 43),
+        0x1010_1010_1010_1010u64.to_le_bytes()
+    );
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+    assert_eq!(events[1].data(), Some(&[8, 9, 10, 11, 12, 13, 14, 15][..]));
+}
+
+#[test]
 fn riscv_core_issues_translated_load_through_data_tlb() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core(fetch_route, data_route, 0x8000);

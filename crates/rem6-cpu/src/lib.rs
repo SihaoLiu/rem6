@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
-    MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord, RiscvHartState,
+    AtomicMemoryOp, MemoryAccessKind, MemoryWidth, Register, RiscvExecutionRecord, RiscvHartState,
     RiscvInstruction, RiscvTrap,
 };
 use rem6_kernel::{
@@ -12,8 +12,8 @@ use rem6_kernel::{
     SchedulerContext, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryOperation,
-    MemoryRequest, MemoryRequestId, ResponseStatus, TranslationRequestId,
+    AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp,
+    MemoryOperation, MemoryRequest, MemoryRequestId, ResponseStatus, TranslationRequestId,
 };
 use rem6_mmio::{MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId};
 use rem6_transport::{
@@ -1537,11 +1537,23 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-            MemoryAccessKind::StoreConditional { value, .. }
-            | MemoryAccessKind::AtomicMemory { value, .. } => MemoryRequest::atomic(
+            MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::atomic(
                 self.request_id,
                 self.physical_address,
                 self.size,
+                store_bytes(*value, self.size),
+                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::AtomicMemory { op, value, .. } => MemoryRequest::atomic_with_op(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                match op {
+                    AtomicMemoryOp::Swap => MemoryAtomicOp::Swap,
+                    AtomicMemoryOp::Add => MemoryAtomicOp::Add,
+                },
                 store_bytes(*value, self.size),
                 ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
                 line_layout,

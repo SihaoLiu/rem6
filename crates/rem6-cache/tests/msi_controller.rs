@@ -2,8 +2,8 @@ use rem6_cache::{
     CacheControllerError, CacheControllerResultKind, MsiCacheController, MsiCacheControllerSnapshot,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
-    MemoryRequestId, MemoryResponse,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryOperation,
+    MemoryRequest, MemoryRequestId, MemoryResponse,
 };
 use rem6_protocol_msi::{MsiAction, MsiEvent, MsiLineId, MsiState};
 use rem6_transport::TargetOutcome;
@@ -26,6 +26,26 @@ fn atomic(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryR
         request_id(sequence),
         Address::new(address),
         size,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
+fn atomic_with_op(
+    sequence: u64,
+    address: u64,
+    op: MemoryAtomicOp,
+    data: Vec<u8>,
+    mask: ByteMask,
+) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic_with_op(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        op,
         data,
         mask,
         layout(),
@@ -167,6 +187,43 @@ fn controller_atomic_hit_returns_old_bytes_and_updates_modified_line() {
         hit.target_outcome(),
         Some(&TargetOutcome::Respond(
             MemoryResponse::completed(&read_back, Some(vec![0xaa, 9, 0xcc, 11])).unwrap()
+        ))
+    );
+}
+
+#[test]
+fn controller_atomic_add_hit_returns_old_bytes_and_updates_modified_line() {
+    let mut controller = controller();
+    controller.install_modified((0..64).collect()).unwrap();
+    let request = atomic_with_op(
+        26,
+        0x1008,
+        MemoryAtomicOp::Add,
+        0x0102_0304_0506_0708u64.to_le_bytes().to_vec(),
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+    );
+
+    let result = controller.accept_cpu_request(request.clone()).unwrap();
+
+    assert_eq!(result.kind(), CacheControllerResultKind::Hit);
+    assert_eq!(
+        result.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&request, Some(vec![8, 9, 10, 11, 12, 13, 14, 15])).unwrap()
+        ))
+    );
+    let read_back = MemoryRequest::read_shared(
+        request_id(27),
+        Address::new(0x1008),
+        AccessSize::new(8).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let hit = controller.accept_cpu_request(read_back.clone()).unwrap();
+    assert_eq!(
+        hit.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&read_back, Some(vec![0x10; 8])).unwrap()
         ))
     );
 }

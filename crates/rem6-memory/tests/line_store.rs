@@ -1,6 +1,6 @@
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryError,
-    MemoryRequest, MemoryRequestId, ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryAtomicOp,
+    MemoryError, MemoryRequest, MemoryRequestId, ResponseStatus,
 };
 
 fn layout() -> CacheLineLayout {
@@ -44,6 +44,26 @@ fn atomic(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryR
         request_id(sequence),
         Address::new(address),
         size,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
+fn atomic_with_op(
+    sequence: u64,
+    address: u64,
+    op: MemoryAtomicOp,
+    data: Vec<u8>,
+    mask: ByteMask,
+) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic_with_op(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        op,
         data,
         mask,
         layout(),
@@ -115,6 +135,30 @@ fn line_store_atomic_returns_old_bytes_before_applying_masked_write() {
     assert_eq!(
         &store.line_data(Address::new(0x1000)).unwrap()[0..8],
         &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]
+    );
+}
+
+#[test]
+fn line_store_atomic_add_returns_old_bytes_and_writes_wrapped_sum() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x00))
+        .unwrap();
+    let request = atomic_with_op(
+        5,
+        0x1008,
+        MemoryAtomicOp::Add,
+        0x0102_0304_0506_0708u64.to_le_bytes().to_vec(),
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+    );
+
+    let response = store.respond(&request).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), Some(&[8, 9, 10, 11, 12, 13, 14, 15][..]));
+    assert_eq!(
+        &store.line_data(Address::new(0x1000)).unwrap()[8..16],
+        &0x1010_1010_1010_1010u64.to_le_bytes()
     );
 }
 

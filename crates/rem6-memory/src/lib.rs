@@ -116,6 +116,12 @@ pub enum MemoryOperation {
     Invalidate,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MemoryAtomicOp {
+    Swap,
+    Add,
+}
+
 impl MemoryOperation {
     pub const fn coherence_intent(self) -> CoherenceIntent {
         match self {
@@ -210,6 +216,17 @@ pub enum MemoryError {
     },
     UnexpectedByteMask {
         request: MemoryRequestId,
+    },
+    MissingAtomicOp {
+        request: MemoryRequestId,
+    },
+    UnexpectedAtomicOp {
+        request: MemoryRequestId,
+    },
+    UnsupportedAtomicAccessSize {
+        request: MemoryRequestId,
+        op: MemoryAtomicOp,
+        size: AccessSize,
     },
     UnalignedLineAddress {
         address: Address,
@@ -311,6 +328,25 @@ impl fmt::Display for MemoryError {
                 "request {} from agent {} must not carry a byte mask",
                 request.sequence(),
                 request.agent().get()
+            ),
+            Self::MissingAtomicOp { request } => write!(
+                formatter,
+                "request {} from agent {} requires an atomic operation",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::UnexpectedAtomicOp { request } => write!(
+                formatter,
+                "request {} from agent {} must not carry an atomic operation",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::UnsupportedAtomicAccessSize { request, op, size } => write!(
+                formatter,
+                "request {} from agent {} uses unsupported {op:?} atomic size {}",
+                request.sequence(),
+                request.agent().get(),
+                size.bytes()
             ),
             Self::UnalignedLineAddress { address, line_size } => write!(
                 formatter,
@@ -479,7 +515,8 @@ impl LineMemoryStore {
             }
             MemoryOperation::Atomic => {
                 let data = self.read_slice(request)?;
-                self.apply_write(request)?;
+                let write_data = request.atomic_write_data(&data)?;
+                self.apply_write_data(request, &write_data)?;
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
             MemoryOperation::Upgrade | MemoryOperation::Invalidate => {
@@ -571,10 +608,18 @@ impl LineMemoryStore {
     }
 
     fn apply_write(&mut self, request: &MemoryRequest) -> Result<(), MemoryError> {
-        let offset = request.line_offset() as usize;
         let payload = request.data().ok_or(MemoryError::MissingRequestData {
             request: request.id(),
         })?;
+        self.apply_write_data(request, payload)
+    }
+
+    fn apply_write_data(
+        &mut self,
+        request: &MemoryRequest,
+        payload: &[u8],
+    ) -> Result<(), MemoryError> {
+        let offset = request.line_offset() as usize;
         let mask = request.byte_mask();
         let line = self.line_mut(request.line_address())?;
         for (index, byte) in payload.iter().enumerate() {
@@ -1046,6 +1091,48 @@ pub struct MemoryRequest {
     line_layout: CacheLineLayout,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
+    atomic_op: Option<MemoryAtomicOp>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemoryRequestPayload {
+    data: Option<Vec<u8>>,
+    byte_mask: Option<ByteMask>,
+    atomic_op: Option<MemoryAtomicOp>,
+}
+
+impl MemoryRequestPayload {
+    fn empty() -> Self {
+        Self {
+            data: None,
+            byte_mask: None,
+            atomic_op: None,
+        }
+    }
+
+    fn write(data: Vec<u8>, byte_mask: ByteMask) -> Self {
+        Self {
+            data: Some(data),
+            byte_mask: Some(byte_mask),
+            atomic_op: None,
+        }
+    }
+
+    fn atomic(op: MemoryAtomicOp, data: Vec<u8>, byte_mask: ByteMask) -> Self {
+        Self {
+            data: Some(data),
+            byte_mask: Some(byte_mask),
+            atomic_op: Some(op),
+        }
+    }
+
+    fn writeback(data: Vec<u8>) -> Self {
+        Self {
+            data: Some(data),
+            byte_mask: None,
+            atomic_op: None,
+        }
+    }
 }
 
 impl MemoryRequest {
@@ -1061,8 +1148,7 @@ impl MemoryRequest {
             address,
             size,
             line_layout,
-            None,
-            None,
+            MemoryRequestPayload::empty(),
         )
     }
 
@@ -1078,8 +1164,7 @@ impl MemoryRequest {
             address,
             size,
             line_layout,
-            None,
-            None,
+            MemoryRequestPayload::empty(),
         )
     }
 
@@ -1095,8 +1180,7 @@ impl MemoryRequest {
             address,
             size,
             line_layout,
-            None,
-            None,
+            MemoryRequestPayload::empty(),
         )
     }
 
@@ -1114,8 +1198,7 @@ impl MemoryRequest {
             address,
             size,
             line_layout,
-            Some(data),
-            Some(byte_mask),
+            MemoryRequestPayload::write(data, byte_mask),
         )
     }
 
@@ -1127,14 +1210,33 @@ impl MemoryRequest {
         byte_mask: ByteMask,
         line_layout: CacheLineLayout,
     ) -> Result<Self, MemoryError> {
+        Self::atomic_with_op(
+            id,
+            address,
+            size,
+            MemoryAtomicOp::Swap,
+            data,
+            byte_mask,
+            line_layout,
+        )
+    }
+
+    pub fn atomic_with_op(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        op: MemoryAtomicOp,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
         Self::new(
             id,
             MemoryOperation::Atomic,
             address,
             size,
             line_layout,
-            Some(data),
-            Some(byte_mask),
+            MemoryRequestPayload::atomic(op, data, byte_mask),
         )
     }
 
@@ -1150,8 +1252,7 @@ impl MemoryRequest {
             address,
             size,
             line_layout,
-            None,
-            None,
+            MemoryRequestPayload::empty(),
         )
     }
 
@@ -1204,8 +1305,7 @@ impl MemoryRequest {
             address,
             size,
             line_layout,
-            None,
-            None,
+            MemoryRequestPayload::empty(),
         )
     }
 
@@ -1224,7 +1324,14 @@ impl MemoryRequest {
         }
 
         let size = AccessSize::new(line_layout.bytes())?;
-        Self::new(id, operation, address, size, line_layout, Some(data), None)
+        Self::new(
+            id,
+            operation,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::writeback(data),
+        )
     }
 
     fn new(
@@ -1233,20 +1340,21 @@ impl MemoryRequest {
         address: Address,
         size: AccessSize,
         line_layout: CacheLineLayout,
-        data: Option<Vec<u8>>,
-        byte_mask: Option<ByteMask>,
+        payload: MemoryRequestPayload,
     ) -> Result<Self, MemoryError> {
         let range = AddressRange::new(address, size)?;
-        Self::validate_payload(id, operation, size, data.as_deref())?;
-        Self::validate_mask(id, operation, size, byte_mask.as_ref())?;
+        Self::validate_payload(id, operation, size, payload.data.as_deref())?;
+        Self::validate_mask(id, operation, size, payload.byte_mask.as_ref())?;
+        Self::validate_atomic_op(id, operation, payload.atomic_op)?;
 
         Ok(Self {
             id,
             operation,
             range,
             line_layout,
-            data,
-            byte_mask,
+            data: payload.data,
+            byte_mask: payload.byte_mask,
+            atomic_op: payload.atomic_op,
         })
     }
 
@@ -1290,6 +1398,19 @@ impl MemoryRequest {
                 Err(MemoryError::MissingByteMask { request: id })
             }
             (_, Some(_)) => Err(MemoryError::UnexpectedByteMask { request: id }),
+            (_, None) => Ok(()),
+        }
+    }
+
+    fn validate_atomic_op(
+        id: MemoryRequestId,
+        operation: MemoryOperation,
+        atomic_op: Option<MemoryAtomicOp>,
+    ) -> Result<(), MemoryError> {
+        match (operation, atomic_op) {
+            (MemoryOperation::Atomic, Some(_)) => Ok(()),
+            (MemoryOperation::Atomic, None) => Err(MemoryError::MissingAtomicOp { request: id }),
+            (_, Some(_)) => Err(MemoryError::UnexpectedAtomicOp { request: id }),
             (_, None) => Ok(()),
         }
     }
@@ -1338,6 +1459,50 @@ impl MemoryRequest {
         self.byte_mask.as_ref()
     }
 
+    pub const fn atomic_op(&self) -> Option<MemoryAtomicOp> {
+        self.atomic_op
+    }
+
+    pub fn atomic_write_data(&self, old_data: &[u8]) -> Result<Vec<u8>, MemoryError> {
+        if self.operation != MemoryOperation::Atomic {
+            return Err(MemoryError::UnexpectedAtomicOp { request: self.id });
+        }
+        if old_data.len() as u64 != self.size().bytes() {
+            return Err(MemoryError::PayloadSizeMismatch {
+                expected: self.size(),
+                actual: old_data.len() as u64,
+            });
+        }
+        let payload = self
+            .data()
+            .ok_or(MemoryError::MissingRequestData { request: self.id() })?;
+        match self
+            .atomic_op
+            .ok_or(MemoryError::MissingAtomicOp { request: self.id() })?
+        {
+            MemoryAtomicOp::Swap => Ok(payload.to_vec()),
+            MemoryAtomicOp::Add => self.atomic_add_data(old_data, payload),
+        }
+    }
+
+    fn atomic_add_data(&self, old_data: &[u8], payload: &[u8]) -> Result<Vec<u8>, MemoryError> {
+        let width = self.size().as_usize()?;
+        if !matches!(width, 1 | 2 | 4 | 8) {
+            return Err(MemoryError::UnsupportedAtomicAccessSize {
+                request: self.id(),
+                op: MemoryAtomicOp::Add,
+                size: self.size(),
+            });
+        }
+
+        let old = read_le_u128(old_data);
+        let increment = read_le_u128(payload);
+        let bit_count = width * 8;
+        let mask = (1u128 << bit_count) - 1;
+        let sum = (old.wrapping_add(increment)) & mask;
+        Ok(sum.to_le_bytes()[..width].to_vec())
+    }
+
     pub const fn requires_response(&self) -> bool {
         self.operation.requires_response()
     }
@@ -1353,6 +1518,14 @@ impl MemoryRequest {
     pub const fn requires_writable(&self) -> bool {
         self.operation.requires_writable()
     }
+}
+
+fn read_le_u128(bytes: &[u8]) -> u128 {
+    let mut value = 0u128;
+    for (shift, byte) in bytes.iter().enumerate() {
+        value |= (*byte as u128) << (shift * 8);
+    }
+    value
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
