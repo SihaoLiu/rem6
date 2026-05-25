@@ -508,6 +508,137 @@ fn workload_suite_dispatch_load_expectation_rejects_plan_drift() {
 }
 
 #[test]
+fn workload_suite_dispatch_plan_builds_planned_timeline_from_weighted_estimates() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let delta = manifest("delta", "sha256:delta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("planned-dispatch-timeline"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(delta.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 8).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(delta.id().clone(), 1).unwrap(),
+            WorkloadSuiteDispatchWeight::new(gamma.id().clone(), 7).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let timeline = plan.planned_execution_timeline().unwrap();
+
+    assert_eq!(timeline.suite_identity(), suite.identity());
+    assert_eq!(timeline.worker_count(), 2);
+    assert_eq!(timeline.entries().len(), 4);
+    assert_eq!(timeline.minimum_start_tick(), Some(0));
+    assert_eq!(timeline.maximum_final_tick(), Some(9));
+    assert_eq!(timeline.total_estimated_ticks(), 17);
+    assert_eq!(timeline.maximum_simultaneous_workers(), 2);
+    assert_eq!(timeline.entries()[0].workload_id(), alpha.id());
+    assert_eq!(timeline.entries()[0].worker_index(), 0);
+    assert_eq!(timeline.entries()[0].planned_start_tick(), 0);
+    assert_eq!(timeline.entries()[0].planned_final_tick(), 8);
+    assert_eq!(timeline.entries()[1].workload_id(), beta.id());
+    assert_eq!(timeline.entries()[1].worker_index(), 1);
+    assert_eq!(timeline.entries()[1].planned_start_tick(), 0);
+    assert_eq!(timeline.entries()[1].planned_final_tick(), 1);
+    assert_eq!(timeline.entries()[2].workload_id(), delta.id());
+    assert_eq!(timeline.entries()[2].worker_index(), 1);
+    assert_eq!(timeline.entries()[2].planned_start_tick(), 1);
+    assert_eq!(timeline.entries()[2].planned_final_tick(), 2);
+    assert_eq!(timeline.entries()[3].workload_id(), gamma.id());
+    assert_eq!(timeline.entries()[3].worker_index(), 1);
+    assert_eq!(timeline.entries()[3].planned_start_tick(), 2);
+    assert_eq!(timeline.entries()[3].planned_final_tick(), 9);
+}
+
+#[test]
+fn workload_suite_dispatch_plan_requires_estimates_for_planned_timeline() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("missing-timeline-estimates"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    let error = plan.planned_execution_timeline().unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::MissingSuiteDispatchEstimate { workload } if workload == *alpha.id()
+    ));
+}
+
+#[test]
+fn workload_suite_dispatch_timeline_rejects_execution_window_drift() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("timeline-window-drift"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let replay = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let plan = WorkloadSuiteDispatchPlan::from_replay_plan_weighted(
+        &replay,
+        2,
+        &[
+            WorkloadSuiteDispatchWeight::new(alpha.id().clone(), 4).unwrap(),
+            WorkloadSuiteDispatchWeight::new(beta.id().clone(), 5).unwrap(),
+        ],
+    )
+    .unwrap();
+    let timeline = plan.planned_execution_timeline().unwrap();
+    let matching = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 0, 4)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 0, 5)
+        .unwrap();
+
+    timeline.verify_execution_summary(&matching).unwrap();
+
+    let drifted = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 1, 5)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 0, 5)
+        .unwrap();
+    let error = timeline.verify_execution_summary(&drifted).unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::SuiteDispatchTimelineWindowMismatch {
+            workload,
+            expected_start_tick: 0,
+            expected_final_tick: 4,
+            actual_start_tick: 1,
+            actual_final_tick: 5,
+        } if workload == *alpha.id()
+    ));
+}
+
+#[test]
 fn workload_suite_dispatch_plan_rejects_invalid_weighted_dispatch_inputs() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

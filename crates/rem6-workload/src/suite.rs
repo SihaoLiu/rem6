@@ -345,6 +345,39 @@ impl WorkloadSuiteDispatchPlan {
         ))
     }
 
+    pub fn planned_execution_timeline(
+        &self,
+    ) -> Result<WorkloadSuiteDispatchTimeline, WorkloadError> {
+        let mut worker_next_ticks = vec![0 as Tick; self.worker_count()];
+        let mut entries = Vec::with_capacity(self.records().len());
+
+        for record in &self.records {
+            let Some(estimated_ticks) = record.estimated_ticks() else {
+                return Err(WorkloadError::MissingSuiteDispatchEstimate {
+                    workload: record.workload_id().clone(),
+                });
+            };
+            let planned_start_tick = worker_next_ticks[record.worker_index()];
+            let planned_final_tick = planned_start_tick.saturating_add(estimated_ticks);
+            worker_next_ticks[record.worker_index()] = planned_final_tick;
+            entries.push(WorkloadSuiteDispatchTimelineEntry::new(
+                record.workload_id().clone(),
+                record.manifest_identity(),
+                record.dispatch_order(),
+                record.worker_index(),
+                estimated_ticks,
+                planned_start_tick,
+                planned_final_tick,
+            ));
+        }
+
+        Ok(WorkloadSuiteDispatchTimeline::new(
+            self.suite_identity(),
+            self.worker_count(),
+            entries,
+        ))
+    }
+
     pub fn execution_expectation(
         &self,
         minimum_simultaneous_workers: usize,
@@ -588,6 +621,217 @@ impl WorkloadSuiteDispatchLoadExpectation {
 
     pub const fn minimum_worker_utilization(&self) -> Option<WorkloadSuiteExecutionRatio> {
         self.minimum_worker_utilization
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchTimeline {
+    suite_identity: WorkloadSuiteIdentity,
+    worker_count: usize,
+    entries: Vec<WorkloadSuiteDispatchTimelineEntry>,
+}
+
+impl WorkloadSuiteDispatchTimeline {
+    fn new(
+        suite_identity: WorkloadSuiteIdentity,
+        worker_count: usize,
+        entries: Vec<WorkloadSuiteDispatchTimelineEntry>,
+    ) -> Self {
+        Self {
+            suite_identity,
+            worker_count,
+            entries,
+        }
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub fn entries(&self) -> &[WorkloadSuiteDispatchTimelineEntry] {
+        &self.entries
+    }
+
+    pub fn minimum_start_tick(&self) -> Option<Tick> {
+        self.entries
+            .iter()
+            .map(WorkloadSuiteDispatchTimelineEntry::planned_start_tick)
+            .min()
+    }
+
+    pub fn maximum_final_tick(&self) -> Option<Tick> {
+        self.entries
+            .iter()
+            .map(WorkloadSuiteDispatchTimelineEntry::planned_final_tick)
+            .max()
+    }
+
+    pub fn total_estimated_ticks(&self) -> Tick {
+        self.entries
+            .iter()
+            .map(WorkloadSuiteDispatchTimelineEntry::estimated_ticks)
+            .sum()
+    }
+
+    pub fn maximum_simultaneous_workers(&self) -> usize {
+        let mut ticks = self
+            .entries
+            .iter()
+            .flat_map(|entry| [entry.planned_start_tick(), entry.planned_final_tick()])
+            .collect::<Vec<_>>();
+        ticks.sort_unstable();
+        ticks.dedup();
+
+        ticks
+            .into_iter()
+            .map(|tick| {
+                self.entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.planned_start_tick() <= tick && tick < entry.planned_final_tick()
+                    })
+                    .map(WorkloadSuiteDispatchTimelineEntry::worker_index)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn verify_execution_summary(
+        &self,
+        summary: &WorkloadSuiteExecutionSummary,
+    ) -> Result<(), WorkloadError> {
+        let mut expected_records = BTreeMap::new();
+        for entry in &self.entries {
+            expected_records.insert(entry.workload_id().clone(), entry);
+        }
+
+        if summary.suite_identity() != self.suite_identity {
+            return Err(WorkloadError::WorkloadSuiteIdentityMismatch {
+                expected: self.suite_identity.clone(),
+                actual: summary.suite_identity(),
+            });
+        }
+
+        for record in summary.records() {
+            let Some(expected) = expected_records.get(record.workload_id()) else {
+                return Err(WorkloadError::UnexpectedSuiteDispatchCompletion {
+                    workload: record.workload_id().clone(),
+                });
+            };
+            if record.manifest_identity() != expected.manifest_identity() {
+                return Err(WorkloadError::SuiteWorkloadResultManifestMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected.manifest_identity(),
+                    actual: record.manifest_identity(),
+                });
+            }
+            if record.dispatch_order() != expected.dispatch_order() {
+                return Err(WorkloadError::SuiteDispatchOrderMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected.dispatch_order(),
+                    actual: record.dispatch_order(),
+                });
+            }
+            if record.worker_index() != expected.worker_index() {
+                return Err(WorkloadError::SuiteDispatchWorkerMismatch {
+                    workload: record.workload_id().clone(),
+                    expected: expected.worker_index(),
+                    actual: record.worker_index(),
+                });
+            }
+            if record.start_tick() != expected.planned_start_tick()
+                || record.final_tick() != expected.planned_final_tick()
+            {
+                return Err(WorkloadError::SuiteDispatchTimelineWindowMismatch {
+                    workload: record.workload_id().clone(),
+                    expected_start_tick: expected.planned_start_tick(),
+                    expected_final_tick: expected.planned_final_tick(),
+                    actual_start_tick: record.start_tick(),
+                    actual_final_tick: record.final_tick(),
+                });
+            }
+        }
+
+        for workload in expected_records.keys() {
+            if !summary
+                .records()
+                .iter()
+                .any(|record| record.workload_id() == workload)
+            {
+                return Err(WorkloadError::MissingSuiteDispatchCompletion {
+                    workload: workload.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteDispatchTimelineEntry {
+    workload_id: WorkloadId,
+    manifest_identity: WorkloadManifestIdentity,
+    dispatch_order: usize,
+    worker_index: usize,
+    estimated_ticks: Tick,
+    planned_start_tick: Tick,
+    planned_final_tick: Tick,
+}
+
+impl WorkloadSuiteDispatchTimelineEntry {
+    fn new(
+        workload_id: WorkloadId,
+        manifest_identity: WorkloadManifestIdentity,
+        dispatch_order: usize,
+        worker_index: usize,
+        estimated_ticks: Tick,
+        planned_start_tick: Tick,
+        planned_final_tick: Tick,
+    ) -> Self {
+        Self {
+            workload_id,
+            manifest_identity,
+            dispatch_order,
+            worker_index,
+            estimated_ticks,
+            planned_start_tick,
+            planned_final_tick,
+        }
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+
+    pub const fn dispatch_order(&self) -> usize {
+        self.dispatch_order
+    }
+
+    pub const fn worker_index(&self) -> usize {
+        self.worker_index
+    }
+
+    pub const fn estimated_ticks(&self) -> Tick {
+        self.estimated_ticks
+    }
+
+    pub const fn planned_start_tick(&self) -> Tick {
+        self.planned_start_tick
+    }
+
+    pub const fn planned_final_tick(&self) -> Tick {
+        self.planned_final_tick
     }
 }
 

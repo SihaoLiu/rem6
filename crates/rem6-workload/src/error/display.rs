@@ -530,6 +530,17 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite dispatch load uses {actual} workers, expected {expected}"
             ),
+            Self::SuiteDispatchTimelineWindowMismatch {
+                workload,
+                expected_start_tick,
+                expected_final_tick,
+                actual_start_tick,
+                actual_final_tick,
+            } => write!(
+                formatter,
+                "workload suite execution for {} used tick window {actual_start_tick}..{actual_final_tick}, expected {expected_start_tick}..{expected_final_tick}",
+                workload.as_str()
+            ),
             Self::SuiteDispatchCompletionWindowInvalid {
                 workload,
                 start_tick,

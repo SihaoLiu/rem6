@@ -368,6 +368,13 @@ pub enum WorkloadError {
         expected: usize,
         actual: usize,
     },
+    SuiteDispatchTimelineWindowMismatch {
+        workload: WorkloadId,
+        expected_start_tick: Tick,
+        expected_final_tick: Tick,
+        actual_start_tick: Tick,
+        actual_final_tick: Tick,
+    },
     SuiteDispatchCompletionWindowInvalid {
         workload: WorkloadId,
         start_tick: Tick,
