@@ -46,6 +46,7 @@ mod topology;
 mod uart_checkpoint;
 mod workload_replay;
 mod workload_replay_heterogeneous;
+mod workload_replay_host;
 
 pub use clint_checkpoint::{
     ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, ClintCheckpointRecord,

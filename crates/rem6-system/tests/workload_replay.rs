@@ -10,10 +10,11 @@ use rem6_system::{
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
     WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
-    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -985,6 +986,10 @@ fn replay_manifest_with_planned_guest_host_call() -> WorkloadManifest {
                 selector: 0x900,
                 arguments: vec![11, 13],
                 payload: vec![2, 4, 6],
+                response: Some(WorkloadGuestHostCallResponse::ok(
+                    vec![21, 34],
+                    vec![0xde, 0xad],
+                )),
             },
         ))
         .add_host_event(WorkloadHostEvent::new(
@@ -1446,7 +1451,7 @@ fn workload_replay_records_planned_guest_host_calls() {
             && *selector == 0x900
             && arguments == &vec![11, 13]
             && payload == &vec![2, 4, 6]
-            && response == &GuestHostCallResponse::unhandled()
+            && response == &GuestHostCallResponse::ok(vec![21, 34], vec![0xde, 0xad])
     )));
     plan.verify_result(outcome.result()).unwrap();
 }

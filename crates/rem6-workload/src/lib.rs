@@ -38,7 +38,8 @@ use host_event::{
 };
 pub use host_event::{
     CheckpointLineage, HostEventIntent, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
-    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadStatsScope,
+    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadStatsScope,
 };
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_batch::{

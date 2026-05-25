@@ -67,9 +67,9 @@ The following public sources shape this design:
 - The gem5 resources reproducibility work identifies complex disk image
   creation, limited guest-host communication, and external scripting for
   multiple workloads as reproducibility problems. rem6 treats typed guest-host
-  calls and typed guest-host call responses as normal host-control traffic so
-  custom monitor and control events do not need a new predefined exit-event
-  class:
+  calls and manifest-declared guest-host responses as normal host-control
+  traffic so custom monitor and control events do not need a new predefined
+  exit-event class:
   <https://arxiv.org/abs/2512.13479>
 - Recent gem5 call-stack profiling work identifies layered runtime complexity
   and hard-to-pinpoint coherence deadlock and livelock:
@@ -154,8 +154,8 @@ The invariants below apply to production components in the workspace.
 
 11. Host control is part of the simulated system boundary.
     ROI markers, exit events, statistics resets, checkpoint requests, CPU mode
-    switches, custom guest-host calls and responses, device launches, and guest
-    traps must pass through a typed host-control channel.
+    switches, custom guest-host calls, manifest-declared responses, device
+    launches, and guest traps must pass through a typed host-control channel.
 
 12. Observability is a runtime feature.
     Each run summary must expose enough information to explain where time went:

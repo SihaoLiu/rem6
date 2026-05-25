@@ -42,9 +42,9 @@ isolated bugs:
   resource package reduce this burden, but they also demonstrate that kernels,
   disk images, benchmark inputs, exit events, and downloads remain workflow
   state outside the core simulator. rem6 therefore keeps typed builders,
-  manifests, artifact identities, custom guest-host calls and responses, and
-  explicit boot handoff reports as the authority for platform and workload
-  state.
+  manifests, artifact identities, custom guest-host calls, manifest-declared
+  responses, and explicit boot handoff reports as the authority for platform
+  and workload state.
 - Error surfaces are split across simulator fatal errors, simulator panics, and
   Python tracebacks. gem5 documentation directs users to different debugging
   paths depending on which layer raised the problem. rem6 therefore returns
@@ -282,7 +282,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed stats dump records, schema-and-reset-scope-checked stats delta records, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, power metric binding from core stats deltas, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, and probe event snapshots exist. Broader power-controller and external-analysis adapter breadth remains open. |
-| guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, and execution mode actions are typed. Broader guest ABI support remains open. |
+| guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, execution mode actions, custom guest-host calls, and manifest-declared guest-host response payloads are typed. Broader guest ABI support remains open. |
 
 ### External Integration and Tooling
 

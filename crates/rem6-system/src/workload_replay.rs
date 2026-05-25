@@ -32,11 +32,10 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId, TransportError,
 };
 use rem6_workload::{
-    HostEventIntent, WorkloadDataCacheProtocol, WorkloadError,
-    WorkloadExpectedCleanParallelDiagnostics, WorkloadGpuDmaCopy, WorkloadHostActionSummary,
-    WorkloadHostEvent, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
-    WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
-    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
+    WorkloadDataCacheProtocol, WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
+    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadTopology,
 };
 
 mod cache_response;
@@ -60,9 +59,9 @@ use crate::workload_replay_heterogeneous::{
     schedule_gpu_kernel_launches, WorkloadAcceleratorActivity, WorkloadGpuActivity,
     WorkloadGpuRuntime,
 };
+use crate::workload_replay_host::schedule_planned_host_events;
 use crate::{
-    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
-    GuestEventKind, GuestSourceId, HostEventPolicy, RiscvDataCacheProtocol,
+    ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy, RiscvDataCacheProtocol,
     RiscvDataCacheRunRecord, RiscvInstructionStats, RiscvSystemRun, RiscvSystemRunDriver,
     RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
     SystemHostEventPort,
@@ -71,7 +70,6 @@ use crate::{
 const DEFAULT_MAX_TURNS: usize = 64;
 const WORKLOAD_STOP_REASON_HOST: &str = "host-stop";
 const WORKLOAD_STOP_REASON_IDLE: &str = "idle";
-const PLANNED_HOST_EVENT_ID_BASE: u64 = 10_000;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct WorkloadGpuDmaActivity {
@@ -565,7 +563,8 @@ impl RiscvWorkloadReplay {
             HostEventPolicy,
             stats,
         )));
-        self.schedule_planned_host_events(
+        schedule_planned_host_events(
+            &self.plan,
             &mut scheduler,
             &controller,
             PartitionId::new(topology.host().partition()),
@@ -699,37 +698,6 @@ impl RiscvWorkloadReplay {
         Err(RiscvWorkloadReplayError::Workload(
             WorkloadError::ManifestIdentityMismatch { expected, actual },
         ))
-    }
-
-    fn schedule_planned_host_events(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        controller: &Arc<Mutex<SystemHostController>>,
-        host_partition: PartitionId,
-        host_source: GuestSourceId,
-    ) -> Result<(), RiscvWorkloadReplayError> {
-        for (index, event) in self.plan.host_events().iter().enumerate() {
-            let Some(guest_event) = planned_host_guest_event(event, index, host_source) else {
-                continue;
-            };
-            let controller = Arc::clone(controller);
-            scheduler
-                .schedule_parallel_at(host_partition, event.tick(), move |context| {
-                    let delivery = GuestEventDelivery::new(
-                        context.now(),
-                        host_partition,
-                        host_partition,
-                        guest_event,
-                    );
-                    controller
-                        .lock()
-                        .expect("system host controller lock")
-                        .handle_delivery(delivery);
-                })
-                .map_err(RiscvWorkloadReplayError::Scheduler)?;
-        }
-
-        Ok(())
     }
 
     fn build_transport(&self) -> Result<MemoryTransport, RiscvWorkloadReplayError> {
@@ -1439,54 +1407,6 @@ fn workload_route_fabric_path(
     FabricPath::new([hop])
         .map_err(TransportError::Fabric)
         .map_err(RiscvWorkloadReplayError::Transport)
-}
-
-fn planned_host_guest_event(
-    event: &WorkloadHostEvent,
-    index: usize,
-    source: GuestSourceId,
-) -> Option<GuestEvent> {
-    let kind = match event.intent() {
-        HostEventIntent::RoiBegin { .. } => GuestEventKind::RoiBegin,
-        HostEventIntent::RoiEnd { .. } => GuestEventKind::RoiEnd,
-        HostEventIntent::StatsReset { .. } => GuestEventKind::StatsReset,
-        HostEventIntent::StatsDump { .. } => GuestEventKind::StatsDump,
-        HostEventIntent::SwitchExecutionMode { target, mode } => {
-            GuestEventKind::ExecutionModeSwitch {
-                target: ExecutionModeTarget::new(target.clone()),
-                mode: workload_execution_mode(mode),
-            }
-        }
-        HostEventIntent::GuestHostCall {
-            selector,
-            arguments,
-            payload,
-        } => GuestEventKind::GuestHostCall {
-            selector: *selector,
-            arguments: arguments.clone(),
-            payload: payload.clone(),
-        },
-        HostEventIntent::Checkpoint { label } => GuestEventKind::Checkpoint {
-            label: label.clone(),
-        },
-        HostEventIntent::RestoreCheckpoint { label } => GuestEventKind::RestoreCheckpoint {
-            label: label.clone(),
-        },
-        HostEventIntent::Stop { .. } => return None,
-    };
-    Some(GuestEvent::new(
-        GuestEventId::new(PLANNED_HOST_EVENT_ID_BASE + index as u64),
-        source,
-        kind,
-    ))
-}
-
-fn workload_execution_mode(mode: &rem6_workload::WorkloadExecutionMode) -> ExecutionMode {
-    match mode {
-        rem6_workload::WorkloadExecutionMode::Functional => ExecutionMode::Functional,
-        rem6_workload::WorkloadExecutionMode::Timing => ExecutionMode::Timing,
-        rem6_workload::WorkloadExecutionMode::Detailed => ExecutionMode::Detailed,
-    }
 }
 
 fn workload_execution_mode_from_system(

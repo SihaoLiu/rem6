@@ -844,6 +844,7 @@ fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
             selector,
             arguments,
             payload,
+            response,
         } => {
             hash_str(hash, "guest_host_call");
             hash_u64(hash, *selector);
@@ -854,6 +855,21 @@ fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
             hash_u64(hash, payload.len() as u64);
             for byte in payload {
                 hash_u64(hash, u64::from(*byte));
+            }
+            match response {
+                Some(response) => {
+                    hash_str(hash, "guest_host_call.response");
+                    hash_i32(hash, response.status());
+                    hash_u64(hash, response.return_values().len() as u64);
+                    for value in response.return_values() {
+                        hash_u64(hash, *value);
+                    }
+                    hash_u64(hash, response.payload().len() as u64);
+                    for byte in response.payload() {
+                        hash_u64(hash, u64::from(*byte));
+                    }
+                }
+                None => hash_str(hash, "guest_host_call.response.none"),
             }
         }
         HostEventIntent::Checkpoint { label } => {
@@ -895,6 +911,10 @@ fn hash_str(hash: &mut u64, value: &str) {
 }
 
 fn hash_u64(hash: &mut u64, value: u64) {
+    hash_bytes(hash, &value.to_le_bytes());
+}
+
+fn hash_i32(hash: &mut u64, value: i32) {
     hash_bytes(hash, &value.to_le_bytes());
 }
 

@@ -173,6 +173,43 @@ impl WorkloadHostActionSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadGuestHostCallResponse {
+    status: i32,
+    return_values: Vec<u64>,
+    payload: Vec<u8>,
+}
+
+impl WorkloadGuestHostCallResponse {
+    pub fn new(status: i32, return_values: Vec<u64>, payload: Vec<u8>) -> Self {
+        Self {
+            status,
+            return_values,
+            payload,
+        }
+    }
+
+    pub fn ok(return_values: Vec<u64>, payload: Vec<u8>) -> Self {
+        Self::new(0, return_values, payload)
+    }
+
+    pub fn unhandled() -> Self {
+        Self::new(-1, Vec::new(), Vec::new())
+    }
+
+    pub const fn status(&self) -> i32 {
+        self.status
+    }
+
+    pub fn return_values(&self) -> &[u64] {
+        &self.return_values
+    }
+
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostEventIntent {
     RoiBegin {
         label: String,
@@ -194,6 +231,7 @@ pub enum HostEventIntent {
         selector: u64,
         arguments: Vec<u64>,
         payload: Vec<u8>,
+        response: Option<WorkloadGuestHostCallResponse>,
     },
     Checkpoint {
         label: String,

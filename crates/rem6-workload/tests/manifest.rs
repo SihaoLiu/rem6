@@ -11,12 +11,12 @@ use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadExecutionMode,
     WorkloadExecutionModeSwitch, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
-    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosPolicy,
-    WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority, WorkloadQosTurnaroundPolicyKind,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope,
-    WorkloadTopology,
+    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
+    WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1238,6 +1238,22 @@ fn workload_manifest_records_guest_host_call_events() {
                 selector: 0x42,
                 arguments: vec![7, 9],
                 payload: vec![1, 3, 5],
+                response: Some(WorkloadGuestHostCallResponse::ok(vec![11, 13], vec![2, 4])),
+            },
+        ))
+        .build()
+        .unwrap();
+    let without_response = WorkloadManifest::builder(id("guest-host-call-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            32,
+            HostEventIntent::GuestHostCall {
+                selector: 0x42,
+                arguments: vec![7, 9],
+                payload: vec![1, 3, 5],
+                response: None,
             },
         ))
         .build()
@@ -1245,6 +1261,7 @@ fn workload_manifest_records_guest_host_call_events() {
 
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
+    assert_ne!(manifest.identity(), without_response.identity());
     assert_eq!(plan.host_events().len(), 1);
     assert_eq!(plan.host_events()[0].tick(), 32);
     assert_eq!(
@@ -1253,6 +1270,7 @@ fn workload_manifest_records_guest_host_call_events() {
             selector: 0x42,
             arguments: vec![7, 9],
             payload: vec![1, 3, 5],
+            response: Some(WorkloadGuestHostCallResponse::ok(vec![11, 13], vec![2, 4],)),
         },
     );
 }
