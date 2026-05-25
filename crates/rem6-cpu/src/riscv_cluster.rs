@@ -1642,10 +1642,11 @@ fn merge_parallel_partition_activity_maps(
         target
             .entry(*partition)
             .and_modify(|stored| {
-                *stored = ParallelPartitionActivity::with_remote_send_count(
+                *stored = ParallelPartitionActivity::with_remote_counts(
                     stored.worker_count() + activity.worker_count(),
                     stored.dispatch_count() + activity.dispatch_count(),
                     stored.remote_send_count() + activity.remote_send_count(),
+                    stored.remote_receive_count() + activity.remote_receive_count(),
                     stored
                         .max_pending_events()
                         .max(activity.max_pending_events()),

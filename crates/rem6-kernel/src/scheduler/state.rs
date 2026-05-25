@@ -274,6 +274,7 @@ pub struct ParallelPartitionActivity {
     worker_count: usize,
     dispatch_count: usize,
     remote_send_count: usize,
+    remote_receive_count: usize,
     max_pending_events: usize,
 }
 
@@ -283,7 +284,7 @@ impl ParallelPartitionActivity {
         dispatch_count: usize,
         max_pending_events: usize,
     ) -> Self {
-        Self::with_remote_send_count(worker_count, dispatch_count, 0, max_pending_events)
+        Self::with_remote_counts(worker_count, dispatch_count, 0, 0, max_pending_events)
     }
 
     pub const fn with_remote_send_count(
@@ -292,10 +293,27 @@ impl ParallelPartitionActivity {
         remote_send_count: usize,
         max_pending_events: usize,
     ) -> Self {
+        Self::with_remote_counts(
+            worker_count,
+            dispatch_count,
+            remote_send_count,
+            0,
+            max_pending_events,
+        )
+    }
+
+    pub const fn with_remote_counts(
+        worker_count: usize,
+        dispatch_count: usize,
+        remote_send_count: usize,
+        remote_receive_count: usize,
+        max_pending_events: usize,
+    ) -> Self {
         Self {
             worker_count,
             dispatch_count,
             remote_send_count,
+            remote_receive_count,
             max_pending_events,
         }
     }
@@ -312,12 +330,19 @@ impl ParallelPartitionActivity {
         self.remote_send_count
     }
 
+    pub const fn remote_receive_count(self) -> usize {
+        self.remote_receive_count
+    }
+
     pub const fn max_pending_events(self) -> usize {
         self.max_pending_events
     }
 
     pub const fn has_activity(self) -> bool {
-        self.worker_count != 0 || self.dispatch_count != 0 || self.remote_send_count != 0
+        self.worker_count != 0
+            || self.dispatch_count != 0
+            || self.remote_send_count != 0
+            || self.remote_receive_count != 0
     }
 
     fn record_worker(&mut self, worker: ParallelWorkerRecord) {
@@ -333,11 +358,16 @@ impl ParallelPartitionActivity {
         self.remote_send_count += 1;
     }
 
+    fn record_remote_receive(&mut self) {
+        self.remote_receive_count += 1;
+    }
+
     fn merge(self, other: Self) -> Self {
         Self {
             worker_count: self.worker_count + other.worker_count,
             dispatch_count: self.dispatch_count + other.dispatch_count,
             remote_send_count: self.remote_send_count + other.remote_send_count,
+            remote_receive_count: self.remote_receive_count + other.remote_receive_count,
             max_pending_events: self.max_pending_events.max(other.max_pending_events),
         }
     }
@@ -887,6 +917,10 @@ where
                 .entry(remote_send.source())
                 .or_default()
                 .record_remote_send();
+            activities
+                .entry(remote_send.target())
+                .or_default()
+                .record_remote_receive();
         }
     }
     activities

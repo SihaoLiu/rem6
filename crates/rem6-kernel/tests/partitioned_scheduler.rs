@@ -590,8 +590,10 @@ fn scheduler_parallel_runner_executes_epochs_until_idle() {
     assert_eq!(run.epochs()[0].remote_sends(), run_sends);
     let core_activity = run.partition_activity(core).unwrap();
     assert_eq!(core_activity.remote_send_count(), 1);
+    assert_eq!(core_activity.remote_receive_count(), 0);
     let memory_activity = run.partition_activity(memory).unwrap();
     assert_eq!(memory_activity.remote_send_count(), 0);
+    assert_eq!(memory_activity.remote_receive_count(), 1);
     assert!(scheduler.is_idle());
     assert_eq!(
         observed.lock().unwrap().as_slice(),
@@ -937,13 +939,20 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     assert_eq!(core0_activity.worker_count(), 1);
     assert_eq!(core0_activity.dispatch_count(), 1);
     assert_eq!(core0_activity.remote_send_count(), 1);
+    assert_eq!(core0_activity.remote_receive_count(), 0);
     assert_eq!(core0_activity.max_pending_events(), 1);
     assert!(core0_activity.has_activity());
     let core1_activity = batches[0].partition_activity(core1).unwrap();
     assert_eq!(core1_activity.remote_send_count(), 1);
-    assert_eq!(batches[0].active_partition_count(), 2);
+    assert_eq!(core1_activity.remote_receive_count(), 0);
+    let memory_receive_activity = batches[0].partition_activity(memory).unwrap();
+    assert_eq!(memory_receive_activity.worker_count(), 0);
+    assert_eq!(memory_receive_activity.dispatch_count(), 0);
+    assert_eq!(memory_receive_activity.remote_send_count(), 0);
+    assert_eq!(memory_receive_activity.remote_receive_count(), 2);
+    assert_eq!(batches[0].active_partition_count(), 3);
     assert!(batches[0].has_partition_activity(core0));
-    assert!(!batches[0].has_partition_activity(memory));
+    assert!(batches[0].has_partition_activity(memory));
 
     assert_eq!(batches[1].horizon(), 4);
     assert_eq!(batches[1].worker_count(), 1);
@@ -975,6 +984,7 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     assert_eq!(memory_batch_activity.worker_count(), 1);
     assert_eq!(memory_batch_activity.dispatch_count(), 2);
     assert_eq!(memory_batch_activity.remote_send_count(), 0);
+    assert_eq!(memory_batch_activity.remote_receive_count(), 0);
     assert_eq!(memory_batch_activity.max_pending_events(), 2);
     assert_eq!(
         batches[1].dispatches_for_partition(memory),
@@ -984,9 +994,11 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
     assert_eq!(memory_epoch_activity.worker_count(), 1);
     assert_eq!(memory_epoch_activity.dispatch_count(), 2);
     assert_eq!(memory_epoch_activity.remote_send_count(), 0);
+    assert_eq!(memory_epoch_activity.remote_receive_count(), 2);
     assert_eq!(memory_epoch_activity.max_pending_events(), 2);
     let core0_epoch_activity = epoch.partition_activity(core0).unwrap();
     assert_eq!(core0_epoch_activity.remote_send_count(), 1);
+    assert_eq!(core0_epoch_activity.remote_receive_count(), 0);
     assert_eq!(epoch.active_partition_count(), 3);
     assert!(epoch.has_partition_activity(core1));
     assert_eq!(scheduler.now(), 4);
