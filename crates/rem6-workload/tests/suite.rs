@@ -3,7 +3,8 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchPlan,
-    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
+    WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -460,6 +461,73 @@ fn workload_suite_execution_summary_records_parallel_windows() {
     assert_eq!(worker_one.last_final_tick(), Some(50));
     assert_eq!(worker_one.total_completion_ticks(), 30);
     assert_eq!(worker_one.busy_tick_span(), Some(30));
+}
+
+#[test]
+fn workload_suite_dispatch_plan_declares_execution_parallelism_expectation() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let suite = WorkloadSuite::builder(suite_id("execution-expectation"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let expectation = dispatch.execution_expectation(2).unwrap();
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 40)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 20, 50)
+        .unwrap();
+
+    assert_eq!(expectation.suite_identity(), suite.identity());
+    assert_eq!(expectation.minimum_simultaneous_workers(), 2);
+    summary.verify_against_expectation(&expectation).unwrap();
+
+    let other_suite = WorkloadSuite::builder(suite_id("other-expectation"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mismatched = WorkloadSuiteExecutionExpectation::new(other_suite.identity(), 2).unwrap();
+    let error = summary.verify_against_expectation(&mismatched).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkloadError::WorkloadSuiteIdentityMismatch { expected, actual }
+            if expected == other_suite.identity() && actual == suite.identity()
+    ));
+}
+
+#[test]
+fn workload_suite_dispatch_plan_rejects_unreachable_execution_parallelism() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let suite = WorkloadSuite::builder(suite_id("unreachable-expectation"))
+        .add_manifest(alpha)
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        4,
+    )
+    .unwrap();
+    let error = dispatch.execution_expectation(2).unwrap_err();
+
+    assert!(matches!(
+        error,
+        WorkloadError::SuiteParallelismRequirementExceedsActiveWorkers {
+            minimum_workers: 2,
+            active_workers: 1
+        }
+    ));
 }
 
 #[test]

@@ -259,6 +259,25 @@ impl WorkloadSuiteDispatchPlan {
     pub fn records(&self) -> &[WorkloadSuiteDispatchRecord] {
         &self.records
     }
+
+    pub fn execution_expectation(
+        &self,
+        minimum_simultaneous_workers: usize,
+    ) -> Result<WorkloadSuiteExecutionExpectation, WorkloadError> {
+        if minimum_simultaneous_workers == 0 {
+            return Err(WorkloadError::ZeroSuiteParallelismRequirement);
+        }
+        let active_workers = self.active_worker_count();
+        if minimum_simultaneous_workers > active_workers {
+            return Err(
+                WorkloadError::SuiteParallelismRequirementExceedsActiveWorkers {
+                    minimum_workers: minimum_simultaneous_workers,
+                    active_workers,
+                },
+            );
+        }
+        WorkloadSuiteExecutionExpectation::new(self.suite_identity(), minimum_simultaneous_workers)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -298,6 +317,35 @@ impl WorkloadSuiteDispatchRecord {
 
     pub const fn worker_index(&self) -> usize {
         self.worker_index
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteExecutionExpectation {
+    suite_identity: WorkloadSuiteIdentity,
+    minimum_simultaneous_workers: usize,
+}
+
+impl WorkloadSuiteExecutionExpectation {
+    pub fn new(
+        suite_identity: WorkloadSuiteIdentity,
+        minimum_simultaneous_workers: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_simultaneous_workers == 0 {
+            return Err(WorkloadError::ZeroSuiteParallelismRequirement);
+        }
+        Ok(Self {
+            suite_identity,
+            minimum_simultaneous_workers,
+        })
+    }
+
+    pub fn suite_identity(&self) -> WorkloadSuiteIdentity {
+        self.suite_identity.clone()
+    }
+
+    pub const fn minimum_simultaneous_workers(&self) -> usize {
+        self.minimum_simultaneous_workers
     }
 }
 
@@ -499,6 +547,20 @@ impl WorkloadSuiteExecutionSummary {
             });
         }
         Ok(())
+    }
+
+    pub fn verify_against_expectation(
+        &self,
+        expectation: &WorkloadSuiteExecutionExpectation,
+    ) -> Result<(), WorkloadError> {
+        let expected_suite_identity = expectation.suite_identity();
+        if self.suite_identity != expected_suite_identity {
+            return Err(WorkloadError::WorkloadSuiteIdentityMismatch {
+                expected: expected_suite_identity,
+                actual: self.suite_identity.clone(),
+            });
+        }
+        self.verify_minimum_simultaneous_workers(expectation.minimum_simultaneous_workers())
     }
 
     pub fn worker_summaries(&self) -> Vec<WorkloadSuiteWorkerExecutionSummary> {

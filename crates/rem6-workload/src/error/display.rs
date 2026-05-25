@@ -517,6 +517,13 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite execution reached {actual_workers} simultaneous workers, expected at least {minimum_workers}"
             ),
+            Self::SuiteParallelismRequirementExceedsActiveWorkers {
+                minimum_workers,
+                active_workers,
+            } => write!(
+                formatter,
+                "workload suite parallelism requirement needs {minimum_workers} simultaneous workers but dispatch uses {active_workers} active workers"
+            ),
             Self::StatsAfterFinalTick {
                 stats_tick,
                 final_tick,

@@ -358,6 +358,10 @@ pub enum WorkloadError {
         minimum_workers: usize,
         actual_workers: usize,
     },
+    SuiteParallelismRequirementExceedsActiveWorkers {
+        minimum_workers: usize,
+        active_workers: usize,
+    },
     StatsAfterFinalTick {
         stats_tick: Tick,
         final_tick: Tick,
