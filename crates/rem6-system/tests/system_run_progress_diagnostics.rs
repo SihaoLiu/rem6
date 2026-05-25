@@ -290,6 +290,132 @@ fn system_run_summarizes_livelock_diagnostic_kind_windows() {
 }
 
 #[test]
+fn system_run_summarizes_livelock_diagnostic_subjects() {
+    let cpu = PartitionId::new(0);
+    let cache = PartitionId::new(1);
+    let cpu_subject = component("cpu-progress-loop");
+    let cache_subject = component("cache-progress-loop");
+    let shared_subject = component("shared-progress-loop");
+    let missing_subject = component("missing-progress-loop");
+    let run = RiscvSystemRun::new(
+        vec![
+            cpu_scheduler_turn_at_with_kind(
+                cpu,
+                0,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                2,
+            ),
+            cpu_scheduler_turn_at_with_kind(
+                cpu,
+                0,
+                shared_subject.clone(),
+                LivelockTransitionKind::QueueRotation,
+                1,
+            ),
+        ],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 24 },
+    )
+    .with_data_cache_runs(vec![
+        data_cache_run_at_with_kind(
+            cache,
+            3,
+            shared_subject.clone(),
+            LivelockTransitionKind::MessageRetry,
+            1,
+        ),
+        data_cache_run_at_with_kind(
+            cache,
+            6,
+            cache_subject.clone(),
+            LivelockTransitionKind::MessageRetry,
+            2,
+        ),
+    ]);
+
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_subjects(2)
+            .unwrap(),
+        vec![cpu_subject.clone()],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_livelock_diagnostic_subjects(2)
+            .unwrap(),
+        vec![cache_subject.clone()],
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_subjects(2).unwrap(),
+        vec![
+            cache_subject.clone(),
+            cpu_subject.clone(),
+            shared_subject.clone(),
+        ],
+    );
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_subject_summaries(2)
+            .unwrap(),
+        vec![(cpu_subject.clone(), 1, 2, 0, 0)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries(2)
+            .unwrap(),
+        vec![(cache_subject.clone(), 1, 2, 6, 6)],
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_subject_summaries(2)
+            .unwrap(),
+        vec![
+            (cache_subject.clone(), 1, 2, 6, 6),
+            (cpu_subject.clone(), 1, 2, 0, 0),
+            (shared_subject.clone(), 1, 2, 0, 3),
+        ],
+    );
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_tick_window_by_subject(2, &cpu_subject)
+            .unwrap(),
+        Some((0, 0)),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_livelock_diagnostic_tick_window_by_subject(
+            2,
+            &cache_subject,
+        )
+        .unwrap(),
+        Some((6, 6)),
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_tick_window_by_subject(2, &shared_subject)
+            .unwrap(),
+        Some((0, 3)),
+    );
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_tick_window_by_subject(2, &missing_subject)
+            .unwrap(),
+        None,
+    );
+
+    let cpu_diagnostics = run
+        .parallel_scheduler_livelock_diagnostics_by_subject(2, &cpu_subject)
+        .unwrap();
+    assert_eq!(cpu_diagnostics.len(), 1);
+    assert_eq!(cpu_diagnostics[0].subject(), &cpu_subject);
+    assert_eq!(cpu_diagnostics[0].transition_count(), 2);
+    let cache_diagnostics = run
+        .data_cache_parallel_scheduler_livelock_diagnostics_by_subject(2, &cache_subject)
+        .unwrap();
+    assert_eq!(cache_diagnostics.len(), 1);
+    assert_eq!(cache_diagnostics[0].subject(), &cache_subject);
+    assert_eq!(cache_diagnostics[0].transition_count(), 2);
+    let shared_diagnostics = run
+        .full_system_livelock_diagnostics_by_subject(2, &shared_subject)
+        .unwrap();
+    assert_eq!(shared_diagnostics.len(), 1);
+    assert_eq!(shared_diagnostics[0].subject(), &shared_subject);
+    assert_eq!(shared_diagnostics[0].transition_count(), 2);
+}
+
+#[test]
 fn system_run_summarizes_progress_transition_dimensions() {
     let cpu = PartitionId::new(0);
     let cache = PartitionId::new(1);

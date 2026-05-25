@@ -269,9 +269,10 @@ cannot be hidden by a looser one. The system-run object exposes CPU-scheduler,
 data-cache scheduler, and merged full-system progress deterministic dimension
 lists, per-dimension record slices, counts, tick windows, compact summaries by
 transition kind, partition, and subject, plus threshold-driven livelock
-diagnostic kind-window summaries. Workload result summaries preserve the same
-evidence shape plus threshold-driven livelock diagnostic records, counts,
-subject queries, transition-kind summaries with exact kind tick windows, and
+diagnostic subject queries, subject summaries, subject tick windows, and
+kind-window summaries. Workload result summaries preserve the same evidence
+shape plus threshold-driven livelock diagnostic records, counts, subject
+queries, transition-kind summaries with exact kind tick windows, and
 kind-filtered diagnostic records plus subject summaries and diagnostic tick
 windows for CPU-scheduler, data-cache scheduler, and merged full-system scopes
 before workload replay translates them into
