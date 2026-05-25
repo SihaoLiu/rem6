@@ -1,5 +1,5 @@
 use rem6_boot::BootImage;
-use rem6_kernel::{ParallelPartitionActivity, PartitionId};
+use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionActivity, WorkloadId,
@@ -221,6 +221,75 @@ fn workload_replay_plan_rejects_missing_or_underactive_partition_activity() {
             actual_remote_receive_count: 3,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_derives_partition_remote_activity_from_flows() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("partition-activity-from-flows"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            0,
+            0,
+            5,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            3,
+            0,
+            0,
+            0,
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            0,
+            0,
+            3,
+            2,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 5, 3, 17),
+            ParallelRemoteFlowRecord::new(PartitionId::new(2), PartitionId::new(1), 3, 5, 13),
+        ])
+        .with_data_cache_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(4),
+            PartitionId::new(3),
+            4,
+            7,
+            11,
+        )]);
+
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 5, 0, 0)),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_partition_activity(PartitionId::new(3)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 0, 4, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(2)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 3, 5, 0)),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]

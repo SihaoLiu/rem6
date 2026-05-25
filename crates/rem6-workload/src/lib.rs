@@ -17,6 +17,7 @@ mod replay_verify;
 mod resource_payload;
 mod result;
 mod result_collect;
+mod result_partition_activity;
 mod topology;
 mod workload_result;
 

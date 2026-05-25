@@ -18,6 +18,10 @@ use crate::result_collect::{
     collect_parallel_remote_flows, collect_partition_frontiers, collect_priority_summaries,
     collect_requestor_summaries, parallel_remote_flow_count,
 };
+use crate::result_partition_activity::{
+    merge_parallel_partition_activity_options, parallel_partition_activity_for_partition,
+    parallel_partition_dispatch_count,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
@@ -832,10 +836,11 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        self.parallel_scheduler_partition_activities
-            .iter()
-            .find(|(existing, _)| *existing == partition)
-            .map(|(_, activity)| *activity)
+        parallel_partition_activity_for_partition(
+            &self.parallel_scheduler_partition_activities,
+            &self.parallel_scheduler_remote_flows,
+            partition,
+        )
     }
 
     pub fn parallel_scheduler_remote_flow_count(
@@ -1008,10 +1013,11 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        self.data_cache_parallel_scheduler_partition_activities
-            .iter()
-            .find(|(existing, _)| *existing == partition)
-            .map(|(_, activity)| *activity)
+        parallel_partition_activity_for_partition(
+            &self.data_cache_parallel_scheduler_partition_activities,
+            &self.data_cache_parallel_scheduler_remote_flows,
+            partition,
+        )
     }
 
     pub fn data_cache_parallel_scheduler_remote_flow_count(
@@ -1711,10 +1717,10 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
-        self.full_system_parallel_scheduler_partition_activities()
-            .into_iter()
-            .find(|(existing, _)| *existing == partition)
-            .map(|(_, activity)| activity)
+        merge_parallel_partition_activity_options(
+            self.parallel_scheduler_partition_activity(partition),
+            self.data_cache_parallel_scheduler_partition_activity(partition),
+        )
     }
 
     pub fn full_system_parallel_scheduler_remote_flow_count(
@@ -1764,13 +1770,4 @@ impl WorkloadParallelExecutionSummary {
                 .data_cache_parallel_scheduler_partition_activities
                 .is_empty()
     }
-}
-
-fn parallel_partition_dispatch_count(
-    activities: &[(PartitionId, ParallelPartitionActivity)],
-) -> usize {
-    activities
-        .iter()
-        .map(|(_, activity)| activity.dispatch_count())
-        .sum()
 }
