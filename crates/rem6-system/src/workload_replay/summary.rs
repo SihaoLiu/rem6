@@ -1,4 +1,3 @@
-use rem6_kernel::ProgressMonitor;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadParallelBatchPartitionSet,
@@ -26,14 +25,20 @@ pub(super) fn parallel_execution_summary(
     let fabric = run.fabric_profile();
     let dram = run.dram_profile();
     let cpu_activities = run.cpu_activities();
-    let scheduler_progress_transition_count = parallel_scheduler_progress_transition_count(run);
+    let scheduler_progress_transition_count = run.parallel_scheduler_progress_transition_count();
     let data_cache_scheduler_progress_transition_count =
-        data_cache_parallel_scheduler_progress_transition_count(run);
+        run.data_cache_parallel_scheduler_progress_transition_count();
     let scheduler_livelock_diagnostic_count = livelock_transition_threshold
-        .map(|threshold| parallel_scheduler_livelock_diagnostic_count(run, threshold))
+        .and_then(|threshold| {
+            run.parallel_scheduler_livelock_diagnostic_count(threshold)
+                .ok()
+        })
         .unwrap_or(0);
     let data_cache_scheduler_livelock_diagnostic_count = livelock_transition_threshold
-        .map(|threshold| data_cache_parallel_scheduler_livelock_diagnostic_count(run, threshold))
+        .and_then(|threshold| {
+            run.data_cache_parallel_scheduler_livelock_diagnostic_count(threshold)
+                .ok()
+        })
         .unwrap_or(0);
     let riscv_fetch_issue_count = cpu_activities
         .values()
@@ -236,63 +241,6 @@ pub(super) fn parallel_execution_summary(
             activities.accelerator_dma.wait_for_edge_count,
             activities.accelerator_dma.deadlock_diagnostic_count,
         )
-}
-
-fn parallel_scheduler_progress_transition_count(run: &RiscvSystemRun) -> usize {
-    run.parallel_scheduler_epochs()
-        .into_iter()
-        .map(|epoch| {
-            epoch
-                .batches()
-                .iter()
-                .map(|batch| batch.progress_transition_count())
-                .sum::<usize>()
-        })
-        .sum()
-}
-
-fn parallel_scheduler_livelock_diagnostic_count(run: &RiscvSystemRun, threshold: u64) -> usize {
-    let Ok(mut monitor) = ProgressMonitor::with_transition_threshold(threshold) else {
-        return 0;
-    };
-    for epoch in run.parallel_scheduler_epochs() {
-        for batch in epoch.batches() {
-            for transition in batch.progress_transitions() {
-                let _ = monitor.record_transition(
-                    transition.subject().clone(),
-                    transition.kind(),
-                    transition.tick(),
-                );
-            }
-        }
-    }
-    monitor.snapshot().diagnostics().len()
-}
-
-fn data_cache_parallel_scheduler_progress_transition_count(run: &RiscvSystemRun) -> usize {
-    run.data_cache_parallel_scheduler_epochs()
-        .into_iter()
-        .map(|epoch| epoch.progress_transition_count())
-        .sum()
-}
-
-fn data_cache_parallel_scheduler_livelock_diagnostic_count(
-    run: &RiscvSystemRun,
-    threshold: u64,
-) -> usize {
-    let Ok(mut monitor) = ProgressMonitor::with_transition_threshold(threshold) else {
-        return 0;
-    };
-    for epoch in run.data_cache_parallel_scheduler_epochs() {
-        for transition in epoch.progress_transitions() {
-            let _ = monitor.record_transition(
-                transition.subject().clone(),
-                transition.kind(),
-                transition.tick(),
-            );
-        }
-    }
-    monitor.snapshot().diagnostics().len()
 }
 
 fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {

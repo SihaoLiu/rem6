@@ -264,8 +264,11 @@ records during callback execution; batch, epoch, and run summaries aggregate
 those records deterministically and can replay them into a monitor snapshot.
 Workload clean-diagnostic expectations may declare the transition threshold; a
 replay summary uses the lowest declared threshold so a stricter diagnostic scope
-cannot be hidden by a looser one. Useful work resets the active window so
-retry-heavy but productive models do not look like livelock.
+cannot be hidden by a looser one. The system-run object exposes CPU-scheduler,
+data-cache scheduler, and merged full-system progress counts plus
+threshold-driven livelock diagnostic counts before workload replay translates
+them into manifest-verifiable result summaries. Useful work resets the active
+window so retry-heavy but productive models do not look like livelock.
 
 Tests for each integration layer should cover both outcomes:
 
