@@ -581,6 +581,13 @@ fn scheduler_parallel_runner_executes_epochs_until_idle() {
     assert_eq!(run.remote_send_count(), 1);
     assert_eq!(run.epochs()[0].remote_send_count(), 1);
     assert_eq!(run.batches()[0].remote_send_count(), 1);
+    let run_sends = run.remote_sends();
+    assert_eq!(run_sends.len(), 1);
+    assert_eq!(run_sends[0].source(), core);
+    assert_eq!(run_sends[0].target(), memory);
+    assert_eq!(run_sends[0].tick(), 2);
+    assert_eq!(run_sends[0].order(), 0);
+    assert_eq!(run.epochs()[0].remote_sends(), run_sends);
     let core_activity = run.partition_activity(core).unwrap();
     assert_eq!(core_activity.remote_send_count(), 1);
     let memory_activity = run.partition_activity(memory).unwrap();
@@ -1001,8 +1008,10 @@ fn scheduler_recorded_parallel_epoch_reports_remote_send_order() {
 
     let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
     let sends = epoch.batches()[0].remote_sends();
+    let epoch_sends = epoch.remote_sends();
 
     assert_eq!(sends.len(), 2);
+    assert_eq!(epoch_sends, sends.to_vec());
     assert_eq!(sends[0].source(), source);
     assert_eq!(sends[0].target(), target);
     assert_eq!(sends[0].tick(), 4);

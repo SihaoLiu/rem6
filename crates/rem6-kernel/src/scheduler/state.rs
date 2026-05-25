@@ -598,6 +598,13 @@ impl RecordedRunSummary {
             .sum()
     }
 
+    pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        self.batches
+            .iter()
+            .flat_map(|batch| batch.remote_sends().iter().copied())
+            .collect()
+    }
+
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
     }
@@ -797,6 +804,13 @@ impl RecordedConservativeRunSummary {
             .iter()
             .map(RecordedRunSummary::remote_send_count)
             .sum()
+    }
+
+    pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        self.epochs
+            .iter()
+            .flat_map(RecordedRunSummary::remote_sends)
+            .collect()
     }
 
     pub fn batch_count(&self) -> usize {

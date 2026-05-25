@@ -45,9 +45,9 @@ isolated bugs:
   messages, records handoff summaries, and requires tests for invalid platform,
   memory, and workload state before broad compatibility claims. Recorded
   parallel runs also expose remote-send records with source, target, tick, and
-  source-local order, plus counts at batch, epoch, run, and source-partition
-  activity scope, so cross-partition communication volume is observable without
-  replaying callbacks.
+  source-local order at batch, epoch, and run scope, plus counts at batch,
+  epoch, run, and source-partition activity scope, so cross-partition
+  communication volume is observable without replaying callbacks.
 - Observability and statistics need stronger contracts. A gem5 issue about
   stats reset explicitly calls out missing reset tests and user confusion from
   inconsistent stats. rem6 therefore treats statistics, activity, wait-for
