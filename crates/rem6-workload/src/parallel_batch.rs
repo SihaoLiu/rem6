@@ -269,6 +269,25 @@ pub(crate) fn total_parallel_batch_worker_count(
         .sum()
 }
 
+pub(crate) fn total_parallel_batch_activity_worker_count(
+    counts: &[WorkloadParallelBatchWorkerCount],
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    if counts.is_empty() {
+        total_parallel_batch_partition_set_worker_count(sets)
+    } else {
+        total_parallel_batch_worker_count(counts)
+    }
+}
+
+fn total_parallel_batch_partition_set_worker_count(
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> usize {
+    sets.iter()
+        .map(|set| set.partitions().len() * set.batch_count())
+        .sum()
+}
+
 pub(crate) fn parallel_batch_count_for_partition_set(
     sets: &[WorkloadParallelBatchPartitionSet],
     partitions: impl IntoIterator<Item = PartitionId>,

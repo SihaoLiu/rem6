@@ -82,7 +82,7 @@ backed by tests, traces, or explicit runtime records.
 
 | gem5 pressure | rem6 countermeasure | Required evidence |
 | --- | --- | --- |
-| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require dispatch progress derived from per-partition activity, per-partition remote activity derived from remote-flow records, initial or final frontier minima, worker-use evidence, and worker-activity evidence from aggregate, batch-histogram, or per-partition records. |
+| Single-threaded simulation kernel limits multi-core throughput. | Partitioned conservative runtime is the default scheduler. | Tests show independent partitions execute in parallel epochs with deterministic tick order, and workload manifests can require dispatch progress derived from per-partition activity, per-partition remote activity derived from remote-flow records, initial or final frontier minima, worker-use evidence, and worker-activity evidence from aggregate, batch-histogram, exact partition-set, or per-partition records. |
 | Parallel extensions are added around an older serial core. | Every core, cache, directory bank, NoC tile, memory channel, GPU unit, and accelerator engine has partition ownership. | Topology tests reject components without a partition, and run summaries report active partitions from aggregate counts, activity-derived partition unions, or remote-flow source/target unions. Summary work flags are also driven by typed partition evidence and frontier records rather than by worker aggregates alone. |
 | Classic cache and Ruby coherence stacks are split. | Memory, cache, coherence, NoC, and DRAM use one transaction and message vocabulary. | Cross-crate tests move CPU, GPU, and DMA traffic through the same transport path, and workload replay manifests can require attributed data-cache runs with no unattributed bridge activity, internally consistent data-cache run accounting, and recorded MSI/MESI/MOESI/CHI data-cache protocol runs. |
 | Ruby protocols encode topology and protocol behavior together. | Protocol crates own state machines; topology and transport crates own placement and routing. | Protocol tests run without topology, and topology tests swap protocol backends without changing routes. |
@@ -365,11 +365,11 @@ data-cache scheduler records conservatively instead of reporting whichever
 subsystem progressed further. Workload result summaries treat non-empty typed
 frontier and partition evidence as parallel work even when worker and batch
 aggregates are not present. Exact batch partition-set histograms also imply
-minimum max-worker use and multi-worker batch activity for any worker threshold
-not larger than the recorded partition set. Workload manifests may declare
-required initial or final frontier minima for specific partitions and scopes,
-turning conservative-frontier progress into a replay contract rather than an
-informal trace inspection.
+minimum max-worker use, total-worker activity, and multi-worker batch activity
+for any worker threshold not larger than the recorded partition set. Workload
+manifests may declare required initial or final frontier minima for specific
+partitions and scopes, turning conservative-frontier progress into a replay
+contract rather than an informal trace inspection.
 
 ## Message Model
 
