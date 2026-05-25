@@ -50,7 +50,8 @@ isolated bugs:
   planned timeline wall-clock, worker-idle, occupancy-window, occupancy
   utilization, worker-count tick histograms, worker-count tick threshold
   contracts, sustained-occupancy, full-occupancy, and underoccupied-tick
-  evidence, suite result-derived execution evidence, per-workload result
+  evidence, suite result-derived execution evidence, runtime execution
+  occupancy windows, runtime worker-count tick histograms and threshold contracts, per-workload result
   start/final windows, worker-level suite completion summaries, round-robin or
   weighted suite dispatch plans, dispatch-declared suite execution
   expectations, suite-level execution efficiency summaries, declared suite
@@ -102,7 +103,7 @@ isolated bugs:
   parallel diagnostic contracts by scheduler or resource scope, so
   cross-partition communication volume, timing drift,
   scheduler progress, scheduler idle drift, real parallel occupancy, sustained
-  worker activity, sustained multi-worker batch execution, exact same-batch
+  worker activity, runtime suite worker-count occupancy, sustained multi-worker batch execution, exact same-batch
   partition co-execution, sustained same-batch co-execution, per-partition
   participation, partition-attributed worker activity, progress-free
   transition volume, declared-threshold livelock diagnostic records, subject queries, subject summaries, kind summaries with exact kind tick windows, kind-filtered subject and record queries, tick windows, and dirty-subject failure evidence, fabric/DRAM

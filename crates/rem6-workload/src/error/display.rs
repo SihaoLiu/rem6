@@ -596,6 +596,14 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "workload suite worker utilization {actual_numerator}/{actual_denominator} is below minimum {minimum_numerator}/{minimum_denominator}"
             ),
+            Self::SuiteExecutionOccupancyWorkerCountTicksBelowMinimum {
+                worker_count,
+                minimum_ticks,
+                actual_ticks,
+            } => write!(
+                formatter,
+                "workload suite execution occupancy bucket {worker_count} has {actual_ticks} ticks, below {minimum_ticks}"
+            ),
             Self::SuitePlannedParallelSpeedupBelowMinimum {
                 minimum_numerator,
                 minimum_denominator,

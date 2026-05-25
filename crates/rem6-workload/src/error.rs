@@ -408,6 +408,11 @@ pub enum WorkloadError {
         actual_numerator: Tick,
         actual_denominator: Tick,
     },
+    SuiteExecutionOccupancyWorkerCountTicksBelowMinimum {
+        worker_count: usize,
+        minimum_ticks: Tick,
+        actual_ticks: Tick,
+    },
     SuitePlannedParallelSpeedupBelowMinimum {
         minimum_numerator: Tick,
         minimum_denominator: Tick,

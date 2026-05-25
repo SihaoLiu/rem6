@@ -83,10 +83,10 @@ pub use suite::{
     WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchRecord, WorkloadSuiteDispatchTimeline,
     WorkloadSuiteDispatchTimelineEntry, WorkloadSuiteDispatchWeight, WorkloadSuiteEntry,
     WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
-    WorkloadSuiteExecutionRatio, WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary,
-    WorkloadSuiteId, WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan,
-    WorkloadSuiteResult, WorkloadSuiteResultEntry, WorkloadSuiteWorkerDispatchLoad,
-    WorkloadSuiteWorkerExecutionSummary,
+    WorkloadSuiteExecutionOccupancyWindow, WorkloadSuiteExecutionRatio,
+    WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
+    WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadSuiteResultEntry, WorkloadSuiteWorkerDispatchLoad, WorkloadSuiteWorkerExecutionSummary,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,

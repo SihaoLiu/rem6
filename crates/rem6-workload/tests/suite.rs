@@ -7,6 +7,7 @@ use rem6_workload::{
     WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
     WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
+use std::collections::BTreeMap;
 
 #[path = "suite/dispatch.rs"]
 mod dispatch;
@@ -397,6 +398,69 @@ fn workload_suite_execution_summary_records_parallel_windows() {
     assert_eq!(worker_one.last_final_tick(), Some(50));
     assert_eq!(worker_one.total_completion_ticks(), 30);
     assert_eq!(worker_one.busy_tick_span(), Some(30));
+}
+
+#[test]
+fn workload_suite_execution_summary_reports_occupancy_worker_count_ticks() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-occupancy-buckets"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 30)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 15, 25)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 40, 50)
+        .unwrap();
+
+    let windows = summary.occupancy_windows();
+    assert_eq!(windows.len(), 5);
+    assert_eq!(windows[0].start_tick(), 10);
+    assert_eq!(windows[0].final_tick(), 15);
+    assert_eq!(windows[0].active_worker_count(), 1);
+    assert_eq!(windows[1].start_tick(), 15);
+    assert_eq!(windows[1].final_tick(), 25);
+    assert_eq!(windows[1].active_worker_count(), 2);
+    assert_eq!(windows[2].start_tick(), 25);
+    assert_eq!(windows[2].final_tick(), 30);
+    assert_eq!(windows[2].active_worker_count(), 1);
+    assert_eq!(windows[3].start_tick(), 30);
+    assert_eq!(windows[3].final_tick(), 40);
+    assert_eq!(windows[3].active_worker_count(), 0);
+    assert_eq!(windows[4].start_tick(), 40);
+    assert_eq!(windows[4].final_tick(), 50);
+    assert_eq!(windows[4].active_worker_count(), 1);
+
+    assert_eq!(
+        summary.occupancy_worker_count_tick_histogram(),
+        BTreeMap::from([(0, 10), (1, 20), (2, 10)]),
+    );
+    assert_eq!(summary.occupancy_ticks_for_worker_count(0), 10);
+    assert_eq!(summary.occupancy_ticks_for_worker_count(1), 20);
+    assert_eq!(summary.occupancy_ticks_for_worker_count(2), 10);
+    assert_eq!(summary.occupancy_ticks_for_worker_count(3), 0);
+    summary
+        .verify_minimum_occupancy_ticks_for_worker_count(2, 10)
+        .unwrap();
+    assert_eq!(
+        summary
+            .verify_minimum_occupancy_ticks_for_worker_count(2, 11)
+            .unwrap_err(),
+        WorkloadError::SuiteExecutionOccupancyWorkerCountTicksBelowMinimum {
+            worker_count: 2,
+            minimum_ticks: 11,
+            actual_ticks: 10,
+        },
+    );
 }
 
 #[test]

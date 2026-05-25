@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::Tick;
 
@@ -463,6 +463,75 @@ impl WorkloadSuiteExecutionSummary {
         self.maximum_simultaneous_workers() > 1
     }
 
+    pub fn occupancy_windows(&self) -> Vec<WorkloadSuiteExecutionOccupancyWindow> {
+        let mut ticks = self
+            .records
+            .iter()
+            .flat_map(|record| [record.start_tick(), record.final_tick()])
+            .collect::<Vec<_>>();
+        ticks.sort_unstable();
+        ticks.dedup();
+
+        ticks
+            .windows(2)
+            .filter_map(|window| {
+                let start_tick = window[0];
+                let final_tick = window[1];
+                if start_tick == final_tick {
+                    return None;
+                }
+                let active_worker_count = self
+                    .records
+                    .iter()
+                    .filter(|record| {
+                        record.start_tick() < final_tick && start_tick < record.final_tick()
+                    })
+                    .map(WorkloadSuiteExecutionRecord::worker_index)
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                Some(WorkloadSuiteExecutionOccupancyWindow::new(
+                    start_tick,
+                    final_tick,
+                    active_worker_count,
+                ))
+            })
+            .collect()
+    }
+
+    pub fn occupancy_worker_count_tick_histogram(&self) -> BTreeMap<usize, Tick> {
+        let mut histogram: BTreeMap<usize, Tick> = BTreeMap::new();
+        for window in self.occupancy_windows() {
+            let ticks = histogram.entry(window.active_worker_count()).or_insert(0);
+            *ticks = (*ticks).saturating_add(window.duration_ticks());
+        }
+        histogram
+    }
+
+    pub fn occupancy_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        self.occupancy_worker_count_tick_histogram()
+            .get(&worker_count)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn verify_minimum_occupancy_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+        minimum_ticks: Tick,
+    ) -> Result<(), WorkloadError> {
+        let actual_ticks = self.occupancy_ticks_for_worker_count(worker_count);
+        if actual_ticks < minimum_ticks {
+            return Err(
+                WorkloadError::SuiteExecutionOccupancyWorkerCountTicksBelowMinimum {
+                    worker_count,
+                    minimum_ticks,
+                    actual_ticks,
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub fn verify_minimum_simultaneous_workers(
         &self,
         minimum_workers: usize,
@@ -670,6 +739,41 @@ impl WorkloadSuiteExecutionSummary {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteExecutionOccupancyWindow {
+    start_tick: Tick,
+    final_tick: Tick,
+    duration_ticks: Tick,
+    active_worker_count: usize,
+}
+
+impl WorkloadSuiteExecutionOccupancyWindow {
+    const fn new(start_tick: Tick, final_tick: Tick, active_worker_count: usize) -> Self {
+        Self {
+            start_tick,
+            final_tick,
+            duration_ticks: final_tick.saturating_sub(start_tick),
+            active_worker_count,
+        }
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn final_tick(&self) -> Tick {
+        self.final_tick
+    }
+
+    pub const fn duration_ticks(&self) -> Tick {
+        self.duration_ticks
+    }
+
+    pub const fn active_worker_count(&self) -> usize {
+        self.active_worker_count
     }
 }
 
