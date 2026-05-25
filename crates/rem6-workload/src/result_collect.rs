@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -42,6 +42,49 @@ pub(crate) fn collect_parallel_remote_flows(
             .or_insert(flow);
     }
     by_route.into_values().collect()
+}
+
+pub(crate) fn collect_parallel_remote_flow_evidence(
+    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<ParallelRemoteFlowRecord> {
+    let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
+    let mut explicit_routes = BTreeSet::<(PartitionId, PartitionId)>::new();
+    for flow in flows {
+        if flow.send_count() == 0 {
+            continue;
+        }
+        let route = (flow.source(), flow.target());
+        explicit_routes.insert(route);
+        by_route
+            .entry(route)
+            .and_modify(|stored| *stored = stored.merged_with(flow))
+            .or_insert(flow);
+    }
+    for send in sends {
+        let route = (send.source(), send.target());
+        if explicit_routes.contains(&route) {
+            continue;
+        }
+        let flow = parallel_remote_flow_from_send(send);
+        by_route
+            .entry(route)
+            .and_modify(|stored| *stored = stored.merged_with(flow))
+            .or_insert(flow);
+    }
+    by_route.into_values().collect()
+}
+
+fn parallel_remote_flow_from_send(send: ParallelRemoteSendRecord) -> ParallelRemoteFlowRecord {
+    ParallelRemoteFlowRecord::with_delay_bounds(
+        send.source(),
+        send.target(),
+        1,
+        send.delivery_tick(),
+        send.delivery_tick(),
+        send.delay(),
+        send.delay(),
+    )
 }
 
 pub(crate) fn collect_partition_frontiers(
@@ -102,6 +145,17 @@ pub(crate) fn parallel_remote_flow_count(
         .find(|flow| flow.source() == source && flow.target() == target)
         .map(|flow| flow.send_count())
         .unwrap_or(0)
+}
+
+pub(crate) fn parallel_remote_flow_evidence_count(
+    flows: &[ParallelRemoteFlowRecord],
+    sends: &[ParallelRemoteSendRecord],
+    source: PartitionId,
+    target: PartitionId,
+) -> usize {
+    let evidence =
+        collect_parallel_remote_flow_evidence(flows.iter().copied(), sends.iter().copied());
+    parallel_remote_flow_count(&evidence, source, target)
 }
 
 pub(crate) fn collect_parallel_remote_sends(

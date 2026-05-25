@@ -182,11 +182,11 @@ fn actual_parallel_remote_flows_for_scope(
 ) -> Vec<ParallelRemoteFlowRecord> {
     match scope {
         WorkloadParallelRemoteFlowScope::Scheduler => {
-            summary.parallel_scheduler_remote_flows().to_vec()
+            summary.parallel_scheduler_remote_flow_evidence()
         }
-        WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
-            .data_cache_parallel_scheduler_remote_flows()
-            .to_vec(),
+        WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+            summary.data_cache_parallel_scheduler_remote_flow_evidence()
+        }
         WorkloadParallelRemoteFlowScope::FullSystem => {
             summary.full_system_parallel_scheduler_remote_flows()
         }

@@ -17,9 +17,10 @@ use crate::parallel_batch::{
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
-    collect_parallel_partition_activities, collect_parallel_remote_flows,
-    collect_parallel_remote_sends, collect_partition_frontiers, collect_priority_summaries,
-    collect_requestor_summaries, parallel_remote_flow_count, parallel_remote_send_count,
+    collect_parallel_partition_activities, collect_parallel_remote_flow_evidence,
+    collect_parallel_remote_flows, collect_parallel_remote_sends, collect_partition_frontiers,
+    collect_priority_summaries, collect_requestor_summaries, parallel_remote_flow_evidence_count,
+    parallel_remote_send_count,
 };
 use crate::result_partition_activity::{
     merge_parallel_partition_activity_evidence_options, parallel_active_partition_count,
@@ -836,6 +837,13 @@ impl WorkloadParallelExecutionSummary {
         &self.parallel_scheduler_remote_flows
     }
 
+    pub fn parallel_scheduler_remote_flow_evidence(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flow_evidence(
+            self.parallel_scheduler_remote_flows.iter().copied(),
+            self.parallel_scheduler_remote_sends.iter().copied(),
+        )
+    }
+
     pub fn parallel_scheduler_remote_sends(&self) -> &[ParallelRemoteSendRecord] {
         &self.parallel_scheduler_remote_sends
     }
@@ -919,11 +927,16 @@ impl WorkloadParallelExecutionSummary {
         source: PartitionId,
         target: PartitionId,
     ) -> usize {
-        parallel_remote_flow_count(&self.parallel_scheduler_remote_flows, source, target)
+        parallel_remote_flow_evidence_count(
+            &self.parallel_scheduler_remote_flows,
+            &self.parallel_scheduler_remote_sends,
+            source,
+            target,
+        )
     }
 
     pub fn has_parallel_scheduler_remote_flows(&self) -> bool {
-        !self.parallel_scheduler_remote_flows.is_empty()
+        !self.parallel_scheduler_remote_flow_evidence().is_empty()
     }
 
     pub fn parallel_scheduler_remote_send_count(
@@ -1064,6 +1077,19 @@ impl WorkloadParallelExecutionSummary {
         &self.data_cache_parallel_scheduler_remote_flows
     }
 
+    pub fn data_cache_parallel_scheduler_remote_flow_evidence(
+        &self,
+    ) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flow_evidence(
+            self.data_cache_parallel_scheduler_remote_flows
+                .iter()
+                .copied(),
+            self.data_cache_parallel_scheduler_remote_sends
+                .iter()
+                .copied(),
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_remote_sends(&self) -> &[ParallelRemoteSendRecord] {
         &self.data_cache_parallel_scheduler_remote_sends
     }
@@ -1154,15 +1180,18 @@ impl WorkloadParallelExecutionSummary {
         source: PartitionId,
         target: PartitionId,
     ) -> usize {
-        parallel_remote_flow_count(
+        parallel_remote_flow_evidence_count(
             &self.data_cache_parallel_scheduler_remote_flows,
+            &self.data_cache_parallel_scheduler_remote_sends,
             source,
             target,
         )
     }
 
     pub fn has_data_cache_parallel_scheduler_remote_flows(&self) -> bool {
-        !self.data_cache_parallel_scheduler_remote_flows.is_empty()
+        !self
+            .data_cache_parallel_scheduler_remote_flow_evidence()
+            .is_empty()
     }
 
     pub fn data_cache_parallel_scheduler_remote_send_count(

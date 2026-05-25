@@ -1,5 +1,5 @@
 use rem6_boot::BootImage;
-use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelRemoteFlowTiming, WorkloadId,
@@ -184,6 +184,79 @@ fn workload_manifest_records_parallel_remote_flow_delay_bounds() {
         ]);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_parallel_remote_flow_timing_from_remote_sends() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+            11,
+            17,
+            (8, 10),
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            2,
+            3,
+            1,
+            13,
+            13,
+            (8, 8),
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+            11,
+            17,
+            (8, 10),
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            3,
+            1,
+            13,
+            13,
+            (8, 8),
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                7,
+                17,
+                1,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(2),
+            PartitionId::new(3),
+            5,
+            13,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
     plan.verify_result(&result).unwrap();
 }
 

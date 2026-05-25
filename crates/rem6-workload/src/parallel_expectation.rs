@@ -774,15 +774,12 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
     ) -> Option<ParallelRemoteFlowRecord> {
         match self.scope {
             WorkloadParallelRemoteFlowScope::Scheduler => find_parallel_remote_flow(
-                summary.parallel_scheduler_remote_flows().iter().copied(),
+                summary.parallel_scheduler_remote_flow_evidence(),
                 self.source,
                 self.target,
             ),
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => find_parallel_remote_flow(
-                summary
-                    .data_cache_parallel_scheduler_remote_flows()
-                    .iter()
-                    .copied(),
+                summary.data_cache_parallel_scheduler_remote_flow_evidence(),
                 self.source,
                 self.target,
             ),

@@ -1,5 +1,5 @@
 use rem6_boot::BootImage;
-use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelRemoteFlow, WorkloadId,
@@ -119,6 +119,67 @@ fn workload_replay_plan_validates_expected_parallel_remote_flows() {
         WorkloadParallelRemoteFlowScope::FullSystem.as_str(),
         "full-system",
     );
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_parallel_remote_flows_from_remote_sends() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            2,
+            3,
+            1,
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            3,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                7,
+                17,
+                1,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(2),
+            PartitionId::new(3),
+            5,
+            13,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
     plan.verify_result(&result).unwrap();
 }
 
