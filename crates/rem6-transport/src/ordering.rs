@@ -1,13 +1,11 @@
 use std::collections::BTreeSet;
 
+use crate::PreparedParallelTransaction;
 use rem6_fabric::{
     FabricError, FabricModel, FabricPacket, FabricPath, FabricTransfer, QosPriority,
     QosQueueArbiter, QosQueuedRequest, QosRequestId, QosRequestorId,
 };
 use rem6_kernel::Tick;
-use rem6_memory::{MemoryBarrierSet, MemoryOperation};
-
-use crate::PreparedParallelTransaction;
 
 pub(crate) struct OrderedFabricQosRequest {
     transaction_index: usize,
@@ -132,58 +130,5 @@ pub(crate) fn transaction_orders_before(
     earlier: &PreparedParallelTransaction,
     later: &PreparedParallelTransaction,
 ) -> bool {
-    same_request_agent(earlier, later)
-        && (barrier_orders_before(
-            later.request.ordering().before(),
-            earlier.request.operation(),
-        ) || barrier_orders_after(
-            earlier.request.ordering().after(),
-            later.request.operation(),
-        ))
-}
-
-fn same_request_agent(
-    first: &PreparedParallelTransaction,
-    second: &PreparedParallelTransaction,
-) -> bool {
-    first.request.id().agent() == second.request.id().agent()
-}
-
-fn barrier_orders_before(barrier: Option<MemoryBarrierSet>, operation: MemoryOperation) -> bool {
-    barrier.is_some_and(|barrier| barrier_matches_operation(barrier, operation))
-}
-
-fn barrier_orders_after(barrier: Option<MemoryBarrierSet>, operation: MemoryOperation) -> bool {
-    barrier.is_some_and(|barrier| barrier_matches_operation(barrier, operation))
-}
-
-fn barrier_matches_operation(barrier: MemoryBarrierSet, operation: MemoryOperation) -> bool {
-    (barrier.read() && operation_reads_for_ordering(operation))
-        || (barrier.write() && operation_writes_for_ordering(operation))
-}
-
-fn operation_reads_for_ordering(operation: MemoryOperation) -> bool {
-    matches!(
-        operation,
-        MemoryOperation::InstructionFetch
-            | MemoryOperation::ReadShared
-            | MemoryOperation::ReadUnique
-            | MemoryOperation::Atomic
-            | MemoryOperation::PrefetchRead
-    )
-}
-
-fn operation_writes_for_ordering(operation: MemoryOperation) -> bool {
-    matches!(
-        operation,
-        MemoryOperation::ReadUnique
-            | MemoryOperation::Write
-            | MemoryOperation::Upgrade
-            | MemoryOperation::Atomic
-            | MemoryOperation::PrefetchWrite
-            | MemoryOperation::WritebackClean
-            | MemoryOperation::WritebackDirty
-            | MemoryOperation::CleanEvict
-            | MemoryOperation::Invalidate
-    )
+    earlier.request.orders_before(&later.request)
 }

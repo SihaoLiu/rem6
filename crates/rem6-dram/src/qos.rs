@@ -178,7 +178,7 @@ pub(crate) fn order_requests<'a>(
     let mut pending = requests;
     let mut ordered = Vec::with_capacity(pending.len());
     while !pending.is_empty() {
-        let candidates = (0..pending.len()).collect::<Vec<_>>();
+        let candidates = ordering_eligible_candidates(&pending);
         let grant_index = grant_index_for_candidates(&pending, &candidates, arbiter)?;
         ordered.push(pending.remove(grant_index));
     }
@@ -273,14 +273,16 @@ fn current_direction_candidates<'a>(
     controller: &DramController,
     pending: &[DramQosRequest<'a>],
 ) -> Result<Vec<usize>, DramError> {
-    let highest_priority = pending
+    let eligible = ordering_eligible_candidates(pending);
+    let highest_priority = eligible
         .iter()
-        .map(DramQosRequest::priority)
+        .map(|index| pending[*index].priority())
         .min()
         .expect("candidate selection is called only with pending requests");
     let mut highest = Vec::new();
     let mut matching_direction = Vec::new();
-    for (index, request) in pending.iter().enumerate() {
+    for index in eligible {
+        let request = &pending[index];
         if request.priority() != highest_priority {
             continue;
         }
@@ -300,4 +302,23 @@ fn current_direction_candidates<'a>(
     } else {
         Ok(matching_direction)
     }
+}
+
+fn ordering_eligible_candidates<'a>(pending: &[DramQosRequest<'a>]) -> Vec<usize> {
+    let eligible = pending
+        .iter()
+        .enumerate()
+        .filter_map(|(candidate_index, candidate)| {
+            let blocked = pending.iter().any(|other| {
+                other.order() < candidate.order()
+                    && other.request().orders_before(candidate.request())
+            });
+            (!blocked).then_some(candidate_index)
+        })
+        .collect::<Vec<_>>();
+    debug_assert!(
+        !eligible.is_empty(),
+        "oldest DRAM QoS request is always ordering-eligible"
+    );
+    eligible
 }

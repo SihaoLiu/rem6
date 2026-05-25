@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+mod ordering;
 mod translation;
 mod translation_tlb;
 
