@@ -1,9 +1,9 @@
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 
 use crate::{
-    CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadHostEvent, WorkloadId,
-    WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadResource, WorkloadResourceId,
-    WorkloadTopology,
+    CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadExpectedParallelRemoteFlow,
+    WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -17,6 +17,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) resources: &'a [WorkloadResource],
     pub(crate) required_resources: &'a [WorkloadResourceId],
     pub(crate) host_events: &'a [WorkloadHostEvent],
+    pub(crate) expected_parallel_remote_flows: &'a [WorkloadExpectedParallelRemoteFlow],
     pub(crate) checkpoint_lineage: Option<&'a CheckpointLineage>,
 }
 
@@ -49,8 +50,26 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         hash_u64(&mut hash, event.tick());
         hash_host_event(&mut hash, event.intent());
     }
+    hash_u64(&mut hash, input.expected_parallel_remote_flows.len() as u64);
+    for expected in input.expected_parallel_remote_flows {
+        hash_expected_parallel_remote_flow(&mut hash, *expected);
+    }
     hash_checkpoint_lineage(&mut hash, input.checkpoint_lineage);
     WorkloadManifestIdentity::new(hash)
+}
+
+fn hash_expected_parallel_remote_flow(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelRemoteFlow,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, u64::from(expected.source().index()));
+    hash_u64(hash, u64::from(expected.target().index()));
+    hash_u64(hash, expected.send_count() as u64);
+}
+
+fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {
+    hash_str(hash, scope.as_str());
 }
 
 fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHandoff>) {

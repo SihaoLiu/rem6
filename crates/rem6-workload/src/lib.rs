@@ -471,6 +471,7 @@ pub struct WorkloadManifest {
     resources: Vec<WorkloadResource>,
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
+    expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     checkpoint_lineage: Option<CheckpointLineage>,
     identity: WorkloadManifestIdentity,
 }
@@ -525,6 +526,10 @@ impl WorkloadManifest {
         &self.host_events
     }
 
+    pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
+        &self.expected_parallel_remote_flows
+    }
+
     pub fn checkpoint_lineage(&self) -> Option<&CheckpointLineage> {
         self.checkpoint_lineage.as_ref()
     }
@@ -547,6 +552,7 @@ pub struct WorkloadManifestBuilder {
     resources: BTreeMap<WorkloadResourceId, WorkloadResource>,
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
+    expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -560,6 +566,7 @@ impl WorkloadManifestBuilder {
             resources: BTreeMap::new(),
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
+            expected_parallel_remote_flows: Vec::new(),
             checkpoint_lineage: None,
         }
     }
@@ -581,6 +588,27 @@ impl WorkloadManifestBuilder {
     pub fn add_host_event(mut self, event: WorkloadHostEvent) -> Self {
         self.host_events.push(event);
         self
+    }
+
+    pub fn add_expected_parallel_remote_flow(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteFlow,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_flows
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlow {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+            });
+        }
+        self.expected_parallel_remote_flows.push(expected);
+        self.expected_parallel_remote_flows
+            .sort_by_key(|flow| flow.sort_key());
+        Ok(self)
     }
 
     pub fn with_topology(mut self, topology: WorkloadTopology) -> Self {
@@ -667,6 +695,7 @@ impl WorkloadManifestBuilder {
             resources: &resources,
             required_resources: &required_resources,
             host_events: &self.host_events,
+            expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
         });
 
@@ -678,6 +707,7 @@ impl WorkloadManifestBuilder {
             resources,
             required_resources,
             host_events: self.host_events,
+            expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             checkpoint_lineage: self.checkpoint_lineage,
             identity,
         })
@@ -713,7 +743,7 @@ impl WorkloadReplayPlan {
             planned_checkpoint_restore_labels: planned_checkpoint_restore_labels(&host_events),
             planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
             planned_stop_reason: planned_stop_reason(&host_events),
-            expected_parallel_remote_flows: Vec::new(),
+            expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
         })
