@@ -406,6 +406,29 @@ pub enum WorkloadError {
         minimum_total_workers: usize,
         actual_total_workers: usize,
     },
+    InvalidExpectedParallelBatchWorkerCount {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+    },
+    ZeroExpectedParallelBatchCount {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+    },
+    DuplicateExpectedParallelBatchActivity {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+    },
+    MissingParallelBatchActivitySummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+        minimum_batch_count: usize,
+    },
+    ExpectedParallelBatchActivityBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+        minimum_batch_count: usize,
+        actual_batch_count: usize,
+    },
     ZeroExpectedParallelPartitionCount {
         scope: WorkloadParallelRemoteFlowScope,
     },
@@ -1068,6 +1091,49 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} worker activity to reach at least {minimum_total_workers} total workers, got {actual_total_workers}",
+                scope.as_str()
+            ),
+            Self::InvalidExpectedParallelBatchWorkerCount {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch activity must require at least 2 workers, got {minimum_worker_count}",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedParallelBatchCount {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch activity with at least {minimum_worker_count} workers must require a positive batch count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelBatchActivity {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch activity with at least {minimum_worker_count} workers is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelBatchActivitySummary {
+                scope,
+                minimum_worker_count,
+                minimum_batch_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch activity with at least {minimum_batch_count} batches at {minimum_worker_count} workers",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelBatchActivityBelowMinimum {
+                scope,
+                minimum_worker_count,
+                minimum_batch_count,
+                actual_batch_count,
+            } => write!(
+                formatter,
+                "expected {} batch activity to reach at least {minimum_batch_count} batches at {minimum_worker_count} workers, got {actual_batch_count}",
                 scope.as_str()
             ),
             Self::ZeroExpectedParallelPartitionCount { scope } => write!(

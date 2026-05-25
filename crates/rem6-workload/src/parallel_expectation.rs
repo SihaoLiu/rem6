@@ -392,6 +392,67 @@ impl WorkloadExpectedParallelWorkerActivity {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelBatchActivity {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_worker_count: usize,
+    minimum_batch_count: usize,
+}
+
+impl WorkloadExpectedParallelBatchActivity {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_count: usize,
+        minimum_batch_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_worker_count < 2 {
+            return Err(WorkloadError::InvalidExpectedParallelBatchWorkerCount {
+                scope,
+                minimum_worker_count,
+            });
+        }
+        if minimum_batch_count == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelBatchCount {
+                scope,
+                minimum_worker_count,
+            });
+        }
+        Ok(Self {
+            scope,
+            minimum_worker_count,
+            minimum_batch_count,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_worker_count(self) -> usize {
+        self.minimum_worker_count
+    }
+
+    pub const fn minimum_batch_count(self) -> usize {
+        self.minimum_batch_count
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, usize) {
+        (self.scope.sort_rank(), self.minimum_worker_count)
+    }
+
+    pub(crate) fn actual_batch_count(self, summary: &WorkloadParallelExecutionSummary) -> usize {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+                .data_cache_parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count),
+            WorkloadParallelRemoteFlowScope::FullSystem => summary
+                .full_system_parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelPartitionActivity {
     scope: WorkloadParallelRemoteFlowScope,
     partition: PartitionId,

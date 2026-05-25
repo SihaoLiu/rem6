@@ -1,6 +1,7 @@
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
-    WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary, WorkloadTopology,
+    WorkloadDramQosRequestorSummary, WorkloadParallelBatchWorkerCount,
+    WorkloadParallelExecutionSummary, WorkloadTopology,
 };
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
@@ -51,6 +52,11 @@ pub(super) fn parallel_execution_summary(
             run.max_parallel_scheduler_workers(),
         )
         .with_scheduler_worker_count(scheduler.total_parallel_workers())
+        .with_parallel_scheduler_batch_worker_counts(
+            run.parallel_scheduler_batches()
+                .into_iter()
+                .map(|batch| WorkloadParallelBatchWorkerCount::new(batch.worker_count(), 1)),
+        )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_riscv_core_counts(
@@ -72,6 +78,11 @@ pub(super) fn parallel_execution_summary(
             run.active_data_cache_parallel_scheduler_partition_count(),
         )
         .with_data_cache_parallel_worker_count(run.data_cache_parallel_scheduler_total_workers())
+        .with_data_cache_parallel_scheduler_batch_worker_counts(
+            run.data_cache_parallel_scheduler_batches()
+                .into_iter()
+                .map(|batch| WorkloadParallelBatchWorkerCount::new(batch.worker_count(), 1)),
+        )
         .with_data_cache_parallel_scheduler_partition_activities(
             run.data_cache_parallel_scheduler_partition_activities(),
         )
@@ -352,6 +363,15 @@ mod tests {
         assert_eq!(
             summary.full_system_parallel_scheduler_remote_flow_count(source, target),
             1,
+        );
+        assert_eq!(
+            summary.parallel_scheduler_batch_worker_counts(),
+            &[WorkloadParallelBatchWorkerCount::new(1, 2)],
+        );
+        assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(1), 2);
+        assert_eq!(
+            summary.full_system_parallel_scheduler_batch_worker_counts(),
+            vec![WorkloadParallelBatchWorkerCount::new(1, 2)],
         );
         let flows = summary.full_system_parallel_scheduler_remote_flows();
         assert_eq!(flows.len(), 1);

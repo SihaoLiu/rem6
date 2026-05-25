@@ -5,8 +5,8 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadId, WorkloadManifest,
-    WorkloadParallelExecutionSummary, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadResult,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -47,6 +47,10 @@ fn workload_result_records_parallel_execution_summary() {
         .with_scheduler_counts(3, 1, 7, 5)
         .with_scheduler_partitions(4, 2)
         .with_scheduler_worker_count(15)
+        .with_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(1, 2),
+            WorkloadParallelBatchWorkerCount::new(2, 3),
+        ])
         .with_parallel_scheduler_remote_flows([
             ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 2, 5, 11),
             ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 3, 3, 17),
@@ -56,6 +60,10 @@ fn workload_result_records_parallel_execution_summary() {
         .with_data_cache_parallel_counts(7, 9, 11, 13, 3)
         .with_data_cache_parallel_partitions(6)
         .with_data_cache_parallel_worker_count(21)
+        .with_data_cache_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(3, 9),
+        ])
         .with_full_system_parallel_partitions(8)
         .with_data_cache_parallel_scheduler_remote_flows([
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 7, 19, 23),
@@ -96,6 +104,14 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.max_parallel_scheduler_workers(), 2);
     assert_eq!(summary.total_parallel_scheduler_workers(), 15);
     assert_eq!(
+        summary.parallel_scheduler_batch_worker_counts(),
+        &[
+            WorkloadParallelBatchWorkerCount::new(1, 2),
+            WorkloadParallelBatchWorkerCount::new(2, 3),
+        ],
+    );
+    assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 3);
+    assert_eq!(
         summary.parallel_scheduler_remote_flows(),
         &[ParallelRemoteFlowRecord::new(
             PartitionId::new(0),
@@ -131,6 +147,17 @@ fn workload_result_records_parallel_execution_summary() {
     );
     assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 3);
     assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 21);
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_worker_counts(),
+        &[
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(3, 9),
+        ],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_count_at_or_above(3),
+        9,
+    );
     assert_eq!(
         summary.active_full_system_parallel_scheduler_partition_count(),
         8
@@ -272,6 +299,18 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 18);
     assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);
     assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 36);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(1, 2),
+            WorkloadParallelBatchWorkerCount::new(2, 7),
+            WorkloadParallelBatchWorkerCount::new(3, 9),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_at_or_above(2),
+        16,
+    );
     assert_eq!(
         summary.full_system_parallel_scheduler_remote_flows(),
         vec![
