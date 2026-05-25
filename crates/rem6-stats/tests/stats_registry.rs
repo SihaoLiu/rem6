@@ -1,9 +1,10 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId, StatId,
-    StatPath, StatPathError, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit,
-    StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
+    StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
+    StatGroupDescriptor, StatGroupId, StatId, StatPath, StatPathError, StatSample, StatScope,
+    StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
+    StatsResetRecord,
 };
 
 #[test]
@@ -389,6 +390,66 @@ fn stats_registry_records_group_owned_counters_and_rejects_bad_groups() {
 }
 
 #[test]
+fn stats_registry_records_counter_descriptions_without_consuming_ids_on_bad_metadata() {
+    let mut stats = StatsRegistry::new();
+
+    assert_eq!(
+        stats
+            .register_counter_with_description("cpu0.cycles", "Cycle", "   ")
+            .unwrap_err(),
+        StatsError::InvalidDescription {
+            description: "   ".to_string(),
+            reason: StatDescriptionError::Empty,
+        },
+    );
+
+    let cycles = stats
+        .register_counter_with_description("cpu0.cycles", "Cycle", "Architected cycles")
+        .unwrap();
+    let cpu0 = stats.register_group(["system", "cpu0"]).unwrap();
+    let insts = stats
+        .register_group_counter_with_description(
+            cpu0,
+            "committed_insts",
+            "Count",
+            "Committed instructions",
+        )
+        .unwrap();
+    assert_eq!(cycles, StatId::new(0));
+    assert_eq!(insts, StatId::new(1));
+
+    stats.increment(cycles, 8).unwrap();
+    stats.increment(insts, 3).unwrap();
+    let snapshot = stats.snapshot(30);
+    assert_eq!(
+        snapshot.samples()[0].description(),
+        Some("Architected cycles")
+    );
+    assert_eq!(
+        snapshot.samples()[0].stat_description(),
+        Some(&StatDescription::new("Architected cycles").unwrap())
+    );
+    assert_eq!(
+        snapshot.samples()[1].description(),
+        Some("Committed instructions")
+    );
+    assert_eq!(
+        stats.dump(31).snapshot().samples()[1].description(),
+        Some("Committed instructions")
+    );
+
+    stats.increment(cycles, 2).unwrap();
+    stats.increment(insts, 4).unwrap();
+    let later = stats.snapshot(35);
+    let delta = later.delta_since(&snapshot).unwrap();
+    assert_eq!(delta.samples()[0].description(), Some("Architected cycles"));
+    assert_eq!(
+        delta.samples()[1].description(),
+        Some("Committed instructions")
+    );
+}
+
+#[test]
 fn stats_snapshots_dumps_and_deltas_carry_group_catalogs() {
     let mut stats = StatsRegistry::new();
     let cpu0 = stats.register_group(["system", "cpu0"]).unwrap();
@@ -613,6 +674,47 @@ fn stats_snapshot_delta_rejects_schema_drift() {
             current_path: "cpu0.committed_insts".to_string(),
             previous_unit: "count".to_string(),
             current_unit: "ops".to_string(),
+        },
+    );
+}
+
+#[test]
+fn stats_snapshot_delta_rejects_description_drift() {
+    let stat = StatId::new(7);
+    let path = StatPath::new(["cpu0"], "cycles").unwrap();
+    let previous_description = StatDescription::new("Original cycle count").unwrap();
+    let current_description = StatDescription::new("Renamed cycle count").unwrap();
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::from_parts_with_description(
+            stat,
+            path.clone(),
+            StatUnit::cycle(),
+            Some(previous_description.clone()),
+            12,
+        )],
+    );
+    let current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::from_parts_with_description(
+            stat,
+            path,
+            StatUnit::cycle(),
+            Some(current_description.clone()),
+            15,
+        )],
+    );
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaDescriptionMismatch {
+            stat,
+            previous_description: Some(previous_description),
+            current_description: Some(current_description),
         },
     );
 }

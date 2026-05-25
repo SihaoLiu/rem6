@@ -99,15 +99,17 @@ isolated bugs:
   checked dot-separated spelling before registration, registry-owned stat
   groups preserve reusable hierarchy ids, and snapshots carry a group catalog
   so exported samples and deltas can resolve group ids without a live registry.
-  Counter units are registered either as typed values or as parsed structured
-  metadata that can preserve nested rate spelling while rejecting empty,
-  whitespace-shaped, or malformed rate strings. This keeps gem5's useful stat
-  name, hierarchy, and unit discipline while returning typed errors instead of
-  panicking. Stats dumps are registry-owned typed records with stable dump ids
-  and self-describing snapshot payloads rather than global output callbacks.
-  Stats deltas are also typed records derived only from snapshots in the same
-  reset scope with matching group catalogs, nondecreasing tick, and
-  nondecreasing counter values.
+  Counter units and descriptions are registered as typed metadata: units can
+  preserve nested rate spelling while rejecting empty, whitespace-shaped, or
+  malformed rate strings, and descriptions preserve gem5's useful `Info.desc`
+  semantics while rejecting empty metadata before consuming counter ids. This
+  keeps gem5's useful stat name, hierarchy, description, and unit discipline
+  while returning typed errors instead of panicking. Stats dumps are
+  registry-owned typed records with stable dump ids and self-describing snapshot
+  payloads rather than global output callbacks. Stats deltas are also typed
+  records derived only from snapshots in the same reset scope with matching
+  group catalogs, matching descriptions, nondecreasing tick, and nondecreasing
+  counter values.
 - Simple models are not automatically cheap or transparent. Recent call-stack
   profiling work identifies gem5's layered design as difficult to profile and
   reports TimingSimpleCPU behavior that can be slower than a full out-of-order
@@ -183,7 +185,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | Local files | rem6 owner | Coverage | Alignment target |
 | --- | ---: | --- | --- | --- |
 | `src/arch` | 1187 | `rem6-isa-riscv`, future ISA crates | partial | Keep per-ISA decoding and architectural state as isolated crates. RISC-V exists; ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA support need equivalent crate ownership before claiming parity. |
-| `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. Stats counter paths are now structured scope/name identities, registry-owned stat groups attach stable group ids plus self-describing group catalogs to snapshots and deltas, nested rate units remain machine-readable in snapshots, stats reset requests reject ticks earlier than the active reset window, typed stats dumps preserve stable ids plus snapshots in registry-owned history, and typed stats deltas reject cross-scope, group-catalog-drifting, schema-drifting, time-regressing, or value-regressing snapshots so reset ordering and stat descriptor drift cannot silently corrupt dump scope. |
+| `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. Stats counter paths are now structured scope/name identities, registry-owned stat groups attach stable group ids plus self-describing group catalogs to snapshots and deltas, stat descriptions preserve checked `Info.desc`-style metadata, nested rate units remain machine-readable in snapshots, stats reset requests reject ticks earlier than the active reset window, typed stats dumps preserve stable ids plus snapshots in registry-owned history, and typed stats deltas reject cross-scope, group-catalog-drifting, description-drifting, schema-drifting, time-regressing, or value-regressing snapshots so reset ordering and stat descriptor drift cannot silently corrupt dump scope. |
 | `src/cpu` | 363 | `rem6-cpu`, `rem6-kernel`, `rem6-system` | partial | RISC-V cluster execution exists, RISC-V data access records expose absent memory-route metadata for MMIO accesses as typed optional state instead of panic-only accessors, and CPU cluster parallel epochs retain both initial and final partition frontiers through full-system run summaries. gem5 simple, checker, Minor, O3, branch prediction, KVM-style switching, and traffic testers need typed rem6 equivalents or explicit replacement models. |
 | `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore, typed reset policy, platform/topology attachment, typed RISC-V DTS source emission, binary FDT/DTB emission, RISC-V DTB memory/A1 handoff, typed Linux `/chosen` bootargs and initrd DTB metadata, typed DTB and initrd blob installation for store-backed and DRAM-backed memory, GPU, and accelerator paths exist. PCI, storage, network, virtio, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
@@ -461,9 +463,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   instruction fetches are not misclassified as cache-covered data traffic.
 - Stats tests cover registry-owned stat groups, self-describing group catalogs
   on snapshots, dumps, and deltas, structured counter scope/name identity, path
-  grammar, structured unit and rate grammar, counter reset epochs, typed dump
-  history, schema-and-reset-scope-checked snapshot deltas, and typed probe
-  point, listener, event, payload, and snapshot records.
+  grammar, structured unit and rate grammar, checked counter descriptions,
+  counter reset epochs, typed dump history, schema-and-reset-scope-checked
+  snapshot deltas, and typed probe point, listener, event, payload, and
+  snapshot records.
 - Timer/MMIO tests cover typed RISC-V CLINT `msip` software interrupts,
   `mtimecmp` timer interrupt scheduling, future-deadline timer deassertion,
   read-only `mtime` from scheduler ticks, the same `mtimecmp` path under the

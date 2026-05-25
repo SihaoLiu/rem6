@@ -4,8 +4,8 @@ use rem6_kernel::Tick;
 
 use crate::error::StatsError;
 use crate::stats::{
-    StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId, StatId, StatPath, StatSample,
-    StatScope, StatSnapshot, StatUnit, StatsResetRecord,
+    StatDescription, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId, StatId,
+    StatPath, StatSample, StatScope, StatSnapshot, StatUnit, StatsResetRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,10 +53,43 @@ impl StatsRegistry {
         self.register_counter_with_unit(path, unit)
     }
 
+    pub fn register_counter_with_description(
+        &mut self,
+        path: impl Into<String>,
+        unit: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_counter_with_unit_and_description(path, unit, description)
+    }
+
     pub fn register_counter_with_unit(
         &mut self,
         path: impl Into<String>,
         unit: StatUnit,
+    ) -> Result<StatId, StatsError> {
+        self.register_counter_with_optional_description(path, unit, None)
+    }
+
+    pub fn register_counter_with_unit_and_description(
+        &mut self,
+        path: impl Into<String>,
+        unit: StatUnit,
+        description: impl Into<String>,
+    ) -> Result<StatId, StatsError> {
+        let description = parse_stat_description(description)?;
+        self.register_counter_with_optional_description(path, unit, Some(description))
+    }
+
+    fn register_counter_with_optional_description(
+        &mut self,
+        path: impl Into<String>,
+        unit: StatUnit,
+        description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
         let path = path.into();
         if path.is_empty() {
@@ -64,7 +97,7 @@ impl StatsRegistry {
         }
         let stat_path = StatPath::parse(path.clone())
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(None, stat_path, unit)
+        self.register_counter_path(None, stat_path, unit, description)
     }
 
     pub fn register_scoped_counter<I, S>(
@@ -100,7 +133,7 @@ impl StatsRegistry {
         let path = segments.join(".");
         let stat_path = StatPath::from_segments(segments)
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(None, stat_path, unit)
+        self.register_counter_path(None, stat_path, unit, None)
     }
 
     pub fn register_group<I, S>(&mut self, scope: I) -> Result<StatGroupId, StatsError>
@@ -142,11 +175,47 @@ impl StatsRegistry {
         self.register_group_counter_with_unit(group, name, unit)
     }
 
+    pub fn register_group_counter_with_description(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_group_counter_with_unit_and_description(group, name, unit, description)
+    }
+
     pub fn register_group_counter_with_unit(
         &mut self,
         group: StatGroupId,
         name: impl Into<String>,
         unit: StatUnit,
+    ) -> Result<StatId, StatsError> {
+        self.register_group_counter_with_optional_description(group, name, unit, None)
+    }
+
+    pub fn register_group_counter_with_unit_and_description(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: StatUnit,
+        description: impl Into<String>,
+    ) -> Result<StatId, StatsError> {
+        let description = parse_stat_description(description)?;
+        self.register_group_counter_with_optional_description(group, name, unit, Some(description))
+    }
+
+    fn register_group_counter_with_optional_description(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: StatUnit,
+        description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
         let Some(scope) = self.groups.get(&group) else {
             return Err(StatsError::UnknownStatGroup { group });
@@ -157,7 +226,7 @@ impl StatsRegistry {
         let path = segments.join(".");
         let stat_path = StatPath::from_segments(segments)
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(Some(group), stat_path, unit)
+        self.register_counter_path(Some(group), stat_path, unit, description)
     }
 
     fn register_counter_path(
@@ -165,6 +234,7 @@ impl StatsRegistry {
         group: Option<StatGroupId>,
         path: StatPath,
         unit: StatUnit,
+        description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
         if self.paths.contains(path.as_str()) {
             return Err(StatsError::DuplicatePath {
@@ -175,8 +245,15 @@ impl StatsRegistry {
         let id = StatId::new(self.next_id);
         self.next_id += 1;
         self.paths.insert(path.as_str().to_string());
-        self.descriptors
-            .insert(id, StatDescriptor { group, path, unit });
+        self.descriptors.insert(
+            id,
+            StatDescriptor {
+                group,
+                path,
+                unit,
+                description,
+            },
+        );
         self.counters.insert(id, 0);
         Ok(id)
     }
@@ -217,11 +294,12 @@ impl StatsRegistry {
             .descriptors
             .iter()
             .map(|(id, descriptor)| {
-                StatSample::from_registered_parts(
+                StatSample::from_registered_parts_with_description(
                     *id,
                     descriptor.group,
                     descriptor.path.clone(),
                     descriptor.unit.clone(),
+                    descriptor.description.clone(),
                     self.counters.get(id).copied().unwrap_or_default(),
                 )
             })
@@ -296,4 +374,13 @@ struct StatDescriptor {
     group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
+    description: Option<StatDescription>,
+}
+
+fn parse_stat_description(description: impl Into<String>) -> Result<StatDescription, StatsError> {
+    let description = description.into();
+    StatDescription::new(description.clone()).map_err(|reason| StatsError::InvalidDescription {
+        description,
+        reason,
+    })
 }

@@ -4,7 +4,10 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 use crate::probes::{ProbeListenerId, ProbePointId};
-use crate::stats::{StatGroupDescriptor, StatGroupId, StatId, StatPathError, StatUnitError};
+use crate::stats::{
+    StatDescription, StatDescriptionError, StatGroupDescriptor, StatGroupId, StatId, StatPathError,
+    StatUnitError,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatsError {
@@ -16,6 +19,10 @@ pub enum StatsError {
     InvalidUnit {
         unit: String,
         reason: StatUnitError,
+    },
+    InvalidDescription {
+        description: String,
+        reason: StatDescriptionError,
     },
     DuplicatePath {
         path: String,
@@ -67,6 +74,11 @@ pub enum StatsError {
         previous_unit: String,
         current_unit: String,
     },
+    SnapshotDeltaDescriptionMismatch {
+        stat: StatId,
+        previous_description: Option<StatDescription>,
+        current_description: Option<StatDescription>,
+    },
     SnapshotDeltaValueWentBack {
         stat: StatId,
         previous: u64,
@@ -107,6 +119,15 @@ impl fmt::Display for StatsError {
             }
             Self::InvalidUnit { unit, reason } => {
                 write!(formatter, "stat unit {unit} is invalid: {reason}")
+            }
+            Self::InvalidDescription {
+                description,
+                reason,
+            } => {
+                write!(
+                    formatter,
+                    "stat description {description:?} is invalid: {reason}"
+                )
             }
             Self::DuplicatePath { path } => write!(formatter, "stat path already exists: {path}"),
             Self::DuplicateGroup { scope } => {
@@ -168,6 +189,11 @@ impl fmt::Display for StatsError {
             } => write!(
                 formatter,
                 "stat snapshot delta descriptor for stat {} changed from {previous_path} {previous_unit} to {current_path} {current_unit}",
+                stat.get()
+            ),
+            Self::SnapshotDeltaDescriptionMismatch { stat, .. } => write!(
+                formatter,
+                "stat snapshot delta description for stat {} changed",
                 stat.get()
             ),
             Self::SnapshotDeltaValueWentBack {

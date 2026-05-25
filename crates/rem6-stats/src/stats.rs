@@ -289,12 +289,36 @@ impl fmt::Display for StatUnit {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StatDescription {
+    spelling: String,
+}
+
+impl StatDescription {
+    pub fn new(description: impl Into<String>) -> Result<Self, StatDescriptionError> {
+        let spelling = description.into();
+        validate_stat_description(&spelling)?;
+        Ok(Self { spelling })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.spelling
+    }
+}
+
+impl fmt::Display for StatDescription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatSample {
     id: StatId,
     group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
+    description: Option<StatDescription>,
     value: u64,
 }
 
@@ -320,12 +344,23 @@ impl StatSample {
             group: None,
             path: stat_path,
             unit: stat_unit,
+            description: None,
             value,
         })
     }
 
     pub const fn from_parts(id: StatId, path: StatPath, unit: StatUnit, value: u64) -> Self {
         Self::from_registered_parts(id, None, path, unit, value)
+    }
+
+    pub const fn from_parts_with_description(
+        id: StatId,
+        path: StatPath,
+        unit: StatUnit,
+        description: Option<StatDescription>,
+        value: u64,
+    ) -> Self {
+        Self::from_registered_parts_with_description(id, None, path, unit, description, value)
     }
 
     pub const fn from_registered_parts(
@@ -335,11 +370,23 @@ impl StatSample {
         unit: StatUnit,
         value: u64,
     ) -> Self {
+        Self::from_registered_parts_with_description(id, group, path, unit, None, value)
+    }
+
+    pub const fn from_registered_parts_with_description(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        description: Option<StatDescription>,
+        value: u64,
+    ) -> Self {
         Self {
             id,
             group,
             path,
             unit,
+            description,
             value,
         }
     }
@@ -376,6 +423,14 @@ impl StatSample {
         &self.unit
     }
 
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_ref().map(StatDescription::as_str)
+    }
+
+    pub const fn stat_description(&self) -> Option<&StatDescription> {
+        self.description.as_ref()
+    }
+
     pub const fn value(&self) -> u64 {
         self.value
     }
@@ -387,6 +442,7 @@ pub struct StatDeltaSample {
     group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
+    description: Option<StatDescription>,
     previous_value: u64,
     current_value: u64,
 }
@@ -421,6 +477,7 @@ impl StatDeltaSample {
             group: None,
             path: stat_path,
             unit: stat_unit,
+            description: None,
             previous_value,
             current_value,
         })
@@ -436,6 +493,25 @@ impl StatDeltaSample {
         Self::from_registered_parts(id, None, path, unit, previous_value, current_value)
     }
 
+    pub const fn from_parts_with_description(
+        id: StatId,
+        path: StatPath,
+        unit: StatUnit,
+        description: Option<StatDescription>,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
+        Self::from_registered_parts_with_description(
+            id,
+            None,
+            path,
+            unit,
+            description,
+            previous_value,
+            current_value,
+        )
+    }
+
     pub const fn from_registered_parts(
         id: StatId,
         group: Option<StatGroupId>,
@@ -444,11 +520,32 @@ impl StatDeltaSample {
         previous_value: u64,
         current_value: u64,
     ) -> Self {
+        Self::from_registered_parts_with_description(
+            id,
+            group,
+            path,
+            unit,
+            None,
+            previous_value,
+            current_value,
+        )
+    }
+
+    pub const fn from_registered_parts_with_description(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        description: Option<StatDescription>,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
         Self {
             id,
             group,
             path,
             unit,
+            description,
             previous_value,
             current_value,
         }
@@ -484,6 +581,14 @@ impl StatDeltaSample {
 
     pub const fn stat_unit(&self) -> &StatUnit {
         &self.unit
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_ref().map(StatDescription::as_str)
+    }
+
+    pub const fn stat_description(&self) -> Option<&StatDescription> {
+        self.description.as_ref()
     }
 
     pub const fn previous_value(&self) -> u64 {
@@ -692,6 +797,13 @@ impl StatSnapshot {
                     current_unit: current_sample.unit().to_string(),
                 });
             }
+            if current_sample.stat_description() != previous_sample.stat_description() {
+                return Err(StatsError::SnapshotDeltaDescriptionMismatch {
+                    stat: previous_sample.id(),
+                    previous_description: previous_sample.stat_description().cloned(),
+                    current_description: current_sample.stat_description().cloned(),
+                });
+            }
             if current_sample.value() < previous_sample.value() {
                 return Err(StatsError::SnapshotDeltaValueWentBack {
                     stat: previous_sample.id(),
@@ -699,11 +811,12 @@ impl StatSnapshot {
                     current: current_sample.value(),
                 });
             }
-            deltas.push(StatDeltaSample::from_registered_parts(
+            deltas.push(StatDeltaSample::from_registered_parts_with_description(
                 previous_sample.id(),
                 previous_sample.group(),
                 previous_sample.stat_path().clone(),
                 previous_sample.stat_unit().clone(),
+                previous_sample.stat_description().cloned(),
                 previous_sample.value(),
                 current_sample.value(),
             ));
@@ -840,6 +953,26 @@ impl fmt::Display for StatUnitError {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StatDescriptionError {
+    Empty,
+    InvalidCharacter { character: char },
+}
+
+impl fmt::Display for StatDescriptionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(formatter, "description must not be empty"),
+            Self::InvalidCharacter { character } => {
+                write!(
+                    formatter,
+                    "description contains invalid character {character:?}"
+                )
+            }
+        }
+    }
+}
+
 fn validate_stat_path(path: &str) -> Result<(), StatPathError> {
     validate_stat_segments(path.split('.'))
 }
@@ -871,6 +1004,18 @@ fn validate_stat_segments<'a>(
     }
     if !saw_segment {
         return Err(StatPathError::EmptySegment { index: 0 });
+    }
+    Ok(())
+}
+
+fn validate_stat_description(description: &str) -> Result<(), StatDescriptionError> {
+    if description.trim().is_empty() {
+        return Err(StatDescriptionError::Empty);
+    }
+    for character in description.chars() {
+        if character.is_control() {
+            return Err(StatDescriptionError::InvalidCharacter { character });
+        }
     }
     Ok(())
 }
