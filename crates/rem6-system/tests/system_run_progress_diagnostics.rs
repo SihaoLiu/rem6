@@ -1,7 +1,8 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_cpu::RiscvClusterTurn;
 use rem6_kernel::{
-    LivelockTransitionKind, PartitionId, PartitionedScheduler, WaitForGraph, WaitForNode,
+    LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId, PartitionedScheduler,
+    WaitForGraph, WaitForNode,
 };
 use rem6_system::{RiscvSystemRun, RiscvSystemRunStopReason};
 
@@ -11,6 +12,16 @@ fn component(name: &str) -> WaitForNode {
 
 fn empty_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
     ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new())
+}
+
+fn transition(
+    partition: PartitionId,
+    subject: WaitForNode,
+    kind: LivelockTransitionKind,
+    tick: u64,
+    order: u64,
+) -> ParallelProgressTransitionRecord {
+    ParallelProgressTransitionRecord::new(partition, subject, kind, tick, order)
 }
 
 fn cpu_scheduler_turn(
@@ -287,6 +298,240 @@ fn system_run_reports_progress_transition_counts_and_windows_by_dimension() {
     assert_eq!(
         run.full_system_progress_transition_tick_window_by_subject(&missing_subject),
         None,
+    );
+}
+
+#[test]
+fn system_run_lists_and_filters_progress_transition_records_by_dimension() {
+    let cpu = PartitionId::new(0);
+    let cache_a = PartitionId::new(1);
+    let cache_b = PartitionId::new(2);
+    let cpu_subject = component("cpu-scheduler");
+    let cache_a_subject = component("cache-scheduler-a");
+    let cache_b_subject = component("cache-scheduler-b");
+    let missing_subject = component("missing-scheduler");
+    let run = RiscvSystemRun::new(
+        vec![cpu_scheduler_turn_at(cpu, 0, cpu_subject.clone(), 2)],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 8 },
+    )
+    .with_data_cache_runs(vec![
+        data_cache_run_at(cache_a, 3, cache_a_subject.clone(), 2),
+        data_cache_run_at(cache_b, 6, cache_b_subject.clone(), 1),
+    ]);
+
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_kinds(),
+        vec![LivelockTransitionKind::ProtocolRetry],
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_partitions(),
+        vec![cpu],
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_subjects(),
+        vec![cpu_subject.clone()],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_kinds(),
+        vec![LivelockTransitionKind::MessageRetry],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_partitions(),
+        vec![cache_a, cache_b],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_subjects(),
+        vec![cache_a_subject.clone(), cache_b_subject.clone()],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_kinds(),
+        vec![
+            LivelockTransitionKind::ProtocolRetry,
+            LivelockTransitionKind::MessageRetry,
+        ],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_partitions(),
+        vec![cpu, cache_a, cache_b],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_subjects(),
+        vec![
+            cache_a_subject.clone(),
+            cache_b_subject.clone(),
+            cpu_subject.clone(),
+        ],
+    );
+
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_records_by_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        vec![
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                0,
+            ),
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_records_by_partition(cpu),
+        vec![
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                0,
+            ),
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.parallel_scheduler_progress_transition_records_by_subject(&cpu_subject),
+        vec![
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                0,
+            ),
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                1,
+            ),
+        ],
+    );
+
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_records_by_kind(
+            LivelockTransitionKind::MessageRetry,
+        ),
+        vec![
+            transition(
+                cache_a,
+                cache_a_subject.clone(),
+                LivelockTransitionKind::MessageRetry,
+                3,
+                0,
+            ),
+            transition(
+                cache_a,
+                cache_a_subject.clone(),
+                LivelockTransitionKind::MessageRetry,
+                3,
+                1,
+            ),
+            transition(
+                cache_b,
+                cache_b_subject.clone(),
+                LivelockTransitionKind::MessageRetry,
+                6,
+                0,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_records_by_partition(cache_b),
+        vec![transition(
+            cache_b,
+            cache_b_subject.clone(),
+            LivelockTransitionKind::MessageRetry,
+            6,
+            0,
+        )],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_progress_transition_records_by_subject(&cache_a_subject),
+        vec![
+            transition(
+                cache_a,
+                cache_a_subject.clone(),
+                LivelockTransitionKind::MessageRetry,
+                3,
+                0,
+            ),
+            transition(
+                cache_a,
+                cache_a_subject.clone(),
+                LivelockTransitionKind::MessageRetry,
+                3,
+                1,
+            ),
+        ],
+    );
+
+    assert_eq!(
+        run.full_system_progress_transition_records_by_kind(LivelockTransitionKind::ProtocolRetry),
+        vec![
+            transition(
+                cpu,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                0,
+            ),
+            transition(
+                cpu,
+                cpu_subject,
+                LivelockTransitionKind::ProtocolRetry,
+                0,
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.full_system_progress_transition_records_by_partition(cache_a),
+        vec![
+            transition(
+                cache_a,
+                cache_a_subject.clone(),
+                LivelockTransitionKind::MessageRetry,
+                3,
+                0,
+            ),
+            transition(
+                cache_a,
+                cache_a_subject,
+                LivelockTransitionKind::MessageRetry,
+                3,
+                1,
+            ),
+        ],
+    );
+    assert!(run
+        .full_system_progress_transition_records_by_subject(&missing_subject)
+        .is_empty());
+    assert_eq!(
+        run.full_system_progress_transition_records_by_subject(&cache_b_subject),
+        vec![transition(
+            cache_b,
+            cache_b_subject,
+            LivelockTransitionKind::MessageRetry,
+            6,
+            0,
+        )],
     );
 }
 
