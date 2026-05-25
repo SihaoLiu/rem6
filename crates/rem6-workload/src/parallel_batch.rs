@@ -62,6 +62,10 @@ impl WorkloadParallelBatchTimelineRecord {
         self.horizon
     }
 
+    pub const fn duration_ticks(&self) -> Tick {
+        self.horizon.saturating_sub(self.start_tick)
+    }
+
     pub fn partitions(&self) -> &[PartitionId] {
         &self.partitions
     }
@@ -206,6 +210,31 @@ pub(crate) fn collect_parallel_batch_worker_counts_from_timeline(
             .iter()
             .map(|record| WorkloadParallelBatchWorkerCount::new(record.worker_count(), 1)),
     )
+}
+
+pub(crate) fn collect_parallel_batch_worker_count_tick_summaries(
+    records: &[WorkloadParallelBatchTimelineRecord],
+) -> Vec<(usize, Tick)> {
+    let mut by_worker_count = BTreeMap::<usize, Tick>::new();
+    for record in records {
+        let duration = record.duration_ticks();
+        if record.worker_count() != 0 && duration != 0 {
+            let ticks = by_worker_count.entry(record.worker_count()).or_default();
+            *ticks = ticks.saturating_add(duration);
+        }
+    }
+    by_worker_count.into_iter().collect()
+}
+
+pub(crate) fn parallel_batch_ticks_for_worker_count(
+    records: &[WorkloadParallelBatchTimelineRecord],
+    worker_count: usize,
+) -> Tick {
+    records
+        .iter()
+        .filter(|record| record.worker_count() == worker_count)
+        .map(WorkloadParallelBatchTimelineRecord::duration_ticks)
+        .fold(0, Tick::saturating_add)
 }
 
 pub(crate) fn collect_parallel_batch_partition_sets_from_timeline(

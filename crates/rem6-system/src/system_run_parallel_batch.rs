@@ -59,6 +59,10 @@ impl RiscvSystemParallelBatchTimelineRecord {
         self.horizon
     }
 
+    pub const fn duration_ticks(&self) -> Tick {
+        self.horizon.saturating_sub(self.start_tick)
+    }
+
     pub fn partitions(&self) -> &[PartitionId] {
         &self.partitions
     }
@@ -92,6 +96,50 @@ impl RiscvSystemRun {
         timeline.extend(self.data_cache_parallel_scheduler_batch_timeline());
         sort_batch_timeline(&mut timeline);
         timeline
+    }
+
+    pub fn parallel_scheduler_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_batch_worker_count_tick_summaries(self.parallel_scheduler_batch_timeline())
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        collect_batch_worker_count_tick_summaries(
+            self.data_cache_parallel_scheduler_batch_timeline(),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        collect_batch_worker_count_tick_summaries(
+            self.full_system_parallel_scheduler_batch_timeline(),
+        )
+    }
+
+    pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        batch_ticks_for_worker_count(self.parallel_scheduler_batch_timeline(), worker_count)
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> Tick {
+        batch_ticks_for_worker_count(
+            self.data_cache_parallel_scheduler_batch_timeline(),
+            worker_count,
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> Tick {
+        batch_ticks_for_worker_count(
+            self.full_system_parallel_scheduler_batch_timeline(),
+            worker_count,
+        )
     }
 
     pub fn parallel_scheduler_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
@@ -264,6 +312,31 @@ fn sort_batch_timeline(timeline: &mut [RiscvSystemParallelBatchTimelineRecord]) 
             record.partitions().to_vec(),
         )
     });
+}
+
+fn collect_batch_worker_count_tick_summaries(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+) -> Vec<(usize, Tick)> {
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for record in records {
+        let duration = record.duration_ticks();
+        if record.worker_count() != 0 && duration != 0 {
+            let ticks = summaries.entry(record.worker_count()).or_default();
+            *ticks = ticks.saturating_add(duration);
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+fn batch_ticks_for_worker_count(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    worker_count: usize,
+) -> Tick {
+    records
+        .into_iter()
+        .filter(|record| record.worker_count() == worker_count)
+        .map(|record| record.duration_ticks())
+        .fold(0, Tick::saturating_add)
 }
 
 fn collect_batch_worker_count_summaries(

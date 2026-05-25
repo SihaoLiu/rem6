@@ -1,9 +1,11 @@
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets_from_timeline,
     collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_timeline,
-    collect_parallel_batch_worker_counts_from_timeline, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord,
+    collect_parallel_batch_worker_count_tick_summaries,
+    collect_parallel_batch_worker_counts_from_timeline, parallel_batch_ticks_for_worker_count,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
 };
+use rem6_kernel::Tick;
 
 use super::WorkloadParallelExecutionSummary;
 
@@ -67,6 +69,47 @@ impl WorkloadParallelExecutionSummary {
                         .cloned(),
                 ),
         )
+    }
+
+    pub fn parallel_scheduler_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_parallel_batch_worker_count_tick_summaries(&self.parallel_scheduler_batch_timeline)
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        collect_parallel_batch_worker_count_tick_summaries(
+            &self.data_cache_parallel_scheduler_batch_timeline,
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        collect_parallel_batch_worker_count_tick_summaries(&timeline)
+    }
+
+    pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        parallel_batch_ticks_for_worker_count(&self.parallel_scheduler_batch_timeline, worker_count)
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> Tick {
+        parallel_batch_ticks_for_worker_count(
+            &self.data_cache_parallel_scheduler_batch_timeline,
+            worker_count,
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_ticks_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> Tick {
+        let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        parallel_batch_ticks_for_worker_count(&timeline, worker_count)
     }
 }
 

@@ -710,6 +710,8 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
             scheduler_late.clone()
         ],
     );
+    assert_eq!(scheduler_early.duration_ticks(), 4);
+    assert_eq!(data_cache.duration_ticks(), 4);
     assert_eq!(summary.scheduler_batch_count(), 2);
     assert_eq!(summary.data_cache_parallel_scheduler_batch_count(), 1);
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 3);
@@ -721,6 +723,42 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
             WorkloadParallelBatchWorkerCount::new(1, 1),
             WorkloadParallelBatchWorkerCount::new(2, 2),
         ],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(1, 4), (2, 4)],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(2, 4)],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(1, 4), (2, 8)],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_batch_ticks_for_worker_count(1),
+        4
+    );
+    assert_eq!(
+        summary.parallel_scheduler_batch_ticks_for_worker_count(2),
+        4
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_batch_ticks_for_worker_count(2),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(1),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(2),
+        8,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(3),
+        0,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_partition_sets(),

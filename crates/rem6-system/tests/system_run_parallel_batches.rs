@@ -286,6 +286,7 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     );
     assert_eq!(timeline[0].start_tick(), 0);
     assert_eq!(timeline[0].horizon(), 4);
+    assert_eq!(timeline[0].duration_ticks(), 4);
     assert_eq!(timeline[0].worker_count(), 2);
     assert_eq!(timeline[0].partitions(), &[cpu0, cpu1]);
     assert_eq!(
@@ -294,6 +295,7 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     );
     assert_eq!(timeline[1].start_tick(), 8);
     assert_eq!(timeline[1].horizon(), 12);
+    assert_eq!(timeline[1].duration_ticks(), 4);
     assert_eq!(timeline[1].worker_count(), 1);
     assert_eq!(timeline[1].partitions(), &[cache]);
     assert_eq!(
@@ -302,8 +304,40 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     );
     assert_eq!(timeline[2].start_tick(), 16);
     assert_eq!(timeline[2].horizon(), 20);
+    assert_eq!(timeline[2].duration_ticks(), 4);
     assert_eq!(timeline[2].worker_count(), 2);
     assert_eq!(timeline[2].partitions(), &[cpu0, cpu1]);
+
+    assert_eq!(
+        run.parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(1, 4)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(2, 8)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(1, 4), (2, 8)],
+    );
+    assert_eq!(run.parallel_scheduler_batch_ticks_for_worker_count(1), 4);
+    assert_eq!(run.parallel_scheduler_batch_ticks_for_worker_count(2), 0);
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_ticks_for_worker_count(2),
+        8,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_ticks_for_worker_count(1),
+        4,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_ticks_for_worker_count(2),
+        8,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_ticks_for_worker_count(3),
+        0,
+    );
 
     let scheduler_timeline = run.parallel_scheduler_batch_timeline();
     assert_eq!(scheduler_timeline.len(), 1);

@@ -426,8 +426,9 @@ fine-grained evidence for batch count, dispatch progress, max-worker use,
 thresholded multi-worker batch activity, exact worker-count bucket activity,
 and total-worker activity, so a lower aggregate or worker-count counter cannot
 hide detailed partition-set execution records.
-The system-run object exposes batch-worker summaries, exact worker-count batch
-queries, minimum-worker batch queries, exact partition-set summaries, and
+The system-run object exposes batch-worker summaries, duration-weighted
+worker-count tick summaries, exact worker-count batch and tick queries,
+minimum-worker batch queries, exact partition-set summaries, and
 same-partition-set streak summaries directly for CPU-scheduler, data-cache
 scheduler, and merged full-system scopes, so simulation diagnostics can inspect
 parallel occupancy before workload replay translates it into manifest evidence.
@@ -444,19 +445,20 @@ tie breakers, which prevents a CPU batch between two data-cache batches from
 being hidden by subsystem-local concatenation when sustained occupancy is
 measured.
 System-run batch timeline records expose the scheduler scope, worker-window
-start tick, conservative horizon, worker count, and normalized partition set, so
-diagnostics can inspect the time-ordered parallel occupancy source before it is
-compressed into histograms or streak summaries.
-Workload result summaries preserve the same scoped timeline records and derive
-batch histograms, partition-set summaries, and streak evidence from them, so
-replay output keeps the precise occupancy evidence behind each compressed
-parallel summary. Workload manifests may now declare exact scheduler,
-data-cache scheduler, or full-system exact worker-count bucket contracts and
-batch timeline records. Replay verification rejects underfilled exact worker
-buckets and rejects missing or unexpected timeline records instead of accepting
-only aggregate occupancy evidence. Exact replay contracts use multiset matching:
-an extra duplicate remote-send, progress-transition, or batch-timeline record
-is unexpected even if an otherwise identical expected record exists.
+start tick, conservative horizon, duration ticks, worker count, and normalized
+partition set, so diagnostics can inspect the time-ordered parallel occupancy
+source before it is compressed into histograms or streak summaries. Workload
+result summaries preserve the same scoped timeline records and derive batch
+histograms, duration-weighted worker-count tick summaries, partition-set
+summaries, and streak evidence from them, so replay output keeps the precise
+occupancy evidence behind each compressed parallel summary. Workload manifests
+may now declare exact scheduler, data-cache scheduler, or full-system exact
+worker-count bucket contracts and batch timeline records. Replay verification
+rejects underfilled exact worker buckets and rejects missing or unexpected
+timeline records instead of accepting only aggregate occupancy evidence. Exact
+replay contracts use multiset matching: an extra duplicate remote-send,
+progress-transition, or batch-timeline record is unexpected even if an otherwise
+identical expected record exists.
 Workload manifests may declare required initial or final frontier minima for
 specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
