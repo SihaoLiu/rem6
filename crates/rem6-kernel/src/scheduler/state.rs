@@ -926,10 +926,13 @@ impl RecordedRunSummary {
     }
 
     pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
-        self.batches
-            .iter()
-            .flat_map(|batch| batch.remote_sends().iter().copied())
-            .collect()
+        ordered_remote_sends(
+            self.batches
+                .iter()
+                .flat_map(ParallelEpochBatchRecord::remote_sends)
+                .copied()
+                .collect(),
+        )
     }
 
     pub fn remote_source_partitions(&self) -> Vec<PartitionId> {
@@ -1201,10 +1204,12 @@ impl RecordedConservativeRunSummary {
     }
 
     pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
-        self.epochs
-            .iter()
-            .flat_map(RecordedRunSummary::remote_sends)
-            .collect()
+        ordered_remote_sends(
+            self.epochs
+                .iter()
+                .flat_map(RecordedRunSummary::remote_sends)
+                .collect(),
+        )
     }
 
     pub fn remote_source_partitions(&self) -> Vec<PartitionId> {
@@ -1402,6 +1407,22 @@ where
             .or_insert_with(|| ParallelRemoteFlowRecord::from_send(*send));
     }
     flows.into_values().collect()
+}
+
+fn ordered_remote_sends(mut sends: Vec<ParallelRemoteSendRecord>) -> Vec<ParallelRemoteSendRecord> {
+    sends.sort_by_key(remote_send_delivery_key);
+    sends
+}
+
+fn remote_send_delivery_key(
+    send: &ParallelRemoteSendRecord,
+) -> (PartitionId, Tick, PartitionId, u64) {
+    (
+        send.target(),
+        send.delivery_tick(),
+        send.source(),
+        send.order(),
+    )
 }
 
 fn collect_remote_source_partitions<'a, I>(remote_sends: I) -> Vec<PartitionId>
