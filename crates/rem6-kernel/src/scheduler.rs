@@ -1239,7 +1239,7 @@ fn run_parallel_partition(
 ) -> ParallelPartitionResult {
     let mut executed_events = 0;
     let mut next_remote_order = queue.next_remote_order;
-    let mut next_progress_order = 0;
+    let mut next_progress_order = queue.next_progress_order;
     let mut dispatches = Vec::new();
     let mut remote_events = Vec::new();
     let mut progress_transitions = Vec::new();
@@ -1255,6 +1255,7 @@ fn run_parallel_partition(
         match callback {
             PartitionEventCallback::Serial(_) => {
                 queue.next_remote_order = next_remote_order;
+                queue.next_progress_order = next_progress_order;
                 return ParallelPartitionResult {
                     index,
                     queue,
@@ -1272,6 +1273,7 @@ fn run_parallel_partition(
                 let rollback_next_id = queue.next_id;
                 let rollback_next_order = queue.next_order;
                 let rollback_next_remote_order = next_remote_order;
+                let rollback_next_progress_order = next_progress_order;
                 let rollback_remote_len = remote_events.len();
                 let rollback_progress_len = progress_transitions.len();
                 let result = catch_unwind(AssertUnwindSafe(|| {
@@ -1291,9 +1293,11 @@ fn run_parallel_partition(
                 if result.is_err() {
                     queue.rollback_scheduled_events(rollback_next_id, rollback_next_order);
                     next_remote_order = rollback_next_remote_order;
+                    next_progress_order = rollback_next_progress_order;
                     remote_events.truncate(rollback_remote_len);
                     progress_transitions.truncate(rollback_progress_len);
                     queue.next_remote_order = next_remote_order;
+                    queue.next_progress_order = next_progress_order;
                     return ParallelPartitionResult {
                         index,
                         queue,
@@ -1315,6 +1319,7 @@ fn run_parallel_partition(
     }
 
     queue.next_remote_order = next_remote_order;
+    queue.next_progress_order = next_progress_order;
     ParallelPartitionResult {
         index,
         queue,
@@ -1331,6 +1336,7 @@ struct PartitionQueue {
     next_id: u64,
     next_order: u64,
     next_remote_order: u64,
+    next_progress_order: u64,
     pending: BinaryHeap<PartitionEvent>,
 }
 
@@ -1341,6 +1347,7 @@ impl PartitionQueue {
             next_id: 0,
             next_order: 0,
             next_remote_order: 0,
+            next_progress_order: 0,
             pending: BinaryHeap::new(),
         }
     }
@@ -1460,6 +1467,7 @@ impl PartitionQueue {
             next_event_local: self.next_id,
             next_event_order: self.next_order,
             next_remote_order: self.next_remote_order,
+            next_progress_order: self.next_progress_order,
             pending_events,
         }
     }
@@ -1469,6 +1477,7 @@ impl PartitionQueue {
         self.next_id = snapshot.next_event_local;
         self.next_order = snapshot.next_event_order;
         self.next_remote_order = snapshot.next_remote_order;
+        self.next_progress_order = snapshot.next_progress_order;
         self.pending.clear();
     }
 }

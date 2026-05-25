@@ -759,6 +759,7 @@ pub struct PartitionSnapshot {
     pub(super) next_event_local: u64,
     pub(super) next_event_order: u64,
     pub(super) next_remote_order: u64,
+    pub(super) next_progress_order: u64,
     pub(super) pending_events: Vec<PendingEventSnapshot>,
 }
 
@@ -779,12 +780,31 @@ impl PartitionSnapshot {
         next_event_order: u64,
         next_remote_order: u64,
     ) -> Self {
+        Self::quiescent_with_orders(
+            partition,
+            now,
+            next_event_local,
+            next_event_order,
+            next_remote_order,
+            0,
+        )
+    }
+
+    pub fn quiescent_with_orders(
+        partition: PartitionId,
+        now: Tick,
+        next_event_local: u64,
+        next_event_order: u64,
+        next_remote_order: u64,
+        next_progress_order: u64,
+    ) -> Self {
         Self {
             partition,
             now,
             next_event_local,
             next_event_order,
             next_remote_order,
+            next_progress_order,
             pending_events: Vec::new(),
         }
     }
@@ -807,6 +827,10 @@ impl PartitionSnapshot {
 
     pub fn next_remote_order(&self) -> u64 {
         self.next_remote_order
+    }
+
+    pub fn next_progress_order(&self) -> u64 {
+        self.next_progress_order
     }
 
     pub fn pending_events(&self) -> &[PendingEventSnapshot] {

@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
-use rem6_kernel::{PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError};
+use rem6_kernel::{
+    LivelockTransitionKind, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
+    WaitForNode,
+};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, SchedulerCheckpointBank,
@@ -152,6 +155,58 @@ fn host_checkpoint_preserves_scheduler_remote_send_order_identity() {
     assert_eq!(run.remote_sends()[0].source(), source);
     assert_eq!(run.remote_sends()[0].target(), target);
     assert_eq!(run.remote_sends()[0].order(), 1);
+}
+
+#[test]
+fn host_checkpoint_preserves_scheduler_progress_transition_order_identity() {
+    let source = PartitionId::new(0);
+    let component = CheckpointComponentId::new("scheduler0").unwrap();
+    let first_subject = WaitForNode::component("core0-retry").unwrap();
+    let second_subject = WaitForNode::component("core0-arbitration").unwrap();
+    let scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(1, 4, 1).unwrap(),
+    ));
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(source, 0, move |context| {
+            context
+                .record_progress_transition(first_subject, LivelockTransitionKind::ProtocolRetry);
+        })
+        .unwrap();
+    scheduler
+        .lock()
+        .unwrap()
+        .run_until_idle_parallel_recorded()
+        .unwrap();
+
+    let port = SchedulerCheckpointPort::new(component.clone(), Arc::clone(&scheduler));
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    port.capture_into(&mut registry).unwrap();
+
+    let restored_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(1, 4, 1).unwrap(),
+    ));
+    SchedulerCheckpointPort::new(component, Arc::clone(&restored_scheduler))
+        .restore_from(&registry)
+        .unwrap();
+
+    let mut restored = restored_scheduler.lock().unwrap();
+    let restored_tick = restored.now();
+    restored
+        .schedule_parallel_at(source, restored_tick, move |context| {
+            context.record_progress_transition(
+                second_subject,
+                LivelockTransitionKind::ResourceArbitration,
+            );
+        })
+        .unwrap();
+    let run = restored.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.progress_transitions().len(), 1);
+    assert_eq!(run.progress_transitions()[0].partition(), source);
+    assert_eq!(run.progress_transitions()[0].order(), 1);
 }
 
 #[test]

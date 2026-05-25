@@ -114,6 +114,75 @@ fn scheduler_parallel_progress_snapshot_rejects_zero_threshold() {
 }
 
 #[test]
+fn scheduler_progress_transition_order_is_source_local_across_epochs() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(1, 4, 1).unwrap();
+    let core = PartitionId::new(0);
+    let first_subject = component("core0-retry");
+    let second_subject = component("core0-arbitration");
+
+    scheduler
+        .schedule_parallel_at(core, 0, move |context| {
+            context
+                .record_progress_transition(first_subject, LivelockTransitionKind::ProtocolRetry);
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(core, 5, move |context| {
+            context.record_progress_transition(
+                second_subject,
+                LivelockTransitionKind::ResourceArbitration,
+            );
+        })
+        .unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let transitions = run.progress_transitions();
+
+    assert_eq!(transitions.len(), 2);
+    assert_eq!(transitions[0].partition(), core);
+    assert_eq!(transitions[0].tick(), 0);
+    assert_eq!(transitions[0].order(), 0);
+    assert_eq!(transitions[1].partition(), core);
+    assert_eq!(transitions[1].tick(), 5);
+    assert_eq!(transitions[1].order(), 1);
+}
+
+#[test]
+fn quiescent_snapshot_preserves_progress_transition_order_identity() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(1, 4, 1).unwrap();
+    let core = PartitionId::new(0);
+    let first_subject = component("core0-retry");
+    let second_subject = component("core0-arbitration");
+
+    scheduler
+        .schedule_parallel_at(core, 0, move |context| {
+            context
+                .record_progress_transition(first_subject, LivelockTransitionKind::ProtocolRetry);
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    let snapshot = scheduler.quiescent_snapshot().unwrap();
+    let mut restored = PartitionedScheduler::with_parallel_worker_limit(1, 4, 1).unwrap();
+    restored.restore_quiescent(&snapshot).unwrap();
+    restored
+        .schedule_parallel_at(core, restored.now(), move |context| {
+            context.record_progress_transition(
+                second_subject,
+                LivelockTransitionKind::ResourceArbitration,
+            );
+        })
+        .unwrap();
+
+    let run = restored.run_until_idle_parallel_recorded().unwrap();
+    let transitions = run.progress_transitions();
+
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(transitions[0].partition(), core);
+    assert_eq!(transitions[0].order(), 1);
+}
+
+#[test]
 fn scheduler_parallel_worker_panic_returns_typed_error_after_progress_record() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(1, 4).unwrap();
     let core = PartitionId::new(0);

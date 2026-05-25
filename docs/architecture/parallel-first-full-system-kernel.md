@@ -345,8 +345,8 @@ The scheduler records:
 - worker count per epoch;
 - active partitions;
 - recorded partition frontiers before and after each parallel epoch;
-- per-partition remote message order cursors in scheduler snapshots and
-  checkpoints;
+- per-partition remote message and progress-transition order cursors in
+  scheduler snapshots and checkpoints;
 - ready partitions selected for dispatch;
 - progress-free transition count before livelock thresholding;
 - event kind, tick, partition, and deterministic local identity;
