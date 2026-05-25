@@ -47,8 +47,10 @@ impl WorkloadParallelExecutionSummary {
             .max(combined_parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
                 &self.parallel_scheduler_remote_flows,
+                &self.parallel_scheduler_remote_sends,
                 &self.data_cache_parallel_scheduler_partition_activities,
                 &self.data_cache_parallel_scheduler_remote_flows,
+                &self.data_cache_parallel_scheduler_remote_sends,
             ))
     }
 

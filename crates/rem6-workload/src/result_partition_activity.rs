@@ -1,25 +1,30 @@
 use std::collections::BTreeSet;
 
-use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId,
+};
 
 pub(crate) fn parallel_active_partition_count(
     activities: &[(PartitionId, ParallelPartitionActivity)],
     flows: &[ParallelRemoteFlowRecord],
+    sends: &[ParallelRemoteSendRecord],
 ) -> usize {
     let mut partitions = BTreeSet::new();
-    collect_active_partitions(&mut partitions, activities, flows);
+    collect_active_partitions(&mut partitions, activities, flows, sends);
     partitions.len()
 }
 
 pub(crate) fn combined_parallel_active_partition_count(
     left_activities: &[(PartitionId, ParallelPartitionActivity)],
     left_flows: &[ParallelRemoteFlowRecord],
+    left_sends: &[ParallelRemoteSendRecord],
     right_activities: &[(PartitionId, ParallelPartitionActivity)],
     right_flows: &[ParallelRemoteFlowRecord],
+    right_sends: &[ParallelRemoteSendRecord],
 ) -> usize {
     let mut partitions = BTreeSet::new();
-    collect_active_partitions(&mut partitions, left_activities, left_flows);
-    collect_active_partitions(&mut partitions, right_activities, right_flows);
+    collect_active_partitions(&mut partitions, left_activities, left_flows, left_sends);
+    collect_active_partitions(&mut partitions, right_activities, right_flows, right_sends);
     partitions.len()
 }
 
@@ -44,6 +49,7 @@ pub(crate) fn parallel_partition_worker_count(
 pub(crate) fn parallel_partition_activity_for_partition(
     activities: &[(PartitionId, ParallelPartitionActivity)],
     flows: &[ParallelRemoteFlowRecord],
+    sends: &[ParallelRemoteSendRecord],
     partition: PartitionId,
 ) -> Option<ParallelPartitionActivity> {
     let explicit = activities
@@ -51,8 +57,11 @@ pub(crate) fn parallel_partition_activity_for_partition(
         .find(|(existing, _)| *existing == partition)
         .map(|(_, activity)| *activity);
     merge_parallel_partition_activity_evidence_options(
-        explicit,
-        parallel_remote_flow_partition_activity(flows, partition),
+        merge_parallel_partition_activity_evidence_options(
+            explicit,
+            parallel_remote_flow_partition_activity(flows, partition),
+        ),
+        parallel_remote_send_partition_activity(sends, partition),
     )
 }
 
@@ -95,11 +104,16 @@ fn collect_active_partitions(
     partitions: &mut BTreeSet<PartitionId>,
     activities: &[(PartitionId, ParallelPartitionActivity)],
     flows: &[ParallelRemoteFlowRecord],
+    sends: &[ParallelRemoteSendRecord],
 ) {
     partitions.extend(activities.iter().map(|(partition, _)| *partition));
     for flow in flows {
         partitions.insert(flow.source());
         partitions.insert(flow.target());
+    }
+    for send in sends {
+        partitions.insert(send.source());
+        partitions.insert(send.target());
     }
 }
 
@@ -117,6 +131,30 @@ fn parallel_remote_flow_partition_activity(
         .filter(|flow| flow.target() == partition)
         .map(|flow| flow.send_count())
         .sum();
+    if remote_send_count == 0 && remote_receive_count == 0 {
+        return None;
+    }
+    Some(ParallelPartitionActivity::with_remote_counts(
+        0,
+        0,
+        remote_send_count,
+        remote_receive_count,
+        0,
+    ))
+}
+
+fn parallel_remote_send_partition_activity(
+    sends: &[ParallelRemoteSendRecord],
+    partition: PartitionId,
+) -> Option<ParallelPartitionActivity> {
+    let remote_send_count = sends
+        .iter()
+        .filter(|send| send.source() == partition)
+        .count();
+    let remote_receive_count = sends
+        .iter()
+        .filter(|send| send.target() == partition)
+        .count();
     if remote_send_count == 0 && remote_receive_count == 0 {
         return None;
     }

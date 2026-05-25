@@ -73,7 +73,7 @@ isolated bugs:
   non-overcounting same-scope activity evidence merges, maximum scheduler empty
   epochs, minimum multi-worker batch counts, exact partition-set batch counts,
   minimum same-partition-set consecutive batch streaks, minimum active partition counts derived from
-  aggregate, exact partition-set, activity, or remote-flow evidence, per-partition
+  aggregate, exact partition-set, activity, remote-send, or remote-flow evidence, per-partition
   activity minima, data-cache protocol attribution expectations, data-cache
   run-accounting consistency, data-cache protocol run-count expectations, and
   minimum fabric, DRAM, and aggregate resource activity contracts plus clean
@@ -451,9 +451,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   derived from the strongest available worker-count, exact partition-set, or streak
   evidence, exact batch partition-set activity derived from exact histograms or streak counts,
   sustained same-batch partition-set streak activity, minimum active partition
-  counts derived from aggregate, exact partition-set, streak, activity, or remote-flow
-  evidence, per-partition activity minima backed by explicit activity, exact
-  batch partition-set histograms, or remote-flow records with same-scope
+  counts derived from aggregate, exact partition-set, streak, activity,
+  remote-send, or remote-flow evidence, per-partition activity minima backed by explicit activity, exact
+  batch partition-set histograms, remote-send records, or remote-flow records with same-scope
   activity projections merged as lower-bound evidence, data-cache run attribution
   expectations, data-cache run-accounting consistency, data-cache protocol
   run-count expectations, minimum fabric/DRAM/resource activity expectations,

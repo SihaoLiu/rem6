@@ -794,6 +794,7 @@ impl WorkloadParallelExecutionSummary {
             .max(parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
                 &self.parallel_scheduler_remote_flows,
+                &self.parallel_scheduler_remote_sends,
             ))
     }
 
@@ -898,6 +899,7 @@ impl WorkloadParallelExecutionSummary {
                 parallel_partition_activity_for_partition(
                     &self.parallel_scheduler_partition_activities,
                     &self.parallel_scheduler_remote_flows,
+                    &self.parallel_scheduler_remote_sends,
                     partition,
                 ),
                 parallel_batch_partition_activity_for_partition(
@@ -1031,6 +1033,7 @@ impl WorkloadParallelExecutionSummary {
             .max(parallel_active_partition_count(
                 &self.data_cache_parallel_scheduler_partition_activities,
                 &self.data_cache_parallel_scheduler_remote_flows,
+                &self.data_cache_parallel_scheduler_remote_sends,
             ))
     }
 
@@ -1131,6 +1134,7 @@ impl WorkloadParallelExecutionSummary {
                 parallel_partition_activity_for_partition(
                     &self.data_cache_parallel_scheduler_partition_activities,
                     &self.data_cache_parallel_scheduler_remote_flows,
+                    &self.data_cache_parallel_scheduler_remote_sends,
                     partition,
                 ),
                 parallel_batch_partition_activity_for_partition(
