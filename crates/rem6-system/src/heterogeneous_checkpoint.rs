@@ -16,8 +16,8 @@ use rem6_gpu::{
 };
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
-    MemoryRequestId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryOperation, MemoryRequest, MemoryRequestId,
 };
 use rem6_transport::MemoryRouteId;
 
@@ -1036,6 +1036,7 @@ fn write_memory_request(payload: &mut Vec<u8>, request: &MemoryRequest) {
     write_u64(payload, request.line_layout().bytes());
     write_optional_bytes(payload, request.data());
     write_optional_mask(payload, request.byte_mask());
+    write_memory_access_ordering(payload, request.ordering());
 }
 
 fn read_memory_request(reader: &mut ChunkReader<'_>) -> Result<MemoryRequest, String> {
@@ -1048,7 +1049,8 @@ fn read_memory_request(reader: &mut ChunkReader<'_>) -> Result<MemoryRequest, St
         .map_err(|error| error.to_string())?;
     let data = reader.read_optional_bytes("memory request data")?;
     let byte_mask = reader.read_optional_mask("memory request byte mask")?;
-    match operation {
+    let ordering = read_memory_access_ordering(reader)?;
+    let request = match operation {
         MemoryOperation::InstructionFetch => {
             MemoryRequest::instruction_fetch(id, address, size, layout)
         }
@@ -1077,7 +1079,56 @@ fn read_memory_request(reader: &mut ChunkReader<'_>) -> Result<MemoryRequest, St
         ),
         other => return Err(format!("unsupported checkpoint memory operation {other:?}")),
     }
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(request.with_ordering(ordering))
+}
+
+fn write_memory_access_ordering(payload: &mut Vec<u8>, ordering: MemoryAccessOrdering) {
+    write_optional_memory_barrier_set(payload, ordering.before());
+    write_optional_memory_barrier_set(payload, ordering.after());
+}
+
+fn read_memory_access_ordering(
+    reader: &mut ChunkReader<'_>,
+) -> Result<MemoryAccessOrdering, String> {
+    let before = read_optional_memory_barrier_set(
+        reader,
+        "memory request before-ordering flag",
+        "memory request before-ordering read flag",
+        "memory request before-ordering write flag",
+    )?;
+    let after = read_optional_memory_barrier_set(
+        reader,
+        "memory request after-ordering flag",
+        "memory request after-ordering read flag",
+        "memory request after-ordering write flag",
+    )?;
+    Ok(MemoryAccessOrdering::new(before, after))
+}
+
+fn write_optional_memory_barrier_set(payload: &mut Vec<u8>, barrier: Option<MemoryBarrierSet>) {
+    match barrier {
+        Some(barrier) => {
+            write_bool(payload, true);
+            write_bool(payload, barrier.read());
+            write_bool(payload, barrier.write());
+        }
+        None => write_bool(payload, false),
+    }
+}
+
+fn read_optional_memory_barrier_set(
+    reader: &mut ChunkReader<'_>,
+    flag_name: &str,
+    read_name: &str,
+    write_name: &str,
+) -> Result<Option<MemoryBarrierSet>, String> {
+    if !reader.read_bool(flag_name)? {
+        return Ok(None);
+    }
+    let read = reader.read_bool(read_name)?;
+    let write = reader.read_bool(write_name)?;
+    Ok(Some(MemoryBarrierSet::new(read, write)))
 }
 
 fn write_memory_operation(payload: &mut Vec<u8>, operation: MemoryOperation) {

@@ -1,14 +1,18 @@
 use rem6_accelerator::{
-    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorEngine,
-    AcceleratorEngineConfig, AcceleratorEngineId, AcceleratorTopologyConfig,
+    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorDmaCopy,
+    AcceleratorEngine, AcceleratorEngineConfig, AcceleratorEngineId, AcceleratorEngineSnapshot,
+    AcceleratorPendingDmaWrite, AcceleratorTopologyConfig,
 };
-use rem6_checkpoint::CheckpointComponentId;
+use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuKernelId, GpuKernelLaunch, GpuTopologyConfig,
 };
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryAccessOrdering, MemoryBarrierSet,
+    MemoryRequest, MemoryRequestId,
+};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     AcceleratorCheckpointBank, AcceleratorCheckpointPort, GpuCheckpointBank, GpuCheckpointPort,
@@ -19,6 +23,7 @@ use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
 };
+use rem6_transport::MemoryRouteId;
 
 fn component(name: &str) -> ComponentId {
     ComponentId::new(name).unwrap()
@@ -42,6 +47,20 @@ fn clock(period: u64) -> ClockDomain {
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
+}
+
+fn request_id(agent: u32, sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(agent), sequence)
+}
+
+fn read_request(agent: u32, sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::read_shared(
+        request_id(agent, sequence),
+        Address::new(address),
+        AccessSize::new(8).unwrap(),
+        layout(),
+    )
+    .unwrap()
 }
 
 fn heterogeneous_topology() -> Topology {
@@ -199,6 +218,54 @@ fn restore_record(source: GuestSourceId, outcome: &SystemActionOutcome) -> HostA
             manifest: manifest.clone(),
         },
     )
+}
+
+#[test]
+fn heterogeneous_checkpoint_preserves_dma_read_request_ordering() {
+    let ordering = MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::new(true, false)),
+        Some(MemoryBarrierSet::memory()),
+    );
+    let copy = AcceleratorDmaCopy::new(
+        AcceleratorCommandId::new(80),
+        MemoryRouteId::new(3),
+        read_request(21, 5, 0x4000).with_ordering(ordering),
+        MemoryRouteId::new(4),
+        request_id(21, 6),
+        Address::new(0x5000),
+    )
+    .unwrap();
+    let snapshot = AcceleratorEngineSnapshot::new(
+        vec![0],
+        Vec::new(),
+        Vec::new(),
+        vec![AcceleratorPendingDmaWrite::new(copy, vec![0x11; 8], 17)],
+        Vec::new(),
+    );
+    let source = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(21), PartitionId::new(1), 1).unwrap(),
+    );
+    source.restore(&snapshot);
+    let component = CheckpointComponentId::new("accelerator21").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let source_port = AcceleratorCheckpointPort::new(component.clone(), source);
+    source_port.register(&mut registry).unwrap();
+    source_port.capture_into(&mut registry).unwrap();
+
+    let target = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(21), PartitionId::new(1), 1).unwrap(),
+    );
+    let target_port = AcceleratorCheckpointPort::new(component, target.clone());
+    let restored = target_port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored.snapshot(), &snapshot);
+    assert_eq!(
+        target.snapshot().pending_dma_writes()[0]
+            .copy()
+            .read_request()
+            .ordering(),
+        ordering
+    );
 }
 
 #[test]
