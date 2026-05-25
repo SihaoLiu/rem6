@@ -248,6 +248,41 @@ pub(crate) fn parallel_batch_ticks_at_or_above(
         .fold(0, Tick::saturating_add)
 }
 
+pub(crate) fn parallel_batch_longest_tick_streak_at_or_above(
+    records: &[WorkloadParallelBatchTimelineRecord],
+    minimum_worker_count: usize,
+) -> Tick {
+    let mut longest = 0;
+    let mut current_start = None;
+    let mut current_end = 0;
+    for record in records {
+        if record.worker_count() < minimum_worker_count || record.duration_ticks() == 0 {
+            continue;
+        }
+        let start_tick = record.start_tick();
+        let horizon = record.horizon();
+        match current_start {
+            Some(streak_start) if start_tick <= current_end => {
+                current_end = current_end.max(horizon);
+                longest = longest.max(current_end.saturating_sub(streak_start));
+            }
+            Some(streak_start) => {
+                longest = longest.max(current_end.saturating_sub(streak_start));
+                current_start = Some(start_tick);
+                current_end = horizon;
+            }
+            None => {
+                current_start = Some(start_tick);
+                current_end = horizon;
+            }
+        }
+    }
+    if let Some(streak_start) = current_start {
+        longest = longest.max(current_end.saturating_sub(streak_start));
+    }
+    longest
+}
+
 pub(crate) fn collect_parallel_batch_partition_sets_from_timeline(
     records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Vec<WorkloadParallelBatchPartitionSet> {

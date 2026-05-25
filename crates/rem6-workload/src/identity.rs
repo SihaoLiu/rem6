@@ -7,17 +7,17 @@ use crate::{
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
     WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
-    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
-    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelFrontier,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -63,6 +63,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelBatchWorkerTickBucket],
     pub(crate) expected_parallel_batch_worker_tick_activity:
         &'a [WorkloadExpectedParallelBatchWorkerTickActivity],
+    pub(crate) expected_parallel_batch_worker_tick_streaks:
+        &'a [WorkloadExpectedParallelBatchWorkerTickStreak],
     pub(crate) expected_parallel_batch_partition_sets:
         &'a [WorkloadExpectedParallelBatchPartitionSet],
     pub(crate) expected_parallel_batch_partition_streaks:
@@ -223,6 +225,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_batch_worker_tick_activity {
         hash_expected_parallel_batch_worker_tick_activity(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_batch_worker_tick_streaks.len() as u64,
+    );
+    for expected in input.expected_parallel_batch_worker_tick_streaks {
+        hash_expected_parallel_batch_worker_tick_streak(&mut hash, *expected);
     }
     hash_u64(
         &mut hash,
@@ -475,6 +484,15 @@ fn hash_expected_parallel_batch_worker_tick_activity(
     hash_parallel_remote_flow_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_ticks());
+}
+
+fn hash_expected_parallel_batch_worker_tick_streak(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelBatchWorkerTickStreak,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, expected.minimum_worker_count() as u64);
+    hash_u64(hash, expected.minimum_consecutive_ticks());
 }
 
 fn hash_expected_parallel_batch_partition_set(

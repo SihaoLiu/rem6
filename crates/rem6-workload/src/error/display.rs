@@ -1182,6 +1182,49 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch worker-count tick activity to reach at least {minimum_ticks} ticks at {minimum_worker_count} workers, got {actual_ticks}",
                 scope.as_str()
             ),
+            Self::InvalidExpectedParallelBatchWorkerTickStreak {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick streak must require at least 2 workers, got {minimum_worker_count}",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedParallelBatchWorkerTickStreak {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick streak at {minimum_worker_count} workers must require positive consecutive ticks",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelBatchWorkerTickStreak {
+                scope,
+                minimum_worker_count,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick streak at {minimum_worker_count} workers is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelBatchWorkerTickStreakSummary {
+                scope,
+                minimum_worker_count,
+                minimum_consecutive_ticks,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch worker-count tick streak with at least {minimum_consecutive_ticks} consecutive ticks at {minimum_worker_count} workers",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelBatchWorkerTickStreakBelowMinimum {
+                scope,
+                minimum_worker_count,
+                minimum_consecutive_ticks,
+                actual_consecutive_ticks,
+            } => write!(
+                formatter,
+                "expected {} batch worker-count tick streak to reach at least {minimum_consecutive_ticks} consecutive ticks at {minimum_worker_count} workers, got {actual_consecutive_ticks}",
+                scope.as_str()
+            ),
             Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
                 formatter,
                 "expected {} batch partition set {} must include at least 2 partitions",

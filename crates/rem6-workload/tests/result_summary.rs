@@ -779,6 +779,30 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         0,
     );
     assert_eq!(
+        summary.parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
+        4,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        4,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
+        12,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        8,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(3),
+        0,
+    );
+    assert_eq!(
         summary.full_system_parallel_scheduler_batch_partition_sets(),
         vec![
             WorkloadParallelBatchPartitionSet::new([cpu0, cpu1], 1),

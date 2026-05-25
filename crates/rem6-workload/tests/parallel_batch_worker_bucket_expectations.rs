@@ -4,10 +4,11 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchWorkerBucket,
     WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
-    WorkloadId, WorkloadParallelBatchPartitionSet, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadId, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -69,6 +70,19 @@ fn expected_tick_activity(
 ) -> WorkloadExpectedParallelBatchWorkerTickActivity {
     WorkloadExpectedParallelBatchWorkerTickActivity::new(scope, minimum_worker_count, minimum_ticks)
         .unwrap()
+}
+
+fn expected_tick_streak(
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_worker_count: usize,
+    minimum_consecutive_ticks: u64,
+) -> WorkloadExpectedParallelBatchWorkerTickStreak {
+    WorkloadExpectedParallelBatchWorkerTickStreak::new(
+        scope,
+        minimum_worker_count,
+        minimum_consecutive_ticks,
+    )
+    .unwrap()
 }
 
 fn timeline_record(
@@ -747,6 +761,226 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelBatchWorkerTickActivity {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            minimum_worker_count: 2,
+        },
+    );
+}
+
+#[test]
+fn workload_manifest_records_parallel_batch_worker_tick_streak_expectations() {
+    let scheduler_streak = expected_tick_streak(WorkloadParallelRemoteFlowScope::Scheduler, 2, 8);
+    let data_cache_streak =
+        expected_tick_streak(WorkloadParallelRemoteFlowScope::DataCacheScheduler, 3, 4);
+    let full_system_streak =
+        expected_tick_streak(WorkloadParallelRemoteFlowScope::FullSystem, 2, 8);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-worker-tick-streak"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_streak(full_system_streak)
+            .unwrap()
+            .add_expected_parallel_batch_worker_tick_streak(data_cache_streak)
+            .unwrap()
+            .add_expected_parallel_batch_worker_tick_streak(scheduler_streak)
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_eq!(
+        manifest.expected_parallel_batch_worker_tick_streaks(),
+        &[scheduler_streak, data_cache_streak, full_system_streak],
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_parallel_batch_worker_tick_streaks(),
+        manifest.expected_parallel_batch_worker_tick_streaks(),
+    );
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                5,
+                [partition(0), partition(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                5,
+                8,
+                [partition(2), partition(3)],
+                2,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                10,
+                14,
+                [partition(4), partition(5), partition(6)],
+                3,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                14,
+                18,
+                [partition(7), partition(8)],
+                2,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_parallel_batch_worker_tick_streaks() {
+    let base =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-streak"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let scheduler =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-streak"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                2,
+                8,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let stronger_scheduler =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-streak"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                2,
+                9,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let wider_scheduler =
+        rem6_workload::WorkloadManifest::builder(id("identity-worker-tick-streak"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                3,
+                8,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_ne!(base.identity(), scheduler.identity());
+    assert_ne!(scheduler.identity(), stronger_scheduler.identity());
+    assert_ne!(scheduler.identity(), wider_scheduler.identity());
+}
+
+#[test]
+fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tick_streaks() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            8,
+        ))
+        .unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::MissingParallelBatchWorkerTickStreakSummary {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            minimum_worker_count: 2,
+            minimum_consecutive_ticks: 8,
+        },
+    );
+
+    let underfilled_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            5,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            6,
+            10,
+            [partition(2), partition(3), partition(4)],
+            3,
+        )]);
+    let underfilled = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underfilled_summary);
+    assert_eq!(
+        plan.verify_result(&underfilled).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchWorkerTickStreakBelowMinimum {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            minimum_worker_count: 2,
+            minimum_consecutive_ticks: 8,
+            actual_consecutive_ticks: 5,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_streaks() {
+    assert_eq!(
+        WorkloadExpectedParallelBatchWorkerTickStreak::new(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            1,
+            8,
+        )
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelBatchWorkerTickStreak {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            minimum_worker_count: 1,
+        },
+    );
+    assert_eq!(
+        WorkloadExpectedParallelBatchWorkerTickStreak::new(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            2,
+            0,
+        )
+        .unwrap_err(),
+        WorkloadError::ZeroExpectedParallelBatchWorkerTickStreak {
+            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            minimum_worker_count: 2,
+        },
+    );
+
+    let duplicate = replay_plan()
+        .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            8,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            9,
+        ))
+        .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateExpectedParallelBatchWorkerTickStreak {
             scope: WorkloadParallelRemoteFlowScope::Scheduler,
             minimum_worker_count: 2,
         },

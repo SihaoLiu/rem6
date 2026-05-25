@@ -129,6 +129,16 @@ impl RiscvSystemRun {
         )
     }
 
+    pub fn parallel_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        longest_batch_tick_streak_at_or_above(
+            self.parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_batch_ticks_for_worker_count(
         &self,
         worker_count: usize,
@@ -149,6 +159,16 @@ impl RiscvSystemRun {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        longest_batch_tick_streak_at_or_above(
+            self.data_cache_parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn full_system_parallel_scheduler_batch_ticks_for_worker_count(
         &self,
         worker_count: usize,
@@ -164,6 +184,16 @@ impl RiscvSystemRun {
         minimum_worker_count: usize,
     ) -> Tick {
         batch_ticks_at_or_above(
+            self.full_system_parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        longest_batch_tick_streak_at_or_above(
             self.full_system_parallel_scheduler_batch_timeline(),
             minimum_worker_count,
         )
@@ -375,6 +405,41 @@ fn batch_ticks_at_or_above(
         .filter(|record| record.worker_count() >= minimum_worker_count)
         .map(|record| record.duration_ticks())
         .fold(0, Tick::saturating_add)
+}
+
+fn longest_batch_tick_streak_at_or_above(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    minimum_worker_count: usize,
+) -> Tick {
+    let mut longest = 0;
+    let mut current_start = None;
+    let mut current_end = 0;
+    for record in records {
+        if record.worker_count() < minimum_worker_count || record.duration_ticks() == 0 {
+            continue;
+        }
+        let start_tick = record.start_tick();
+        let horizon = record.horizon();
+        match current_start {
+            Some(streak_start) if start_tick <= current_end => {
+                current_end = current_end.max(horizon);
+                longest = longest.max(current_end.saturating_sub(streak_start));
+            }
+            Some(streak_start) => {
+                longest = longest.max(current_end.saturating_sub(streak_start));
+                current_start = Some(start_tick);
+                current_end = horizon;
+            }
+            None => {
+                current_start = Some(start_tick);
+                current_end = horizon;
+            }
+        }
+    }
+    if let Some(streak_start) = current_start {
+        longest = longest.max(current_end.saturating_sub(streak_start));
+    }
+    longest
 }
 
 fn collect_batch_worker_count_summaries(

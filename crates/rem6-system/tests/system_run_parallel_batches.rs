@@ -262,6 +262,40 @@ fn full_system_batch_streaks_follow_batch_start_ticks_across_scopes() {
 }
 
 #[test]
+fn full_system_batch_tick_streaks_cross_scheduler_scopes() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let run = RiscvSystemRun::new(
+        cpu_scheduler_turns_at(3, 2, 8, &[cpu0, cpu1]),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 16 },
+    )
+    .with_data_cache_runs(vec![data_cache_runs_at_ticks(3, 2, &[0], &[cpu1, cache])]);
+
+    assert_eq!(
+        run.parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        4,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        4,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
+        8,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        8,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(3),
+        0,
+    );
+}
+
+#[test]
 fn system_run_exposes_scoped_parallel_batch_timeline() {
     let cpu0 = PartitionId::new(0);
     let cpu1 = PartitionId::new(1);
@@ -354,6 +388,30 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         run.full_system_parallel_scheduler_batch_ticks_at_or_above(3),
+        0,
+    );
+    assert_eq!(
+        run.parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
+        4,
+    );
+    assert_eq!(
+        run.parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        0,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        4,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
+        4,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        4,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(3),
         0,
     );
 
