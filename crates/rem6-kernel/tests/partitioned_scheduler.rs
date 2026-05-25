@@ -1006,6 +1006,52 @@ fn scheduler_recorded_parallel_epoch_reports_worker_batches() {
 }
 
 #[test]
+fn scheduler_recorded_parallel_epoch_reports_initial_and_final_frontiers() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 5).unwrap();
+
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+
+    scheduler
+        .schedule_parallel_at(core0, 2, move |context| {
+            context.schedule_local_after(2, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler.schedule_parallel_at(core1, 3, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(memory, 8, |_| {}).unwrap();
+
+    let epoch = scheduler.run_next_epoch_parallel_recorded().unwrap();
+
+    assert_eq!(epoch.initial_frontier_count(), 3);
+    assert_eq!(epoch.final_frontier_count(), 3);
+    assert_eq!(epoch.initial_frontiers()[0].partition(), core0);
+    assert_eq!(epoch.initial_frontiers()[0].now(), 0);
+    assert_eq!(epoch.initial_frontiers()[0].safe_until(), 5);
+    assert_eq!(epoch.initial_frontiers()[0].next_tick(), Some(2));
+    assert_eq!(epoch.initial_frontiers()[0].pending_events(), 1);
+    assert_eq!(
+        epoch
+            .initial_frontier(memory)
+            .map(|frontier| frontier.next_tick()),
+        Some(Some(8))
+    );
+
+    let core0_final = epoch.final_frontier(core0).unwrap();
+    assert_eq!(core0_final.now(), 5);
+    assert_eq!(core0_final.safe_until(), 10);
+    assert_eq!(core0_final.next_tick(), None);
+    assert_eq!(core0_final.pending_events(), 0);
+    let memory_final = epoch.final_frontier(memory).unwrap();
+    assert_eq!(memory_final.now(), 5);
+    assert_eq!(memory_final.safe_until(), 10);
+    assert_eq!(memory_final.next_tick(), Some(8));
+    assert_eq!(memory_final.pending_events(), 1);
+    assert_eq!(epoch.final_frontier(PartitionId::new(9)), None);
+    assert_eq!(scheduler.next_pending_tick(memory).unwrap(), Some(8));
+}
+
+#[test]
 fn scheduler_recorded_parallel_epoch_reports_remote_send_order() {
     let source = PartitionId::new(0);
     let target = PartitionId::new(1);

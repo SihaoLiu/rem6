@@ -738,6 +738,8 @@ impl SchedulerDispatchRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedRunSummary {
     pub(super) summary: RunSummary,
+    pub(super) initial_frontiers: Vec<PartitionFrontier>,
+    pub(super) final_frontiers: Vec<PartitionFrontier>,
     pub(super) dispatches: Vec<SchedulerDispatchRecord>,
     pub(super) batches: Vec<ParallelEpochBatchRecord>,
     pub(super) profile: ParallelRunProfile,
@@ -746,6 +748,36 @@ pub struct RecordedRunSummary {
 impl RecordedRunSummary {
     pub fn summary(&self) -> RunSummary {
         self.summary
+    }
+
+    pub fn initial_frontiers(&self) -> &[PartitionFrontier] {
+        &self.initial_frontiers
+    }
+
+    pub fn initial_frontier(&self, partition: PartitionId) -> Option<PartitionFrontier> {
+        self.initial_frontiers
+            .iter()
+            .copied()
+            .find(|frontier| frontier.partition() == partition)
+    }
+
+    pub fn initial_frontier_count(&self) -> usize {
+        self.initial_frontiers.len()
+    }
+
+    pub fn final_frontiers(&self) -> &[PartitionFrontier] {
+        &self.final_frontiers
+    }
+
+    pub fn final_frontier(&self, partition: PartitionId) -> Option<PartitionFrontier> {
+        self.final_frontiers
+            .iter()
+            .copied()
+            .find(|frontier| frontier.partition() == partition)
+    }
+
+    pub fn final_frontier_count(&self) -> usize {
+        self.final_frontiers.len()
     }
 
     pub fn dispatches(&self) -> &[SchedulerDispatchRecord] {

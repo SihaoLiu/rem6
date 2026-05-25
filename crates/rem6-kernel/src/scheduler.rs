@@ -521,12 +521,15 @@ impl PartitionedScheduler {
                     executed_events: 0,
                     final_tick: self.now,
                 },
+                initial_frontiers: Vec::new(),
+                final_frontiers: Vec::new(),
                 dispatches: Vec::new(),
                 batches: Vec::new(),
                 profile: ParallelRunProfile::default(),
             });
         };
         let horizon = plan.horizon();
+        let initial_frontiers = plan.frontiers().to_vec();
 
         if let Some(blocker) = plan.serial_blockers().first() {
             return Err(SchedulerError::SerialEventInParallelEpoch {
@@ -566,6 +569,7 @@ impl PartitionedScheduler {
         }
 
         self.advance_partitions_to(horizon);
+        let final_frontiers = self.parallel_epoch_frontiers()?;
         dispatches.sort_by_key(|record| (record.tick, record.partition(), record.id.local()));
         let profile = ParallelRunProfile::for_epoch(&batches, dispatches.len(), batches.is_empty());
 
@@ -574,6 +578,8 @@ impl PartitionedScheduler {
                 executed_events,
                 final_tick: self.now,
             },
+            initial_frontiers,
+            final_frontiers,
             dispatches,
             batches,
             profile,
@@ -668,28 +674,12 @@ impl PartitionedScheduler {
             return Ok(None);
         }
 
-        let mut horizon = None;
-        let mut frontiers = Vec::with_capacity(self.partitions.len());
-        for (index, queue) in self.partitions.iter().enumerate() {
-            let partition = PartitionId::new(index as u32);
-            let safe_until = queue.now.checked_add(self.min_remote_delay).ok_or(
-                SchedulerError::EpochHorizonOverflow {
-                    partition,
-                    now: queue.now,
-                    delay: self.min_remote_delay,
-                },
-            )?;
-            horizon = Some(horizon.map_or(safe_until, |current: Tick| current.min(safe_until)));
-            frontiers.push(PartitionFrontier::new(
-                partition,
-                queue.now,
-                safe_until,
-                queue.peek_tick(),
-                queue.pending_event_count(),
-            ));
-        }
-
-        let horizon = horizon.expect("non-empty scheduler has a horizon");
+        let frontiers = self.parallel_epoch_frontiers()?;
+        let horizon = frontiers
+            .iter()
+            .map(|frontier| frontier.safe_until())
+            .min()
+            .expect("non-empty scheduler has a horizon");
         let ready_partitions = frontiers
             .iter()
             .filter_map(|frontier| {
@@ -724,6 +714,30 @@ impl PartitionedScheduler {
             .iter()
             .map(PartitionQueue::pending_event_count)
             .sum()
+    }
+
+    fn parallel_epoch_frontiers(&self) -> Result<Vec<PartitionFrontier>, SchedulerError> {
+        self.partitions
+            .iter()
+            .enumerate()
+            .map(|(index, queue)| {
+                let partition = PartitionId::new(index as u32);
+                let safe_until = queue.now.checked_add(self.min_remote_delay).ok_or(
+                    SchedulerError::EpochHorizonOverflow {
+                        partition,
+                        now: queue.now,
+                        delay: self.min_remote_delay,
+                    },
+                )?;
+                Ok(PartitionFrontier::new(
+                    partition,
+                    queue.now,
+                    safe_until,
+                    queue.peek_tick(),
+                    queue.pending_event_count(),
+                ))
+            })
+            .collect()
     }
 
     fn next_partition_with_event(&self) -> Option<PartitionId> {

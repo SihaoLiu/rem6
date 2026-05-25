@@ -342,7 +342,7 @@ The scheduler records:
 - dispatch count and batch count;
 - worker count per epoch;
 - active partitions;
-- partition frontier before and after each epoch;
+- recorded partition frontiers before and after each parallel epoch;
 - ready partitions selected for dispatch;
 - progress-free transition count before livelock thresholding;
 - event kind, tick, partition, and deterministic local identity;
