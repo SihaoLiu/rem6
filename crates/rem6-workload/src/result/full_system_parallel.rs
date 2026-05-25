@@ -1,5 +1,6 @@
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionFrontier, PartitionId,
 };
 
 use crate::parallel_batch::{
@@ -10,7 +11,7 @@ use crate::parallel_batch::{
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
-    collect_parallel_remote_flows,
+    collect_parallel_remote_flows, collect_parallel_remote_sends, parallel_remote_send_count,
 };
 use crate::result_partition_activity::{
     combined_parallel_active_partition_count, merge_parallel_partition_activity_options,
@@ -149,6 +150,16 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn full_system_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        collect_parallel_remote_sends(
+            self.parallel_scheduler_remote_sends.iter().copied().chain(
+                self.data_cache_parallel_scheduler_remote_sends
+                    .iter()
+                    .copied(),
+            ),
+        )
+    }
+
     pub fn full_system_parallel_scheduler_initial_frontiers(&self) -> Vec<PartitionFrontier> {
         collect_conservative_partition_frontiers(
             self.parallel_scheduler_initial_frontiers
@@ -223,9 +234,26 @@ impl WorkloadParallelExecutionSummary {
             + self.data_cache_parallel_scheduler_remote_flow_count(source, target)
     }
 
+    pub fn full_system_parallel_scheduler_remote_send_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_send_count(
+            &self.full_system_parallel_scheduler_remote_sends(),
+            source,
+            target,
+        )
+    }
+
     pub fn has_full_system_parallel_scheduler_remote_flows(&self) -> bool {
         self.has_parallel_scheduler_remote_flows()
             || self.has_data_cache_parallel_scheduler_remote_flows()
+    }
+
+    pub fn has_full_system_parallel_scheduler_remote_sends(&self) -> bool {
+        self.has_parallel_scheduler_remote_sends()
+            || self.has_data_cache_parallel_scheduler_remote_sends()
     }
 
     pub fn has_full_system_parallel_scheduler_work(&self) -> bool {
@@ -243,6 +271,7 @@ impl WorkloadParallelExecutionSummary {
             || !self.parallel_scheduler_batch_worker_counts.is_empty()
             || !self.parallel_scheduler_batch_partition_sets.is_empty()
             || !self.parallel_scheduler_batch_partition_streaks.is_empty()
+            || self.has_parallel_scheduler_remote_sends()
             || self.has_parallel_scheduler_frontiers()
     }
 
@@ -261,6 +290,7 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .data_cache_parallel_scheduler_batch_partition_streaks
                 .is_empty()
+            || self.has_data_cache_parallel_scheduler_remote_sends()
             || self.has_data_cache_parallel_scheduler_frontiers()
     }
 }

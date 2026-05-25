@@ -359,9 +359,10 @@ cluster and full-system run records must preserve both the initial and final
 frontiers for each recorded parallel epoch, so higher layers can verify how far
 each partition advanced instead of inferring it from aggregate counts.
 Data-cache and coherence run summaries follow the same rule, and workload
-result summaries must retain those frontiers separately from aggregate worker
-and batch counts. Workload result summaries also expose aggregate full-system
-frontier views so verification can reason about the combined CPU and
+result summaries must retain those frontiers and individual remote-send records
+separately from aggregate worker, batch, and remote-flow counts. Workload result
+summaries also expose aggregate full-system frontier views so verification can
+reason about the combined CPU and
 data-cache/coherence conservative horizon without discarding per-subsystem
 records. Those full-system frontier views merge same-partition CPU and
 data-cache scheduler records conservatively instead of reporting whichever

@@ -89,6 +89,7 @@ pub(super) fn parallel_execution_summary(
         )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
+        .with_parallel_scheduler_remote_sends(run.parallel_scheduler_remote_sends())
         .with_parallel_scheduler_frontiers(
             run.parallel_scheduler_frontiers(),
             run.parallel_scheduler_final_frontiers(),
@@ -142,6 +143,9 @@ pub(super) fn parallel_execution_summary(
         )
         .with_data_cache_parallel_scheduler_remote_flows(
             run.data_cache_parallel_scheduler_remote_flows(),
+        )
+        .with_data_cache_parallel_scheduler_remote_sends(
+            run.data_cache_parallel_scheduler_remote_sends(),
         )
         .with_data_cache_parallel_scheduler_frontiers(
             run.data_cache_parallel_scheduler_initial_frontiers(),
@@ -491,6 +495,15 @@ mod tests {
         assert_eq!(flows[0].target(), target);
         assert_eq!(flows[0].send_count(), 1);
         assert!(summary.has_full_system_parallel_scheduler_remote_flows());
+        let sends = summary.full_system_parallel_scheduler_remote_sends();
+        assert_eq!(sends.len(), 1);
+        assert_eq!(sends[0].source(), source);
+        assert_eq!(sends[0].target(), target);
+        assert_eq!(sends[0].source_tick(), 0);
+        assert_eq!(sends[0].delivery_tick(), 4);
+        assert_eq!(sends[0].delay(), 4);
+        assert_eq!(sends[0].order(), 0);
+        assert!(summary.has_full_system_parallel_scheduler_remote_sends());
     }
 
     #[test]

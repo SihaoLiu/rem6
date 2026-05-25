@@ -1,7 +1,8 @@
 use rem6_boot::BootImage;
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionFrontier, PartitionId,
 };
 use rem6_memory::Address;
 use rem6_workload::{
@@ -63,6 +64,22 @@ fn workload_result_records_parallel_execution_summary() {
             ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 3, 3, 17),
             ParallelRemoteFlowRecord::new(PartitionId::new(1), PartitionId::new(3), 0, 9, 9),
         ])
+        .with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(2),
+                5,
+                11,
+                1,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(2),
+                3,
+                17,
+                0,
+            ),
+        ])
         .with_parallel_scheduler_frontiers(
             [
                 PartitionFrontier::new(PartitionId::new(0), 0, 8, Some(2), 1),
@@ -97,6 +114,22 @@ fn workload_result_records_parallel_execution_summary() {
         .with_data_cache_parallel_scheduler_remote_flows([
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 7, 19, 23),
             ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 1, 13, 29),
+        ])
+        .with_data_cache_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                19,
+                23,
+                3,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                13,
+                29,
+                2,
+            ),
         ])
         .with_data_cache_parallel_scheduler_frontiers(
             [PartitionFrontier::new(
@@ -183,6 +216,31 @@ fn workload_result_records_parallel_execution_summary() {
         0,
     );
     assert!(summary.has_parallel_scheduler_remote_flows());
+    assert_eq!(
+        summary.parallel_scheduler_remote_sends(),
+        &[
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(2),
+                3,
+                17,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(2),
+                5,
+                11,
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_send_count(PartitionId::new(0), PartitionId::new(2)),
+        2,
+    );
+    assert!(summary.has_parallel_scheduler_remote_sends());
+    assert_eq!(summary.parallel_scheduler_remote_sends()[0].delay(), 14);
     assert_eq!(
         summary.parallel_scheduler_initial_frontiers(),
         &[
@@ -273,6 +331,33 @@ fn workload_result_records_parallel_execution_summary() {
         8,
     );
     assert!(summary.has_data_cache_parallel_scheduler_remote_flows());
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_sends(),
+        &[
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                13,
+                29,
+                2,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                19,
+                23,
+                3,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_remote_send_count(
+            PartitionId::new(4),
+            PartitionId::new(5),
+        ),
+        2,
+    );
+    assert!(summary.has_data_cache_parallel_scheduler_remote_sends());
     assert_eq!(
         summary.data_cache_parallel_scheduler_initial_frontiers(),
         &[PartitionFrontier::new(
@@ -500,6 +585,47 @@ fn workload_result_records_parallel_execution_summary() {
         8,
     );
     assert!(summary.has_full_system_parallel_scheduler_remote_flows());
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_sends(),
+        vec![
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(2),
+                3,
+                17,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(2),
+                5,
+                11,
+                1,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                13,
+                29,
+                2,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                19,
+                23,
+                3,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_send_count(
+            PartitionId::new(4),
+            PartitionId::new(5),
+        ),
+        2,
+    );
+    assert!(summary.has_full_system_parallel_scheduler_remote_sends());
     assert!(summary.has_full_system_parallel_scheduler_work());
     assert!(summary.has_parallel_scheduler_work());
     assert!(summary.has_data_cache_parallel_work());
@@ -533,6 +659,18 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
     assert!(scheduler_flow.has_parallel_scheduler_work());
     assert!(!scheduler_flow.has_data_cache_parallel_work());
     assert!(scheduler_flow.has_full_system_parallel_scheduler_work());
+
+    let scheduler_send = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            3,
+            11,
+            0,
+        )]);
+    assert!(scheduler_send.has_parallel_scheduler_work());
+    assert!(!scheduler_send.has_data_cache_parallel_work());
+    assert!(scheduler_send.has_full_system_parallel_scheduler_work());
 
     let data_cache_frontier = WorkloadParallelExecutionSummary::default()
         .with_data_cache_parallel_scheduler_frontiers(

@@ -10,9 +10,9 @@ use rem6_fabric::{
 };
 use rem6_kernel::{
     ConservativeRunSummary, DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelRemoteFlowRecord,
-    ParallelRunProfile, PartitionFrontier, PartitionId, RecordedConservativeRunSummary,
-    RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind, WaitForGraph,
-    WaitForGraphSnapshot, WaitForNode,
+    ParallelRemoteSendRecord, ParallelRunProfile, PartitionFrontier, PartitionId,
+    RecordedConservativeRunSummary, RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge,
+    WaitForEdgeKind, WaitForGraph, WaitForGraphSnapshot, WaitForNode,
 };
 use rem6_memory::MemoryTargetId;
 use rem6_transport::MemoryTransport;
@@ -197,6 +197,10 @@ impl ParallelCoherenceRunSummary {
 
     pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         self.scheduler_run.remote_flows()
+    }
+
+    pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        self.scheduler_run.remote_sends()
     }
 
     pub fn executed_events(&self) -> usize {

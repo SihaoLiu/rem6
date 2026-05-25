@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_coherence::{ParallelCoherenceRunHistory, ParallelCoherenceRunSummary};
 use rem6_kernel::{
     DeadlockDiagnostic, ParallelEpochBatchRecord, ParallelPartitionActivity,
-    ParallelRemoteFlowRecord, ParallelRunProfile, PartitionFrontier, PartitionId,
-    RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind, WaitForNode,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile, PartitionFrontier,
+    PartitionId, RecordedRunSummary, SchedulerDispatchRecord, Tick, WaitForEdge, WaitForEdgeKind,
+    WaitForNode,
 };
 
 use crate::RiscvSystemRun;
@@ -200,6 +201,14 @@ impl RiscvSystemRun {
             self.data_cache_runs
                 .iter()
                 .flat_map(ParallelCoherenceRunSummary::remote_flows),
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        crate::system_run_remote_flow::collect_parallel_remote_sends(
+            self.data_cache_runs
+                .iter()
+                .flat_map(ParallelCoherenceRunSummary::remote_sends),
         )
     }
 
@@ -426,6 +435,14 @@ impl RiscvSystemRun {
         let mut flows = self.parallel_scheduler_remote_flows();
         flows.extend(self.data_cache_parallel_scheduler_remote_flows());
         crate::system_run_remote_flow::merge_parallel_remote_flow_records(flows)
+    }
+
+    pub fn full_system_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        crate::system_run_remote_flow::collect_parallel_remote_sends(
+            self.parallel_scheduler_remote_sends()
+                .into_iter()
+                .chain(self.data_cache_parallel_scheduler_remote_sends()),
+        )
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {

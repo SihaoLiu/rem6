@@ -534,17 +534,39 @@ fn system_run_reports_parallel_scheduler_remote_flows() {
     assert_eq!(core_flows[0].source(), core);
     assert_eq!(core_flows[0].target(), memory);
     assert_eq!(core_flows[0].send_count(), 1);
+    let core_sends = run.parallel_scheduler_remote_sends();
+    assert_eq!(core_sends.len(), 1);
+    assert_eq!(core_sends[0].source(), core);
+    assert_eq!(core_sends[0].target(), memory);
+    assert_eq!(core_sends[0].source_tick(), 0);
+    assert_eq!(core_sends[0].delivery_tick(), 4);
+    assert_eq!(core_sends[0].delay(), 4);
+    assert_eq!(core_sends[0].order(), 0);
 
     let data_cache_flows = run.data_cache_parallel_scheduler_remote_flows();
     assert_eq!(data_cache_flows.len(), 1);
     assert_eq!(data_cache_flows[0].source(), cache);
     assert_eq!(data_cache_flows[0].target(), directory);
     assert_eq!(data_cache_flows[0].send_count(), 2);
+    let data_cache_sends = run.data_cache_parallel_scheduler_remote_sends();
+    assert_eq!(data_cache_sends.len(), 2);
+    assert_eq!(data_cache_sends[0].source(), cache);
+    assert_eq!(data_cache_sends[0].target(), directory);
+    assert_eq!(data_cache_sends[0].source_tick(), 0);
+    assert_eq!(data_cache_sends[0].delivery_tick(), 4);
+    assert_eq!(data_cache_sends[0].delay(), 4);
+    assert_eq!(data_cache_sends[0].order(), 0);
+    assert_eq!(data_cache_sends[1].order(), 1);
 
     let full_flows = run.full_system_parallel_scheduler_remote_flows();
     assert_eq!(full_flows.len(), 2);
     assert_eq!(full_flows[0], core_flows[0]);
     assert_eq!(full_flows[1], data_cache_flows[0]);
+    let full_sends = run.full_system_parallel_scheduler_remote_sends();
+    assert_eq!(full_sends.len(), 3);
+    assert_eq!(full_sends[0], core_sends[0]);
+    assert_eq!(full_sends[1], data_cache_sends[0]);
+    assert_eq!(full_sends[2], data_cache_sends[1]);
 }
 
 #[test]

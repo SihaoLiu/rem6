@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionFrontier, PartitionId,
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionFrontier, PartitionId,
 };
 
 use crate::{WorkloadDramQosPrioritySummary, WorkloadDramQosRequestorSummary};
@@ -101,6 +102,33 @@ pub(crate) fn parallel_remote_flow_count(
         .find(|flow| flow.source() == source && flow.target() == target)
         .map(|flow| flow.send_count())
         .unwrap_or(0)
+}
+
+pub(crate) fn collect_parallel_remote_sends(
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<ParallelRemoteSendRecord> {
+    let mut sends = sends.into_iter().collect::<Vec<_>>();
+    sends.sort_by_key(|send| {
+        (
+            send.source(),
+            send.target(),
+            send.source_tick(),
+            send.delivery_tick(),
+            send.order(),
+        )
+    });
+    sends
+}
+
+pub(crate) fn parallel_remote_send_count(
+    sends: &[ParallelRemoteSendRecord],
+    source: PartitionId,
+    target: PartitionId,
+) -> usize {
+    sends
+        .iter()
+        .filter(|send| send.source() == source && send.target() == target)
+        .count()
 }
 
 pub(crate) fn collect_parallel_partition_activities(

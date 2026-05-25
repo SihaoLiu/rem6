@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
-    ParallelRemoteFlowRecord, ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier,
-    PartitionId, ReadyPartition, RecordedRunSummary, RunSummary, ScheduledEventKind,
-    SchedulerDispatchRecord, Tick,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord,
+    PartitionFrontier, PartitionId, ReadyPartition, RecordedRunSummary, RunSummary,
+    ScheduledEventKind, SchedulerDispatchRecord, Tick,
 };
 
 use crate::parallel_flow::merge_parallel_remote_flow_records;
@@ -310,6 +310,13 @@ impl RiscvClusterSchedulerEpoch {
 
     pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         self.remote_flows.clone()
+    }
+
+    pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        self.batches
+            .iter()
+            .flat_map(|batch| batch.remote_sends().iter().copied())
+            .collect()
     }
 
     pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
