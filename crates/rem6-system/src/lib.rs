@@ -61,8 +61,8 @@ pub use fabric_checkpoint::{
 };
 pub use guest_event::{
     ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventChannel, GuestEventDelivery,
-    GuestEventId, GuestEventKind, GuestSourceId, GuestTrap, GuestTrapKind, HostAction,
-    HostActionRecord, HostEventPolicy, StopRequest,
+    GuestEventId, GuestEventKind, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind,
+    HostAction, HostActionRecord, HostEventPolicy, StopRequest,
 };
 pub use heterogeneous_checkpoint::{
     AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,

@@ -4,8 +4,8 @@ use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryPr
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{
-    ExecutionMode, ExecutionModeTarget, RiscvSystemRunStopReason, RiscvWorkloadReplay,
-    SystemActionOutcome,
+    ExecutionMode, ExecutionModeTarget, GuestHostCallResponse, RiscvSystemRunStopReason,
+    RiscvWorkloadReplay, SystemActionOutcome,
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
@@ -1439,12 +1439,14 @@ fn workload_replay_records_planned_guest_host_calls() {
             selector,
             arguments,
             payload,
+            response,
         } if *tick == 1
             && event.get() == 10_001
             && source.get() == 51
             && *selector == 0x900
             && arguments == &vec![11, 13]
             && payload == &vec![2, 4, 6]
+            && response == &GuestHostCallResponse::unhandled()
     )));
     plan.verify_result(outcome.result()).unwrap();
 }

@@ -10,10 +10,10 @@ use rem6_memory::{
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventChannel, GuestEventDelivery,
-    GuestEventId, GuestEventKind, GuestSourceId, GuestTrap, GuestTrapKind, HostAction,
-    HostActionRecord, HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap, StopRequest,
-    SystemActionOutcome, SystemError, SystemEventPort, SystemHostController, SystemHostEventPort,
-    SystemRunController,
+    GuestEventId, GuestEventKind, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind,
+    HostAction, HostActionRecord, HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap,
+    StopRequest, SystemActionOutcome, SystemError, SystemEventPort, SystemHostController,
+    SystemHostEventPort, SystemRunController,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -335,9 +335,65 @@ fn guest_host_call_records_typed_outcome_without_stopping() {
             selector: 0x1000,
             arguments: vec![1, 2, 3],
             payload: vec![0xaa, 0xbb],
+            response: GuestHostCallResponse::unhandled(),
         }]
     );
     assert_eq!(controller.run().stop_request(), None);
+}
+
+#[test]
+fn guest_host_call_uses_registered_typed_response() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(32);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    controller
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .register_guest_host_call_response(
+            0x2200,
+            GuestHostCallResponse::ok(vec![55, 89], vec![0xca, 0xfe]),
+        );
+    let port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(guest, 5, move |context| {
+            port.emit(
+                context,
+                GuestEvent::new(
+                    GuestEventId::new(81),
+                    source,
+                    GuestEventKind::GuestHostCall {
+                        selector: 0x2200,
+                        arguments: vec![34],
+                        payload: Vec::new(),
+                    },
+                ),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[SystemActionOutcome::GuestHostCall {
+            tick: 7,
+            event: GuestEventId::new(81),
+            source,
+            selector: 0x2200,
+            arguments: vec![34],
+            payload: Vec::new(),
+            response: GuestHostCallResponse::ok(vec![55, 89], vec![0xca, 0xfe]),
+        }]
+    );
 }
 
 #[test]

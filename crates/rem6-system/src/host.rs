@@ -11,7 +11,7 @@ use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, DramMemoryCheckpointBank, ExecutionMode,
     ExecutionModeTarget, FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId,
-    GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
     RiscvCoreCheckpointBank, SchedulerCheckpointBank, StopRequest, SystemError,
     TimerCheckpointBank, UartCheckpointBank,
@@ -36,6 +36,7 @@ pub enum SystemActionOutcome {
         selector: u64,
         arguments: Vec<u64>,
         payload: Vec<u8>,
+        response: GuestHostCallResponse,
     },
     StatsReset(StatsResetRecord),
     StatsDump(StatDumpRecord),
@@ -137,6 +138,7 @@ pub struct SystemActionExecutor {
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
+    guest_host_call_responses: BTreeMap<u64, GuestHostCallResponse>,
     execution_mode_checkpoint_registered: bool,
 }
 
@@ -163,6 +165,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -189,6 +192,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -215,6 +219,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -241,6 +246,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -267,6 +273,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -293,6 +300,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -320,6 +328,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -347,6 +356,7 @@ impl SystemActionExecutor {
             timer_checkpoints: None,
             uart_checkpoints: None,
             execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
     }
@@ -373,6 +383,25 @@ impl SystemActionExecutor {
 
     pub fn execution_modes(&self) -> &BTreeMap<ExecutionModeTarget, ExecutionMode> {
         &self.execution_modes
+    }
+
+    pub fn register_guest_host_call_response(
+        &mut self,
+        selector: u64,
+        response: GuestHostCallResponse,
+    ) -> Option<GuestHostCallResponse> {
+        self.guest_host_call_responses.insert(selector, response)
+    }
+
+    pub fn guest_host_call_response(&self, selector: u64) -> Option<&GuestHostCallResponse> {
+        self.guest_host_call_responses.get(&selector)
+    }
+
+    fn resolve_guest_host_call_response(&self, selector: u64) -> GuestHostCallResponse {
+        self.guest_host_call_responses
+            .get(&selector)
+            .cloned()
+            .unwrap_or_else(GuestHostCallResponse::unhandled)
     }
 
     fn ensure_execution_mode_checkpoint_component(
@@ -697,6 +726,7 @@ impl SystemActionExecutor {
                 selector: *selector,
                 arguments: arguments.clone(),
                 payload: payload.clone(),
+                response: self.resolve_guest_host_call_response(*selector),
             }),
             HostAction::ResetStats => self
                 .stats
