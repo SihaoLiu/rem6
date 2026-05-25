@@ -7,9 +7,9 @@ use rem6_kernel::Tick;
 use rem6_memory::MemoryError;
 
 use crate::{
-    WorkloadExecutionMode, WorkloadManifestIdentity, WorkloadParallelDiagnosticScope,
-    WorkloadParallelRemoteFlowScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
-    WorkloadRouteLatency,
+    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -387,6 +387,21 @@ pub enum WorkloadError {
     },
     DuplicateExpectedParallelWorkerActivity {
         scope: WorkloadParallelRemoteFlowScope,
+    },
+    ZeroExpectedDataCacheProtocolRunCount {
+        protocol: WorkloadDataCacheProtocol,
+    },
+    DuplicateExpectedDataCacheProtocolRunCount {
+        protocol: WorkloadDataCacheProtocol,
+    },
+    MissingDataCacheProtocolSummary {
+        protocol: WorkloadDataCacheProtocol,
+        minimum_run_count: usize,
+    },
+    ExpectedDataCacheProtocolRunCountBelowMinimum {
+        protocol: WorkloadDataCacheProtocol,
+        minimum_run_count: usize,
+        actual_run_count: usize,
     },
     MissingParallelWorkerSummary {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1168,6 +1183,33 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "expected {} worker activity to reach at least {minimum_total_workers} total workers, got {actual_total_workers}",
                 scope.as_str()
+            ),
+            Self::ZeroExpectedDataCacheProtocolRunCount { protocol } => write!(
+                formatter,
+                "expected {} data-cache protocol run count must be positive",
+                protocol.as_str()
+            ),
+            Self::DuplicateExpectedDataCacheProtocolRunCount { protocol } => write!(
+                formatter,
+                "expected {} data-cache protocol run count is already declared",
+                protocol.as_str()
+            ),
+            Self::MissingDataCacheProtocolSummary {
+                protocol,
+                minimum_run_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} data-cache protocol with at least {minimum_run_count} runs",
+                protocol.as_str()
+            ),
+            Self::ExpectedDataCacheProtocolRunCountBelowMinimum {
+                protocol,
+                minimum_run_count,
+                actual_run_count,
+            } => write!(
+                formatter,
+                "expected {} data-cache protocol to run at least {minimum_run_count} times, got {actual_run_count}",
+                protocol.as_str()
             ),
             Self::ZeroExpectedParallelSchedulerProgress { scope } => write!(
                 formatter,

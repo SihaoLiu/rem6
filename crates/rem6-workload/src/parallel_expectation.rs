@@ -1,6 +1,6 @@
 use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
 
-use crate::{WorkloadError, WorkloadParallelExecutionSummary};
+use crate::{WorkloadDataCacheProtocol, WorkloadError, WorkloadParallelExecutionSummary};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadParallelRemoteFlowScope {
@@ -102,6 +102,43 @@ impl WorkloadExpectedCleanParallelDiagnostics {
                 summary.full_system_deadlock_diagnostic_count(),
             ),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedDataCacheProtocolRunCount {
+    protocol: WorkloadDataCacheProtocol,
+    minimum_run_count: usize,
+}
+
+impl WorkloadExpectedDataCacheProtocolRunCount {
+    pub fn new(
+        protocol: WorkloadDataCacheProtocol,
+        minimum_run_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_run_count == 0 {
+            return Err(WorkloadError::ZeroExpectedDataCacheProtocolRunCount { protocol });
+        }
+        Ok(Self {
+            protocol,
+            minimum_run_count,
+        })
+    }
+
+    pub const fn protocol(self) -> WorkloadDataCacheProtocol {
+        self.protocol
+    }
+
+    pub const fn minimum_run_count(self) -> usize {
+        self.minimum_run_count
+    }
+
+    pub(crate) const fn sort_key(self) -> WorkloadDataCacheProtocol {
+        self.protocol
+    }
+
+    pub(crate) fn actual_run_count(self, summary: &WorkloadParallelExecutionSummary) -> usize {
+        summary.data_cache_parallel_run_count_for_protocol(self.protocol)
     }
 }
 

@@ -4,10 +4,11 @@ use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange};
 use rem6_system::{RiscvDataCacheProtocol, RiscvWorkloadReplay};
 use rem6_workload::{
-    HostEventIntent, WorkloadDataCacheProtocol, WorkloadHostEvent, WorkloadHostPlacement,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore,
-    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadExpectedDataCacheProtocolRunCount,
+    WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -135,6 +136,10 @@ fn replay_manifest_with_chi_data_cache_load() -> WorkloadManifest {
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
+    .add_expected_data_cache_protocol_run_count(
+        WorkloadExpectedDataCacheProtocolRunCount::new(WorkloadDataCacheProtocol::Chi, 1).unwrap(),
+    )
+    .unwrap()
     .add_host_event(WorkloadHostEvent::new(
         0,
         HostEventIntent::Stop {

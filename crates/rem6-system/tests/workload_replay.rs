@@ -9,10 +9,11 @@ use rem6_system::{
 };
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
-    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadExpectedDataCacheProtocolRunCount, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -852,6 +853,10 @@ fn replay_manifest_with_data_cache_load(
         .add_resource(kernel_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
+        .add_expected_data_cache_protocol_run_count(
+            WorkloadExpectedDataCacheProtocolRunCount::new(protocol, 1).unwrap(),
+        )
+        .unwrap()
         .add_host_event(WorkloadHostEvent::new(
             0,
             HostEventIntent::Stop {

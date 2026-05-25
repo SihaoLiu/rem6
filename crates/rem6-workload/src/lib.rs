@@ -38,13 +38,14 @@ pub use parallel_batch::{
     WorkloadParallelBatchWorkerCount,
 };
 pub use parallel_expectation::{
-    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
+    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
+    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -255,6 +256,7 @@ pub struct WorkloadManifest {
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
+    expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -324,6 +326,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedCleanParallelDiagnostics] {
         &self.expected_clean_parallel_diagnostics
+    }
+
+    pub fn expected_data_cache_protocol_run_counts(
+        &self,
+    ) -> &[WorkloadExpectedDataCacheProtocolRunCount] {
+        &self.expected_data_cache_protocol_run_counts
     }
 
     pub fn expected_parallel_remote_flows(&self) -> &[WorkloadExpectedParallelRemoteFlow] {
@@ -405,6 +413,7 @@ pub struct WorkloadManifestBuilder {
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
+    expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -430,6 +439,7 @@ impl WorkloadManifestBuilder {
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
             expected_clean_parallel_diagnostics: Vec::new(),
+            expected_data_cache_protocol_run_counts: Vec::new(),
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
@@ -470,6 +480,25 @@ impl WorkloadManifestBuilder {
         self.expected_clean_parallel_diagnostics.push(expected);
         self.expected_clean_parallel_diagnostics
             .sort_by_key(|diagnostics| diagnostics.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_data_cache_protocol_run_count(
+        mut self,
+        expected: WorkloadExpectedDataCacheProtocolRunCount,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_data_cache_protocol_run_counts
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedDataCacheProtocolRunCount {
+                protocol: expected.protocol(),
+            });
+        }
+        self.expected_data_cache_protocol_run_counts.push(expected);
+        self.expected_data_cache_protocol_run_counts
+            .sort_by_key(|count| count.sort_key());
         Ok(self)
     }
 
@@ -788,6 +817,7 @@ impl WorkloadManifestBuilder {
             required_resources: &required_resources,
             host_events: &self.host_events,
             expected_clean_parallel_diagnostics: &self.expected_clean_parallel_diagnostics,
+            expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
@@ -812,6 +842,7 @@ impl WorkloadManifestBuilder {
             required_resources,
             host_events: self.host_events,
             expected_clean_parallel_diagnostics: self.expected_clean_parallel_diagnostics,
+            expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
@@ -843,6 +874,7 @@ pub struct WorkloadReplayPlan {
     planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
+    expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -872,6 +904,9 @@ impl WorkloadReplayPlan {
             planned_stop_reason: planned_stop_reason(&host_events),
             expected_clean_parallel_diagnostics: manifest
                 .expected_clean_parallel_diagnostics()
+                .to_vec(),
+            expected_data_cache_protocol_run_counts: manifest
+                .expected_data_cache_protocol_run_counts()
                 .to_vec(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             expected_parallel_remote_flow_timings: manifest
@@ -945,6 +980,31 @@ impl WorkloadReplayPlan {
 
     pub fn planned_stop_reason(&self) -> Option<&str> {
         self.planned_stop_reason.as_deref()
+    }
+
+    pub fn add_expected_data_cache_protocol_run_count(
+        mut self,
+        expected: WorkloadExpectedDataCacheProtocolRunCount,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_data_cache_protocol_run_counts
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedDataCacheProtocolRunCount {
+                protocol: expected.protocol(),
+            });
+        }
+        self.expected_data_cache_protocol_run_counts.push(expected);
+        self.expected_data_cache_protocol_run_counts
+            .sort_by_key(|count| count.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_data_cache_protocol_run_counts(
+        &self,
+    ) -> &[WorkloadExpectedDataCacheProtocolRunCount] {
+        &self.expected_data_cache_protocol_run_counts
     }
 
     pub fn add_expected_parallel_remote_flow(
@@ -1270,14 +1330,15 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_remote_flow_timings(result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
-        self.verify_expected_parallel_scheduler_progress(result)?;
+        replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;
+        replay_verify::verify_expected_parallel_scheduler_progress(self, result)?;
         replay_verify::verify_expected_parallel_scheduler_idle_bounds(self, result)?;
         self.verify_expected_parallel_batch_activity(result)?;
         self.verify_expected_parallel_batch_partition_sets(result)?;
         self.verify_expected_parallel_batch_partition_streaks(result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
-        self.verify_expected_clean_parallel_diagnostics(result)?;
+        replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
         Ok(())
     }
 
@@ -1539,41 +1600,6 @@ impl WorkloadReplayPlan {
         Ok(())
     }
 
-    fn verify_expected_parallel_scheduler_progress(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_parallel_scheduler_progress.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = self.expected_parallel_scheduler_progress[0];
-            return Err(WorkloadError::MissingParallelSchedulerProgressSummary {
-                scope: expected.scope(),
-                minimum_epoch_count: expected.minimum_epoch_count(),
-                minimum_dispatch_count: expected.minimum_dispatch_count(),
-            });
-        };
-
-        for expected in &self.expected_parallel_scheduler_progress {
-            let (actual_epoch_count, actual_dispatch_count) = expected.actual_counts(summary);
-            if actual_epoch_count < expected.minimum_epoch_count()
-                || actual_dispatch_count < expected.minimum_dispatch_count()
-            {
-                return Err(
-                    WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
-                        scope: expected.scope(),
-                        minimum_epoch_count: expected.minimum_epoch_count(),
-                        actual_epoch_count,
-                        minimum_dispatch_count: expected.minimum_dispatch_count(),
-                        actual_dispatch_count,
-                    },
-                );
-            }
-        }
-        Ok(())
-    }
-
     fn verify_expected_parallel_batch_activity(
         &self,
         result: &WorkloadResult,
@@ -1742,33 +1768,6 @@ impl WorkloadReplayPlan {
                         actual_remote_receive_count,
                     },
                 );
-            }
-        }
-        Ok(())
-    }
-
-    fn verify_expected_clean_parallel_diagnostics(
-        &self,
-        result: &WorkloadResult,
-    ) -> Result<(), WorkloadError> {
-        if self.expected_clean_parallel_diagnostics.is_empty() {
-            return Ok(());
-        }
-        let Some(summary) = result.parallel_execution_summary() else {
-            let expected = self.expected_clean_parallel_diagnostics[0];
-            return Err(WorkloadError::MissingParallelDiagnosticSummary {
-                scope: expected.scope(),
-            });
-        };
-
-        for expected in &self.expected_clean_parallel_diagnostics {
-            let (wait_for_edge_count, deadlock_diagnostic_count) = expected.actual_counts(summary);
-            if wait_for_edge_count != 0 || deadlock_diagnostic_count != 0 {
-                return Err(WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
-                    scope: expected.scope(),
-                    wait_for_edge_count,
-                    deadlock_diagnostic_count,
-                });
             }
         }
         Ok(())
