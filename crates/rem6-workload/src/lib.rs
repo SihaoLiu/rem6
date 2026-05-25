@@ -33,10 +33,11 @@ pub use host_event::{
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -45,8 +46,8 @@ pub use qos::{
 pub use resource_payload::{WorkloadResolvedResources, WorkloadResourcePayload};
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
-    WorkloadDramQosRequestorSummary, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary,
+    WorkloadDramQosRequestorSummary, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,
@@ -252,6 +253,7 @@ pub struct WorkloadManifest {
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
+    expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -336,6 +338,12 @@ impl WorkloadManifest {
         &self.expected_parallel_batch_activity
     }
 
+    pub fn expected_parallel_batch_partition_sets(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchPartitionSet] {
+        &self.expected_parallel_batch_partition_sets
+    }
+
     pub fn expected_parallel_partition_use(&self) -> &[WorkloadExpectedParallelPartitionUse] {
         &self.expected_parallel_partition_use
     }
@@ -374,6 +382,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
+    expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -395,6 +404,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_worker_activity: Vec::new(),
             expected_parallel_batch_activity: Vec::new(),
+            expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             expected_parallel_partition_activity: Vec::new(),
             checkpoint_lineage: None,
@@ -486,6 +496,26 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_batch_activity.push(expected);
         self.expected_parallel_batch_activity
             .sort_by_key(|batch_activity| batch_activity.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_batch_partition_set(
+        mut self,
+        expected: WorkloadExpectedParallelBatchPartitionSet,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_partition_sets
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelBatchPartitionSet {
+                scope: expected.scope(),
+                partitions: expected.partition_indexes(),
+            });
+        }
+        self.expected_parallel_batch_partition_sets.push(expected);
+        self.expected_parallel_batch_partition_sets
+            .sort_by_key(|batch_set| batch_set.sort_key());
         Ok(self)
     }
 
@@ -668,6 +698,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
             expected_parallel_batch_activity: &self.expected_parallel_batch_activity,
+            expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
@@ -687,6 +718,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
             expected_parallel_batch_activity: self.expected_parallel_batch_activity,
+            expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
             checkpoint_lineage: self.checkpoint_lineage,
@@ -713,6 +745,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
+    expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -743,6 +776,9 @@ impl WorkloadReplayPlan {
                 .expected_parallel_worker_activity()
                 .to_vec(),
             expected_parallel_batch_activity: manifest.expected_parallel_batch_activity().to_vec(),
+            expected_parallel_batch_partition_sets: manifest
+                .expected_parallel_batch_partition_sets()
+                .to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
             expected_parallel_partition_activity: manifest
                 .expected_parallel_partition_activity()
@@ -918,6 +954,32 @@ impl WorkloadReplayPlan {
         &self.expected_parallel_batch_activity
     }
 
+    pub fn add_expected_parallel_batch_partition_set(
+        mut self,
+        expected: WorkloadExpectedParallelBatchPartitionSet,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_partition_sets
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelBatchPartitionSet {
+                scope: expected.scope(),
+                partitions: expected.partition_indexes(),
+            });
+        }
+        self.expected_parallel_batch_partition_sets.push(expected);
+        self.expected_parallel_batch_partition_sets
+            .sort_by_key(|batch_set| batch_set.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_batch_partition_sets(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchPartitionSet] {
+        &self.expected_parallel_batch_partition_sets
+    }
+
     pub fn add_expected_parallel_partition_use(
         mut self,
         expected: WorkloadExpectedParallelPartitionUse,
@@ -1015,6 +1077,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         self.verify_expected_parallel_batch_activity(result)?;
+        self.verify_expected_parallel_batch_partition_sets(result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_parallel_partition_activity(result)?;
         self.verify_expected_clean_parallel_diagnostics(result)?;
@@ -1304,6 +1367,38 @@ impl WorkloadReplayPlan {
                     minimum_batch_count: expected.minimum_batch_count(),
                     actual_batch_count,
                 });
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_expected_parallel_batch_partition_sets(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_batch_partition_sets.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = &self.expected_parallel_batch_partition_sets[0];
+            return Err(WorkloadError::MissingParallelBatchPartitionSetSummary {
+                scope: expected.scope(),
+                partitions: expected.partition_indexes(),
+                minimum_batch_count: expected.minimum_batch_count(),
+            });
+        };
+
+        for expected in &self.expected_parallel_batch_partition_sets {
+            let actual_batch_count = expected.actual_batch_count(summary);
+            if actual_batch_count < expected.minimum_batch_count() {
+                return Err(
+                    WorkloadError::ExpectedParallelBatchPartitionSetBelowMinimum {
+                        scope: expected.scope(),
+                        partitions: expected.partition_indexes(),
+                        minimum_batch_count: expected.minimum_batch_count(),
+                        actual_batch_count,
+                    },
+                );
             }
         }
         Ok(())

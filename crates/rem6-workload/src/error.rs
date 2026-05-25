@@ -429,6 +429,29 @@ pub enum WorkloadError {
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
+    InvalidExpectedParallelBatchPartitionSet {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+    },
+    ZeroExpectedParallelBatchPartitionSetCount {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+    },
+    DuplicateExpectedParallelBatchPartitionSet {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+    },
+    MissingParallelBatchPartitionSetSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+        minimum_batch_count: usize,
+    },
+    ExpectedParallelBatchPartitionSetBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        partitions: Vec<u32>,
+        minimum_batch_count: usize,
+        actual_batch_count: usize,
+    },
     ZeroExpectedParallelPartitionCount {
         scope: WorkloadParallelRemoteFlowScope,
     },
@@ -1136,6 +1159,45 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch activity to reach at least {minimum_batch_count} batches at {minimum_worker_count} workers, got {actual_batch_count}",
                 scope.as_str()
             ),
+            Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
+                formatter,
+                "expected {} batch partition set {} must include at least 2 partitions",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::ZeroExpectedParallelBatchPartitionSetCount { scope, partitions } => write!(
+                formatter,
+                "expected {} batch partition set {} must require a positive batch count",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::DuplicateExpectedParallelBatchPartitionSet { scope, partitions } => write!(
+                formatter,
+                "expected {} batch partition set {} is already declared",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::MissingParallelBatchPartitionSetSummary {
+                scope,
+                partitions,
+                minimum_batch_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch partition set {} with at least {minimum_batch_count} batches",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
+            Self::ExpectedParallelBatchPartitionSetBelowMinimum {
+                scope,
+                partitions,
+                minimum_batch_count,
+                actual_batch_count,
+            } => write!(
+                formatter,
+                "expected {} batch partition set {} to reach at least {minimum_batch_count} batches, got {actual_batch_count}",
+                scope.as_str(),
+                format_partition_indexes(partitions)
+            ),
             Self::ZeroExpectedParallelPartitionCount { scope } => write!(
                 formatter,
                 "expected {} partition use must require a positive active partition count",
@@ -1215,6 +1277,15 @@ impl fmt::Display for WorkloadError {
             ),
         }
     }
+}
+
+fn format_partition_indexes(partitions: &[u32]) -> String {
+    let values = partitions
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
 }
 
 impl Error for WorkloadError {

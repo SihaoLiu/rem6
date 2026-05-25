@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
@@ -73,6 +73,33 @@ impl WorkloadParallelBatchWorkerCount {
 
     pub const fn is_empty(&self) -> bool {
         self.worker_count == 0 || self.batch_count == 0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadParallelBatchPartitionSet {
+    partitions: Vec<PartitionId>,
+    batch_count: usize,
+}
+
+impl WorkloadParallelBatchPartitionSet {
+    pub fn new(partitions: impl IntoIterator<Item = PartitionId>, batch_count: usize) -> Self {
+        Self {
+            partitions: normalize_partition_set(partitions),
+            batch_count,
+        }
+    }
+
+    pub fn partitions(&self) -> &[PartitionId] {
+        &self.partitions
+    }
+
+    pub const fn batch_count(&self) -> usize {
+        self.batch_count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.partitions.is_empty() || self.batch_count == 0
     }
 }
 
@@ -152,6 +179,7 @@ pub struct WorkloadParallelExecutionSummary {
     max_parallel_scheduler_workers: usize,
     total_parallel_scheduler_workers: usize,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
+    parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     parallel_scheduler_partition_activities: Vec<(PartitionId, ParallelPartitionActivity)>,
     parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     riscv_core_count: usize,
@@ -168,6 +196,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_max_workers: usize,
     data_cache_parallel_scheduler_total_workers: usize,
     data_cache_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
+    data_cache_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     active_full_system_parallel_scheduler_partition_count: usize,
     data_cache_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
@@ -272,6 +301,19 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_parallel_scheduler_batch_partition_sets(
+        mut self,
+        sets: impl IntoIterator<Item = WorkloadParallelBatchPartitionSet>,
+    ) -> Self {
+        self.parallel_scheduler_batch_partition_sets = collect_parallel_batch_partition_sets(sets);
+        self.scheduler_batch_count = self
+            .parallel_scheduler_batch_partition_sets
+            .iter()
+            .map(WorkloadParallelBatchPartitionSet::batch_count)
+            .sum();
+        self
+    }
+
     pub fn with_parallel_scheduler_remote_flows(
         mut self,
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
@@ -350,6 +392,20 @@ impl WorkloadParallelExecutionSummary {
             .data_cache_parallel_scheduler_batch_worker_counts
             .iter()
             .map(WorkloadParallelBatchWorkerCount::batch_count)
+            .sum();
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_batch_partition_sets(
+        mut self,
+        sets: impl IntoIterator<Item = WorkloadParallelBatchPartitionSet>,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_batch_partition_sets =
+            collect_parallel_batch_partition_sets(sets);
+        self.data_cache_parallel_scheduler_batch_count = self
+            .data_cache_parallel_scheduler_batch_partition_sets
+            .iter()
+            .map(WorkloadParallelBatchPartitionSet::batch_count)
             .sum();
         self
     }
@@ -629,10 +685,24 @@ impl WorkloadParallelExecutionSummary {
         &self.parallel_scheduler_batch_worker_counts
     }
 
+    pub fn parallel_scheduler_batch_partition_sets(&self) -> &[WorkloadParallelBatchPartitionSet] {
+        &self.parallel_scheduler_batch_partition_sets
+    }
+
     pub fn parallel_scheduler_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
         parallel_batch_count_at_or_above(
             &self.parallel_scheduler_batch_worker_counts,
             minimum_worker_count,
+        )
+    }
+
+    pub fn parallel_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        parallel_batch_count_for_partition_set(
+            &self.parallel_scheduler_batch_partition_sets,
+            partitions,
         )
     }
 
@@ -733,6 +803,12 @@ impl WorkloadParallelExecutionSummary {
         &self.data_cache_parallel_scheduler_batch_worker_counts
     }
 
+    pub fn data_cache_parallel_scheduler_batch_partition_sets(
+        &self,
+    ) -> &[WorkloadParallelBatchPartitionSet] {
+        &self.data_cache_parallel_scheduler_batch_partition_sets
+    }
+
     pub fn data_cache_parallel_scheduler_batch_count_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -740,6 +816,16 @@ impl WorkloadParallelExecutionSummary {
         parallel_batch_count_at_or_above(
             &self.data_cache_parallel_scheduler_batch_worker_counts,
             minimum_worker_count,
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        parallel_batch_count_for_partition_set(
+            &self.data_cache_parallel_scheduler_batch_partition_sets,
+            partitions,
         )
     }
 
@@ -1256,6 +1342,32 @@ impl WorkloadParallelExecutionSummary {
             + self.data_cache_parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
     }
 
+    pub fn full_system_parallel_scheduler_batch_partition_sets(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionSet> {
+        collect_parallel_batch_partition_sets(
+            self.parallel_scheduler_batch_partition_sets
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_batch_partition_sets
+                        .iter()
+                        .cloned(),
+                ),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let partitions = normalize_partition_set(partitions);
+        self.parallel_scheduler_batch_count_for_partition_set(partitions.iter().copied())
+            + self.data_cache_parallel_scheduler_batch_count_for_partition_set(
+                partitions.iter().copied(),
+            )
+    }
+
     pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         collect_parallel_remote_flows(
             self.parallel_scheduler_remote_flows.iter().copied().chain(
@@ -1315,6 +1427,7 @@ impl WorkloadParallelExecutionSummary {
             || self.total_parallel_scheduler_workers != 0
             || self.max_parallel_scheduler_workers != 0
             || !self.parallel_scheduler_batch_worker_counts.is_empty()
+            || !self.parallel_scheduler_batch_partition_sets.is_empty()
     }
 
     pub const fn has_data_cache_parallel_work(&self) -> bool {
@@ -1325,7 +1438,18 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .data_cache_parallel_scheduler_batch_worker_counts
                 .is_empty()
+            || !self
+                .data_cache_parallel_scheduler_batch_partition_sets
+                .is_empty()
     }
+}
+
+fn normalize_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {
+    partitions
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn collect_parallel_batch_worker_counts(
@@ -1346,6 +1470,24 @@ fn collect_parallel_batch_worker_counts(
         .collect()
 }
 
+fn collect_parallel_batch_partition_sets(
+    sets: impl IntoIterator<Item = WorkloadParallelBatchPartitionSet>,
+) -> Vec<WorkloadParallelBatchPartitionSet> {
+    let mut by_partitions = BTreeMap::<Vec<PartitionId>, usize>::new();
+    for set in sets {
+        if set.is_empty() {
+            continue;
+        }
+        *by_partitions.entry(set.partitions().to_vec()).or_default() += set.batch_count();
+    }
+    by_partitions
+        .into_iter()
+        .map(|(partitions, batch_count)| {
+            WorkloadParallelBatchPartitionSet::new(partitions, batch_count)
+        })
+        .collect()
+}
+
 fn parallel_batch_count_at_or_above(
     counts: &[WorkloadParallelBatchWorkerCount],
     minimum_worker_count: usize,
@@ -1355,6 +1497,17 @@ fn parallel_batch_count_at_or_above(
         .filter(|count| count.worker_count() >= minimum_worker_count)
         .map(WorkloadParallelBatchWorkerCount::batch_count)
         .sum()
+}
+
+fn parallel_batch_count_for_partition_set(
+    sets: &[WorkloadParallelBatchPartitionSet],
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> usize {
+    let partitions = normalize_partition_set(partitions);
+    sets.iter()
+        .find(|set| set.partitions() == partitions.as_slice())
+        .map(WorkloadParallelBatchPartitionSet::batch_count)
+        .unwrap_or(0)
 }
 
 fn collect_priority_summaries(
