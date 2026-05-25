@@ -27,12 +27,42 @@ fn recorded_parallel_runs_report_exact_batch_worker_count_buckets() {
     assert_eq!(first_epoch.batch_count_at_or_above(1), 2);
     assert_eq!(first_epoch.batch_count_at_or_above(2), 1);
     assert_eq!(first_epoch.batch_count_at_or_above(3), 0);
+    assert_eq!(
+        first_epoch.batch_worker_count_tick_summaries(),
+        vec![(1, 4), (2, 4)]
+    );
+    assert_eq!(first_epoch.batch_ticks_for_worker_count(1), 4);
+    assert_eq!(first_epoch.batch_ticks_for_worker_count(2), 4);
+    assert_eq!(first_epoch.batch_ticks_at_or_above(1), 8);
+    assert_eq!(first_epoch.batch_ticks_at_or_above(2), 4);
+    assert_eq!(first_epoch.batch_worker_ticks(), 12);
+    assert_eq!(first_epoch.batch_worker_ticks_at_or_above(1), 12);
+    assert_eq!(first_epoch.batch_worker_ticks_at_or_above(2), 8);
+    assert_eq!(first_epoch.batch_worker_ticks_at_or_above(3), 0);
 
     assert_eq!(second_epoch.batch_worker_count_summaries(), vec![(1, 1)]);
+    assert_eq!(
+        second_epoch.batch_worker_count_tick_summaries(),
+        vec![(1, 4)]
+    );
+    assert_eq!(second_epoch.batch_worker_ticks(), 4);
+    assert_eq!(second_epoch.batch_worker_ticks_at_or_above(2), 0);
     assert_eq!(run.batch_worker_count_summaries(), vec![(1, 2), (2, 1)]);
     assert_eq!(run.batch_count_for_worker_count(1), 2);
     assert_eq!(run.batch_count_for_worker_count(2), 1);
     assert_eq!(run.batch_count_at_or_above(1), 3);
     assert_eq!(run.batch_count_at_or_above(2), 1);
     assert_eq!(run.batch_count_at_or_above(3), 0);
+    assert_eq!(
+        run.batch_worker_count_tick_summaries(),
+        vec![(1, 8), (2, 4)]
+    );
+    assert_eq!(run.batch_ticks_for_worker_count(1), 8);
+    assert_eq!(run.batch_ticks_for_worker_count(2), 4);
+    assert_eq!(run.batch_ticks_at_or_above(1), 12);
+    assert_eq!(run.batch_ticks_at_or_above(2), 4);
+    assert_eq!(run.batch_worker_ticks(), 16);
+    assert_eq!(run.batch_worker_ticks_at_or_above(1), 16);
+    assert_eq!(run.batch_worker_ticks_at_or_above(2), 8);
+    assert_eq!(run.batch_worker_ticks_at_or_above(3), 0);
 }

@@ -436,9 +436,11 @@ for CPU-scheduler, data-cache scheduler, and merged full-system scopes, so
 simulation diagnostics can inspect parallel occupancy before workload replay
 translates it into manifest evidence.
 The kernel recorded epoch and run summaries expose exact batch worker-count
-summaries, exact worker-count batch queries, and minimum-worker batch queries,
-so the runtime scheduler itself remains the first source of parallel occupancy
-truth rather than relying on subsystem-specific reconstruction.
+summaries, duration-weighted worker-count tick summaries, exact worker-count
+batch and tick queries, minimum-worker batch and tick queries, total batch
+worker-ticks, and thresholded batch worker-tick queries, so the runtime
+scheduler itself remains the first source of parallel occupancy truth rather
+than relying on subsystem-specific reconstruction.
 Workload results retain explicit merged full-system streak evidence instead of
 reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to

@@ -1058,6 +1058,26 @@ impl RecordedRunSummary {
         batch_count_at_or_above(&self.batches, minimum_worker_count)
     }
 
+    pub fn batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_batch_worker_count_tick_summaries(&self.batches)
+    }
+
+    pub fn batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        batch_ticks_for_worker_count(&self.batches, worker_count)
+    }
+
+    pub fn batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_ticks_at_or_above(&self.batches, minimum_worker_count)
+    }
+
+    pub fn batch_worker_ticks(&self) -> Tick {
+        batch_worker_ticks(&self.batches)
+    }
+
+    pub fn batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_worker_ticks_at_or_above(&self.batches, minimum_worker_count)
+    }
+
     pub fn empty_epoch_count(&self) -> usize {
         self.profile.empty_epoch_count()
     }
@@ -1358,6 +1378,37 @@ impl RecordedConservativeRunSummary {
         )
     }
 
+    pub fn batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_batch_worker_count_tick_summaries(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+        )
+    }
+
+    pub fn batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        batch_ticks_for_worker_count(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            worker_count,
+        )
+    }
+
+    pub fn batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_ticks_at_or_above(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            minimum_worker_count,
+        )
+    }
+
+    pub fn batch_worker_ticks(&self) -> Tick {
+        batch_worker_ticks(self.epochs.iter().flat_map(|epoch| epoch.batches().iter()))
+    }
+
+    pub fn batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_worker_ticks_at_or_above(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            minimum_worker_count,
+        )
+    }
+
     pub fn empty_epoch_count(&self) -> usize {
         self.profile.empty_epoch_count()
     }
@@ -1481,6 +1532,82 @@ where
         .into_iter()
         .filter(|batch| batch.worker_count() >= minimum_worker_count)
         .count()
+}
+
+fn collect_batch_worker_count_tick_summaries<'a, I>(batches: I) -> Vec<(usize, Tick)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for batch in batches {
+        let worker_count = batch.worker_count();
+        if worker_count != 0 {
+            let duration_ticks = batch_duration_ticks(batch);
+            let summary_ticks = summaries.entry(worker_count).or_default();
+            *summary_ticks = summary_ticks.saturating_add(duration_ticks);
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+fn batch_ticks_for_worker_count<'a, I>(batches: I, worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() == worker_count)
+        .map(batch_duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .map(batch_duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_ticks<'a, I>(batches: I) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .map(batch_worker_tick_count)
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .map(batch_worker_tick_count)
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_tick_count(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch_duration_ticks(batch).saturating_mul(batch.worker_count() as Tick)
+}
+
+fn batch_duration_ticks(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch.horizon().saturating_sub(batch_start_tick(batch))
+}
+
+fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch
+        .workers()
+        .iter()
+        .map(|worker| worker.start_tick())
+        .min()
+        .unwrap_or_else(|| batch.horizon())
 }
 
 fn progress_monitor_snapshot<I>(
