@@ -1,6 +1,7 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvError,
-    RiscvExecutionRecord, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
+    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvTrap,
+    RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -21,6 +22,10 @@ fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, r
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | 0x2f
+}
+
+fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
+    (mode << 28) | (predecessor << 24) | (successor << 20) | (funct3 << 12) | 0x0f
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -575,6 +580,35 @@ fn hart_reports_word_atomic_accesses_without_mutating_register() {
         );
         assert_eq!(hart.read(reg(7)), 0);
     }
+}
+
+#[test]
+fn hart_reports_fence_barriers_without_memory_or_register_side_effects() {
+    let mut hart = RiscvHartState::new(0xb000);
+    hart.write(reg(1), 0x1234);
+
+    let fence = RiscvInstruction::decode(fence_type(0, 0b1010, 0b0101, 0x0)).unwrap();
+    assert_eq!(
+        fence,
+        RiscvInstruction::Fence {
+            predecessor: RiscvFenceSet::new(true, false, true, false),
+            successor: RiscvFenceSet::new(false, true, false, true),
+            mode: 0,
+        }
+    );
+    let fence_record = hart.execute(fence).unwrap();
+    assert_eq!(fence_record.next_pc(), 0xb004);
+    assert_eq!(fence_record.register_writes(), &[]);
+    assert_eq!(fence_record.memory_access(), None);
+    assert_eq!(hart.read(reg(1)), 0x1234);
+
+    let fence_i = RiscvInstruction::decode(fence_type(0, 0, 0, 0x1)).unwrap();
+    assert_eq!(fence_i, RiscvInstruction::FenceI);
+    let fence_i_record = hart.execute(fence_i).unwrap();
+    assert_eq!(fence_i_record.next_pc(), 0xb008);
+    assert_eq!(fence_i_record.register_writes(), &[]);
+    assert_eq!(fence_i_record.memory_access(), None);
+    assert_eq!(hart.read(reg(1)), 0x1234);
 }
 
 #[test]

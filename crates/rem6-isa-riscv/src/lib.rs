@@ -60,6 +60,50 @@ pub enum AtomicMemoryOp {
     MaxUnsigned,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvFenceSet {
+    input: bool,
+    output: bool,
+    read: bool,
+    write: bool,
+}
+
+impl RiscvFenceSet {
+    pub const fn new(input: bool, output: bool, read: bool, write: bool) -> Self {
+        Self {
+            input,
+            output,
+            read,
+            write,
+        }
+    }
+
+    const fn from_bits(bits: u32) -> Self {
+        Self {
+            input: bits & 0b1000 != 0,
+            output: bits & 0b0100 != 0,
+            read: bits & 0b0010 != 0,
+            write: bits & 0b0001 != 0,
+        }
+    }
+
+    pub const fn input(self) -> bool {
+        self.input
+    }
+
+    pub const fn output(self) -> bool {
+        self.output
+    }
+
+    pub const fn read(self) -> bool {
+        self.read
+    }
+
+    pub const fn write(self) -> bool {
+        self.write
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemoryAccessKind {
     Load {
@@ -206,6 +250,12 @@ pub enum RiscvInstruction {
         acquire: bool,
         release: bool,
     },
+    Fence {
+        predecessor: RiscvFenceSet,
+        successor: RiscvFenceSet,
+        mode: u8,
+    },
+    FenceI,
     Ecall,
     Ebreak,
 }
@@ -219,6 +269,7 @@ impl RiscvInstruction {
         let opcode = raw & 0x7f;
         match opcode {
             0x03 => decode_load(raw),
+            0x0f => decode_fence(raw),
             0x13 => decode_op_imm(raw),
             0x17 => Ok(Self::Auipc {
                 rd: rd(raw),
@@ -240,6 +291,18 @@ impl RiscvInstruction {
             0x73 => decode_system(raw),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         }
+    }
+}
+
+fn decode_fence(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match funct3(raw) {
+        0x0 => Ok(RiscvInstruction::Fence {
+            predecessor: RiscvFenceSet::from_bits((raw >> 24) & 0x0f),
+            successor: RiscvFenceSet::from_bits((raw >> 20) & 0x0f),
+            mode: ((raw >> 28) & 0x0f) as u8,
+        }),
+        0x1 => Ok(RiscvInstruction::FenceI),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
 
@@ -648,6 +711,7 @@ impl RiscvHartState {
                     release,
                 });
             }
+            RiscvInstruction::Fence { .. } | RiscvInstruction::FenceI => {}
             RiscvInstruction::Ecall => {
                 next_pc = pc;
                 self.pc = next_pc;

@@ -7,7 +7,8 @@ use rem6_cpu::{
     RiscvDataAccessTarget, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
-    MemoryAccessKind, MemoryWidth, Register, RiscvInstruction, RiscvTrap, RiscvTrapKind,
+    MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction, RiscvTrap,
+    RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -45,6 +46,10 @@ fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, r
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | 0x2f
+}
+
+fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
+    (mode << 28) | (predecessor << 24) | (successor << 20) | (funct3 << 12) | 0x0f
 }
 
 fn j_type(imm: i32, rd: u8) -> u32 {
@@ -503,6 +508,69 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
         drive_one_action(&core, store, &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+}
+
+#[test]
+fn riscv_core_executes_fence_barriers_without_data_requests() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            fence_type(0, 0b1010, 0b0101, 0x0),
+            fence_type(0, 0, 0, 0x1),
+            i_type(9, 0, 0x0, 6, 0x13),
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(fence) = action else {
+        panic!("expected fence execution");
+    };
+    assert_eq!(
+        fence.instruction(),
+        RiscvInstruction::Fence {
+            predecessor: RiscvFenceSet::new(true, false, true, false),
+            successor: RiscvFenceSet::new(false, true, false, true),
+            mode: 0,
+        }
+    );
+    assert_eq!(fence.execution().memory_access(), None);
+    assert_eq!(core.data_access_events(), &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(fence_i) = action else {
+        panic!("expected fence.i execution");
+    };
+    assert_eq!(fence_i.instruction(), RiscvInstruction::FenceI);
+    assert_eq!(fence_i.execution().memory_access(), None);
+    assert_eq!(core.data_access_events(), &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(addi) = action else {
+        panic!("expected addi execution");
+    };
+    assert_eq!(
+        addi.instruction(),
+        RiscvInstruction::decode(i_type(9, 0, 0x0, 6, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(6)), 9);
 }
 
 #[test]
