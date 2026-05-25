@@ -416,6 +416,140 @@ fn system_run_summarizes_livelock_diagnostic_subjects() {
 }
 
 #[test]
+fn system_run_queries_livelock_diagnostics_by_transition_kind() {
+    let cpu = PartitionId::new(0);
+    let cache = PartitionId::new(1);
+    let cpu_subject = component("cpu-progress-loop");
+    let cache_subject = component("cache-progress-loop");
+    let shared_subject = component("shared-progress-loop");
+    let run = RiscvSystemRun::new(
+        vec![
+            cpu_scheduler_turn_at_with_kind(
+                cpu,
+                0,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                2,
+            ),
+            cpu_scheduler_turn_at_with_kind(
+                cpu,
+                0,
+                shared_subject.clone(),
+                LivelockTransitionKind::QueueRotation,
+                1,
+            ),
+        ],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 24 },
+    )
+    .with_data_cache_runs(vec![
+        data_cache_run_at_with_kind(
+            cache,
+            3,
+            shared_subject.clone(),
+            LivelockTransitionKind::MessageRetry,
+            1,
+        ),
+        data_cache_run_at_with_kind(
+            cache,
+            6,
+            cache_subject.clone(),
+            LivelockTransitionKind::MessageRetry,
+            2,
+        ),
+    ]);
+
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
+            2,
+            LivelockTransitionKind::ProtocolRetry,
+        )
+        .unwrap(),
+        2,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap(),
+        2,
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_transition_count_by_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap(),
+        3,
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_transition_kind_summaries(2)
+            .unwrap(),
+        vec![
+            (LivelockTransitionKind::ProtocolRetry, 2),
+            (LivelockTransitionKind::QueueRotation, 1),
+            (LivelockTransitionKind::MessageRetry, 3),
+        ],
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_subjects_by_transition_kind(
+            2,
+            LivelockTransitionKind::QueueRotation,
+        )
+        .unwrap(),
+        vec![shared_subject.clone()],
+    );
+    assert_eq!(
+        run.parallel_scheduler_livelock_diagnostic_subjects_by_transition_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap(),
+        Vec::<WaitForNode>::new(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_livelock_diagnostic_tick_window_by_transition_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap(),
+        Some((6, 6)),
+    );
+    assert_eq!(
+        run.full_system_livelock_diagnostic_tick_window_by_transition_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap(),
+        Some((3, 6)),
+    );
+
+    let data_cache_message_diagnostics = run
+        .data_cache_parallel_scheduler_livelock_diagnostics_by_transition_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap();
+    assert_eq!(data_cache_message_diagnostics.len(), 1);
+    assert_eq!(data_cache_message_diagnostics[0].subject(), &cache_subject);
+    let full_system_message_diagnostics = run
+        .full_system_livelock_diagnostics_by_transition_kind(
+            2,
+            LivelockTransitionKind::MessageRetry,
+        )
+        .unwrap();
+    assert_eq!(full_system_message_diagnostics.len(), 2);
+    assert_eq!(
+        full_system_message_diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.subject().clone())
+            .collect::<Vec<_>>(),
+        vec![cache_subject, shared_subject],
+    );
+}
+
+#[test]
 fn system_run_summarizes_progress_transition_dimensions() {
     let cpu = PartitionId::new(0);
     let cache = PartitionId::new(1);

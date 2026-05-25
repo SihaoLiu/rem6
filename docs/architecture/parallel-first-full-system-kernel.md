@@ -270,6 +270,7 @@ data-cache scheduler, and merged full-system progress deterministic dimension
 lists, per-dimension record slices, counts, tick windows, compact summaries by
 transition kind, partition, and subject, plus threshold-driven livelock
 diagnostic subject queries, subject summaries, subject tick windows, and
+transition-kind queries, transition-kind counts, transition-kind summaries, and
 kind-window summaries. Workload result summaries preserve the same evidence
 shape plus threshold-driven livelock diagnostic records, counts, subject
 queries, transition-kind summaries with exact kind tick windows, and

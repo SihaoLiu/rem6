@@ -508,6 +508,64 @@ impl RiscvSystemRun {
         ))
     }
 
+    pub fn parallel_scheduler_livelock_diagnostic_subjects_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Vec<WaitForNode>, ProgressMonitorError> {
+        let diagnostics = self.parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostic_subjects_by_transition_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostics_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+        let diagnostics = self.parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostics_by_transition_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostic_tick_window_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Option<(Tick, Tick)>, ProgressMonitorError> {
+        let diagnostics = self.parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(livelock_diagnostic_transition_kind_tick_window(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<u64, ProgressMonitorError> {
+        let diagnostics = self.parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(livelock_diagnostic_transition_count_by_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn parallel_scheduler_livelock_diagnostic_transition_kind_summaries(
+        &self,
+        threshold: u64,
+    ) -> Result<Vec<(LivelockTransitionKind, u64)>, ProgressMonitorError> {
+        let diagnostics = self.parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostic_transition_kind_summaries(
+            &diagnostics,
+        ))
+    }
+
     pub fn parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(
         &self,
         threshold: u64,
@@ -575,6 +633,64 @@ impl RiscvSystemRun {
         ))
     }
 
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_subjects_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Vec<WaitForNode>, ProgressMonitorError> {
+        let diagnostics = self.data_cache_parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostic_subjects_by_transition_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostics_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+        let diagnostics = self.data_cache_parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostics_by_transition_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_tick_window_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Option<(Tick, Tick)>, ProgressMonitorError> {
+        let diagnostics = self.data_cache_parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(livelock_diagnostic_transition_kind_tick_window(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_transition_count_by_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<u64, ProgressMonitorError> {
+        let diagnostics = self.data_cache_parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(livelock_diagnostic_transition_count_by_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_summaries(
+        &self,
+        threshold: u64,
+    ) -> Result<Vec<(LivelockTransitionKind, u64)>, ProgressMonitorError> {
+        let diagnostics = self.data_cache_parallel_scheduler_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostic_transition_kind_summaries(
+            &diagnostics,
+        ))
+    }
+
     pub fn data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(
         &self,
         threshold: u64,
@@ -637,6 +753,64 @@ impl RiscvSystemRun {
         Ok(livelock_diagnostic_tick_window(
             &diagnostics,
             |diagnostic| diagnostic.subject() == subject,
+        ))
+    }
+
+    pub fn full_system_livelock_diagnostic_subjects_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Vec<WaitForNode>, ProgressMonitorError> {
+        let diagnostics = self.full_system_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostic_subjects_by_transition_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn full_system_livelock_diagnostics_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Vec<LivelockDiagnostic>, ProgressMonitorError> {
+        let diagnostics = self.full_system_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostics_by_transition_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn full_system_livelock_diagnostic_tick_window_by_transition_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<Option<(Tick, Tick)>, ProgressMonitorError> {
+        let diagnostics = self.full_system_livelock_diagnostics(threshold)?;
+        Ok(livelock_diagnostic_transition_kind_tick_window(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn full_system_livelock_diagnostic_transition_count_by_kind(
+        &self,
+        threshold: u64,
+        kind: LivelockTransitionKind,
+    ) -> Result<u64, ProgressMonitorError> {
+        let diagnostics = self.full_system_livelock_diagnostics(threshold)?;
+        Ok(livelock_diagnostic_transition_count_by_kind(
+            &diagnostics,
+            kind,
+        ))
+    }
+
+    pub fn full_system_livelock_diagnostic_transition_kind_summaries(
+        &self,
+        threshold: u64,
+    ) -> Result<Vec<(LivelockTransitionKind, u64)>, ProgressMonitorError> {
+        let diagnostics = self.full_system_livelock_diagnostics(threshold)?;
+        Ok(collect_livelock_diagnostic_transition_kind_summaries(
+            &diagnostics,
         ))
     }
 
@@ -809,6 +983,73 @@ fn livelock_diagnostic_tick_window<'a>(
         }
     }
     window
+}
+
+fn collect_livelock_diagnostic_subjects_by_transition_kind<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    kind: LivelockTransitionKind,
+) -> Vec<WaitForNode> {
+    diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.transition_count_by_kind(kind) != 0)
+        .map(|diagnostic| diagnostic.subject().clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_livelock_diagnostics_by_transition_kind<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    kind: LivelockTransitionKind,
+) -> Vec<LivelockDiagnostic> {
+    diagnostics
+        .into_iter()
+        .filter(|diagnostic| diagnostic.transition_count_by_kind(kind) != 0)
+        .cloned()
+        .collect()
+}
+
+fn livelock_diagnostic_transition_count_by_kind<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    kind: LivelockTransitionKind,
+) -> u64 {
+    diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.transition_count_by_kind(kind))
+        .sum()
+}
+
+fn livelock_diagnostic_transition_kind_tick_window<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+    kind: LivelockTransitionKind,
+) -> Option<(Tick, Tick)> {
+    let mut window: Option<(Tick, Tick)> = None;
+    for diagnostic in diagnostics {
+        for count in diagnostic.transition_kind_counts() {
+            if count.kind() == kind {
+                window = Some(match window {
+                    Some((first_tick, last_tick)) => (
+                        first_tick.min(count.first_transition_tick()),
+                        last_tick.max(count.last_transition_tick()),
+                    ),
+                    None => (count.first_transition_tick(), count.last_transition_tick()),
+                });
+            }
+        }
+    }
+    window
+}
+
+fn collect_livelock_diagnostic_transition_kind_summaries<'a>(
+    diagnostics: impl IntoIterator<Item = &'a LivelockDiagnostic>,
+) -> Vec<(LivelockTransitionKind, u64)> {
+    let mut summaries = BTreeMap::<LivelockTransitionKind, u64>::new();
+    for diagnostic in diagnostics {
+        for count in diagnostic.transition_kind_counts() {
+            *summaries.entry(count.kind()).or_insert(0) += count.count();
+        }
+    }
+    summaries.into_iter().collect()
 }
 
 fn collect_livelock_diagnostic_transition_kind_window_summaries<'a>(
