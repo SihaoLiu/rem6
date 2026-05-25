@@ -1225,6 +1225,33 @@ impl fmt::Display for WorkloadError {
                 "expected {} batch worker-count tick streak to reach at least {minimum_consecutive_ticks} consecutive ticks at {minimum_worker_count} workers, got {actual_consecutive_ticks}",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelBatchWorkerTicks { scope } => write!(
+                formatter,
+                "expected {} batch worker-ticks must require positive worker-ticks",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelBatchWorkerTicks { scope } => write!(
+                formatter,
+                "expected {} batch worker-ticks is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelBatchWorkerTicksSummary {
+                scope,
+                minimum_worker_ticks,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} batch worker-ticks with at least {minimum_worker_ticks} worker-ticks",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelBatchWorkerTicksBelowMinimum {
+                scope,
+                minimum_worker_ticks,
+                actual_worker_ticks,
+            } => write!(
+                formatter,
+                "expected {} batch worker-ticks to reach at least {minimum_worker_ticks}, got {actual_worker_ticks}",
+                scope.as_str()
+            ),
             Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
                 formatter,
                 "expected {} batch partition set {} must include at least 2 partitions",

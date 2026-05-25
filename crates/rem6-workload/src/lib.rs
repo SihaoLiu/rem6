@@ -56,6 +56,7 @@ pub use parallel_batch_timeline_expectation::WorkloadExpectedParallelBatchTimeli
 pub use parallel_batch_worker_count_expectation::{
     WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
     WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
+    WorkloadExpectedParallelBatchWorkerTicks,
 };
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
@@ -245,6 +246,7 @@ pub struct WorkloadManifest {
     expected_parallel_batch_worker_tick_activity:
         Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_worker_tick_streaks: Vec<WorkloadExpectedParallelBatchWorkerTickStreak>,
+    expected_parallel_batch_worker_ticks: Vec<WorkloadExpectedParallelBatchWorkerTicks>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -424,6 +426,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_batch_worker_tick_activity:
         Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_worker_tick_streaks: Vec<WorkloadExpectedParallelBatchWorkerTickStreak>,
+    expected_parallel_batch_worker_ticks: Vec<WorkloadExpectedParallelBatchWorkerTicks>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -464,6 +467,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_worker_tick_buckets: Vec::new(),
             expected_parallel_batch_worker_tick_activity: Vec::new(),
             expected_parallel_batch_worker_tick_streaks: Vec::new(),
+            expected_parallel_batch_worker_ticks: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_batch_timeline_records: Vec::new(),
@@ -874,6 +878,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_batch_worker_tick_activity,
             expected_parallel_batch_worker_tick_streaks: &self
                 .expected_parallel_batch_worker_tick_streaks,
+            expected_parallel_batch_worker_ticks: &self.expected_parallel_batch_worker_ticks,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
                 .expected_parallel_batch_partition_streaks,
@@ -918,6 +923,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_batch_worker_tick_activity,
             expected_parallel_batch_worker_tick_streaks: self
                 .expected_parallel_batch_worker_tick_streaks,
+            expected_parallel_batch_worker_ticks: self.expected_parallel_batch_worker_ticks,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
                 .expected_parallel_batch_partition_streaks,
@@ -966,6 +972,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_batch_worker_tick_activity:
         Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_worker_tick_streaks: Vec<WorkloadExpectedParallelBatchWorkerTickStreak>,
+    expected_parallel_batch_worker_ticks: Vec<WorkloadExpectedParallelBatchWorkerTicks>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -1040,6 +1047,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_batch_worker_tick_streaks: manifest
                 .expected_parallel_batch_worker_tick_streaks()
+                .to_vec(),
+            expected_parallel_batch_worker_ticks: manifest
+                .expected_parallel_batch_worker_ticks()
                 .to_vec(),
             expected_parallel_batch_partition_sets: manifest
                 .expected_parallel_batch_partition_sets()
@@ -1489,6 +1499,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_batch_worker_tick_buckets(self, result)?;
         replay_verify::verify_expected_parallel_batch_worker_tick_activity(self, result)?;
         replay_verify::verify_expected_parallel_batch_worker_tick_streaks(self, result)?;
+        replay_verify::verify_expected_parallel_batch_worker_ticks(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         replay_verify::verify_expected_parallel_batch_timeline_records(self, result)?;

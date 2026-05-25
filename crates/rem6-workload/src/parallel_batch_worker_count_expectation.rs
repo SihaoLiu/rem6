@@ -263,6 +263,53 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelBatchWorkerTicks {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_worker_ticks: Tick,
+}
+
+impl WorkloadExpectedParallelBatchWorkerTicks {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_ticks: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_worker_ticks == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelBatchWorkerTicks { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_worker_ticks,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_worker_ticks(self) -> Tick {
+        self.minimum_worker_ticks
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) fn actual_worker_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Tick {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.parallel_scheduler_batch_worker_ticks()
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_batch_worker_ticks()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_batch_worker_ticks()
+            }
+        }
+    }
+}
+
 impl WorkloadManifest {
     pub fn expected_parallel_batch_worker_buckets(
         &self,
@@ -286,6 +333,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedParallelBatchWorkerTickStreak] {
         &self.expected_parallel_batch_worker_tick_streaks
+    }
+
+    pub fn expected_parallel_batch_worker_ticks(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchWorkerTicks] {
+        &self.expected_parallel_batch_worker_ticks
     }
 }
 
@@ -376,6 +429,25 @@ impl WorkloadManifestBuilder {
             .push(expected);
         self.expected_parallel_batch_worker_tick_streaks
             .sort_by_key(|streak| streak.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_batch_worker_ticks(
+        mut self,
+        expected: WorkloadExpectedParallelBatchWorkerTicks,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_worker_ticks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelBatchWorkerTicks {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_batch_worker_ticks.push(expected);
+        self.expected_parallel_batch_worker_ticks
+            .sort_by_key(|expected| expected.sort_key());
         Ok(self)
     }
 }
@@ -492,5 +564,30 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedParallelBatchWorkerTickStreak] {
         &self.expected_parallel_batch_worker_tick_streaks
+    }
+
+    pub fn add_expected_parallel_batch_worker_ticks(
+        mut self,
+        expected: WorkloadExpectedParallelBatchWorkerTicks,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_batch_worker_ticks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelBatchWorkerTicks {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_batch_worker_ticks.push(expected);
+        self.expected_parallel_batch_worker_ticks
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_batch_worker_ticks(
+        &self,
+    ) -> &[WorkloadExpectedParallelBatchWorkerTicks] {
+        &self.expected_parallel_batch_worker_ticks
     }
 }

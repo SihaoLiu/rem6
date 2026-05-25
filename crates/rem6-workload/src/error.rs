@@ -928,6 +928,21 @@ pub enum WorkloadError {
         minimum_consecutive_ticks: Tick,
         actual_consecutive_ticks: Tick,
     },
+    ZeroExpectedParallelBatchWorkerTicks {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelBatchWorkerTicks {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    MissingParallelBatchWorkerTicksSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_ticks: Tick,
+    },
+    ExpectedParallelBatchWorkerTicksBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_worker_ticks: Tick,
+        actual_worker_ticks: Tick,
+    },
     InvalidExpectedParallelBatchPartitionSet {
         scope: WorkloadParallelRemoteFlowScope,
         partitions: Vec<u32>,

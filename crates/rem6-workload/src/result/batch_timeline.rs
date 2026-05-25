@@ -4,7 +4,7 @@ use crate::parallel_batch::{
     collect_parallel_batch_worker_count_tick_summaries,
     collect_parallel_batch_worker_counts_from_timeline,
     parallel_batch_longest_tick_streak_at_or_above, parallel_batch_ticks_at_or_above,
-    parallel_batch_ticks_for_worker_count, WorkloadParallelBatchScope,
+    parallel_batch_ticks_for_worker_count, parallel_batch_worker_ticks, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord,
 };
 use rem6_kernel::Tick;
@@ -103,6 +103,10 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn parallel_scheduler_batch_worker_ticks(&self) -> Tick {
+        parallel_batch_worker_ticks(&self.parallel_scheduler_batch_timeline)
+    }
+
     pub fn parallel_scheduler_longest_batch_tick_streak_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -133,6 +137,10 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
+        parallel_batch_worker_ticks(&self.data_cache_parallel_scheduler_batch_timeline)
+    }
+
     pub fn data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -157,6 +165,11 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count)
+    }
+
+    pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
+        let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        parallel_batch_worker_ticks(&timeline)
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
