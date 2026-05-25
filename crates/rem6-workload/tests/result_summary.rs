@@ -1,8 +1,9 @@
 use rem6_boot::BootImage;
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId,
+    LivelockTransitionKind, ParallelPartitionActivity, ParallelProgressTransitionRecord,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
+    WaitForNode,
 };
 use rem6_memory::Address;
 use rem6_workload::{
@@ -37,6 +38,20 @@ fn kernel_resource() -> WorkloadResource {
         "resources/kernel.elf",
     )
     .unwrap()
+}
+
+fn wait_subject(value: &str) -> WaitForNode {
+    WaitForNode::component(value).unwrap()
+}
+
+fn progress_transition(
+    partition: u32,
+    subject: WaitForNode,
+    kind: LivelockTransitionKind,
+    tick: u64,
+    order: u64,
+) -> ParallelProgressTransitionRecord {
+    ParallelProgressTransitionRecord::new(PartitionId::new(partition), subject, kind, tick, order)
 }
 
 #[test]
@@ -629,6 +644,129 @@ fn workload_result_records_parallel_execution_summary() {
     assert!(summary.has_full_system_parallel_scheduler_work());
     assert!(summary.has_parallel_scheduler_work());
     assert!(summary.has_data_cache_parallel_work());
+}
+
+#[test]
+fn workload_result_counts_parallel_progress_transition_evidence() {
+    let cpu_subject = wait_subject("cpu-scheduler");
+    let data_cache_subject = wait_subject("data-cache-scheduler");
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_progress_transitions([
+            progress_transition(
+                0,
+                cpu_subject.clone(),
+                LivelockTransitionKind::SchedulerEpoch,
+                3,
+                0,
+            ),
+            progress_transition(
+                0,
+                cpu_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                4,
+                1,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_progress_transitions([
+            progress_transition(
+                2,
+                data_cache_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                5,
+                0,
+            ),
+            progress_transition(
+                2,
+                data_cache_subject.clone(),
+                LivelockTransitionKind::QueueRotation,
+                6,
+                1,
+            ),
+        ]);
+
+    assert_eq!(
+        summary.parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::SchedulerEpoch,
+        ),
+        1,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::ProtocolRetry
+        ),
+        1,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::QueueRotation
+        ),
+        0,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::ProtocolRetry,
+        ),
+        1,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::QueueRotation,
+        ),
+        1,
+    );
+    assert_eq!(
+        summary
+            .full_system_progress_transition_count_by_kind(LivelockTransitionKind::ProtocolRetry),
+        2,
+    );
+    assert_eq!(
+        summary
+            .full_system_progress_transition_count_by_kind(LivelockTransitionKind::SchedulerEpoch),
+        1,
+    );
+    assert_eq!(
+        summary
+            .full_system_progress_transition_count_by_kind(LivelockTransitionKind::QueueRotation),
+        1,
+    );
+
+    assert_eq!(
+        summary.parallel_scheduler_progress_transition_count_by_partition(PartitionId::new(0)),
+        2,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_progress_transition_count_by_partition(
+            PartitionId::new(2)
+        ),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_progress_transition_count_by_partition(PartitionId::new(0)),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_progress_transition_count_by_partition(PartitionId::new(2)),
+        2,
+    );
+
+    assert_eq!(
+        summary.parallel_scheduler_progress_transition_count_by_subject(&cpu_subject),
+        2,
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_progress_transition_count_by_subject(
+            &data_cache_subject,
+        ),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_progress_transition_count_by_subject(&cpu_subject),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_progress_transition_count_by_subject(&data_cache_subject),
+        2,
+    );
 }
 
 #[test]

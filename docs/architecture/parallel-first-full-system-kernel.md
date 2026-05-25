@@ -266,7 +266,8 @@ those records deterministically and can replay them into a monitor snapshot.
 Workload clean-diagnostic expectations may declare the transition threshold; a
 replay summary uses the lowest declared threshold so a stricter diagnostic scope
 cannot be hidden by a looser one. The system-run object exposes CPU-scheduler,
-data-cache scheduler, and merged full-system progress counts plus
+data-cache scheduler, and merged full-system progress counts, result-level
+counts by transition kind, partition, and subject, and
 threshold-driven livelock diagnostic counts before workload replay translates
 them into manifest-verifiable result summaries. Useful work resets the active
 window so retry-heavy but productive models do not look like livelock.
@@ -394,9 +395,10 @@ specific partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
 They may also require individual remote-send records, exact progress-free
-transition records, remote-flow delivery windows, and optional min/max delay
-bounds, turning cross-partition timing and livelock evidence into replayable
-data instead of aggregate counters. Remote-send records are strong enough to
+transition records with kind, partition, and subject result counts, remote-flow
+delivery windows, and optional min/max delay bounds, turning cross-partition
+timing and livelock evidence into replayable data instead of aggregate counters.
+Remote-send records are strong enough to
 derive route-level flow count, first/last delivery tick, and delay-bound
 evidence when an aggregate remote-flow record is absent or weaker than the
 exact send evidence.
