@@ -1276,6 +1276,38 @@ fn scheduler_parallel_worker_panic_discards_local_events_from_panicked_callback(
 }
 
 #[test]
+fn scheduler_parallel_worker_panic_preserves_successful_remote_events() {
+    let source = PartitionId::new(0);
+    let panicker = PartitionId::new(1);
+    let target = PartitionId::new(2);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(panicker, 0, move |context| {
+            context.schedule_remote_after(target, 4, |_| {}).unwrap();
+            panic!("worker panic sentinel");
+        })
+        .unwrap();
+
+    assert_eq!(
+        scheduler.run_next_epoch_parallel_recorded().unwrap_err(),
+        SchedulerError::ParallelWorkerPanicked {
+            partition: panicker
+        }
+    );
+    let snapshot = scheduler.snapshot();
+    let pending = snapshot.partitions()[target.index() as usize].pending_events();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].tick(), 4);
+    assert_eq!(pending[0].kind(), ScheduledEventKind::Parallel);
+}
+
+#[test]
 fn scheduler_min_delay_constructor_keeps_unbounded_worker_limit() {
     let scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
 
