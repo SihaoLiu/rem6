@@ -9,7 +9,7 @@ use rem6_kernel::{
     PartitionedScheduler, ReadyPartition, RecordedRunSummary, RunSummary, ScheduledEventKind,
     SchedulerContext, SchedulerDispatchRecord, SchedulerError, Tick,
 };
-use rem6_memory::{AgentId, TranslationPageMap};
+use rem6_memory::{AccessSize, Address, AgentId, TranslationPageMap};
 use rem6_mmio::MmioBus;
 use rem6_transport::{
     MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
@@ -123,6 +123,19 @@ impl RiscvCluster {
             .get(&cpu)
             .cloned()
             .ok_or(RiscvClusterError::UnknownCpu { cpu })
+    }
+
+    pub fn invalidate_load_reservation_for_agent_if_overlaps(
+        &self,
+        agent: AgentId,
+        address: Address,
+        size: AccessSize,
+    ) -> bool {
+        self.cores
+            .values()
+            .find(|core| core.agent() == agent)
+            .and_then(|core| core.invalidate_load_reservation_if_overlaps(address, size))
+            .is_some()
     }
 
     #[allow(clippy::too_many_arguments)]

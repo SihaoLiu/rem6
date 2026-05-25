@@ -18,9 +18,9 @@ use super::coherence_data::{
 };
 use super::{
     dram_activities_since, dram_wait_for_since, mark_dram_activity, mark_dram_wait_for,
-    take_memory_error, topology_cached_memory_response, RiscvTopologyDmaCopy,
-    RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary,
-    RiscvTopologySystem, RiscvTopologySystemError,
+    take_memory_error, topology_cached_memory_response, RiscvTopologyCachedDataCaches,
+    RiscvTopologyDmaCopy, RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary,
+    RiscvTopologyDmaStageRunSummary, RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 #[derive(Clone, Debug)]
@@ -161,6 +161,7 @@ impl RiscvTopologySystem {
         let chi_data_run_start = chi_data_cache
             .as_ref()
             .map(RiscvTopologyChiDataCache::mark_runs);
+        let cluster = self.cluster.clone();
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
@@ -185,6 +186,7 @@ impl RiscvTopologySystem {
                     let read_mesi_data_cache = mesi_data_cache.clone();
                     let read_moesi_data_cache = moesi_data_cache.clone();
                     let read_chi_data_cache = chi_data_cache.clone();
+                    let read_cluster = cluster.clone();
                     let prepared = accelerator.prepare_dma_copy_read(
                         issued_at,
                         copy,
@@ -193,10 +195,13 @@ impl RiscvTopologySystem {
                             topology_cached_memory_response(
                                 &read_memory,
                                 &read_error,
-                                read_msi_data_cache.as_ref(),
-                                read_mesi_data_cache.as_ref(),
-                                read_moesi_data_cache.as_ref(),
-                                read_chi_data_cache.as_ref(),
+                                RiscvTopologyCachedDataCaches {
+                                    msi: read_msi_data_cache.as_ref(),
+                                    mesi: read_mesi_data_cache.as_ref(),
+                                    moesi: read_moesi_data_cache.as_ref(),
+                                    chi: read_chi_data_cache.as_ref(),
+                                    cluster: &read_cluster,
+                                },
                                 &delivery,
                             )
                         },
@@ -218,6 +223,7 @@ impl RiscvTopologySystem {
                     let read_mesi_data_cache = mesi_data_cache.clone();
                     let read_moesi_data_cache = moesi_data_cache.clone();
                     let read_chi_data_cache = chi_data_cache.clone();
+                    let read_cluster = cluster.clone();
                     let prepared = gpu.prepare_dma_copy_read(
                         issued_at,
                         copy,
@@ -226,10 +232,13 @@ impl RiscvTopologySystem {
                             topology_cached_memory_response(
                                 &read_memory,
                                 &read_error,
-                                read_msi_data_cache.as_ref(),
-                                read_mesi_data_cache.as_ref(),
-                                read_moesi_data_cache.as_ref(),
-                                read_chi_data_cache.as_ref(),
+                                RiscvTopologyCachedDataCaches {
+                                    msi: read_msi_data_cache.as_ref(),
+                                    mesi: read_mesi_data_cache.as_ref(),
+                                    moesi: read_moesi_data_cache.as_ref(),
+                                    chi: read_chi_data_cache.as_ref(),
+                                    cluster: &read_cluster,
+                                },
                                 &delivery,
                             )
                         },
@@ -366,6 +375,7 @@ impl RiscvTopologySystem {
         let chi_data_run_start = chi_data_cache
             .as_ref()
             .map(RiscvTopologyChiDataCache::mark_runs);
+        let cluster = self.cluster.clone();
         let mut scheduler = self.lock_scheduler();
         let issued_at = scheduler.now();
         let fabric_activity_start = self.transport.mark_fabric_activity();
@@ -391,6 +401,7 @@ impl RiscvTopologySystem {
                     let write_mesi_data_cache = mesi_data_cache.clone();
                     let write_moesi_data_cache = moesi_data_cache.clone();
                     let write_chi_data_cache = chi_data_cache.clone();
+                    let write_cluster = cluster.clone();
                     let Some(prepared) = accelerator
                         .prepare_next_dma_write(
                             issued_at,
@@ -399,10 +410,13 @@ impl RiscvTopologySystem {
                                 topology_cached_memory_response(
                                     &write_memory,
                                     &write_error,
-                                    write_msi_data_cache.as_ref(),
-                                    write_mesi_data_cache.as_ref(),
-                                    write_moesi_data_cache.as_ref(),
-                                    write_chi_data_cache.as_ref(),
+                                    RiscvTopologyCachedDataCaches {
+                                        msi: write_msi_data_cache.as_ref(),
+                                        mesi: write_mesi_data_cache.as_ref(),
+                                        moesi: write_moesi_data_cache.as_ref(),
+                                        chi: write_chi_data_cache.as_ref(),
+                                        cluster: &write_cluster,
+                                    },
                                     &delivery,
                                 )
                             },
@@ -431,6 +445,7 @@ impl RiscvTopologySystem {
                     let write_mesi_data_cache = mesi_data_cache.clone();
                     let write_moesi_data_cache = moesi_data_cache.clone();
                     let write_chi_data_cache = chi_data_cache.clone();
+                    let write_cluster = cluster.clone();
                     let Some(prepared) = gpu
                         .prepare_next_dma_write(
                             issued_at,
@@ -439,10 +454,13 @@ impl RiscvTopologySystem {
                                 topology_cached_memory_response(
                                     &write_memory,
                                     &write_error,
-                                    write_msi_data_cache.as_ref(),
-                                    write_mesi_data_cache.as_ref(),
-                                    write_moesi_data_cache.as_ref(),
-                                    write_chi_data_cache.as_ref(),
+                                    RiscvTopologyCachedDataCaches {
+                                        msi: write_msi_data_cache.as_ref(),
+                                        mesi: write_mesi_data_cache.as_ref(),
+                                        moesi: write_moesi_data_cache.as_ref(),
+                                        chi: write_chi_data_cache.as_ref(),
+                                        cluster: &write_cluster,
+                                    },
                                     &delivery,
                                 )
                             },

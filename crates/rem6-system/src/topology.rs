@@ -1238,6 +1238,7 @@ impl RiscvTopologySystem {
         let data_mesi_cache = mesi_data_cache.clone();
         let data_moesi_cache = moesi_data_cache.clone();
         let data_chi_cache = chi_data_cache.clone();
+        let data_cluster = self.cluster.clone();
         let data_responder = move |_cpu| {
             let memory = data_memory.clone();
             let memory_error = Arc::clone(&data_error);
@@ -1245,14 +1246,18 @@ impl RiscvTopologySystem {
             let mesi_data_cache = data_mesi_cache.clone();
             let moesi_data_cache = data_moesi_cache.clone();
             let chi_data_cache = data_chi_cache.clone();
+            let cluster = data_cluster.clone();
             move |delivery, _context: &mut ParallelSchedulerContext<'_>| {
                 topology_cached_memory_response(
                     &memory,
                     &memory_error,
-                    msi_data_cache.as_ref(),
-                    mesi_data_cache.as_ref(),
-                    moesi_data_cache.as_ref(),
-                    chi_data_cache.as_ref(),
+                    RiscvTopologyCachedDataCaches {
+                        msi: msi_data_cache.as_ref(),
+                        mesi: mesi_data_cache.as_ref(),
+                        moesi: moesi_data_cache.as_ref(),
+                        chi: chi_data_cache.as_ref(),
+                        cluster: &cluster,
+                    },
                     &delivery,
                 )
             }
@@ -1598,21 +1603,27 @@ fn topology_memory_response(
 fn topology_cached_memory_response(
     memory: &RiscvTopologyMemoryBackend,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
-    msi_data_cache: Option<&RiscvTopologyMsiDataCache>,
-    mesi_data_cache: Option<&RiscvTopologyMesiDataCache>,
-    moesi_data_cache: Option<&RiscvTopologyMoesiDataCache>,
-    chi_data_cache: Option<&RiscvTopologyChiDataCache>,
+    data_caches: RiscvTopologyCachedDataCaches<'_>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
     topology_data_cache_response(
-        msi_data_cache,
-        mesi_data_cache,
-        moesi_data_cache,
-        chi_data_cache,
+        data_caches.msi,
+        data_caches.mesi,
+        data_caches.moesi,
+        data_caches.chi,
+        data_caches.cluster,
         memory_error,
         delivery,
     )
     .unwrap_or_else(|| topology_memory_response(memory, memory_error, delivery))
+}
+
+struct RiscvTopologyCachedDataCaches<'a> {
+    msi: Option<&'a RiscvTopologyMsiDataCache>,
+    mesi: Option<&'a RiscvTopologyMesiDataCache>,
+    moesi: Option<&'a RiscvTopologyMoesiDataCache>,
+    chi: Option<&'a RiscvTopologyChiDataCache>,
+    cluster: &'a RiscvCluster,
 }
 
 fn mark_dram_activity(memory: &RiscvTopologyMemoryBackend) -> Option<DramMemoryActivityMarker> {

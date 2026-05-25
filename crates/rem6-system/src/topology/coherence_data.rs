@@ -6,8 +6,13 @@ use rem6_coherence::{
     PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
     PartitionedMoesiDirectoryLineHarness,
 };
+use rem6_cpu::RiscvCluster;
 use rem6_dram::DramTargetActivity;
 use rem6_memory::{Address, MemoryRequest, MemoryResponse, ResponseStatus};
+use rem6_protocol_chi::ChiEvent;
+use rem6_protocol_mesi::MesiEvent;
+use rem6_protocol_moesi::MoesiEvent;
+use rem6_protocol_msi::MsiEvent;
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
@@ -214,10 +219,11 @@ impl RiscvTopologyChiDataCache {
 
 pub(super) fn topology_msi_data_response(
     cache: &RiscvTopologyMsiDataCache,
+    cluster: &RiscvCluster,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
-    match topology_msi_data_response_result(cache, delivery) {
+    match topology_msi_data_response_result(cache, cluster, delivery) {
         Ok(outcome) => outcome,
         Err(error) => {
             record_coherence_error(memory_error, error);
@@ -228,17 +234,30 @@ pub(super) fn topology_msi_data_response(
 
 fn topology_msi_data_response_result(
     cache: &RiscvTopologyMsiDataCache,
+    cluster: &RiscvCluster,
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("MSI data cache lock");
     let start_tick = harness.now();
     let responses_before = harness.cpu_responses().len();
+    let decisions_before = harness.directory_decisions().len();
     harness
         .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
         .map_err(RiscvTopologySystemError::MsiDataCache)?;
     let run = harness
         .run_until_idle_parallel_recorded()
         .map_err(RiscvTopologySystemError::MsiDataCache)?;
+    for record in harness
+        .directory_decisions()
+        .get(decisions_before..)
+        .unwrap_or_default()
+    {
+        for snoop in record.decision().snoops() {
+            if snoop.event() == MsiEvent::SnoopWrite {
+                invalidate_snooped_reservation(cluster, snoop.target(), delivery.request());
+            }
+        }
+    }
     let response_record = harness
         .cpu_responses()
         .get(responses_before..)
@@ -257,10 +276,11 @@ fn topology_msi_data_response_result(
 
 pub(super) fn topology_mesi_data_response(
     cache: &RiscvTopologyMesiDataCache,
+    cluster: &RiscvCluster,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
-    match topology_mesi_data_response_result(cache, delivery) {
+    match topology_mesi_data_response_result(cache, cluster, delivery) {
         Ok(outcome) => outcome,
         Err(error) => {
             record_coherence_error(memory_error, error);
@@ -271,17 +291,30 @@ pub(super) fn topology_mesi_data_response(
 
 fn topology_mesi_data_response_result(
     cache: &RiscvTopologyMesiDataCache,
+    cluster: &RiscvCluster,
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("MESI data cache lock");
     let start_tick = harness.now();
     let responses_before = harness.cpu_responses().len();
+    let decisions_before = harness.directory_decisions().len();
     harness
         .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
         .map_err(RiscvTopologySystemError::MesiDataCache)?;
     let run = harness
         .run_until_idle_parallel_recorded()
         .map_err(RiscvTopologySystemError::MesiDataCache)?;
+    for record in harness
+        .directory_decisions()
+        .get(decisions_before..)
+        .unwrap_or_default()
+    {
+        for snoop in record.decision().snoops() {
+            if snoop.event() == MesiEvent::SnoopWrite {
+                invalidate_snooped_reservation(cluster, snoop.target(), delivery.request());
+            }
+        }
+    }
     let response_record = harness
         .cpu_responses()
         .get(responses_before..)
@@ -303,32 +336,49 @@ pub(super) fn topology_data_cache_response(
     mesi_data_cache: Option<&RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<&RiscvTopologyMoesiDataCache>,
     chi_data_cache: Option<&RiscvTopologyChiDataCache>,
+    cluster: &RiscvCluster,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> Option<TargetOutcome> {
     let line_address = delivery.request().line_address();
     if let Some(cache) = chi_data_cache.filter(|cache| cache.line_address() == line_address) {
-        Some(topology_chi_data_response(cache, memory_error, delivery))
+        Some(topology_chi_data_response(
+            cache,
+            cluster,
+            memory_error,
+            delivery,
+        ))
     } else if let Some(cache) =
         moesi_data_cache.filter(|cache| cache.line_address() == line_address)
     {
-        Some(topology_moesi_data_response(cache, memory_error, delivery))
+        Some(topology_moesi_data_response(
+            cache,
+            cluster,
+            memory_error,
+            delivery,
+        ))
     } else if let Some(cache) = mesi_data_cache.filter(|cache| cache.line_address() == line_address)
     {
-        Some(topology_mesi_data_response(cache, memory_error, delivery))
+        Some(topology_mesi_data_response(
+            cache,
+            cluster,
+            memory_error,
+            delivery,
+        ))
     } else {
         msi_data_cache
             .filter(|cache| cache.line_address() == line_address)
-            .map(|cache| topology_msi_data_response(cache, memory_error, delivery))
+            .map(|cache| topology_msi_data_response(cache, cluster, memory_error, delivery))
     }
 }
 
 pub(super) fn topology_chi_data_response(
     cache: &RiscvTopologyChiDataCache,
+    cluster: &RiscvCluster,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
-    match topology_chi_data_response_result(cache, delivery) {
+    match topology_chi_data_response_result(cache, cluster, delivery) {
         Ok(outcome) => outcome,
         Err(error) => {
             record_coherence_error(memory_error, error);
@@ -339,17 +389,30 @@ pub(super) fn topology_chi_data_response(
 
 fn topology_chi_data_response_result(
     cache: &RiscvTopologyChiDataCache,
+    cluster: &RiscvCluster,
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("CHI data cache lock");
     let start_tick = harness.now();
     let responses_before = harness.cpu_responses().len();
+    let decisions_before = harness.directory_decisions().len();
     harness
         .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
         .map_err(RiscvTopologySystemError::ChiDataCache)?;
     let run = harness
         .run_until_idle_parallel_recorded()
         .map_err(RiscvTopologySystemError::ChiDataCache)?;
+    for record in harness
+        .directory_decisions()
+        .get(decisions_before..)
+        .unwrap_or_default()
+    {
+        for snoop in record.decision().snoops() {
+            if snoop.event() == ChiEvent::SnoopUnique {
+                invalidate_snooped_reservation(cluster, snoop.target(), delivery.request());
+            }
+        }
+    }
     let response_record = harness
         .cpu_responses()
         .get(responses_before..)
@@ -368,10 +431,11 @@ fn topology_chi_data_response_result(
 
 pub(super) fn topology_moesi_data_response(
     cache: &RiscvTopologyMoesiDataCache,
+    cluster: &RiscvCluster,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
-    match topology_moesi_data_response_result(cache, delivery) {
+    match topology_moesi_data_response_result(cache, cluster, delivery) {
         Ok(outcome) => outcome,
         Err(error) => {
             record_coherence_error(memory_error, error);
@@ -382,17 +446,30 @@ pub(super) fn topology_moesi_data_response(
 
 fn topology_moesi_data_response_result(
     cache: &RiscvTopologyMoesiDataCache,
+    cluster: &RiscvCluster,
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("MOESI data cache lock");
     let start_tick = harness.now();
     let responses_before = harness.cpu_responses().len();
+    let decisions_before = harness.directory_decisions().len();
     harness
         .submit_cpu_request_parallel(delivery.request().id().agent(), delivery.request().clone())
         .map_err(RiscvTopologySystemError::MoesiDataCache)?;
     let run = harness
         .run_until_idle_parallel_recorded()
         .map_err(RiscvTopologySystemError::MoesiDataCache)?;
+    for record in harness
+        .directory_decisions()
+        .get(decisions_before..)
+        .unwrap_or_default()
+    {
+        for snoop in record.decision().snoops() {
+            if snoop.event() == MoesiEvent::SnoopWrite {
+                invalidate_snooped_reservation(cluster, snoop.target(), delivery.request());
+            }
+        }
+    }
     let response_record = harness
         .cpu_responses()
         .get(responses_before..)
@@ -407,6 +484,18 @@ fn topology_moesi_data_response_result(
     cache.record_run(run);
 
     data_cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)
+}
+
+fn invalidate_snooped_reservation(
+    cluster: &RiscvCluster,
+    target: rem6_memory::AgentId,
+    request: &MemoryRequest,
+) {
+    cluster.invalidate_load_reservation_for_agent_if_overlaps(
+        target,
+        request.range().start(),
+        request.size(),
+    );
 }
 
 trait DataCacheCpuResponseRecord {

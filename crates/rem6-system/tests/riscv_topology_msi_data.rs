@@ -3,11 +3,14 @@ use rem6_coherence::{
     ParallelCoherenceRunHistory, PartitionedDirectoryLineHarness, TopologyCacheAgentConfig,
     TopologyDirectoryConfig, TopologyDirectoryHarnessConfig, TopologyDramMemoryConfig,
 };
-use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
+use rem6_cpu::{
+    CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig,
+    RiscvDataAccessEventKind,
+};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_isa_riscv::Register;
 use rem6_kernel::{ClockDomain, PartitionId};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId};
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId};
 use rem6_protocol_msi::MsiState;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -68,6 +71,17 @@ fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
         | (funct3 << 12)
         | ((imm & 0x1f) << 7)
         | opcode
+}
+
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
 }
 
 fn nop() -> u32 {
@@ -251,6 +265,40 @@ fn code_image() -> BootImage {
         .unwrap()
 }
 
+fn lr_sc_snoop_image() -> BootImage {
+    let mut image = BootImage::new(Address::new(0x8000))
+        .add_segment(
+            Address::new(0x8000),
+            word(atomic_type(0x02, false, false, 0, 2, 0x3, 5)),
+        )
+        .unwrap();
+    image = image
+        .add_segment(Address::new(0x8004), word(nop()))
+        .unwrap()
+        .add_segment(
+            Address::new(0x8008),
+            word(atomic_type(0x03, false, true, 6, 2, 0x3, 7)),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x800c), word(0x0010_0073))
+        .unwrap();
+
+    for index in 0..2 {
+        image = image
+            .add_segment(Address::new(0x9000 + index * 4), word(nop()))
+            .unwrap();
+    }
+    image = image
+        .add_segment(Address::new(0x9008), word(s_type(0, 6, 2, 0x3, 0x23)))
+        .unwrap();
+    for index in 0..40 {
+        image = image
+            .add_segment(Address::new(0x900c + index * 4), word(nop()))
+            .unwrap();
+    }
+    image
+}
+
 fn code_dram_config() -> RiscvTopologyDramConfig {
     RiscvTopologyDramConfig::new(
         MemoryTargetId::new(0),
@@ -300,6 +348,90 @@ fn msi_data_harness(topology: &Topology) -> PartitionedDirectoryLineHarness {
         ),
     )
     .unwrap()
+}
+
+#[test]
+fn topology_system_msi_snoop_invalidates_peer_lr_reservation_before_store_response() {
+    let topology = msi_topology();
+    let source = GuestSourceId::new(127);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology.clone(),
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(code_dram_config(), &lr_sc_snoop_image())
+    .unwrap()
+    .with_msi_data_cache(msi_data_harness(&topology))
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(6), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let cpu0 = system.cluster().core(CpuId::new(0)).unwrap();
+    let cpu1 = system.cluster().core(CpuId::new(1)).unwrap();
+    cpu0.write_register(Register::new(2).unwrap(), 0x3000);
+    cpu0.write_register(Register::new(6).unwrap(), 0x0102_0304_0506_0708);
+    cpu1.write_register(Register::new(2).unwrap(), 0x3000);
+    cpu1.write_register(Register::new(6).unwrap(), 0x1112_1314_1516_1718);
+
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            Default::default(),
+            Default::default(),
+            260,
+            |cpu: CpuId| GuestEventId::new(1270 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::HostStop(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(1270),
+            source,
+            1,
+        )),
+    );
+    assert_eq!(cpu0.read_register(Register::new(7).unwrap()), 1);
+    assert_eq!(cpu0.load_reservation(), None);
+    let cpu0_sc_failure_tick = cpu0
+        .data_access_events()
+        .into_iter()
+        .find(|event| {
+            event.kind() == RiscvDataAccessEventKind::ConditionalFailed
+                && event.operation() == MemoryOperation::Atomic
+        })
+        .expect("core0 store conditional failure")
+        .tick();
+    let cpu1_store_completion_tick = cpu1
+        .data_access_events()
+        .into_iter()
+        .find(|event| {
+            event.kind() == RiscvDataAccessEventKind::Completed
+                && event.operation() == MemoryOperation::Write
+        })
+        .expect("core1 store completion")
+        .tick();
+    assert!(
+        cpu0_sc_failure_tick < cpu1_store_completion_tick,
+        "SC failure tick {cpu0_sc_failure_tick}, store completion tick {cpu1_store_completion_tick}"
+    );
+    let cache = system.msi_data_cache().unwrap();
+    let harness = cache.lock().unwrap();
+    let decisions = harness.directory_decisions();
+    assert!(decisions.iter().any(|record| {
+        record.decision().request().agent() == agent(8)
+            && record
+                .decision()
+                .snoops()
+                .iter()
+                .any(|snoop| snoop.target() == agent(7))
+    }));
 }
 
 #[test]
