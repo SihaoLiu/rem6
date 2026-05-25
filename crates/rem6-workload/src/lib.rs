@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_boot::BootImage;
 use rem6_kernel::Tick;
 use rem6_memory::{Address, AddressRange};
-use rem6_stats::StatSnapshot;
 
 mod boot_handoff;
 mod error;
@@ -16,6 +15,7 @@ mod qos;
 mod resource_payload;
 mod result;
 mod topology;
+mod workload_result;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
 pub use error::WorkloadError;
@@ -41,8 +41,9 @@ pub use parallel_expectation::{
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -58,6 +59,7 @@ pub use topology::{
     WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
     WorkloadRouteLatency, WorkloadTopology,
 };
+pub use workload_result::WorkloadResult;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WorkloadId(String);
@@ -256,6 +258,7 @@ pub struct WorkloadManifest {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
+    expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
@@ -339,6 +342,12 @@ impl WorkloadManifest {
         &self.expected_parallel_worker_activity
     }
 
+    pub fn expected_parallel_scheduler_progress(
+        &self,
+    ) -> &[WorkloadExpectedParallelSchedulerProgress] {
+        &self.expected_parallel_scheduler_progress
+    }
+
     pub fn expected_parallel_batch_activity(&self) -> &[WorkloadExpectedParallelBatchActivity] {
         &self.expected_parallel_batch_activity
     }
@@ -392,6 +401,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
+    expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
@@ -415,6 +425,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_worker_activity: Vec::new(),
+            expected_parallel_scheduler_progress: Vec::new(),
             expected_parallel_batch_activity: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
@@ -509,6 +520,25 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_batch_activity.push(expected);
         self.expected_parallel_batch_activity
             .sort_by_key(|batch_activity| batch_activity.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_scheduler_progress(
+        mut self,
+        expected: WorkloadExpectedParallelSchedulerProgress,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_scheduler_progress
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelSchedulerProgress {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_scheduler_progress.push(expected);
+        self.expected_parallel_scheduler_progress
+            .sort_by_key(|progress| progress.sort_key());
         Ok(self)
     }
 
@@ -733,6 +763,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
+            expected_parallel_scheduler_progress: &self.expected_parallel_scheduler_progress,
             expected_parallel_batch_activity: &self.expected_parallel_batch_activity,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
@@ -755,6 +786,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
+            expected_parallel_scheduler_progress: self.expected_parallel_scheduler_progress,
             expected_parallel_batch_activity: self.expected_parallel_batch_activity,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
@@ -784,6 +816,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
+    expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
     expected_parallel_batch_activity: Vec<WorkloadExpectedParallelBatchActivity>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
@@ -815,6 +848,9 @@ impl WorkloadReplayPlan {
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_worker_activity: manifest
                 .expected_parallel_worker_activity()
+                .to_vec(),
+            expected_parallel_scheduler_progress: manifest
+                .expected_parallel_scheduler_progress()
                 .to_vec(),
             expected_parallel_batch_activity: manifest.expected_parallel_batch_activity().to_vec(),
             expected_parallel_batch_partition_sets: manifest
@@ -972,6 +1008,31 @@ impl WorkloadReplayPlan {
 
     pub fn expected_parallel_worker_activity(&self) -> &[WorkloadExpectedParallelWorkerActivity] {
         &self.expected_parallel_worker_activity
+    }
+
+    pub fn add_expected_parallel_scheduler_progress(
+        mut self,
+        expected: WorkloadExpectedParallelSchedulerProgress,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_scheduler_progress
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelSchedulerProgress {
+                scope: expected.scope(),
+            });
+        }
+        self.expected_parallel_scheduler_progress.push(expected);
+        self.expected_parallel_scheduler_progress
+            .sort_by_key(|progress| progress.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_scheduler_progress(
+        &self,
+    ) -> &[WorkloadExpectedParallelSchedulerProgress] {
+        &self.expected_parallel_scheduler_progress
     }
 
     pub fn add_expected_parallel_batch_activity(
@@ -1132,10 +1193,10 @@ impl WorkloadReplayPlan {
     }
 
     pub fn verify_result(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
-        if result.manifest_identity != self.manifest_identity {
+        if result.manifest_identity() != self.manifest_identity {
             return Err(WorkloadError::ManifestIdentityMismatch {
                 expected: self.manifest_identity.clone(),
-                actual: result.manifest_identity.clone(),
+                actual: result.manifest_identity(),
             });
         }
 
@@ -1149,6 +1210,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_remote_flow_timings(result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
+        self.verify_expected_parallel_scheduler_progress(result)?;
         self.verify_expected_parallel_batch_activity(result)?;
         self.verify_expected_parallel_batch_partition_sets(result)?;
         self.verify_expected_parallel_batch_partition_streaks(result)?;
@@ -1416,6 +1478,41 @@ impl WorkloadReplayPlan {
         Ok(())
     }
 
+    fn verify_expected_parallel_scheduler_progress(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_scheduler_progress.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_parallel_scheduler_progress[0];
+            return Err(WorkloadError::MissingParallelSchedulerProgressSummary {
+                scope: expected.scope(),
+                minimum_epoch_count: expected.minimum_epoch_count(),
+                minimum_dispatch_count: expected.minimum_dispatch_count(),
+            });
+        };
+
+        for expected in &self.expected_parallel_scheduler_progress {
+            let (actual_epoch_count, actual_dispatch_count) = expected.actual_counts(summary);
+            if actual_epoch_count < expected.minimum_epoch_count()
+                || actual_dispatch_count < expected.minimum_dispatch_count()
+            {
+                return Err(
+                    WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+                        scope: expected.scope(),
+                        minimum_epoch_count: expected.minimum_epoch_count(),
+                        actual_epoch_count,
+                        minimum_dispatch_count: expected.minimum_dispatch_count(),
+                        actual_dispatch_count,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn verify_expected_parallel_batch_activity(
         &self,
         result: &WorkloadResult,
@@ -1614,156 +1711,5 @@ impl WorkloadReplayPlan {
             }
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadResult {
-    manifest_identity: WorkloadManifestIdentity,
-    final_tick: Tick,
-    stop_reason: Option<String>,
-    stats_snapshot: Option<StatSnapshot>,
-    parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
-    host_action_summary: Option<WorkloadHostActionSummary>,
-    checkpoint_labels: Vec<String>,
-    restored_checkpoint_labels: Vec<String>,
-    execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
-}
-
-impl WorkloadResult {
-    pub const fn new(manifest_identity: WorkloadManifestIdentity, final_tick: Tick) -> Self {
-        Self {
-            manifest_identity,
-            final_tick,
-            stop_reason: None,
-            stats_snapshot: None,
-            parallel_execution_summary: None,
-            host_action_summary: None,
-            checkpoint_labels: Vec::new(),
-            restored_checkpoint_labels: Vec::new(),
-            execution_mode_switches: Vec::new(),
-        }
-    }
-
-    pub fn with_stop_reason(mut self, reason: impl Into<String>) -> Self {
-        self.stop_reason = Some(reason.into());
-        self
-    }
-
-    pub fn with_stats_snapshot(mut self, snapshot: StatSnapshot) -> Self {
-        self.stats_snapshot = Some(snapshot);
-        self
-    }
-
-    pub fn with_parallel_execution_summary(
-        mut self,
-        summary: WorkloadParallelExecutionSummary,
-    ) -> Self {
-        self.parallel_execution_summary = Some(summary);
-        self
-    }
-
-    pub fn with_host_action_summary(mut self, summary: WorkloadHostActionSummary) -> Self {
-        self.host_action_summary = Some(summary);
-        self
-    }
-
-    pub fn with_checkpoint_label(mut self, label: impl Into<String>) -> Self {
-        self.checkpoint_labels.push(label.into());
-        self
-    }
-
-    pub fn with_restored_checkpoint_label(mut self, label: impl Into<String>) -> Self {
-        self.restored_checkpoint_labels.push(label.into());
-        self
-    }
-
-    pub fn with_execution_mode_switch(
-        mut self,
-        tick: Tick,
-        target: impl Into<String>,
-        mode: WorkloadExecutionMode,
-    ) -> Self {
-        self.execution_mode_switches
-            .push(WorkloadExecutionModeSwitch::new(tick, target, mode));
-        self
-    }
-
-    pub fn with_execution_mode_switch_stats_scope(
-        mut self,
-        tick: Tick,
-        target: impl Into<String>,
-        mode: WorkloadExecutionMode,
-        stats_epoch: u64,
-        stats_reset_tick: Tick,
-    ) -> Self {
-        self.execution_mode_switches.push(
-            WorkloadExecutionModeSwitch::new(tick, target, mode)
-                .with_stats_scope(stats_epoch, stats_reset_tick),
-        );
-        self
-    }
-
-    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
-        self.manifest_identity.clone()
-    }
-
-    pub const fn final_tick(&self) -> Tick {
-        self.final_tick
-    }
-
-    pub fn stop_reason(&self) -> Option<&str> {
-        self.stop_reason.as_deref()
-    }
-
-    pub const fn stats_snapshot(&self) -> Option<&StatSnapshot> {
-        self.stats_snapshot.as_ref()
-    }
-
-    pub const fn parallel_execution_summary(&self) -> Option<&WorkloadParallelExecutionSummary> {
-        self.parallel_execution_summary.as_ref()
-    }
-
-    pub const fn host_action_summary(&self) -> Option<&WorkloadHostActionSummary> {
-        self.host_action_summary.as_ref()
-    }
-
-    pub fn checkpoint_labels(&self) -> &[String] {
-        &self.checkpoint_labels
-    }
-
-    pub fn restored_checkpoint_labels(&self) -> &[String] {
-        &self.restored_checkpoint_labels
-    }
-
-    pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
-        &self.execution_mode_switches
-    }
-
-    pub fn verify_manifest(&self, manifest: &WorkloadManifest) -> Result<(), WorkloadError> {
-        let expected = manifest.identity();
-        if self.manifest_identity != expected {
-            return Err(WorkloadError::ManifestIdentityMismatch {
-                expected,
-                actual: self.manifest_identity.clone(),
-            });
-        }
-
-        self.verify_stats_timing()
-    }
-
-    fn verify_stats_timing(&self) -> Result<(), WorkloadError> {
-        let Some(snapshot) = &self.stats_snapshot else {
-            return Ok(());
-        };
-
-        if snapshot.tick() <= self.final_tick {
-            return Ok(());
-        }
-
-        Err(WorkloadError::StatsAfterFinalTick {
-            stats_tick: snapshot.tick(),
-            final_tick: self.final_tick,
-        })
     }
 }

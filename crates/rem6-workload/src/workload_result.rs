@@ -1,0 +1,158 @@
+use rem6_kernel::Tick;
+use rem6_stats::StatSnapshot;
+
+use crate::{
+    WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadHostActionSummary,
+    WorkloadManifest, WorkloadManifestIdentity, WorkloadParallelExecutionSummary,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadResult {
+    manifest_identity: WorkloadManifestIdentity,
+    final_tick: Tick,
+    stop_reason: Option<String>,
+    stats_snapshot: Option<StatSnapshot>,
+    parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
+    host_action_summary: Option<WorkloadHostActionSummary>,
+    checkpoint_labels: Vec<String>,
+    restored_checkpoint_labels: Vec<String>,
+    execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
+}
+
+impl WorkloadResult {
+    pub const fn new(manifest_identity: WorkloadManifestIdentity, final_tick: Tick) -> Self {
+        Self {
+            manifest_identity,
+            final_tick,
+            stop_reason: None,
+            stats_snapshot: None,
+            parallel_execution_summary: None,
+            host_action_summary: None,
+            checkpoint_labels: Vec::new(),
+            restored_checkpoint_labels: Vec::new(),
+            execution_mode_switches: Vec::new(),
+        }
+    }
+
+    pub fn with_stop_reason(mut self, reason: impl Into<String>) -> Self {
+        self.stop_reason = Some(reason.into());
+        self
+    }
+
+    pub fn with_stats_snapshot(mut self, snapshot: StatSnapshot) -> Self {
+        self.stats_snapshot = Some(snapshot);
+        self
+    }
+
+    pub fn with_parallel_execution_summary(
+        mut self,
+        summary: WorkloadParallelExecutionSummary,
+    ) -> Self {
+        self.parallel_execution_summary = Some(summary);
+        self
+    }
+
+    pub fn with_host_action_summary(mut self, summary: WorkloadHostActionSummary) -> Self {
+        self.host_action_summary = Some(summary);
+        self
+    }
+
+    pub fn with_checkpoint_label(mut self, label: impl Into<String>) -> Self {
+        self.checkpoint_labels.push(label.into());
+        self
+    }
+
+    pub fn with_restored_checkpoint_label(mut self, label: impl Into<String>) -> Self {
+        self.restored_checkpoint_labels.push(label.into());
+        self
+    }
+
+    pub fn with_execution_mode_switch(
+        mut self,
+        tick: Tick,
+        target: impl Into<String>,
+        mode: WorkloadExecutionMode,
+    ) -> Self {
+        self.execution_mode_switches
+            .push(WorkloadExecutionModeSwitch::new(tick, target, mode));
+        self
+    }
+
+    pub fn with_execution_mode_switch_stats_scope(
+        mut self,
+        tick: Tick,
+        target: impl Into<String>,
+        mode: WorkloadExecutionMode,
+        stats_epoch: u64,
+        stats_reset_tick: Tick,
+    ) -> Self {
+        self.execution_mode_switches.push(
+            WorkloadExecutionModeSwitch::new(tick, target, mode)
+                .with_stats_scope(stats_epoch, stats_reset_tick),
+        );
+        self
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+
+    pub const fn final_tick(&self) -> Tick {
+        self.final_tick
+    }
+
+    pub fn stop_reason(&self) -> Option<&str> {
+        self.stop_reason.as_deref()
+    }
+
+    pub const fn stats_snapshot(&self) -> Option<&StatSnapshot> {
+        self.stats_snapshot.as_ref()
+    }
+
+    pub const fn parallel_execution_summary(&self) -> Option<&WorkloadParallelExecutionSummary> {
+        self.parallel_execution_summary.as_ref()
+    }
+
+    pub const fn host_action_summary(&self) -> Option<&WorkloadHostActionSummary> {
+        self.host_action_summary.as_ref()
+    }
+
+    pub fn checkpoint_labels(&self) -> &[String] {
+        &self.checkpoint_labels
+    }
+
+    pub fn restored_checkpoint_labels(&self) -> &[String] {
+        &self.restored_checkpoint_labels
+    }
+
+    pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
+        &self.execution_mode_switches
+    }
+
+    pub fn verify_manifest(&self, manifest: &WorkloadManifest) -> Result<(), WorkloadError> {
+        let expected = manifest.identity();
+        if self.manifest_identity != expected {
+            return Err(WorkloadError::ManifestIdentityMismatch {
+                expected,
+                actual: self.manifest_identity.clone(),
+            });
+        }
+
+        self.verify_stats_timing()
+    }
+
+    pub(crate) fn verify_stats_timing(&self) -> Result<(), WorkloadError> {
+        let Some(snapshot) = &self.stats_snapshot else {
+            return Ok(());
+        };
+
+        if snapshot.tick() <= self.final_tick {
+            return Ok(());
+        }
+
+        Err(WorkloadError::StatsAfterFinalTick {
+            stats_tick: snapshot.tick(),
+            final_tick: self.final_tick,
+        })
+    }
+}

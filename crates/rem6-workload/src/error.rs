@@ -406,6 +406,24 @@ pub enum WorkloadError {
         minimum_total_workers: usize,
         actual_total_workers: usize,
     },
+    ZeroExpectedParallelSchedulerProgress {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelSchedulerProgress {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    MissingParallelSchedulerProgressSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_epoch_count: usize,
+        minimum_dispatch_count: usize,
+    },
+    ExpectedParallelSchedulerProgressBelowMinimum {
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_epoch_count: usize,
+        actual_epoch_count: usize,
+        minimum_dispatch_count: usize,
+        actual_dispatch_count: usize,
+    },
     InvalidExpectedParallelBatchWorkerCount {
         scope: WorkloadParallelRemoteFlowScope,
         minimum_worker_count: usize,
@@ -1137,6 +1155,36 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} worker activity to reach at least {minimum_total_workers} total workers, got {actual_total_workers}",
+                scope.as_str()
+            ),
+            Self::ZeroExpectedParallelSchedulerProgress { scope } => write!(
+                formatter,
+                "expected {} scheduler progress must require a positive epoch or dispatch count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelSchedulerProgress { scope } => write!(
+                formatter,
+                "expected {} scheduler progress is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelSchedulerProgressSummary {
+                scope,
+                minimum_epoch_count,
+                minimum_dispatch_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} scheduler progress with at least {minimum_epoch_count} epochs and {minimum_dispatch_count} dispatches",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelSchedulerProgressBelowMinimum {
+                scope,
+                minimum_epoch_count,
+                actual_epoch_count,
+                minimum_dispatch_count,
+                actual_dispatch_count,
+            } => write!(
+                formatter,
+                "expected {} scheduler progress to reach at least {minimum_epoch_count} epochs and {minimum_dispatch_count} dispatches, got {actual_epoch_count} epochs and {actual_dispatch_count} dispatches",
                 scope.as_str()
             ),
             Self::InvalidExpectedParallelBatchWorkerCount {

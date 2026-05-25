@@ -392,6 +392,66 @@ impl WorkloadExpectedParallelWorkerActivity {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelSchedulerProgress {
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_epoch_count: usize,
+    minimum_dispatch_count: usize,
+}
+
+impl WorkloadExpectedParallelSchedulerProgress {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        minimum_epoch_count: usize,
+        minimum_dispatch_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_epoch_count == 0 && minimum_dispatch_count == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelSchedulerProgress { scope });
+        }
+        Ok(Self {
+            scope,
+            minimum_epoch_count,
+            minimum_dispatch_count,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn minimum_epoch_count(self) -> usize {
+        self.minimum_epoch_count
+    }
+
+    pub const fn minimum_dispatch_count(self) -> usize {
+        self.minimum_dispatch_count
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) const fn actual_counts(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> (usize, usize) {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => (
+                summary.scheduler_epoch_count(),
+                summary.scheduler_dispatch_count(),
+            ),
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => (
+                summary.data_cache_parallel_scheduler_epoch_count(),
+                summary.data_cache_parallel_scheduler_dispatch_count(),
+            ),
+            WorkloadParallelRemoteFlowScope::FullSystem => (
+                summary.full_system_parallel_scheduler_epoch_count(),
+                summary.full_system_parallel_scheduler_dispatch_count(),
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchActivity {
     scope: WorkloadParallelRemoteFlowScope,
     minimum_worker_count: usize,

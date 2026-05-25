@@ -29,9 +29,9 @@ isolated bugs:
   parallel timing simulation as an extension to gem5, with explicit
   synchronization and, for timing mode, accepted timing deviation. rem6
   therefore treats partition ownership, lookahead, deterministic merge order,
-  per-partition snapshots, verifiable multi-worker batch activity, exact
-  same-batch partition-set activity, and sustained same-batch streak activity
-  as core kernel contracts.
+  per-partition snapshots, scheduler epoch and dispatch progress, verifiable
+  multi-worker batch activity, exact same-batch partition-set activity, and
+  sustained same-batch streak activity as core kernel contracts.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -58,15 +58,16 @@ isolated bugs:
   cluster, coherence, full-system run, and workload-result summaries preserve
   those flow records. Workload manifests and replay plans can declare exact
   expected remote-flow counts, exact remote-flow first/last tick windows,
-  minimum max-worker use, minimum total-worker activity, minimum multi-worker
-  batch counts, exact partition-set batch counts, minimum same-partition-set
-  consecutive batch streaks, minimum active partition counts, per-partition
-  activity minima, and clean parallel diagnostic contracts by scheduler or
-  resource scope, so cross-partition communication volume, timing drift, real
-  parallel occupancy, sustained worker activity, sustained multi-worker batch
-  execution, exact same-batch partition co-execution, sustained same-batch
-  co-execution, per-partition participation, and wait-for/deadlock cleanliness
-  are observable and verifiable without replaying callbacks.
+  minimum max-worker use, minimum total-worker activity, minimum scheduler epoch
+  and dispatch progress, minimum multi-worker batch counts, exact partition-set
+  batch counts, minimum same-partition-set consecutive batch streaks, minimum
+  active partition counts, per-partition activity minima, and clean parallel
+  diagnostic contracts by scheduler or resource scope, so cross-partition
+  communication volume, timing drift, scheduler progress, real parallel
+  occupancy, sustained worker activity, sustained multi-worker batch execution,
+  exact same-batch partition co-execution, sustained same-batch co-execution,
+  per-partition participation, and wait-for/deadlock cleanliness are observable
+  and verifiable without replaying callbacks.
 - Observability and statistics need stronger contracts. A gem5 issue about
   stats reset explicitly calls out missing reset tests and user confusion from
   inconsistent stats. rem6 therefore treats statistics, activity, wait-for
@@ -150,7 +151,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
 | `src/kern` | 18 | `rem6-system`, `rem6-platform`, workload resources | partial | RISC-V Linux boot handoff can install initrd bytes, emit matching `/chosen` DTB metadata, place generated or resolved-resource DTBs in guest memory, and set A1 through typed system APIs. Broader Linux symbols, panic/oops hooks, guest ABI helpers, and other ISA kernels remain open. |
 | `src/mem` | 682 | `rem6-memory`, `rem6-transport`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-dram`, `rem6-fabric`, protocol crates | partial | rem6 already splits protocol state, topology, NoC, DRAM, replacement state, MSHR resources, prefetch queues, stores, directory state, and coherence harnesses into typed crates. CHI-like line states, a single-line cache controller, a multi-line cache bank, an initial directory decision model, serial plus partitioned multi-cache coherence harnesses, topology-built CHI cache-directory and DRAM routes, CHI recorded run-resource summaries, workload-replay CHI data-cache attribution, direct topology CHI data-cache attach, direct topology store-backed and DRAM-backed CPU fetch/data line-layout derivation from addressed memory regions, and MSHR-backed cache bank QoS metadata, ready arbitration, and typed downstream QoS export exist; broader CHI transactions, prefetcher breadth, cache/DRAM QoS policy breadth, and Ruby-network breadth remain open. |
-| `src/python` | 253 | `rem6-workload`, `rem6-platform`, future front ends | partial | Keep gem5's ease of composition while replacing Python object wiring with checked manifests and typed builders. Workload manifests now record typed Linux boot handoff intent, including DTB address, bootargs, device-tree resource identity, initrd address range, and initrd resource identity. RISC-V core fetch and data routes must originate from the declared core partition and source endpoint before replay can build a cluster. RISC-V workload replay derives each core's fetch line layout from the memory target containing the current fetch PC instead of assuming the first target or entry target, and derives replay-injected data request line layouts from the memory target containing each data access address. RISC-V data-cache backing routes must be declared explicitly and originate from the data-cache directory partition and endpoint before replay can attach an external-memory backed cache. GPU and accelerator command routes must target the declared device partition and control endpoint, and GPU and accelerator DMA routes must originate from the declared device partition and DMA endpoint. Resolved resource payloads validate required resource id, digest, device-tree kind, initrd kind, initrd byte length, and manifest identity before workload replay installs DTB and initrd bytes into guest memory. Workload-result parallel summaries preserve CPU scheduler, data-cache scheduler, and merged full-system remote-flow records as typed partition pairs with counts and first/last ticks plus total worker counts, batch worker-count histograms, exact batch partition-set histograms, maximum consecutive batch partition-set streaks, and per-partition worker, dispatch, remote-send, and remote-receive activity; workload manifests include exact expected scheduler, data-cache scheduler, or full-system remote-flow counts and first/last tick windows plus minimum max-worker use, total-worker activity, multi-worker batch activity, exact batch partition-set activity, sustained same-batch partition-set streak activity, active partition counts, per-partition activity minima, and clean parallel diagnostic expectations in manifest identity, and replay plans validate them as part of result verification. Boot resources are reproducible data rather than Python workflow side effects. |
+| `src/python` | 253 | `rem6-workload`, `rem6-platform`, future front ends | partial | Keep gem5's ease of composition while replacing Python object wiring with checked manifests and typed builders. Workload manifests now record typed Linux boot handoff intent, including DTB address, bootargs, device-tree resource identity, initrd address range, and initrd resource identity. RISC-V core fetch and data routes must originate from the declared core partition and source endpoint before replay can build a cluster. RISC-V workload replay derives each core's fetch line layout from the memory target containing the current fetch PC instead of assuming the first target or entry target, and derives replay-injected data request line layouts from the memory target containing each data access address. RISC-V data-cache backing routes must be declared explicitly and originate from the data-cache directory partition and endpoint before replay can attach an external-memory backed cache. GPU and accelerator command routes must target the declared device partition and control endpoint, and GPU and accelerator DMA routes must originate from the declared device partition and DMA endpoint. Resolved resource payloads validate required resource id, digest, device-tree kind, initrd kind, initrd byte length, and manifest identity before workload replay installs DTB and initrd bytes into guest memory. Workload-result parallel summaries preserve CPU scheduler, data-cache scheduler, and merged full-system remote-flow records as typed partition pairs with counts and first/last ticks plus scheduler epoch and dispatch counts, total worker counts, batch worker-count histograms, exact batch partition-set histograms, maximum consecutive batch partition-set streaks, and per-partition worker, dispatch, remote-send, and remote-receive activity; workload manifests include exact expected scheduler, data-cache scheduler, or full-system remote-flow counts and first/last tick windows plus minimum max-worker use, scheduler epoch and dispatch progress, total-worker activity, multi-worker batch activity, exact batch partition-set activity, sustained same-batch partition-set streak activity, active partition counts, per-partition activity minima, and clean parallel diagnostic expectations in manifest identity, and replay plans validate them as part of result verification. Boot resources are reproducible data rather than Python workflow side effects. |
 | `src/sim` | 176 | `rem6-kernel`, `rem6-system`, `rem6-checkpoint`, `rem6-stats`, `rem6-power` | partial | Event queues, ticks, objects, exit events, power hooks, probes, checkpoints, and statistics need typed partitioned equivalents. Core scheduling, per-partition parallel activity summaries, typed probe events, typed power domains, and checkpoints exist. |
 | `src/systemc` | 3911 | future `rem6-systemc` or adapter crate | external-adapter | Preserve interoperability only through an adapter boundary. Core rem6 timing must not depend on SystemC. |
 | `src/sst` | 6 | future SST adapter crate | external-adapter | Preserve co-simulation value behind a typed boundary that cannot bypass rem6 partition ownership. |
@@ -227,7 +228,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, worker-local remote outboxes, ordered remote-send records, source-target remote-flow records carried through RISC-V cluster, full-system, and workload-result summaries, batch worker-count histograms, exact batch partition-set histograms, and maximum consecutive partition-set streaks carried into workload summaries, manifest-owned and result-verifiable expected remote-flow counts and first/last tick windows, minimum max-worker contracts, total-worker activity contracts, multi-worker batch activity contracts, exact batch partition-set contracts, sustained same-batch streak contracts, active-partition contracts, per-partition activity contracts, clean diagnostic contracts, source and target partition counts in recorded parallel summaries, and typed parallel-worker failure reporting that preserves remaining partition events, keeps executed-time visibility, commits successful callbacks' remote messages, and rolls back local and remote events scheduled by the panicked callback exist. |
+| event queue and tick logic in `src/sim` | `rem6-kernel` | covered | Partitioned scheduling, conservative epochs, deterministic order, lookahead, scheduler snapshots, worker-local remote outboxes, ordered remote-send records, source-target remote-flow records carried through RISC-V cluster, full-system, and workload-result summaries, scheduler epoch and dispatch counts, batch worker-count histograms, exact batch partition-set histograms, and maximum consecutive partition-set streaks carried into workload summaries, manifest-owned and result-verifiable expected remote-flow counts and first/last tick windows, minimum scheduler progress contracts, minimum max-worker contracts, total-worker activity contracts, multi-worker batch activity contracts, exact batch partition-set contracts, sustained same-batch streak contracts, active-partition contracts, per-partition activity contracts, clean diagnostic contracts, source and target partition counts in recorded parallel summaries, and typed parallel-worker failure reporting that preserves remaining partition events, keeps executed-time visibility, commits successful callbacks' remote messages, and rolls back local and remote events scheduled by the panicked callback exist. |
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. More devices and pending-state rejection remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed probe registries, probe listener state, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, and probe event snapshots exist. Broader power-controller and external-analysis adapter breadth remains open. |
@@ -378,11 +379,12 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   history state. Coherence, system, DMA, and
   workload-result summary tests cover direct DRAM QoS diagnostics over those
   typed activity profiles, plus workload-level CPU scheduler, data-cache
-  scheduler, merged full-system remote-flow records, total-worker counts,
-  batch worker-count histograms, exact batch partition-set histograms, maximum
-  consecutive partition-set streaks, per-partition activity summaries,
-  replay-plan validation of exact expected remote-flow counts and first/last
-  tick windows, minimum max-worker use, minimum total-worker activity,
+  scheduler, merged full-system remote-flow records, scheduler epoch and
+  dispatch counts, total-worker counts, batch worker-count histograms, exact
+  batch partition-set histograms, maximum consecutive partition-set streaks,
+  per-partition activity summaries, replay-plan validation of exact expected
+  remote-flow counts and first/last tick windows, minimum scheduler epoch and
+  dispatch progress, minimum max-worker use, minimum total-worker activity,
   minimum multi-worker batch activity, exact batch partition-set activity,
   sustained same-batch partition-set streak activity, minimum active partition
   counts, per-partition activity minima, clean parallel diagnostic expectations,
@@ -476,10 +478,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   partition and endpoint validation, explicit RISC-V data-cache backing-route
   validation and identity hashing, GPU and accelerator command plus DMA endpoint
   validation, manifest-owned parallel remote-flow count, remote-flow timing,
-  max-worker use, total-worker activity, active-partition, per-partition
-  activity, and clean diagnostic verification contracts, result metadata,
-  execution mode switches, host action summaries, checkpoint restore labels,
-  and statistics snapshots.
+  scheduler progress, max-worker use, total-worker activity, active-partition,
+  per-partition activity, and clean diagnostic verification contracts, result
+  metadata, execution mode switches, host action summaries, checkpoint restore
+  labels, and statistics snapshots.
 
 ## Open Alignment Work
 
