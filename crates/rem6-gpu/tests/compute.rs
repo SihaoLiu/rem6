@@ -9,7 +9,8 @@ use rem6_kernel::{
     WaitForNode,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, LineMemoryStore, MemoryRequest, MemoryRequestId,
+    AccessSize, Address, AgentId, CacheLineLayout, LineMemoryStore, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryRequest, MemoryRequestId,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportEndpointId,
@@ -519,4 +520,77 @@ fn gpu_dma_copy_reports_recorded_parallel_activity() {
             8,
         )]
     );
+}
+
+#[test]
+fn gpu_dma_write_preserves_read_request_ordering() {
+    let gpu_partition = PartitionId::new(0);
+    let memory_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("gpu0.dma"),
+                gpu_partition,
+                endpoint("memory0.port"),
+                memory_partition,
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(8), gpu_partition, 1, 1).unwrap());
+    let ordering = MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        Some(MemoryBarrierSet::new(false, true)),
+    );
+    let read_request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(8), 11),
+        Address::new(0x1008),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(ordering);
+    let copy = GpuDmaCopy::new(
+        GpuDmaId::new(31),
+        route,
+        read_request,
+        route,
+        MemoryRequestId::new(AgentId::new(8), 12),
+        Address::new(0x2004),
+    )
+    .unwrap();
+    gpu.restore(&GpuDeviceSnapshot::new(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![GpuPendingDmaWrite::new(
+            copy,
+            vec![0x10, 0x20, 0x30, 0x40],
+            4,
+        )],
+        Vec::new(),
+    ));
+    let observed = Arc::new(Mutex::new(None));
+    let write_observed = Arc::clone(&observed);
+
+    assert!(gpu
+        .issue_next_dma_write(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            move |delivery: RequestDelivery, _context| {
+                *write_observed.lock().unwrap() = Some(delivery.request().ordering());
+                TargetOutcome::NoResponse
+            },
+        )
+        .unwrap()
+        .is_some());
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(*observed.lock().unwrap(), Some(ordering));
 }

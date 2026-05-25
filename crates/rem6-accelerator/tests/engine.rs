@@ -9,8 +9,8 @@ use rem6_kernel::{
     WaitForNode,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryRequest,
-    MemoryRequestId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryRequest, MemoryRequestId,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, RequestDelivery,
@@ -462,6 +462,81 @@ fn accelerator_dma_copy_uses_parallel_memory_transport() {
             ),
         ],
     );
+}
+
+#[test]
+fn accelerator_dma_write_preserves_read_request_ordering() {
+    let accelerator_partition = PartitionId::new(0);
+    let memory_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("accelerator0.dma"),
+                accelerator_partition,
+                endpoint("memory0.port"),
+                memory_partition,
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let engine = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(9), accelerator_partition, 1)
+            .unwrap(),
+    );
+    let ordering = MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        Some(MemoryBarrierSet::new(false, true)),
+    );
+    let read_request = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(9), 11),
+        Address::new(0x1008),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(ordering);
+    let copy = AcceleratorDmaCopy::new(
+        AcceleratorCommandId::new(31),
+        route,
+        read_request,
+        route,
+        MemoryRequestId::new(AgentId::new(9), 12),
+        Address::new(0x2004),
+    )
+    .unwrap();
+    engine.restore(&AcceleratorEngineSnapshot::new(
+        vec![0],
+        Vec::new(),
+        Vec::new(),
+        vec![AcceleratorPendingDmaWrite::new(
+            copy,
+            vec![0x10, 0x20, 0x30, 0x40],
+            4,
+        )],
+        Vec::new(),
+    ));
+    let observed = Arc::new(Mutex::new(None));
+    let write_observed = Arc::clone(&observed);
+
+    assert!(engine
+        .issue_next_dma_write(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            move |delivery: RequestDelivery, _context| {
+                *write_observed.lock().unwrap() = Some(delivery.request().ordering());
+                TargetOutcome::NoResponse
+            },
+        )
+        .unwrap()
+        .is_some());
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(*observed.lock().unwrap(), Some(ordering));
 }
 
 #[test]

@@ -422,6 +422,7 @@ impl AcceleratorDmaCopy {
             ByteMask::full(self.read_request.size()).map_err(AcceleratorError::Memory)?,
             self.read_request.line_layout(),
         )
+        .map(|request| request.with_ordering(self.read_request.ordering()))
         .map_err(AcceleratorError::Memory)
     }
 }
