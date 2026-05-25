@@ -204,6 +204,48 @@ fn unexpected_parallel_remote_flow(
     })
 }
 
+pub(crate) fn verify_expected_parallel_remote_endpoints(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_endpoints = plan.expected_parallel_remote_endpoints();
+    if expected_endpoints.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = &expected_endpoints[0];
+        return Err(WorkloadError::MissingParallelRemoteEndpointSummary {
+            scope: expected.scope(),
+            expected_sources: expected.source_partition_indexes(),
+            expected_targets: expected.target_partition_indexes(),
+        });
+    };
+
+    for expected in expected_endpoints {
+        let actual_sources = expected.actual_source_partitions(summary);
+        let actual_targets = expected.actual_target_partitions(summary);
+        if actual_sources != expected.source_partitions()
+            || actual_targets != expected.target_partitions()
+        {
+            return Err(WorkloadError::ExpectedParallelRemoteEndpointsMismatch {
+                scope: expected.scope(),
+                expected_sources: expected.source_partition_indexes(),
+                actual_sources: partition_indexes(&actual_sources),
+                expected_targets: expected.target_partition_indexes(),
+                actual_targets: partition_indexes(&actual_targets),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn partition_indexes(partitions: &[rem6_kernel::PartitionId]) -> Vec<u32> {
+    partitions
+        .iter()
+        .map(|partition| partition.index())
+        .collect()
+}
+
 pub(crate) fn verify_expected_parallel_remote_flow_timings(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

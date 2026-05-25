@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
     PartitionFrontier, PartitionId,
@@ -522,6 +524,109 @@ impl WorkloadExpectedParallelRemoteFlow {
             && flow.target() == self.target
             && flow.send_count() == self.send_count
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelRemoteEndpoints {
+    scope: WorkloadParallelRemoteFlowScope,
+    source_partitions: Vec<PartitionId>,
+    target_partitions: Vec<PartitionId>,
+}
+
+impl WorkloadExpectedParallelRemoteEndpoints {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        source_partitions: impl IntoIterator<Item = PartitionId>,
+        target_partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> Result<Self, WorkloadError> {
+        let source_partitions = normalize_parallel_endpoint_partitions(source_partitions);
+        if source_partitions.is_empty() {
+            return Err(WorkloadError::EmptyExpectedParallelRemoteEndpointSources { scope });
+        }
+        let target_partitions = normalize_parallel_endpoint_partitions(target_partitions);
+        if target_partitions.is_empty() {
+            return Err(WorkloadError::EmptyExpectedParallelRemoteEndpointTargets { scope });
+        }
+        Ok(Self {
+            scope,
+            source_partitions,
+            target_partitions,
+        })
+    }
+
+    pub const fn scope(&self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub fn source_partitions(&self) -> &[PartitionId] {
+        &self.source_partitions
+    }
+
+    pub fn target_partitions(&self) -> &[PartitionId] {
+        &self.target_partitions
+    }
+
+    pub(crate) fn source_partition_indexes(&self) -> Vec<u32> {
+        self.source_partitions
+            .iter()
+            .map(|partition| partition.index())
+            .collect()
+    }
+
+    pub(crate) fn target_partition_indexes(&self) -> Vec<u32> {
+        self.target_partitions
+            .iter()
+            .map(|partition| partition.index())
+            .collect()
+    }
+
+    pub(crate) const fn sort_key(&self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) fn actual_source_partitions(
+        &self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Vec<PartitionId> {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.parallel_scheduler_remote_source_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_remote_source_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_remote_source_partitions()
+            }
+        }
+    }
+
+    pub(crate) fn actual_target_partitions(
+        &self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Vec<PartitionId> {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => {
+                summary.parallel_scheduler_remote_target_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_remote_target_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::FullSystem => {
+                summary.full_system_parallel_scheduler_remote_target_partitions()
+            }
+        }
+    }
+}
+
+fn normalize_parallel_endpoint_partitions(
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> Vec<PartitionId> {
+    partitions
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

@@ -118,6 +118,56 @@ pub(crate) fn format_remote_traffic_error(
     }
 }
 
+pub(crate) fn format_remote_endpoint_error(
+    error: &WorkloadError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    match error {
+        WorkloadError::EmptyExpectedParallelRemoteEndpointSources { scope } => write!(
+            formatter,
+            "expected {} remote endpoints must declare at least one source partition",
+            scope.as_str()
+        ),
+        WorkloadError::EmptyExpectedParallelRemoteEndpointTargets { scope } => write!(
+            formatter,
+            "expected {} remote endpoints must declare at least one target partition",
+            scope.as_str()
+        ),
+        WorkloadError::DuplicateExpectedParallelRemoteEndpoints { scope } => write!(
+            formatter,
+            "expected {} remote endpoints are already declared",
+            scope.as_str()
+        ),
+        WorkloadError::MissingParallelRemoteEndpointSummary {
+            scope,
+            expected_sources,
+            expected_targets,
+        } => write!(
+            formatter,
+            "missing parallel summary for expected {} remote endpoints from {} to {}",
+            scope.as_str(),
+            format_partition_indexes(expected_sources),
+            format_partition_indexes(expected_targets)
+        ),
+        WorkloadError::ExpectedParallelRemoteEndpointsMismatch {
+            scope,
+            expected_sources,
+            actual_sources,
+            expected_targets,
+            actual_targets,
+        } => write!(
+            formatter,
+            "expected {} remote endpoints from {} to {}, got {} to {}",
+            scope.as_str(),
+            format_partition_indexes(expected_sources),
+            format_partition_indexes(expected_targets),
+            format_partition_indexes(actual_sources),
+            format_partition_indexes(actual_targets)
+        ),
+        _ => unreachable!("unsupported remote endpoint error"),
+    }
+}
+
 impl Error for WorkloadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {

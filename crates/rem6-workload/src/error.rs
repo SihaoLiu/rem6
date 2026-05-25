@@ -6,7 +6,9 @@ use rem6_kernel::Tick;
 use rem6_memory::MemoryError;
 
 use crate::{
-    error_support::{format_partition_indexes, format_remote_traffic_error},
+    error_support::{
+        format_partition_indexes, format_remote_endpoint_error, format_remote_traffic_error,
+    },
     WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadManifestIdentity,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope, WorkloadResourceId,
@@ -332,6 +334,27 @@ pub enum WorkloadError {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
         target: u32,
+    },
+    EmptyExpectedParallelRemoteEndpointSources {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    EmptyExpectedParallelRemoteEndpointTargets {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    DuplicateExpectedParallelRemoteEndpoints {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
+    MissingParallelRemoteEndpointSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        expected_sources: Vec<u32>,
+        expected_targets: Vec<u32>,
+    },
+    ExpectedParallelRemoteEndpointsMismatch {
+        scope: WorkloadParallelRemoteFlowScope,
+        expected_sources: Vec<u32>,
+        actual_sources: Vec<u32>,
+        expected_targets: Vec<u32>,
+        actual_targets: Vec<u32>,
     },
     DuplicateExpectedParallelRemoteSend {
         scope: WorkloadParallelRemoteFlowScope,
@@ -1179,6 +1202,13 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedParallelRemoteSendMissing { .. }
             | Self::UnexpectedParallelRemoteSend { .. } => {
                 format_remote_traffic_error(self, formatter)
+            }
+            Self::EmptyExpectedParallelRemoteEndpointSources { .. }
+            | Self::EmptyExpectedParallelRemoteEndpointTargets { .. }
+            | Self::DuplicateExpectedParallelRemoteEndpoints { .. }
+            | Self::MissingParallelRemoteEndpointSummary { .. }
+            | Self::ExpectedParallelRemoteEndpointsMismatch { .. } => {
+                format_remote_endpoint_error(self, formatter)
             }
             Self::InvalidExpectedParallelRemoteFlowTimingWindow {
                 scope,

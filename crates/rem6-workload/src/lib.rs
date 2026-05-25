@@ -11,6 +11,7 @@ mod heterogeneous;
 mod host_event;
 mod identity;
 mod manifest_parallel_frontier;
+mod manifest_remote_endpoints;
 mod parallel_batch;
 mod parallel_expectation;
 mod qos;
@@ -46,12 +47,13 @@ pub use parallel_expectation::{
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -265,6 +267,7 @@ pub struct WorkloadManifest {
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -440,6 +443,7 @@ pub struct WorkloadManifestBuilder {
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -470,6 +474,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_protocol_run_counts: Vec::new(),
             expected_data_cache_run_attribution: None,
             expected_parallel_remote_flows: Vec::new(),
+            expected_parallel_remote_endpoints: Vec::new(),
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
@@ -906,6 +911,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
+            expected_parallel_remote_endpoints: &self.expected_parallel_remote_endpoints,
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
@@ -935,6 +941,7 @@ impl WorkloadManifestBuilder {
             expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
+            expected_parallel_remote_endpoints: self.expected_parallel_remote_endpoints,
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
@@ -971,6 +978,7 @@ pub struct WorkloadReplayPlan {
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
@@ -1010,6 +1018,9 @@ impl WorkloadReplayPlan {
                 .expected_data_cache_run_attribution()
                 .copied(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
+            expected_parallel_remote_endpoints: manifest
+                .expected_parallel_remote_endpoints()
+                .to_vec(),
             expected_parallel_remote_sends: manifest.expected_parallel_remote_sends().to_vec(),
             expected_parallel_remote_flow_timings: manifest
                 .expected_parallel_remote_flow_timings()
@@ -1501,6 +1512,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
         replay_verify::verify_expected_parallel_remote_sends(self, result)?;
         replay_verify::verify_expected_parallel_remote_flow_timings(self, result)?;
+        replay_verify::verify_expected_parallel_remote_endpoints(self, result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_worker_activity(result)?;
         replay_verify::verify_expected_data_cache_protocol_run_counts(self, result)?;
