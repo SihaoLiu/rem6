@@ -33,8 +33,9 @@ pub use host_event::{
 use identity::{manifest_identity, ManifestIdentityInput};
 pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelWorkerUse,
-    WorkloadParallelDiagnosticScope, WorkloadParallelRemoteFlowScope,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelWorkerUse, WorkloadParallelDiagnosticScope,
+    WorkloadParallelRemoteFlowScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
@@ -245,6 +246,7 @@ pub struct WorkloadManifest {
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -311,6 +313,12 @@ impl WorkloadManifest {
         &self.expected_parallel_remote_flows
     }
 
+    pub fn expected_parallel_remote_flow_timings(
+        &self,
+    ) -> &[WorkloadExpectedParallelRemoteFlowTiming] {
+        &self.expected_parallel_remote_flow_timings
+    }
+
     pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
         &self.expected_parallel_worker_use
     }
@@ -343,6 +351,7 @@ pub struct WorkloadManifestBuilder {
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -360,6 +369,7 @@ impl WorkloadManifestBuilder {
             host_events: Vec::new(),
             expected_clean_parallel_diagnostics: Vec::new(),
             expected_parallel_remote_flows: Vec::new(),
+            expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_partition_use: Vec::new(),
             checkpoint_lineage: None,
@@ -391,6 +401,27 @@ impl WorkloadManifestBuilder {
         self.expected_clean_parallel_diagnostics.push(expected);
         self.expected_clean_parallel_diagnostics
             .sort_by_key(|diagnostics| diagnostics.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_remote_flow_timing(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteFlowTiming,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_flow_timings
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlowTiming {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+            });
+        }
+        self.expected_parallel_remote_flow_timings.push(expected);
+        self.expected_parallel_remote_flow_timings
+            .sort_by_key(|timing| timing.sort_key());
         Ok(self)
     }
 
@@ -549,6 +580,7 @@ impl WorkloadManifestBuilder {
             host_events: &self.host_events,
             expected_clean_parallel_diagnostics: &self.expected_clean_parallel_diagnostics,
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
+            expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_partition_use: &self.expected_parallel_partition_use,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
@@ -564,6 +596,7 @@ impl WorkloadManifestBuilder {
             host_events: self.host_events,
             expected_clean_parallel_diagnostics: self.expected_clean_parallel_diagnostics,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
+            expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_partition_use: self.expected_parallel_partition_use,
             checkpoint_lineage: self.checkpoint_lineage,
@@ -586,6 +619,7 @@ pub struct WorkloadReplayPlan {
     planned_stop_reason: Option<String>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
+    expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_partition_use: Vec<WorkloadExpectedParallelPartitionUse>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -608,6 +642,9 @@ impl WorkloadReplayPlan {
                 .expected_clean_parallel_diagnostics()
                 .to_vec(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
+            expected_parallel_remote_flow_timings: manifest
+                .expected_parallel_remote_flow_timings()
+                .to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_partition_use: manifest.expected_parallel_partition_use().to_vec(),
             host_events,
@@ -703,6 +740,33 @@ impl WorkloadReplayPlan {
         Ok(self)
     }
 
+    pub fn add_expected_parallel_remote_flow_timing(
+        mut self,
+        expected: WorkloadExpectedParallelRemoteFlowTiming,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_remote_flow_timings
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedParallelRemoteFlowTiming {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+            });
+        }
+        self.expected_parallel_remote_flow_timings.push(expected);
+        self.expected_parallel_remote_flow_timings
+            .sort_by_key(|timing| timing.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_parallel_remote_flow_timings(
+        &self,
+    ) -> &[WorkloadExpectedParallelRemoteFlowTiming] {
+        &self.expected_parallel_remote_flow_timings
+    }
+
     pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
         &self.expected_parallel_worker_use
     }
@@ -774,6 +838,7 @@ impl WorkloadReplayPlan {
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         self.verify_expected_parallel_remote_flows(result)?;
+        self.verify_expected_parallel_remote_flow_timings(result)?;
         self.verify_expected_parallel_worker_use(result)?;
         self.verify_expected_parallel_partition_use(result)?;
         self.verify_expected_clean_parallel_diagnostics(result)?;
@@ -932,6 +997,50 @@ impl WorkloadReplayPlan {
                     target: expected.target().index(),
                     expected_send_count: expected.send_count(),
                     actual_send_count,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_expected_parallel_remote_flow_timings(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        if self.expected_parallel_remote_flow_timings.is_empty() {
+            return Ok(());
+        }
+        let Some(summary) = result.parallel_execution_summary() else {
+            let expected = self.expected_parallel_remote_flow_timings[0];
+            return Err(WorkloadError::MissingParallelRemoteFlowTimingSummary {
+                scope: expected.scope(),
+                source: expected.source().index(),
+                target: expected.target().index(),
+                expected_send_count: expected.send_count(),
+                expected_first_tick: expected.first_tick(),
+                expected_last_tick: expected.last_tick(),
+            });
+        };
+
+        for expected in &self.expected_parallel_remote_flow_timings {
+            let actual = expected.actual_record(summary);
+            let actual_send_count = actual.map(|record| record.send_count()).unwrap_or(0);
+            let actual_first_tick = actual.map(|record| record.first_tick());
+            let actual_last_tick = actual.map(|record| record.last_tick());
+            if actual_send_count != expected.send_count()
+                || actual_first_tick != Some(expected.first_tick())
+                || actual_last_tick != Some(expected.last_tick())
+            {
+                return Err(WorkloadError::ExpectedParallelRemoteFlowTimingMismatch {
+                    scope: expected.scope(),
+                    source: expected.source().index(),
+                    target: expected.target().index(),
+                    expected_send_count: expected.send_count(),
+                    actual_send_count,
+                    expected_first_tick: expected.first_tick(),
+                    actual_first_tick,
+                    expected_last_tick: expected.last_tick(),
+                    actual_last_tick,
                 });
             }
         }
@@ -1505,6 +1614,37 @@ pub enum WorkloadError {
         target: u32,
         expected_send_count: usize,
         actual_send_count: usize,
+    },
+    InvalidExpectedParallelRemoteFlowTimingWindow {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
+    DuplicateExpectedParallelRemoteFlowTiming {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
+    MissingParallelRemoteFlowTimingSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+        expected_first_tick: Tick,
+        expected_last_tick: Tick,
+    },
+    ExpectedParallelRemoteFlowTimingMismatch {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        expected_send_count: usize,
+        actual_send_count: usize,
+        expected_first_tick: Tick,
+        actual_first_tick: Option<Tick>,
+        expected_last_tick: Tick,
+        actual_last_tick: Option<Tick>,
     },
     ZeroExpectedParallelWorkerCount {
         scope: WorkloadParallelRemoteFlowScope,

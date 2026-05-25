@@ -506,6 +506,61 @@ impl fmt::Display for WorkloadError {
                 "expected {} remote flow {source}->{target} to have {expected_send_count} sends, got {actual_send_count}",
                 scope.as_str()
             ),
+            Self::InvalidExpectedParallelRemoteFlowTimingWindow {
+                scope,
+                source,
+                target,
+                first_tick,
+                last_tick,
+            } => write!(
+                formatter,
+                "expected {} remote flow timing {source}->{target} first tick {first_tick} is after last tick {last_tick}",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelRemoteFlowTiming {
+                scope,
+                source,
+                target,
+            } => write!(
+                formatter,
+                "expected {} remote flow timing {source}->{target} is already declared",
+                scope.as_str()
+            ),
+            Self::MissingParallelRemoteFlowTimingSummary {
+                scope,
+                source,
+                target,
+                expected_send_count,
+                expected_first_tick,
+                expected_last_tick,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected {} remote flow timing {source}->{target} with {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}",
+                scope.as_str()
+            ),
+            Self::ExpectedParallelRemoteFlowTimingMismatch {
+                scope,
+                source,
+                target,
+                expected_send_count,
+                actual_send_count,
+                expected_first_tick,
+                actual_first_tick,
+                expected_last_tick,
+                actual_last_tick,
+            } => {
+                let actual_first_tick = actual_first_tick
+                    .map(|tick| tick.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let actual_last_tick = actual_last_tick
+                    .map(|tick| tick.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                write!(
+                    formatter,
+                    "expected {} remote flow timing {source}->{target} to have {expected_send_count} sends from tick {expected_first_tick} to {expected_last_tick}, got {actual_send_count} sends from tick {actual_first_tick} to {actual_last_tick}",
+                    scope.as_str()
+                )
+            }
             Self::ZeroExpectedParallelWorkerCount { scope } => write!(
                 formatter,
                 "expected {} worker use must require a positive maximum worker count",

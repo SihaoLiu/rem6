@@ -3,9 +3,10 @@ use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopol
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelWorkerUse, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelWorkerUse, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelRemoteFlowScope, WorkloadResource,
+    WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -22,6 +23,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) expected_clean_parallel_diagnostics:
         &'a [WorkloadExpectedCleanParallelDiagnostics],
     pub(crate) expected_parallel_remote_flows: &'a [WorkloadExpectedParallelRemoteFlow],
+    pub(crate) expected_parallel_remote_flow_timings:
+        &'a [WorkloadExpectedParallelRemoteFlowTiming],
     pub(crate) expected_parallel_worker_use: &'a [WorkloadExpectedParallelWorkerUse],
     pub(crate) expected_parallel_partition_use: &'a [WorkloadExpectedParallelPartitionUse],
     pub(crate) checkpoint_lineage: Option<&'a CheckpointLineage>,
@@ -67,6 +70,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     for expected in input.expected_parallel_remote_flows {
         hash_expected_parallel_remote_flow(&mut hash, *expected);
     }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_remote_flow_timings.len() as u64,
+    );
+    for expected in input.expected_parallel_remote_flow_timings {
+        hash_expected_parallel_remote_flow_timing(&mut hash, *expected);
+    }
     hash_u64(&mut hash, input.expected_parallel_worker_use.len() as u64);
     for expected in input.expected_parallel_worker_use {
         hash_expected_parallel_worker_use(&mut hash, *expected);
@@ -97,6 +107,18 @@ fn hash_expected_parallel_remote_flow(
     hash_u64(hash, u64::from(expected.source().index()));
     hash_u64(hash, u64::from(expected.target().index()));
     hash_u64(hash, expected.send_count() as u64);
+}
+
+fn hash_expected_parallel_remote_flow_timing(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelRemoteFlowTiming,
+) {
+    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_u64(hash, u64::from(expected.source().index()));
+    hash_u64(hash, u64::from(expected.target().index()));
+    hash_u64(hash, expected.send_count() as u64);
+    hash_u64(hash, expected.first_tick());
+    hash_u64(hash, expected.last_tick());
 }
 
 fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {

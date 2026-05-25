@@ -1,4 +1,4 @@
-use rem6_kernel::PartitionId;
+use rem6_kernel::{ParallelRemoteFlowRecord, PartitionId};
 
 use crate::{WorkloadError, WorkloadParallelExecutionSummary};
 
@@ -172,6 +172,125 @@ impl WorkloadExpectedParallelRemoteFlow {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelRemoteFlowTiming {
+    scope: WorkloadParallelRemoteFlowScope,
+    source: PartitionId,
+    target: PartitionId,
+    send_count: usize,
+    first_tick: u64,
+    last_tick: u64,
+}
+
+impl WorkloadExpectedParallelRemoteFlowTiming {
+    pub fn new(
+        scope: WorkloadParallelRemoteFlowScope,
+        source: PartitionId,
+        target: PartitionId,
+        send_count: usize,
+        first_tick: u64,
+        last_tick: u64,
+    ) -> Result<Self, WorkloadError> {
+        if send_count == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelRemoteFlowCount {
+                scope,
+                source: source.index(),
+                target: target.index(),
+            });
+        }
+        if first_tick > last_tick {
+            return Err(
+                WorkloadError::InvalidExpectedParallelRemoteFlowTimingWindow {
+                    scope,
+                    source: source.index(),
+                    target: target.index(),
+                    first_tick,
+                    last_tick,
+                },
+            );
+        }
+        Ok(Self {
+            scope,
+            source,
+            target,
+            send_count,
+            first_tick,
+            last_tick,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+        self.scope
+    }
+
+    pub const fn source(self) -> PartitionId {
+        self.source
+    }
+
+    pub const fn target(self) -> PartitionId {
+        self.target
+    }
+
+    pub const fn send_count(self) -> usize {
+        self.send_count
+    }
+
+    pub const fn first_tick(self) -> u64 {
+        self.first_tick
+    }
+
+    pub const fn last_tick(self) -> u64 {
+        self.last_tick
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, u32, u32) {
+        (
+            self.scope.sort_rank(),
+            self.source.index(),
+            self.target.index(),
+        )
+    }
+
+    pub(crate) fn actual_record(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<ParallelRemoteFlowRecord> {
+        match self.scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => find_parallel_remote_flow(
+                summary.parallel_scheduler_remote_flows().iter().copied(),
+                self.source,
+                self.target,
+            ),
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => find_parallel_remote_flow(
+                summary
+                    .data_cache_parallel_scheduler_remote_flows()
+                    .iter()
+                    .copied(),
+                self.source,
+                self.target,
+            ),
+            WorkloadParallelRemoteFlowScope::FullSystem => find_parallel_remote_flow(
+                summary.full_system_parallel_scheduler_remote_flows(),
+                self.source,
+                self.target,
+            ),
+        }
+    }
+}
+
+fn find_parallel_remote_flow<I>(
+    flows: I,
+    source: PartitionId,
+    target: PartitionId,
+) -> Option<ParallelRemoteFlowRecord>
+where
+    I: IntoIterator<Item = ParallelRemoteFlowRecord>,
+{
+    flows
+        .into_iter()
+        .find(|flow| flow.source() == source && flow.target() == target)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
