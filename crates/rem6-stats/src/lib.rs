@@ -327,6 +327,104 @@ impl StatSample {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatDeltaSample {
+    id: StatId,
+    path: String,
+    unit: String,
+    previous_value: u64,
+    current_value: u64,
+}
+
+impl StatDeltaSample {
+    pub fn new(
+        id: StatId,
+        path: impl Into<String>,
+        unit: impl Into<String>,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
+        Self {
+            id,
+            path: path.into(),
+            unit: unit.into(),
+            previous_value,
+            current_value,
+        }
+    }
+
+    pub const fn id(&self) -> StatId {
+        self.id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn unit(&self) -> &str {
+        &self.unit
+    }
+
+    pub const fn previous_value(&self) -> u64 {
+        self.previous_value
+    }
+
+    pub const fn current_value(&self) -> u64 {
+        self.current_value
+    }
+
+    pub const fn delta_value(&self) -> u64 {
+        self.current_value - self.previous_value
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatSnapshotDelta {
+    previous_tick: Tick,
+    current_tick: Tick,
+    epoch: u64,
+    reset_tick: Tick,
+    samples: Vec<StatDeltaSample>,
+}
+
+impl StatSnapshotDelta {
+    pub const fn new(
+        previous_tick: Tick,
+        current_tick: Tick,
+        epoch: u64,
+        reset_tick: Tick,
+        samples: Vec<StatDeltaSample>,
+    ) -> Self {
+        Self {
+            previous_tick,
+            current_tick,
+            epoch,
+            reset_tick,
+            samples,
+        }
+    }
+
+    pub const fn previous_tick(&self) -> Tick {
+        self.previous_tick
+    }
+
+    pub const fn current_tick(&self) -> Tick {
+        self.current_tick
+    }
+
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub const fn reset_tick(&self) -> Tick {
+        self.reset_tick
+    }
+
+    pub fn samples(&self) -> &[StatDeltaSample] {
+        &self.samples
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatSnapshot {
     tick: Tick,
     epoch: u64,
@@ -358,6 +456,59 @@ impl StatSnapshot {
 
     pub fn samples(&self) -> &[StatSample] {
         &self.samples
+    }
+
+    pub fn delta_since(&self, previous: &Self) -> Result<StatSnapshotDelta, StatsError> {
+        if self.tick < previous.tick {
+            return Err(StatsError::SnapshotDeltaTimeWentBack {
+                previous_tick: previous.tick,
+                current_tick: self.tick,
+            });
+        }
+        if self.epoch != previous.epoch || self.reset_tick != previous.reset_tick {
+            return Err(StatsError::SnapshotDeltaScopeMismatch {
+                previous_epoch: previous.epoch,
+                current_epoch: self.epoch,
+                previous_reset_tick: previous.reset_tick,
+                current_reset_tick: self.reset_tick,
+            });
+        }
+
+        let current_samples = self
+            .samples
+            .iter()
+            .map(|sample| (sample.id(), sample))
+            .collect::<BTreeMap<_, _>>();
+        let mut deltas = Vec::with_capacity(previous.samples.len());
+        for previous_sample in &previous.samples {
+            let Some(current_sample) = current_samples.get(&previous_sample.id()) else {
+                return Err(StatsError::SnapshotDeltaMissingStat {
+                    stat: previous_sample.id(),
+                });
+            };
+            if current_sample.value() < previous_sample.value() {
+                return Err(StatsError::SnapshotDeltaValueWentBack {
+                    stat: previous_sample.id(),
+                    previous: previous_sample.value(),
+                    current: current_sample.value(),
+                });
+            }
+            deltas.push(StatDeltaSample::new(
+                previous_sample.id(),
+                previous_sample.path(),
+                previous_sample.unit(),
+                previous_sample.value(),
+                current_sample.value(),
+            ));
+        }
+
+        Ok(StatSnapshotDelta::new(
+            previous.tick,
+            self.tick,
+            self.epoch,
+            self.reset_tick,
+            deltas,
+        ))
     }
 }
 
@@ -547,6 +698,24 @@ pub enum StatsError {
         tick: Tick,
         reset_tick: Tick,
     },
+    SnapshotDeltaTimeWentBack {
+        previous_tick: Tick,
+        current_tick: Tick,
+    },
+    SnapshotDeltaScopeMismatch {
+        previous_epoch: u64,
+        current_epoch: u64,
+        previous_reset_tick: Tick,
+        current_reset_tick: Tick,
+    },
+    SnapshotDeltaMissingStat {
+        stat: StatId,
+    },
+    SnapshotDeltaValueWentBack {
+        stat: StatId,
+        previous: u64,
+        current: u64,
+    },
     EmptyProbeComponent,
     EmptyProbeName,
     DuplicateProbePoint {
@@ -587,6 +756,34 @@ impl fmt::Display for StatsError {
             Self::ResetBeforeLastReset { tick, reset_tick } => write!(
                 formatter,
                 "cannot reset stats at tick {tick}; last reset was at tick {reset_tick}"
+            ),
+            Self::SnapshotDeltaTimeWentBack {
+                previous_tick,
+                current_tick,
+            } => write!(
+                formatter,
+                "stat snapshot delta tick {current_tick} is before previous tick {previous_tick}"
+            ),
+            Self::SnapshotDeltaScopeMismatch {
+                previous_epoch,
+                current_epoch,
+                previous_reset_tick,
+                current_reset_tick,
+            } => write!(
+                formatter,
+                "stat snapshot delta scopes differ: previous epoch {previous_epoch} reset {previous_reset_tick}, current epoch {current_epoch} reset {current_reset_tick}"
+            ),
+            Self::SnapshotDeltaMissingStat { stat } => {
+                write!(formatter, "stat snapshot delta is missing stat {}", stat.get())
+            }
+            Self::SnapshotDeltaValueWentBack {
+                stat,
+                previous,
+                current,
+            } => write!(
+                formatter,
+                "stat snapshot delta value for stat {} went from {previous} down to {current}",
+                stat.get()
             ),
             Self::EmptyProbeComponent => write!(formatter, "probe component must not be empty"),
             Self::EmptyProbeName => write!(formatter, "probe point name must not be empty"),

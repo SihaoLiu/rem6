@@ -324,8 +324,8 @@ crate owns one reason to change and exposes typed data to adjacent crates.
 | `rem6-timer` | Timer MMIO, programmed events, interrupt emission, and checkpointable timer state. |
 | `rem6-boot` | Boot images, segments, initial memory population, and workload input metadata. |
 | `rem6-checkpoint` | Manifest format, component chunks, restore validation, and protocol-neutral checkpoint assembly. |
-| `rem6-stats` | Typed counters, registry ownership, statistics reset and dump behavior, and run metadata. |
-| `rem6-power` | Power domains, residency, typed expression inputs, reset-scope-checked stat-delta bindings, and thermal models. |
+| `rem6-stats` | Typed counters, registry ownership, statistics reset and dump behavior, reset-scope-checked snapshot deltas, and run metadata. |
+| `rem6-power` | Power domains, residency, typed expression inputs, core stats-delta bindings, and thermal models. |
 | `rem6-platform` | Platform assembly helpers that remain thin wrappers over topology, memory, devices, and host control. |
 | `rem6-system` | Full-system composition. It wires crates together but must not hide timing, protocol, fabric, or device behavior behind untyped glue. |
 
@@ -589,8 +589,8 @@ work.
 | Multi-protocol integration | Tests that swap protocol backend without changing topology definitions. |
 | Host events | Tests for guest event delivery, stop requests, statistics actions, and deterministic replay metadata. |
 | Checkpointing | Tests for manifest validation, scheduler restore, memory restore, device restore, coherence restore, and restore rejection for incompatible state. |
-| Statistics | Tests for registry ownership, monotonic reset behavior, dump records, and aggregation into system summaries. |
-| Power | Tests for power domains, expression inputs, stat snapshot and scoped delta bindings, thermal coupling, and invalid scope rejection. |
+| Statistics | Tests for registry ownership, monotonic reset behavior, reset-scope-checked deltas, dump records, and aggregation into system summaries. |
+| Power | Tests for power domains, expression inputs, stat snapshot and core stats-delta bindings, thermal coupling, and invalid scope rejection. |
 | Deadlock diagnostics | Tests that create a wait-for cycle and assert a bounded diagnostic. |
 | Livelock diagnostics | Tests that create repeated progress-free transitions and assert a bounded diagnostic. |
 

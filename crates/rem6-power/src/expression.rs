@@ -4,7 +4,7 @@ use crate::{
     PowerError, PowerEstimate, PowerModelMode, PowerResidency, PowerStateKind, ThermalDomainId,
     ThermalNetwork, ThermalRcModel,
 };
-use rem6_stats::{StatId, StatSnapshot};
+use rem6_stats::{StatId, StatSnapshot, StatsError};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PowerMetricId(u64);
@@ -159,39 +159,20 @@ impl PowerExpressionInputs {
         current: &StatSnapshot,
         bindings: &PowerMetricBindings,
     ) -> Result<Self, PowerError> {
-        if current.tick() < previous.tick() {
-            return Err(PowerError::PowerStatSnapshotTimeWentBack {
-                previous_tick: previous.tick(),
-                current_tick: current.tick(),
-            });
-        }
-        if previous.epoch() != current.epoch() || previous.reset_tick() != current.reset_tick() {
-            return Err(PowerError::PowerStatSnapshotScopeMismatch {
-                previous_epoch: previous.epoch(),
-                current_epoch: current.epoch(),
-                previous_reset_tick: previous.reset_tick(),
-                current_reset_tick: current.reset_tick(),
-            });
-        }
-
-        let previous_values = stat_sample_values(previous);
-        let current_values = stat_sample_values(current);
+        let delta = current
+            .delta_since(previous)
+            .map_err(power_error_from_stat_delta)?;
+        let delta_values = delta
+            .samples()
+            .iter()
+            .map(|sample| (sample.id(), sample.delta_value()))
+            .collect::<BTreeMap<_, _>>();
         let mut inputs = Self::new(temperature_c, voltage_v, clock_period_ticks)?;
         for (metric, stat) in bindings.entries() {
-            let Some(previous_value) = previous_values.get(stat).copied() else {
+            let Some(value) = delta_values.get(stat).copied() else {
                 return Err(PowerError::MissingBoundStat { stat: *stat });
             };
-            let Some(current_value) = current_values.get(stat).copied() else {
-                return Err(PowerError::MissingBoundStat { stat: *stat });
-            };
-            if current_value < previous_value {
-                return Err(PowerError::PowerStatValueWentBack {
-                    stat: *stat,
-                    previous: previous_value,
-                    current: current_value,
-                });
-            }
-            inputs = inputs.with_metric(*metric, (current_value - previous_value) as f64)?;
+            inputs = inputs.with_metric(*metric, value as f64)?;
         }
         Ok(inputs)
     }
@@ -220,12 +201,38 @@ impl PowerExpressionInputs {
     }
 }
 
-fn stat_sample_values(snapshot: &StatSnapshot) -> BTreeMap<StatId, u64> {
-    snapshot
-        .samples()
-        .iter()
-        .map(|sample| (sample.id(), sample.value()))
-        .collect()
+fn power_error_from_stat_delta(error: StatsError) -> PowerError {
+    match error {
+        StatsError::SnapshotDeltaTimeWentBack {
+            previous_tick,
+            current_tick,
+        } => PowerError::PowerStatSnapshotTimeWentBack {
+            previous_tick,
+            current_tick,
+        },
+        StatsError::SnapshotDeltaScopeMismatch {
+            previous_epoch,
+            current_epoch,
+            previous_reset_tick,
+            current_reset_tick,
+        } => PowerError::PowerStatSnapshotScopeMismatch {
+            previous_epoch,
+            current_epoch,
+            previous_reset_tick,
+            current_reset_tick,
+        },
+        StatsError::SnapshotDeltaValueWentBack {
+            stat,
+            previous,
+            current,
+        } => PowerError::PowerStatValueWentBack {
+            stat,
+            previous,
+            current,
+        },
+        StatsError::SnapshotDeltaMissingStat { stat } => PowerError::MissingBoundStat { stat },
+        _ => unreachable!("stat snapshot delta returned a non-delta stats error"),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

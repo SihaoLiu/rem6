@@ -1,7 +1,8 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
-    ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot, StatId,
-    StatSample, StatSnapshot, StatsError, StatsRegistry, StatsResetRecord,
+    ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
+    StatDeltaSample, StatId, StatSample, StatSnapshot, StatSnapshotDelta, StatsError,
+    StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -136,6 +137,81 @@ fn stats_reset_rejects_time_before_last_reset_without_mutating_scope() {
             50,
             vec![StatSample::new(cycles, "cpu0.cycles", "cycles", 3)],
         )
+    );
+}
+
+#[test]
+fn stats_snapshot_derives_scope_checked_counter_deltas() {
+    let mut stats = StatsRegistry::new();
+    let insts = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    let mem_reads = stats.register_counter("system.mem_reads", "count").unwrap();
+    stats.increment(insts, 20).unwrap();
+    stats.increment(mem_reads, 5).unwrap();
+    let previous = stats.snapshot(100);
+    stats.increment(insts, 12).unwrap();
+    stats.increment(mem_reads, 2).unwrap();
+    let current = stats.snapshot(140);
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap(),
+        StatSnapshotDelta::new(
+            100,
+            140,
+            0,
+            0,
+            vec![
+                StatDeltaSample::new(insts, "cpu0.committed_insts", "count", 20, 32),
+                StatDeltaSample::new(mem_reads, "system.mem_reads", "count", 5, 7),
+            ],
+        )
+    );
+
+    stats.reset(150);
+    stats.increment(insts, 3).unwrap();
+    let reset_scope = stats.snapshot(170);
+    assert_eq!(
+        reset_scope.delta_since(&current).unwrap_err(),
+        StatsError::SnapshotDeltaScopeMismatch {
+            previous_epoch: 0,
+            current_epoch: 1,
+            previous_reset_tick: 0,
+            current_reset_tick: 150,
+        },
+    );
+    assert_eq!(
+        previous.delta_since(&current).unwrap_err(),
+        StatsError::SnapshotDeltaTimeWentBack {
+            previous_tick: 140,
+            current_tick: 100,
+        },
+    );
+}
+
+#[test]
+fn stats_snapshot_delta_rejects_counter_regression() {
+    let stat = StatId::new(7);
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::new(stat, "cpu0.committed_insts", "count", 12)],
+    );
+    let current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::new(stat, "cpu0.committed_insts", "count", 9)],
+    );
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaValueWentBack {
+            stat,
+            previous: 12,
+            current: 9,
+        },
     );
 }
 
