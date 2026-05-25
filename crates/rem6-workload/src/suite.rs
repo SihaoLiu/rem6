@@ -217,6 +217,7 @@ pub struct WorkloadSuiteExecutionExpectation {
     suite_identity: WorkloadSuiteIdentity,
     worker_count: usize,
     minimum_simultaneous_workers: usize,
+    occupancy_tick_requirements: Vec<(usize, Tick)>,
     minimum_parallel_speedup: Option<WorkloadSuiteExecutionRatio>,
     minimum_worker_utilization: Option<WorkloadSuiteExecutionRatio>,
 }
@@ -233,6 +234,7 @@ impl WorkloadSuiteExecutionExpectation {
             suite_identity,
             worker_count: minimum_simultaneous_workers,
             minimum_simultaneous_workers,
+            occupancy_tick_requirements: Vec::new(),
             minimum_parallel_speedup: None,
             minimum_worker_utilization: None,
         })
@@ -240,6 +242,26 @@ impl WorkloadSuiteExecutionExpectation {
 
     fn for_worker_count(mut self, worker_count: usize) -> Self {
         self.worker_count = worker_count;
+        self
+    }
+
+    pub fn with_minimum_occupancy_ticks_for_worker_count(
+        mut self,
+        worker_count: usize,
+        minimum_ticks: Tick,
+    ) -> Self {
+        match self
+            .occupancy_tick_requirements
+            .binary_search_by_key(&worker_count, |(worker_count, _)| *worker_count)
+        {
+            Ok(index) => {
+                self.occupancy_tick_requirements[index].1 =
+                    self.occupancy_tick_requirements[index].1.max(minimum_ticks);
+            }
+            Err(index) => self
+                .occupancy_tick_requirements
+                .insert(index, (worker_count, minimum_ticks)),
+        }
         self
     }
 
@@ -277,6 +299,10 @@ impl WorkloadSuiteExecutionExpectation {
 
     pub const fn minimum_worker_utilization(&self) -> Option<WorkloadSuiteExecutionRatio> {
         self.minimum_worker_utilization
+    }
+
+    pub fn occupancy_tick_requirements(&self) -> &[(usize, Tick)] {
+        &self.occupancy_tick_requirements
     }
 }
 
@@ -561,6 +587,9 @@ impl WorkloadSuiteExecutionSummary {
             });
         }
         self.verify_minimum_simultaneous_workers(expectation.minimum_simultaneous_workers())?;
+        for &(worker_count, minimum_ticks) in expectation.occupancy_tick_requirements() {
+            self.verify_minimum_occupancy_ticks_for_worker_count(worker_count, minimum_ticks)?;
+        }
 
         if expectation.minimum_parallel_speedup().is_some()
             || expectation.minimum_worker_utilization().is_some()

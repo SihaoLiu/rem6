@@ -603,6 +603,58 @@ fn workload_suite_execution_expectation_requires_efficiency_thresholds() {
 }
 
 #[test]
+fn workload_suite_execution_expectation_requires_runtime_occupancy_buckets() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("runtime-occupancy-expectation"))
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let dispatch = WorkloadSuiteDispatchPlan::from_replay_plan(
+        &WorkloadSuiteReplayPlan::from_suite(&suite).unwrap(),
+        2,
+    )
+    .unwrap();
+    let expectation = dispatch
+        .execution_expectation(2)
+        .unwrap()
+        .with_minimum_occupancy_ticks_for_worker_count(2, 10);
+    let matching = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 30)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 15, 25)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 40, 50)
+        .unwrap();
+    let underoccupied = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 10, 20)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 15, 18)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 30, 40)
+        .unwrap();
+
+    assert_eq!(expectation.occupancy_tick_requirements(), &[(2, 10)],);
+    matching.verify_against_expectation(&expectation).unwrap();
+    assert_eq!(
+        underoccupied
+            .verify_against_expectation(&expectation)
+            .unwrap_err(),
+        WorkloadError::SuiteExecutionOccupancyWorkerCountTicksBelowMinimum {
+            worker_count: 2,
+            minimum_ticks: 10,
+            actual_ticks: 3,
+        },
+    );
+}
+
+#[test]
 fn workload_suite_execution_expectation_rejects_underperforming_efficiency() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

@@ -762,6 +762,9 @@ impl WorkloadSuiteDispatchTimeline {
                 actual_workers,
             });
         }
+        for &(worker_count, minimum_ticks) in expectation.occupancy_tick_requirements() {
+            self.verify_minimum_occupancy_ticks_for_worker_count(worker_count, minimum_ticks)?;
+        }
 
         if expectation.minimum_parallel_speedup().is_some()
             || expectation.minimum_worker_utilization().is_some()

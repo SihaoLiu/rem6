@@ -54,7 +54,7 @@ isolated bugs:
   occupancy windows, runtime worker-count tick histograms and threshold contracts, per-workload result
   start/final windows, worker-level suite completion summaries, round-robin or
   weighted suite dispatch plans, dispatch-declared suite execution
-  expectations, suite-level execution efficiency summaries, declared suite
+  expectations with runtime worker-count tick thresholds, suite-level execution efficiency summaries, declared suite
   speedup and utilization thresholds, and explicit boot handoff reports as the
   authority for platform and workload state.
 - Error surfaces are split across simulator fatal errors, simulator panics, and
@@ -102,7 +102,7 @@ isolated bugs:
   minimum fabric, DRAM, and aggregate resource activity contracts plus clean
   parallel diagnostic contracts by scheduler or resource scope, so
   cross-partition communication volume, timing drift,
-  scheduler progress, scheduler idle drift, real parallel occupancy, sustained
+  scheduler progress, scheduler idle drift, real parallel occupancy, dispatch-declared runtime occupancy thresholds, sustained
   worker activity, runtime suite worker-count occupancy, sustained multi-worker batch execution, exact same-batch
   partition co-execution, sustained same-batch co-execution, per-partition
   participation, partition-attributed worker activity, progress-free
