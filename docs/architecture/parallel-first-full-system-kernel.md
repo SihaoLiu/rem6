@@ -324,7 +324,7 @@ crate owns one reason to change and exposes typed data to adjacent crates.
 | `rem6-timer` | Timer MMIO, programmed events, interrupt emission, and checkpointable timer state. |
 | `rem6-boot` | Boot images, segments, initial memory population, and workload input metadata. |
 | `rem6-checkpoint` | Manifest format, component chunks, restore validation, and protocol-neutral checkpoint assembly. |
-| `rem6-stats` | Typed counters, registry-owned stat groups, structured scope/name paths, typed unit registration, structured units and rate units, registry ownership, statistics reset, typed dump history, schema-and-reset-scope-checked snapshot deltas, and run metadata. |
+| `rem6-stats` | Typed counters, registry-owned stat groups, self-describing snapshot group catalogs, structured scope/name paths, typed unit registration, structured units and rate units, registry ownership, statistics reset, typed dump history, schema-and-reset-scope-checked snapshot deltas, and run metadata. |
 | `rem6-power` | Power domains, residency, typed expression inputs, core stats-delta bindings, and thermal models. |
 | `rem6-platform` | Platform assembly helpers that remain thin wrappers over topology, memory, devices, and host control. |
 | `rem6-system` | Full-system composition. It wires crates together but must not hide timing, protocol, fabric, or device behavior behind untyped glue. |
@@ -589,7 +589,7 @@ work.
 | Multi-protocol integration | Tests that swap protocol backend without changing topology definitions. |
 | Host events | Tests for guest event delivery, stop requests, statistics actions, and deterministic replay metadata. |
 | Checkpointing | Tests for manifest validation, scheduler restore, memory restore, device restore, coherence restore, and restore rejection for incompatible state. |
-| Statistics | Tests for registry-owned stat groups, structured counter scope/name identity, path grammar, structured unit and rate grammar, monotonic reset behavior, typed dump records, schema-and-reset-scope-checked deltas, and aggregation into system summaries. |
+| Statistics | Tests for registry-owned stat groups, self-describing group catalogs on snapshots, dumps, and deltas, structured counter scope/name identity, path grammar, structured unit and rate grammar, monotonic reset behavior, typed dump records, schema-and-reset-scope-checked deltas, and aggregation into system summaries. |
 | Power | Tests for power domains, expression inputs, stat snapshot and core stats-delta bindings, thermal coupling, and invalid scope or schema rejection. |
 | Deadlock diagnostics | Tests that create a wait-for cycle and assert a bounded diagnostic. |
 | Livelock diagnostics | Tests that create repeated progress-free transitions and assert a bounded diagnostic. |

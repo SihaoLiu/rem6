@@ -1,9 +1,9 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatDumpId, StatDumpRecord, StatGroupId, StatId, StatPath, StatPathError,
-    StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError,
-    StatsRegistry, StatsResetRecord,
+    StatDeltaSample, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId, StatId,
+    StatPath, StatPathError, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit,
+    StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -389,6 +389,42 @@ fn stats_registry_records_group_owned_counters_and_rejects_bad_groups() {
 }
 
 #[test]
+fn stats_snapshots_dumps_and_deltas_carry_group_catalogs() {
+    let mut stats = StatsRegistry::new();
+    let cpu0 = stats.register_group(["system", "cpu0"]).unwrap();
+    let cpu1 = stats.register_group(["system", "cpu1"]).unwrap();
+    let cpu0_cycles = stats
+        .register_group_counter_with_unit(cpu0, "cycles", StatUnit::cycle())
+        .unwrap();
+    let cpu1_cycles = stats
+        .register_group_counter_with_unit(cpu1, "cycles", StatUnit::cycle())
+        .unwrap();
+
+    stats.increment(cpu0_cycles, 11).unwrap();
+    stats.increment(cpu1_cycles, 13).unwrap();
+    let snapshot = stats.snapshot(40);
+    let expected_groups = vec![
+        StatGroupDescriptor::new(cpu0, StatScope::new(["system", "cpu0"]).unwrap()),
+        StatGroupDescriptor::new(cpu1, StatScope::new(["system", "cpu1"]).unwrap()),
+    ];
+    assert_eq!(snapshot.groups(), expected_groups.as_slice());
+    assert_eq!(snapshot.group_scope(cpu0).unwrap().as_str(), "system.cpu0");
+    assert_eq!(snapshot.group_scope(cpu1).unwrap().as_str(), "system.cpu1");
+    assert_eq!(snapshot.group_scope(StatGroupId::new(99)), None);
+
+    let dump = stats.dump(42);
+    assert_eq!(dump.snapshot().groups(), expected_groups.as_slice());
+
+    stats.increment(cpu0_cycles, 2).unwrap();
+    stats.increment(cpu1_cycles, 3).unwrap();
+    let later = stats.snapshot(45);
+    let delta = later.delta_since(&snapshot).unwrap();
+    assert_eq!(delta.groups(), expected_groups.as_slice());
+    assert_eq!(delta.group_scope(cpu0).unwrap().as_str(), "system.cpu0");
+    assert_eq!(delta.group_scope(cpu1).unwrap().as_str(), "system.cpu1");
+}
+
+#[test]
 fn stats_snapshot_rejects_time_before_last_reset() {
     let mut stats = StatsRegistry::new();
     stats.register_counter("cpu0.cycles", "cycles").unwrap();
@@ -577,6 +613,51 @@ fn stats_snapshot_delta_rejects_schema_drift() {
             current_path: "cpu0.committed_insts".to_string(),
             previous_unit: "count".to_string(),
             current_unit: "ops".to_string(),
+        },
+    );
+}
+
+#[test]
+fn stats_snapshot_delta_rejects_group_catalog_drift() {
+    let stat = StatId::new(0);
+    let group = StatGroupId::new(0);
+    let previous_group =
+        StatGroupDescriptor::new(group, StatScope::new(["system", "cpu0"]).unwrap());
+    let current_group =
+        StatGroupDescriptor::new(group, StatScope::new(["system", "cpu1"]).unwrap());
+    let path = StatPath::new(["system", "cpu0"], "cycles").unwrap();
+    let previous = StatSnapshot::with_groups(
+        10,
+        0,
+        0,
+        vec![previous_group.clone()],
+        vec![StatSample::from_registered_parts(
+            stat,
+            Some(group),
+            path.clone(),
+            StatUnit::cycle(),
+            12,
+        )],
+    );
+    let current = StatSnapshot::with_groups(
+        20,
+        0,
+        0,
+        vec![current_group.clone()],
+        vec![StatSample::from_registered_parts(
+            stat,
+            Some(group),
+            path,
+            StatUnit::cycle(),
+            15,
+        )],
+    );
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaGroupCatalogMismatch {
+            previous_groups: vec![previous_group],
+            current_groups: vec![current_group],
         },
     );
 }

@@ -359,6 +359,26 @@ impl fmt::Display for StatScope {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatGroupDescriptor {
+    id: StatGroupId,
+    scope: StatScope,
+}
+
+impl StatGroupDescriptor {
+    pub const fn new(id: StatGroupId, scope: StatScope) -> Self {
+        Self { id, scope }
+    }
+
+    pub const fn id(&self) -> StatGroupId {
+        self.id
+    }
+
+    pub const fn scope(&self) -> &StatScope {
+        &self.scope
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StatPath {
     spelling: String,
@@ -758,6 +778,7 @@ pub struct StatSnapshotDelta {
     current_tick: Tick,
     epoch: u64,
     reset_tick: Tick,
+    groups: Vec<StatGroupDescriptor>,
     samples: Vec<StatDeltaSample>,
 }
 
@@ -769,11 +790,30 @@ impl StatSnapshotDelta {
         reset_tick: Tick,
         samples: Vec<StatDeltaSample>,
     ) -> Self {
+        Self::with_groups(
+            previous_tick,
+            current_tick,
+            epoch,
+            reset_tick,
+            Vec::new(),
+            samples,
+        )
+    }
+
+    pub const fn with_groups(
+        previous_tick: Tick,
+        current_tick: Tick,
+        epoch: u64,
+        reset_tick: Tick,
+        groups: Vec<StatGroupDescriptor>,
+        samples: Vec<StatDeltaSample>,
+    ) -> Self {
         Self {
             previous_tick,
             current_tick,
             epoch,
             reset_tick,
+            groups,
             samples,
         }
     }
@@ -794,6 +834,17 @@ impl StatSnapshotDelta {
         self.reset_tick
     }
 
+    pub fn groups(&self) -> &[StatGroupDescriptor] {
+        &self.groups
+    }
+
+    pub fn group_scope(&self, group: StatGroupId) -> Option<&StatScope> {
+        self.groups
+            .iter()
+            .find(|descriptor| descriptor.id() == group)
+            .map(StatGroupDescriptor::scope)
+    }
+
     pub fn samples(&self) -> &[StatDeltaSample] {
         &self.samples
     }
@@ -804,15 +855,27 @@ pub struct StatSnapshot {
     tick: Tick,
     epoch: u64,
     reset_tick: Tick,
+    groups: Vec<StatGroupDescriptor>,
     samples: Vec<StatSample>,
 }
 
 impl StatSnapshot {
     pub const fn new(tick: Tick, epoch: u64, reset_tick: Tick, samples: Vec<StatSample>) -> Self {
+        Self::with_groups(tick, epoch, reset_tick, Vec::new(), samples)
+    }
+
+    pub const fn with_groups(
+        tick: Tick,
+        epoch: u64,
+        reset_tick: Tick,
+        groups: Vec<StatGroupDescriptor>,
+        samples: Vec<StatSample>,
+    ) -> Self {
         Self {
             tick,
             epoch,
             reset_tick,
+            groups,
             samples,
         }
     }
@@ -827,6 +890,17 @@ impl StatSnapshot {
 
     pub const fn reset_tick(&self) -> Tick {
         self.reset_tick
+    }
+
+    pub fn groups(&self) -> &[StatGroupDescriptor] {
+        &self.groups
+    }
+
+    pub fn group_scope(&self, group: StatGroupId) -> Option<&StatScope> {
+        self.groups
+            .iter()
+            .find(|descriptor| descriptor.id() == group)
+            .map(StatGroupDescriptor::scope)
     }
 
     pub fn samples(&self) -> &[StatSample] {
@@ -846,6 +920,12 @@ impl StatSnapshot {
                 current_epoch: self.epoch,
                 previous_reset_tick: previous.reset_tick,
                 current_reset_tick: self.reset_tick,
+            });
+        }
+        if self.groups != previous.groups {
+            return Err(StatsError::SnapshotDeltaGroupCatalogMismatch {
+                previous_groups: previous.groups.clone(),
+                current_groups: self.groups.clone(),
             });
         }
 
@@ -902,11 +982,12 @@ impl StatSnapshot {
             ));
         }
 
-        Ok(StatSnapshotDelta::new(
+        Ok(StatSnapshotDelta::with_groups(
             previous.tick,
             self.tick,
             self.epoch,
             self.reset_tick,
+            previous.groups.clone(),
             deltas,
         ))
     }
@@ -1250,10 +1331,16 @@ impl StatsRegistry {
                 )
             })
             .collect();
-        Ok(StatSnapshot::new(
+        let groups = self
+            .groups
+            .iter()
+            .map(|(id, scope)| StatGroupDescriptor::new(*id, scope.clone()))
+            .collect();
+        Ok(StatSnapshot::with_groups(
             tick,
             self.epoch,
             self.reset_tick,
+            groups,
             samples,
         ))
     }
@@ -1473,6 +1560,10 @@ pub enum StatsError {
         previous_reset_tick: Tick,
         current_reset_tick: Tick,
     },
+    SnapshotDeltaGroupCatalogMismatch {
+        previous_groups: Vec<StatGroupDescriptor>,
+        current_groups: Vec<StatGroupDescriptor>,
+    },
     SnapshotDeltaMissingStat {
         stat: StatId,
     },
@@ -1562,6 +1653,12 @@ impl fmt::Display for StatsError {
                 formatter,
                 "stat snapshot delta scopes differ: previous epoch {previous_epoch} reset {previous_reset_tick}, current epoch {current_epoch} reset {current_reset_tick}"
             ),
+            Self::SnapshotDeltaGroupCatalogMismatch { .. } => {
+                write!(
+                    formatter,
+                    "stat snapshot group catalog changed between delta endpoints"
+                )
+            }
             Self::SnapshotDeltaMissingStat { stat } => {
                 write!(formatter, "stat snapshot delta is missing stat {}", stat.get())
             }
