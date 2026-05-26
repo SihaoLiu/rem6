@@ -5,10 +5,13 @@ use std::fmt;
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
 mod bridge;
+mod capability;
 mod interrupt;
 mod mmio;
 mod msi;
 mod msix;
+
+use capability::PciEndpointCapabilityList;
 
 pub use bridge::{PciBridgeBusRange, PciBridgeConfig};
 pub use interrupt::{
@@ -410,6 +413,7 @@ pub struct PciEndpointConfig {
     class: PciClassCode,
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
+    capabilities: PciEndpointCapabilityList,
     msi: Option<msi::PciMsiCapabilityState>,
     msix: Option<msix::PciMsixCapabilityState>,
 }
@@ -435,6 +439,7 @@ impl PciEndpointConfig {
             class,
             config,
             bars: std::array::from_fn(|_| None),
+            capabilities: PciEndpointCapabilityList::new(),
             msi: None,
             msix: None,
         }
@@ -488,9 +493,11 @@ impl PciEndpointConfig {
         if self.msi.is_some() {
             return Err(PciError::DuplicateMsiCapability);
         }
+        self.register_capability_region(spec.offset(), spec.size())?;
         let state = msi::PciMsiCapabilityState::new(spec);
         state.install_into(&mut self.config);
         self.msi = Some(state);
+        self.rebuild_capability_list();
         Ok(())
     }
 
@@ -577,6 +584,7 @@ impl PciEndpointConfig {
             class: self.class,
             config: self.config,
             bars: self.bars.clone(),
+            capabilities: self.capabilities.clone(),
             msi: self.msi.clone(),
             msix: self.msix.clone(),
         }
@@ -625,6 +633,7 @@ impl PciEndpointConfig {
 
         self.config = snapshot.config;
         self.bars = snapshot.bars.clone();
+        self.capabilities = snapshot.capabilities.clone();
         self.msi = snapshot.msi.clone();
         self.msix = snapshot.msix.clone();
         Ok(())
@@ -670,6 +679,18 @@ impl PciEndpointConfig {
         }
     }
 
+    pub(crate) fn register_capability_region(
+        &mut self,
+        offset: PciConfigOffset,
+        size: u64,
+    ) -> Result<(), PciError> {
+        self.capabilities.register(offset, size)
+    }
+
+    pub(crate) fn rebuild_capability_list(&mut self) {
+        self.capabilities.rebuild(&mut self.config);
+    }
+
     fn command(&self) -> u16 {
         u16::from_le_bytes(
             self.config[PCI_COMMAND_OFFSET..PCI_COMMAND_OFFSET + 2]
@@ -696,6 +717,7 @@ pub struct PciEndpointConfigSnapshot {
     class: PciClassCode,
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
+    capabilities: PciEndpointCapabilityList,
     msi: Option<msi::PciMsiCapabilityState>,
     msix: Option<msix::PciMsixCapabilityState>,
 }
@@ -1207,6 +1229,12 @@ pub enum PciError {
         requested_function: PciFunctionAddress,
         requested_bar: PciBarIndex,
     },
+    OverlappingCapability {
+        existing_offset: PciConfigOffset,
+        existing_size: AccessSize,
+        requested_offset: PciConfigOffset,
+        requested_size: AccessSize,
+    },
     InvalidBridgeBusRange {
         primary: u8,
         secondary: u8,
@@ -1434,6 +1462,19 @@ impl fmt::Display for PciError {
                 requested_bar.get(),
                 existing_function,
                 existing_bar.get()
+            ),
+            Self::OverlappingCapability {
+                existing_offset,
+                existing_size,
+                requested_offset,
+                requested_size,
+            } => write!(
+                f,
+                "PCI capability at {:#x} for {} bytes overlaps capability at {:#x} for {} bytes",
+                requested_offset.get(),
+                requested_size.bytes(),
+                existing_offset.get(),
+                existing_size.bytes()
             ),
             Self::InvalidBridgeBusRange {
                 primary,

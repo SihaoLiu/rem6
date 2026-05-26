@@ -9,8 +9,7 @@ use rem6_memory::{AccessSize, Address};
 
 use crate::{
     write_u16_at, write_u32_at, PciConfigOffset, PciEndpointConfig, PciError, PciFunctionAddress,
-    PCI_CAPABILITY_PTR_OFFSET, PCI_CONFIG_SPACE_SIZE, PCI_STATUS_CAPABILITY_LIST,
-    PCI_STATUS_OFFSET,
+    PCI_CONFIG_SPACE_SIZE,
 };
 
 const PCI_CAPABILITY_MIN_OFFSET: u16 = 0x40;
@@ -161,8 +160,6 @@ impl PciMsiCapabilityState {
 
     pub(crate) fn install_into(&self, config: &mut [u8; PCI_CONFIG_SPACE_SIZE]) {
         let base = self.spec.offset().as_usize();
-        config[PCI_CAPABILITY_PTR_OFFSET] = self.spec.offset().get() as u8;
-        config[PCI_STATUS_OFFSET] |= PCI_STATUS_CAPABILITY_LIST;
         config[base] = PCI_MSI_CAPABILITY_ID;
         config[base + 1] = 0;
         write_u16_at(

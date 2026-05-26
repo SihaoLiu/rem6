@@ -9,8 +9,7 @@ use rem6_memory::{AccessSize, Address};
 
 use crate::{
     write_u16_at, write_u32_at, PciBarIndex, PciConfigOffset, PciEndpointConfig, PciError,
-    PciFunctionAddress, PciMsiMessage, PCI_CAPABILITY_PTR_OFFSET, PCI_CONFIG_SPACE_SIZE,
-    PCI_STATUS_CAPABILITY_LIST, PCI_STATUS_OFFSET,
+    PciFunctionAddress, PciMsiMessage, PCI_CONFIG_SPACE_SIZE,
 };
 
 const PCI_CAPABILITY_MIN_OFFSET: u16 = 0x40;
@@ -100,6 +99,10 @@ impl PciMsixCapabilitySpec {
         self.pba_offset
     }
 
+    pub const fn size(self) -> u64 {
+        PCI_MSIX_CAPABILITY_SIZE
+    }
+
     fn table_size(self) -> u64 {
         u64::from(self.vector_count) * PCI_MSIX_TABLE_ENTRY_BYTES
     }
@@ -153,8 +156,6 @@ impl PciMsixCapabilityState {
 
     pub(crate) fn install_into(&self, config: &mut [u8; PCI_CONFIG_SPACE_SIZE]) {
         let base = self.spec.offset().as_usize();
-        config[PCI_CAPABILITY_PTR_OFFSET] = self.spec.offset().get() as u8;
-        config[PCI_STATUS_OFFSET] |= PCI_STATUS_CAPABILITY_LIST;
         config[base] = PCI_MSIX_CAPABILITY_ID;
         config[base + 1] = 0;
         write_u16_at(
@@ -391,9 +392,11 @@ impl PciEndpointConfig {
         if self.msix.is_some() {
             return Err(PciError::DuplicateMsixCapability);
         }
+        self.register_capability_region(spec.offset(), spec.size())?;
         let state = PciMsixCapabilityState::new(spec);
         state.install_into(&mut self.config);
         self.msix = Some(state);
+        self.rebuild_capability_list();
         Ok(())
     }
 
