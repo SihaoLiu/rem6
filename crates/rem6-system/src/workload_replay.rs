@@ -21,7 +21,8 @@ use rem6_dram::{
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
 use rem6_kernel::{
-    PartitionFrontier, PartitionId, PartitionedScheduler, SchedulerError, Tick, WaitForGraph,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
+    PartitionedScheduler, SchedulerError, Tick, WaitForGraph,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -55,7 +56,8 @@ use self::cache_response::{
 };
 use self::dma_scheduler_evidence::{
     dma_scheduler_batch_timeline, dma_scheduler_batch_worker_count_ticks,
-    dma_scheduler_batch_worker_counts, dma_scheduler_frontiers, DmaSchedulerEvidence,
+    dma_scheduler_batch_worker_counts, dma_scheduler_frontiers, dma_scheduler_remote_flows,
+    dma_scheduler_remote_sends, DmaSchedulerEvidence,
 };
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{fixed_priority_policy, queue_arbiter};
@@ -94,6 +96,8 @@ struct WorkloadGpuDmaActivity {
     scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     scheduler_initial_frontiers: Vec<PartitionFrontier>,
     scheduler_final_frontiers: Vec<PartitionFrontier>,
+    scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
+    scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     wait_for_edge_count: usize,
     deadlock_diagnostic_count: usize,
 }
@@ -957,6 +961,8 @@ impl RiscvWorkloadReplay {
                 scheduler_evidence.initial_frontiers,
             ),
             scheduler_final_frontiers: dma_scheduler_frontiers(scheduler_evidence.final_frontiers),
+            scheduler_remote_flows: dma_scheduler_remote_flows(scheduler_evidence.remote_flows),
+            scheduler_remote_sends: dma_scheduler_remote_sends(scheduler_evidence.remote_sends),
             wait_for_edge_count: 0,
             deadlock_diagnostic_count: 0,
         }

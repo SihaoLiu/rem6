@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorCommandId, AcceleratorDmaCopy, AcceleratorEngineId};
-use rem6_kernel::{PartitionFrontier, PartitionedScheduler, Tick, WaitForGraph};
+use rem6_kernel::{
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionedScheduler,
+    Tick, WaitForGraph,
+};
 use rem6_memory::{
     AccessSize, AddressRange, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
@@ -17,7 +20,8 @@ use super::{
     cached_memory_response,
     dma_scheduler_evidence::{
         dma_scheduler_batch_timeline, dma_scheduler_batch_worker_count_ticks,
-        dma_scheduler_batch_worker_counts, dma_scheduler_frontiers, DmaSchedulerEvidence,
+        dma_scheduler_batch_worker_counts, dma_scheduler_frontiers, dma_scheduler_remote_flows,
+        dma_scheduler_remote_sends, DmaSchedulerEvidence,
     },
     RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
 };
@@ -39,6 +43,8 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     pub(super) scheduler_initial_frontiers: Vec<PartitionFrontier>,
     pub(super) scheduler_final_frontiers: Vec<PartitionFrontier>,
+    pub(super) scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
+    pub(super) scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     pub(super) wait_for_edge_count: usize,
     pub(super) deadlock_diagnostic_count: usize,
 }
@@ -179,6 +185,8 @@ pub(super) fn run_accelerator_dma_copies(
         ),
         scheduler_initial_frontiers: dma_scheduler_frontiers(scheduler_evidence.initial_frontiers),
         scheduler_final_frontiers: dma_scheduler_frontiers(scheduler_evidence.final_frontiers),
+        scheduler_remote_flows: dma_scheduler_remote_flows(scheduler_evidence.remote_flows),
+        scheduler_remote_sends: dma_scheduler_remote_sends(scheduler_evidence.remote_sends),
         wait_for_edge_count: 0,
         deadlock_diagnostic_count: 0,
     }

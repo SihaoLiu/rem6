@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
     PartitionFrontier, PartitionId,
@@ -20,7 +22,7 @@ use crate::result_collect::{
 };
 use crate::result_partition_activity::{
     combined_parallel_active_partition_count, merge_parallel_partition_activity_evidence_options,
-    merge_parallel_partition_activity_options,
+    merge_parallel_partition_activity_options, parallel_partition_activity_for_partition,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -71,6 +73,7 @@ impl WorkloadParallelExecutionSummary {
                 &self.data_cache_parallel_scheduler_remote_flows,
                 &self.data_cache_parallel_scheduler_remote_sends,
             ))
+            .max(self.active_full_system_remote_partition_count())
     }
 
     pub fn full_system_parallel_scheduler_max_workers(&self) -> usize {
@@ -199,17 +202,22 @@ impl WorkloadParallelExecutionSummary {
         collect_parallel_remote_flows(
             self.parallel_scheduler_remote_flow_evidence()
                 .into_iter()
-                .chain(self.data_cache_parallel_scheduler_remote_flow_evidence()),
+                .chain(self.data_cache_parallel_scheduler_remote_flow_evidence())
+                .chain(self.dma_scheduler_remote_flows()),
         )
     }
 
     pub fn full_system_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
         collect_parallel_remote_sends(
-            self.parallel_scheduler_remote_sends.iter().copied().chain(
-                self.data_cache_parallel_scheduler_remote_sends
-                    .iter()
-                    .copied(),
-            ),
+            self.parallel_scheduler_remote_sends
+                .iter()
+                .copied()
+                .chain(
+                    self.data_cache_parallel_scheduler_remote_sends
+                        .iter()
+                        .copied(),
+                )
+                .chain(self.dma_scheduler_remote_sends()),
         )
     }
 
@@ -281,12 +289,18 @@ impl WorkloadParallelExecutionSummary {
             parallel_batch_partition_activity_for_partition(&dma_partition_sets, partition),
             parallel_batch_streak_activity_for_partition(&dma_partition_streaks, partition),
         );
+        let dma_remote_activity = parallel_partition_activity_for_partition(
+            &[],
+            &self.dma_scheduler_remote_flows(),
+            &self.dma_scheduler_remote_sends(),
+            partition,
+        );
         merge_parallel_partition_activity_options(
             merge_parallel_partition_activity_options(
                 self.parallel_scheduler_partition_activity(partition),
                 self.data_cache_parallel_scheduler_partition_activity(partition),
             ),
-            dma_activity,
+            merge_parallel_partition_activity_evidence_options(dma_activity, dma_remote_activity),
         )
     }
 
@@ -318,11 +332,13 @@ impl WorkloadParallelExecutionSummary {
     pub fn has_full_system_parallel_scheduler_remote_flows(&self) -> bool {
         self.has_parallel_scheduler_remote_flows()
             || self.has_data_cache_parallel_scheduler_remote_flows()
+            || self.has_dma_scheduler_remote_flows()
     }
 
     pub fn has_full_system_parallel_scheduler_remote_sends(&self) -> bool {
         self.has_parallel_scheduler_remote_sends()
             || self.has_data_cache_parallel_scheduler_remote_sends()
+            || self.has_dma_scheduler_remote_sends()
     }
 
     pub fn has_full_system_parallel_scheduler_work(&self) -> bool {
@@ -370,5 +386,32 @@ impl WorkloadParallelExecutionSummary {
             || self.dma_scheduler_batch_count() != 0
             || self.dma_scheduler_batch_worker_ticks() != 0
             || self.has_dma_scheduler_frontiers()
+            || self.has_dma_scheduler_remote_flows()
+            || self.has_dma_scheduler_remote_sends()
+    }
+}
+
+impl WorkloadParallelExecutionSummary {
+    fn active_full_system_remote_partition_count(&self) -> usize {
+        let mut partitions = BTreeSet::new();
+        partitions.extend(
+            self.parallel_scheduler_partition_activities
+                .iter()
+                .map(|(partition, _)| *partition),
+        );
+        partitions.extend(
+            self.data_cache_parallel_scheduler_partition_activities
+                .iter()
+                .map(|(partition, _)| *partition),
+        );
+        for flow in self.full_system_parallel_scheduler_remote_flows() {
+            partitions.insert(flow.source());
+            partitions.insert(flow.target());
+        }
+        for send in self.full_system_parallel_scheduler_remote_sends() {
+            partitions.insert(send.source());
+            partitions.insert(send.target());
+        }
+        partitions.len()
     }
 }

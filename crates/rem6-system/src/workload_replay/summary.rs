@@ -288,6 +288,12 @@ pub(super) fn parallel_execution_summary(
                 .copied(),
             activities.gpu_dma.scheduler_final_frontiers.iter().copied(),
         )
+        .with_gpu_dma_scheduler_remote_flows(
+            activities.gpu_dma.scheduler_remote_flows.iter().copied(),
+        )
+        .with_gpu_dma_scheduler_remote_sends(
+            activities.gpu_dma.scheduler_remote_sends.iter().copied(),
+        )
         .with_gpu_dma_diagnostics(
             activities.gpu_dma.wait_for_edge_count,
             activities.gpu_dma.deadlock_diagnostic_count,
@@ -346,6 +352,20 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .copied(),
         )
+        .with_accelerator_dma_scheduler_remote_flows(
+            activities
+                .accelerator_dma
+                .scheduler_remote_flows
+                .iter()
+                .copied(),
+        )
+        .with_accelerator_dma_scheduler_remote_sends(
+            activities
+                .accelerator_dma
+                .scheduler_remote_sends
+                .iter()
+                .copied(),
+        )
         .with_accelerator_dma_diagnostics(
             activities.accelerator_dma.wait_for_edge_count,
             activities.accelerator_dma.deadlock_diagnostic_count,
@@ -393,8 +413,9 @@ mod tests {
     };
     use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
     use rem6_kernel::{
-        LivelockTransitionKind, PartitionFrontier, PartitionId, PartitionedScheduler,
-        WaitForEdgeKind, WaitForGraph, WaitForNode,
+        LivelockTransitionKind, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+        PartitionFrontier, PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForGraph,
+        WaitForNode,
     };
     use rem6_memory::{
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -687,6 +708,83 @@ mod tests {
             summary.full_system_parallel_scheduler_initial_frontiers(),
             vec![gpu_initial, accelerator_initial],
         );
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_dma_scheduler_remote_traffic() {
+        let gpu_source = PartitionId::new(6);
+        let gpu_target = PartitionId::new(9);
+        let accelerator_source = PartitionId::new(7);
+        let accelerator_target = PartitionId::new(10);
+        let run = RiscvSystemRun::new(
+            Vec::new(),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 16 },
+        );
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity {
+            scheduler_remote_flows: vec![ParallelRemoteFlowRecord::with_delay_bounds(
+                gpu_source, gpu_target, 1, 11, 11, 8, 8,
+            )],
+            scheduler_remote_sends: vec![ParallelRemoteSendRecord::with_timing(
+                gpu_source, gpu_target, 3, 11, 0,
+            )],
+            ..WorkloadGpuDmaActivity::default()
+        };
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity {
+            scheduler_remote_sends: vec![ParallelRemoteSendRecord::with_timing(
+                accelerator_source,
+                accelerator_target,
+                2,
+                10,
+                0,
+            )],
+            ..WorkloadAcceleratorDmaActivity::default()
+        };
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(
+            summary.gpu_dma_scheduler_remote_flow_count(gpu_source, gpu_target),
+            1,
+        );
+        assert_eq!(
+            summary.accelerator_dma_scheduler_remote_send_count(
+                accelerator_source,
+                accelerator_target,
+            ),
+            1,
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_remote_flow_count(gpu_source, gpu_target),
+            1,
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_remote_send_count(
+                accelerator_source,
+                accelerator_target,
+            ),
+            1,
+        );
+        assert!(summary.has_full_system_parallel_scheduler_remote_flows());
+        assert!(summary.has_full_system_parallel_scheduler_remote_sends());
     }
 
     #[test]

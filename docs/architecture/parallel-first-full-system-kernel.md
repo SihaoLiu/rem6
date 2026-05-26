@@ -450,11 +450,17 @@ GPU and accelerator DMA replay paths also preserve recorded scheduler batch
 timelines, epoch and dispatch progress, batch counts, worker-count buckets, and
 duration-weighted worker-tick evidence for their internal read and write schedulers, so
 heterogeneous memory movement does not disappear behind copy/completion
-counters. The workload full-system scheduler aggregate includes that DMA
-scheduler evidence alongside CPU and data-cache scheduler evidence, so
+counters. They also preserve DMA scheduler remote-send records and derived
+remote-flow evidence from those recorded read and write schedulers, so
+cross-partition DMA traffic keeps source tick, delivery tick, order, and delay
+data instead of collapsing into a device-local copy counter. The workload
+full-system scheduler aggregate includes that DMA scheduler evidence alongside
+CPU and data-cache scheduler evidence, so
 heterogeneous parallel work remains visible through the same full-system batch
 timeline, worker-count, max-worker, total-worker, worker-tick, and thresholded
-batch queries used by CPU/cache runs. DMA timelines also derive exact
+batch queries used by CPU/cache runs. Full-system remote-send, remote-flow,
+delay-floor, delay-ceiling, endpoint, and traffic-consistency contracts include
+the DMA scheduler records as first-class evidence. DMA timelines also derive exact
 partition-set histograms and same-partition-set streaks, and those derived
 records participate in merged full-system partition evidence instead of staying
 behind device-local counters. The same DMA-derived partition evidence feeds

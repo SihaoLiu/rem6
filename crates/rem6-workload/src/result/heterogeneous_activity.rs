@@ -1,13 +1,17 @@
 use std::collections::BTreeMap;
 
-use rem6_kernel::{PartitionFrontier, Tick};
+use rem6_kernel::{
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
+};
 
 use crate::parallel_batch::{
     collect_parallel_batch_worker_counts, max_parallel_batch_worker_count,
     total_parallel_batch_worker_count, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
-    collect_conservative_partition_frontiers, collect_partition_frontiers,
+    collect_conservative_partition_frontiers, collect_parallel_remote_flow_evidence,
+    collect_parallel_remote_flows, collect_parallel_remote_sends, collect_partition_frontiers,
+    parallel_remote_flow_evidence_count, parallel_remote_send_count,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -56,6 +60,22 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_remote_flows(
+        mut self,
+        flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    ) -> Self {
+        self.gpu_dma_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
+    pub fn with_gpu_dma_scheduler_remote_sends(
+        mut self,
+        sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+    ) -> Self {
+        self.gpu_dma_scheduler_remote_sends = collect_parallel_remote_sends(sends);
+        self
+    }
+
     pub fn with_accelerator_dma_scheduler_counts(
         mut self,
         epoch_count: usize,
@@ -99,6 +119,22 @@ impl WorkloadParallelExecutionSummary {
             collect_partition_frontiers(initial_frontiers);
         self.accelerator_dma_scheduler_final_frontiers =
             collect_partition_frontiers(final_frontiers);
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_remote_flows(
+        mut self,
+        flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    ) -> Self {
+        self.accelerator_dma_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_remote_sends(
+        mut self,
+        sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+    ) -> Self {
+        self.accelerator_dma_scheduler_remote_sends = collect_parallel_remote_sends(sends);
         self
     }
 
@@ -240,6 +276,50 @@ impl WorkloadParallelExecutionSummary {
     pub fn has_gpu_dma_scheduler_frontiers(&self) -> bool {
         !self.gpu_dma_scheduler_initial_frontiers.is_empty()
             || !self.gpu_dma_scheduler_final_frontiers.is_empty()
+    }
+
+    pub fn gpu_dma_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
+        &self.gpu_dma_scheduler_remote_flows
+    }
+
+    pub fn gpu_dma_scheduler_remote_flow_evidence(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flow_evidence(
+            self.gpu_dma_scheduler_remote_flows.iter().copied(),
+            self.gpu_dma_scheduler_remote_sends.iter().copied(),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_remote_sends(&self) -> &[ParallelRemoteSendRecord] {
+        &self.gpu_dma_scheduler_remote_sends
+    }
+
+    pub fn gpu_dma_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_flow_evidence_count(
+            &self.gpu_dma_scheduler_remote_flows,
+            &self.gpu_dma_scheduler_remote_sends,
+            source,
+            target,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_remote_send_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_send_count(&self.gpu_dma_scheduler_remote_sends, source, target)
+    }
+
+    pub fn has_gpu_dma_scheduler_remote_flows(&self) -> bool {
+        !self.gpu_dma_scheduler_remote_flow_evidence().is_empty()
+    }
+
+    pub fn has_gpu_dma_scheduler_remote_sends(&self) -> bool {
+        !self.gpu_dma_scheduler_remote_sends.is_empty()
     }
 
     pub const fn has_gpu_dma_activity(&self) -> bool {
@@ -431,6 +511,52 @@ impl WorkloadParallelExecutionSummary {
             || !self.accelerator_dma_scheduler_final_frontiers.is_empty()
     }
 
+    pub fn accelerator_dma_scheduler_remote_flows(&self) -> &[ParallelRemoteFlowRecord] {
+        &self.accelerator_dma_scheduler_remote_flows
+    }
+
+    pub fn accelerator_dma_scheduler_remote_flow_evidence(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flow_evidence(
+            self.accelerator_dma_scheduler_remote_flows.iter().copied(),
+            self.accelerator_dma_scheduler_remote_sends.iter().copied(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_remote_sends(&self) -> &[ParallelRemoteSendRecord] {
+        &self.accelerator_dma_scheduler_remote_sends
+    }
+
+    pub fn accelerator_dma_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_flow_evidence_count(
+            &self.accelerator_dma_scheduler_remote_flows,
+            &self.accelerator_dma_scheduler_remote_sends,
+            source,
+            target,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_remote_send_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_send_count(&self.accelerator_dma_scheduler_remote_sends, source, target)
+    }
+
+    pub fn has_accelerator_dma_scheduler_remote_flows(&self) -> bool {
+        !self
+            .accelerator_dma_scheduler_remote_flow_evidence()
+            .is_empty()
+    }
+
+    pub fn has_accelerator_dma_scheduler_remote_sends(&self) -> bool {
+        !self.accelerator_dma_scheduler_remote_sends.is_empty()
+    }
+
     pub const fn has_accelerator_dma_activity(&self) -> bool {
         self.accelerator_dma_copy_count != 0
             || self.accelerator_dma_completion_count != 0
@@ -564,6 +690,54 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_dma_scheduler_frontiers(&self) -> bool {
         self.has_gpu_dma_scheduler_frontiers() || self.has_accelerator_dma_scheduler_frontiers()
+    }
+
+    pub fn dma_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flows(
+            self.gpu_dma_scheduler_remote_flow_evidence()
+                .into_iter()
+                .chain(self.accelerator_dma_scheduler_remote_flow_evidence()),
+        )
+    }
+
+    pub fn dma_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        collect_parallel_remote_sends(
+            self.gpu_dma_scheduler_remote_sends
+                .iter()
+                .copied()
+                .chain(self.accelerator_dma_scheduler_remote_sends.iter().copied()),
+        )
+    }
+
+    pub fn dma_scheduler_remote_flow_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_flow_evidence_count(
+            &self.dma_scheduler_remote_flows(),
+            &self.dma_scheduler_remote_sends(),
+            source,
+            target,
+        )
+    }
+
+    pub fn dma_scheduler_remote_send_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        parallel_remote_send_count(&self.dma_scheduler_remote_sends(), source, target)
+    }
+
+    pub fn has_dma_scheduler_remote_flows(&self) -> bool {
+        self.has_gpu_dma_scheduler_remote_flows()
+            || self.has_accelerator_dma_scheduler_remote_flows()
+    }
+
+    pub fn has_dma_scheduler_remote_sends(&self) -> bool {
+        self.has_gpu_dma_scheduler_remote_sends()
+            || self.has_accelerator_dma_scheduler_remote_sends()
     }
 
     pub const fn dma_wait_for_edge_count(&self) -> usize {

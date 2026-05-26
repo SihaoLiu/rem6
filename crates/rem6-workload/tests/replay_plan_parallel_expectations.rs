@@ -184,6 +184,53 @@ fn workload_replay_plan_derives_parallel_remote_flows_from_remote_sends() {
 }
 
 #[test]
+fn workload_replay_plan_derives_full_system_remote_flows_from_dma_scheduler_sends() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            6,
+            9,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            7,
+            10,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(6),
+                PartitionId::new(9),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(6),
+                PartitionId::new(9),
+                5,
+                13,
+                1,
+            ),
+        ])
+        .with_accelerator_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(7),
+            PartitionId::new(10),
+            2,
+            10,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_prefers_remote_send_flow_evidence_over_weaker_aggregates() {
     let plan = replay_plan()
         .add_expected_parallel_remote_flow(expected(

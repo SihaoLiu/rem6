@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
-    ParallelEpochBatchRecord, PartitionFrontier, PartitionId, RecordedConservativeRunSummary, Tick,
+    ParallelEpochBatchRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionFrontier, PartitionId, RecordedConservativeRunSummary, Tick,
 };
 use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
@@ -19,6 +20,8 @@ pub(super) struct DmaSchedulerEvidence {
     pub(super) batch_worker_count_ticks: BTreeMap<usize, Tick>,
     pub(super) initial_frontiers: Vec<PartitionFrontier>,
     pub(super) final_frontiers: Vec<PartitionFrontier>,
+    pub(super) remote_flows: Vec<ParallelRemoteFlowRecord>,
+    pub(super) remote_sends: Vec<ParallelRemoteSendRecord>,
 }
 
 impl DmaSchedulerEvidence {
@@ -40,6 +43,8 @@ impl DmaSchedulerEvidence {
             .extend(run.initial_frontiers().iter().copied());
         self.final_frontiers
             .extend(run.final_frontiers().iter().copied());
+        self.remote_flows.extend(run.remote_flows());
+        self.remote_sends.extend(run.remote_sends());
         for (worker_count, count) in run.batch_worker_count_summaries() {
             let stored = self.batch_worker_counts.entry(worker_count).or_default();
             *stored = stored.saturating_add(count);
@@ -79,6 +84,37 @@ pub(super) fn dma_scheduler_frontiers(
             frontier.safe_until(),
             frontier.next_tick(),
             frontier.pending_events(),
+        )
+    });
+    records
+}
+
+pub(super) fn dma_scheduler_remote_flows(
+    records: Vec<ParallelRemoteFlowRecord>,
+) -> Vec<ParallelRemoteFlowRecord> {
+    let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
+    for record in records {
+        if record.send_count() == 0 {
+            continue;
+        }
+        by_route
+            .entry((record.source(), record.target()))
+            .and_modify(|stored| *stored = stored.merged_with(record))
+            .or_insert(record);
+    }
+    by_route.into_values().collect()
+}
+
+pub(super) fn dma_scheduler_remote_sends(
+    mut records: Vec<ParallelRemoteSendRecord>,
+) -> Vec<ParallelRemoteSendRecord> {
+    records.sort_by_key(|record| {
+        (
+            record.source(),
+            record.target(),
+            record.source_tick(),
+            record.delivery_tick(),
+            record.order(),
         )
     });
     records
