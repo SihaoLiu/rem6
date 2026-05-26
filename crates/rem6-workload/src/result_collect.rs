@@ -253,6 +253,7 @@ pub(crate) fn collect_parallel_partition_activities(
 ) -> Vec<(PartitionId, ParallelPartitionActivity)> {
     let mut by_partition = BTreeMap::new();
     for (partition, activity) in activities {
+        let activity = normalize_parallel_partition_activity(activity);
         if !activity.has_activity() {
             continue;
         }
@@ -264,6 +265,21 @@ pub(crate) fn collect_parallel_partition_activities(
             .or_insert(activity);
     }
     by_partition.into_iter().collect()
+}
+
+fn normalize_parallel_partition_activity(
+    activity: ParallelPartitionActivity,
+) -> ParallelPartitionActivity {
+    if activity.worker_count() == 0 && activity.dispatch_count() != 0 {
+        return ParallelPartitionActivity::with_remote_counts(
+            0,
+            0,
+            activity.remote_send_count(),
+            activity.remote_receive_count(),
+            activity.max_pending_events(),
+        );
+    }
+    activity
 }
 
 fn merge_parallel_partition_activity(

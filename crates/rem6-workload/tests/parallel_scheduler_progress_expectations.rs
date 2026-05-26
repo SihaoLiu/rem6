@@ -267,6 +267,42 @@ fn workload_replay_plan_derives_dispatch_progress_from_partition_activity() {
 }
 
 #[test]
+fn workload_replay_plan_ignores_workerless_partition_dispatch_progress() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([(
+            PartitionId::new(0),
+            ParallelPartitionActivity::with_remote_counts(0, 3, 1, 0, 0),
+        )])
+        .with_data_cache_parallel_scheduler_partition_activities([(
+            PartitionId::new(1),
+            ParallelPartitionActivity::with_remote_counts(0, 4, 0, 1, 0),
+        )]);
+
+    assert_eq!(summary.scheduler_dispatch_count(), 0);
+    assert_eq!(summary.data_cache_parallel_scheduler_dispatch_count(), 0);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            minimum_epoch_count: 0,
+            actual_epoch_count: 0,
+            minimum_dispatch_count: 2,
+            actual_dispatch_count: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_derives_dispatch_progress_from_batch_evidence() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("scheduler-progress-from-batch-evidence"),

@@ -247,11 +247,52 @@ fn workload_replay_plan_rejects_missing_or_underactive_partition_activity() {
             minimum_worker_count: 2,
             actual_worker_count: 1,
             minimum_dispatch_count: 5,
-            actual_dispatch_count: 4,
+            actual_dispatch_count: 3,
             minimum_remote_send_count: 1,
             actual_remote_send_count: 1,
             minimum_remote_receive_count: 5,
             actual_remote_receive_count: 3,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_ignores_workerless_partition_dispatch_activity() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            1,
+            0,
+            1,
+            2,
+            0,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([(
+            PartitionId::new(1),
+            ParallelPartitionActivity::with_remote_counts(0, 3, 2, 0, 5),
+        )]);
+
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(1)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 2, 0, 5)),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelPartitionActivityBelowMinimum {
+            scope: WorkloadParallelBatchPartitionScope::Scheduler,
+            partition: 1,
+            minimum_worker_count: 0,
+            actual_worker_count: 0,
+            minimum_dispatch_count: 1,
+            actual_dispatch_count: 0,
+            minimum_remote_send_count: 2,
+            actual_remote_send_count: 2,
+            minimum_remote_receive_count: 0,
+            actual_remote_receive_count: 0,
         },
     );
 }
