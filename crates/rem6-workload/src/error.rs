@@ -573,6 +573,11 @@ pub enum WorkloadError {
         source: u32,
         target: u32,
     },
+    InvalidExpectedParallelRemoteFlowEndpoints {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+    },
     DuplicateExpectedParallelRemoteFlow {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,

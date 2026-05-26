@@ -469,6 +469,13 @@ impl WorkloadExpectedParallelRemoteFlow {
                 target: target.index(),
             });
         }
+        if source == target {
+            return Err(WorkloadError::InvalidExpectedParallelRemoteFlowEndpoints {
+                scope,
+                source: source.index(),
+                target: target.index(),
+            });
+        }
         Ok(Self {
             scope,
             source,
@@ -902,6 +909,13 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
     ) -> Result<Self, WorkloadError> {
         if send_count == 0 {
             return Err(WorkloadError::ZeroExpectedParallelRemoteFlowCount {
+                scope,
+                source: source.index(),
+                target: target.index(),
+            });
+        }
+        if source == target {
+            return Err(WorkloadError::InvalidExpectedParallelRemoteFlowEndpoints {
                 scope,
                 source: source.index(),
                 target: target.index(),

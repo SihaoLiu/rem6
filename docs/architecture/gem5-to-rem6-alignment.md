@@ -51,7 +51,9 @@ isolated bugs:
   contracts use dedicated manifest scopes. Direct GPU
   and accelerator DMA per-partition activity contracts now use the DMA
   timeline-derived sets and streaks, and merged full-system partition checks
-  include the same per-partition worker and dispatch activity. Wait-for
+  include the same per-partition worker and dispatch activity. Remote-flow
+  contracts reject same-partition endpoints, so remote traffic evidence cannot
+  be satisfied by local partition traffic. Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
   with the same deterministic semantics before the data is converted into
@@ -344,6 +346,9 @@ Implementation evidence on 2026-05-26:
   one-partition records. Exact timeline contracts must prove at least two
   workers spanning at least two scheduler partitions before replay accepts them
   as parallel evidence.
+- Workload parallel remote-flow and remote-flow timing expectations now reject
+  same-partition endpoints. A manifest-declared remote-flow contract must cross
+  partition boundaries before replay accepts it as remote parallel evidence.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

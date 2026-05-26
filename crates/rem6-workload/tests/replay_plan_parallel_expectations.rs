@@ -367,6 +367,22 @@ fn workload_replay_plan_rejects_invalid_parallel_remote_flow_expectations() {
         },
     );
 
+    let same_partition = WorkloadExpectedParallelRemoteFlow::new(
+        WorkloadParallelRemoteFlowScope::Scheduler,
+        PartitionId::new(2),
+        PartitionId::new(2),
+        1,
+    )
+    .unwrap_err();
+    assert_eq!(
+        same_partition,
+        WorkloadError::InvalidExpectedParallelRemoteFlowEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+        },
+    );
+
     let duplicate = replay_plan()
         .add_expected_parallel_remote_flow(expected(
             WorkloadParallelRemoteFlowScope::FullSystem,

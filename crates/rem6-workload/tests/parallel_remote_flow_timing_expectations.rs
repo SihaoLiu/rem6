@@ -643,6 +643,24 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_flow_timing
         },
     );
 
+    let same_partition = WorkloadExpectedParallelRemoteFlowTiming::new(
+        WorkloadParallelRemoteFlowScope::Scheduler,
+        PartitionId::new(2),
+        PartitionId::new(2),
+        1,
+        6,
+        12,
+    )
+    .unwrap_err();
+    assert_eq!(
+        same_partition,
+        WorkloadError::InvalidExpectedParallelRemoteFlowEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+        },
+    );
+
     let invalid_delay = WorkloadExpectedParallelRemoteFlowTiming::with_delay_bounds(
         WorkloadParallelRemoteFlowScope::Scheduler,
         PartitionId::new(0),

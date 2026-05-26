@@ -26,6 +26,15 @@ pub(crate) fn format_remote_traffic_error(
             "expected {} remote flow {source}->{target} must have a positive send count",
             scope.as_str()
         ),
+        WorkloadError::InvalidExpectedParallelRemoteFlowEndpoints {
+            scope,
+            source,
+            target,
+        } => write!(
+            formatter,
+            "expected {} remote flow {source}->{target} must cross partitions",
+            scope.as_str()
+        ),
         WorkloadError::DuplicateExpectedParallelRemoteFlow {
             scope,
             source,

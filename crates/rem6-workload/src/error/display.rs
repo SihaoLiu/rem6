@@ -772,6 +772,7 @@ impl fmt::Display for WorkloadError {
                 write!(formatter, "stop reason {actual} was not planned")
             }
             Self::ZeroExpectedParallelRemoteFlowCount { .. }
+            | Self::InvalidExpectedParallelRemoteFlowEndpoints { .. }
             | Self::DuplicateExpectedParallelRemoteFlow { .. }
             | Self::DuplicateExpectedParallelRemoteSend { .. }
             | Self::MissingParallelExecutionSummary { .. }
