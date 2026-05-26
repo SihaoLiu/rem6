@@ -6,7 +6,8 @@ use rem6_accelerator::{
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_gpu::{
-    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuKernelId, GpuKernelLaunch, GpuTopologyConfig,
+    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuKernelId, GpuKernelLaunch,
+    GpuSlotSnapshot, GpuTopologyConfig,
 };
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -15,9 +16,10 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    AcceleratorCheckpointBank, AcceleratorCheckpointPort, GpuCheckpointBank, GpuCheckpointPort,
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvTopologyHostConfig,
-    RiscvTopologySystem, SystemActionExecutor, SystemActionOutcome,
+    AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,
+    GpuCheckpointBank, GpuCheckpointError, GpuCheckpointPort, GuestEventId, GuestSourceId,
+    HostAction, HostActionRecord, RiscvTopologyHostConfig, RiscvTopologySystem,
+    SystemActionExecutor, SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -266,6 +268,102 @@ fn heterogeneous_checkpoint_preserves_dma_read_request_ordering() {
             .ordering(),
         ordering
     );
+}
+
+#[test]
+fn accelerator_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = CheckpointComponentId::new("accelerator_atomic_a").unwrap();
+    let invalid_component = CheckpointComponentId::new("accelerator_atomic_b").unwrap();
+    let expected_snapshot =
+        AcceleratorEngineSnapshot::new(vec![47], Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let source = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(30), PartitionId::new(1), 1).unwrap(),
+    );
+    source.restore(&expected_snapshot);
+
+    let target_valid = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(31), PartitionId::new(1), 1).unwrap(),
+    );
+    let target_invalid = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(32), PartitionId::new(1), 1).unwrap(),
+    );
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    AcceleratorCheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "accelerator", vec![0xaa])
+        .unwrap();
+
+    let bank = AcceleratorCheckpointBank::new([
+        AcceleratorCheckpointPort::new(valid_component, target_valid.clone()),
+        AcceleratorCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let err = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        err,
+        AcceleratorCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn gpu_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = CheckpointComponentId::new("gpu_atomic_a").unwrap();
+    let invalid_component = CheckpointComponentId::new("gpu_atomic_b").unwrap();
+    let expected_snapshot = GpuDeviceSnapshot::new(
+        vec![
+            GpuSlotSnapshot::new(17, false, Vec::new()),
+            GpuSlotSnapshot::new(23, true, Vec::new()),
+        ],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let source = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(40), PartitionId::new(2), 2, 1).unwrap(),
+    );
+    source.restore(&expected_snapshot);
+
+    let target_valid = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(41), PartitionId::new(2), 2, 1).unwrap(),
+    );
+    let target_invalid = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(42), PartitionId::new(2), 2, 1).unwrap(),
+    );
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    GpuCheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "gpu", vec![0xbb])
+        .unwrap();
+
+    let bank = GpuCheckpointBank::new([
+        GpuCheckpointPort::new(valid_component, target_valid.clone()),
+        GpuCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let err = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        err,
+        GpuCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
 }
 
 #[test]

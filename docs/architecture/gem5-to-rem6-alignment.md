@@ -406,7 +406,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   mutate live memory state. Fabric, coherence, and RISC-V checkpoint-bank tests
   cover decode-first multi-bank and multi-core restore so malformed chunks
   cannot partially rewind another live NoC lane frontier, cache bank,
-  architectural PC, or integer register file. RISC-V
+  architectural PC, or integer register file. Heterogeneous checkpoint-bank
+  tests cover decode-first accelerator and GPU restore so a malformed later
+  device chunk cannot partially restore an earlier live device. RISC-V
   cluster tests cover peer reservation invalidation after a completed overlapping store so a later
   `SC.D` fails instead of overwriting the peer's data. RISC-V topology tests
   cover MSI data-cache snoop invalidation before the peer store response reaches
@@ -435,7 +437,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   transport, scheduler activity, summaries, and checkpoint banks, including
   DMA write-request ordering inherited from copy read requests and
   heterogeneous checkpoint restore of pending DMA read-request ordering
-  metadata.
+  metadata plus bank-level prevalidation before live device state is mutated.
 - CPU branch prediction exposes typed direction prediction, GShare PC-history
   indexing, BiMode choice and direction-array training, Tournament
   local/global/choice training, loop trip-count learning, LTAGE loop override

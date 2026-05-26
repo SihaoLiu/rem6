@@ -90,6 +90,15 @@ impl AcceleratorCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<AcceleratorCheckpointRecord, AcceleratorCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.engine.restore(record.snapshot());
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<AcceleratorCheckpointRecord, AcceleratorCheckpointError> {
         let payload = registry
             .chunk(&self.component, ACCELERATOR_CHUNK)
             .ok_or_else(|| AcceleratorCheckpointError::MissingChunk {
@@ -97,7 +106,6 @@ impl AcceleratorCheckpointPort {
                 name: ACCELERATOR_CHUNK.to_string(),
             })?;
         let snapshot = decode_accelerator_snapshot(&self.component, payload)?;
-        self.engine.restore(&snapshot);
         Ok(AcceleratorCheckpointRecord::new(
             self.component.clone(),
             snapshot,
@@ -153,10 +161,15 @@ impl AcceleratorCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<AcceleratorCheckpointRecord>, AcceleratorCheckpointError> {
-        self.ports
+        let records = self
+            .ports
             .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+            .map(|port| port.decode_from(registry))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in self.ports.values().zip(&records) {
+            port.engine.restore(record.snapshot());
+        }
+        Ok(records)
     }
 }
 
@@ -250,6 +263,15 @@ impl GpuCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<GpuCheckpointRecord, GpuCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.gpu.restore(record.snapshot());
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<GpuCheckpointRecord, GpuCheckpointError> {
         let payload = registry.chunk(&self.component, GPU_CHUNK).ok_or_else(|| {
             GpuCheckpointError::MissingChunk {
                 component: self.component.clone(),
@@ -257,7 +279,6 @@ impl GpuCheckpointPort {
             }
         })?;
         let snapshot = decode_gpu_snapshot(&self.component, payload)?;
-        self.gpu.restore(&snapshot);
         Ok(GpuCheckpointRecord::new(self.component.clone(), snapshot))
     }
 }
@@ -310,10 +331,15 @@ impl GpuCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<GpuCheckpointRecord>, GpuCheckpointError> {
-        self.ports
+        let records = self
+            .ports
             .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+            .map(|port| port.decode_from(registry))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in self.ports.values().zip(&records) {
+            port.gpu.restore(record.snapshot());
+        }
+        Ok(records)
     }
 }
 
