@@ -1,7 +1,9 @@
 use rem6_virtio::{
-    VirtioBlockDecodedRequest, VirtioBlockRequestId, VirtioBlockRequestKind, VirtioQueueIndex,
-    VirtioSplitDescriptor, VirtioSplitDescriptorChain, VIRTIO_BLOCK_SECTOR_SIZE,
-    VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
+    VirtioBlockConfigSpec, VirtioBlockDecodedRequest, VirtioBlockDevice, VirtioBlockMemoryBackend,
+    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioQueueIndex, VirtioSplitDescriptor,
+    VirtioSplitDescriptorChain, VirtioSplitUsedElement, VirtioSplitUsedRing,
+    VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID,
+    VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -176,4 +178,53 @@ fn virtio_split_descriptor_chain_rejects_bad_block_shapes() {
         .decode_block_request(queue(0)),
         Err(error) if error.to_string().contains("device id")
     ));
+}
+
+#[test]
+fn virtio_split_used_ring_records_block_completion_writeback() {
+    let data = sector(0x44);
+    let backend = VirtioBlockMemoryBackend::from_bytes(data.clone()).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend.clone()).unwrap();
+    let decoded = decoded(
+        VirtioSplitDescriptorChain::new(
+            14,
+            vec![
+                VirtioSplitDescriptor::device_readable(14, header(VIRTIO_BLOCK_T_IN, 0), Some(15)),
+                VirtioSplitDescriptor::device_writable(15, 300, Some(16)),
+                VirtioSplitDescriptor::device_writable(16, 212, Some(17)),
+                VirtioSplitDescriptor::device_writable(17, 1, None),
+            ],
+        )
+        .unwrap(),
+    );
+    let completion = device.execute_at(41, decoded.request().clone()).unwrap();
+
+    let mut used_ring = VirtioSplitUsedRing::new(4, 0xfffe).unwrap();
+    let writeback = used_ring
+        .complete_block_request(&decoded, &completion)
+        .unwrap();
+
+    assert_eq!(writeback.status_write().descriptor(), 17);
+    assert_eq!(writeback.status_write().offset(), 0);
+    assert_eq!(writeback.status_write().bytes(), &[VIRTIO_BLOCK_S_OK]);
+    assert_eq!(writeback.data_writes().len(), 2);
+    assert_eq!(writeback.data_writes()[0].descriptor(), 15);
+    assert_eq!(writeback.data_writes()[0].bytes(), &data[..300]);
+    assert_eq!(writeback.data_writes()[1].descriptor(), 16);
+    assert_eq!(writeback.data_writes()[1].bytes(), &data[300..]);
+    assert_eq!(writeback.used_slot(), 2);
+    assert_eq!(writeback.used_index(), 0xffff);
+    assert_eq!(
+        writeback.used_element(),
+        VirtioSplitUsedElement::new(14, 529)
+    );
+    assert_eq!(used_ring.index(), 0xffff);
+    assert_eq!(
+        used_ring.entry(2),
+        Some(&VirtioSplitUsedElement::new(14, 529))
+    );
+    assert_eq!(
+        writeback.used_element().to_le_bytes(),
+        [14, 0, 0, 0, 17, 2, 0, 0]
+    );
 }

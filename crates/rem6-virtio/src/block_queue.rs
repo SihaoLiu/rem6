@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind, VirtioError,
-    VirtioQueueIndex, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
+    VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
+    VirtioError, VirtioQueueIndex, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
     VIRTIO_BLOCK_T_OUT,
 };
 
@@ -129,9 +129,15 @@ impl VirtioSplitDescriptorChain {
         let (raw_type, sector) = self.block_header()?;
         let status = self.status_descriptor()?;
         let payload = &self.descriptors[1..self.descriptors.len() - 1];
+        let used_length = self.chain_used_length(raw_type)?;
+        let mut writable_data_descriptors = Vec::new();
         let request = match raw_type {
             VIRTIO_BLOCK_T_IN => {
-                let bytes = self.writable_payload_bytes(raw_type, payload)?;
+                writable_data_descriptors = self.writable_payload_targets(raw_type, payload)?;
+                let bytes = writable_data_descriptors
+                    .iter()
+                    .map(|target| u64::from(target.length()))
+                    .sum();
                 VirtioBlockRequest::read(
                     VirtioBlockRequestId::new(u64::from(self.head)),
                     queue,
@@ -153,7 +159,11 @@ impl VirtioSplitDescriptorChain {
                 VirtioBlockRequest::flush(VirtioBlockRequestId::new(u64::from(self.head)), queue)?
             }
             VIRTIO_BLOCK_T_GET_ID => {
-                let bytes = self.writable_payload_bytes(raw_type, payload)?;
+                writable_data_descriptors = self.writable_payload_targets(raw_type, payload)?;
+                let bytes = writable_data_descriptors
+                    .iter()
+                    .map(|target| u64::from(target.length()))
+                    .sum();
                 if bytes < 20 {
                     return Err(VirtioError::InvalidVirtioBlockDeviceIdOutput { bytes });
                 }
@@ -174,7 +184,9 @@ impl VirtioSplitDescriptorChain {
         Ok(VirtioBlockDecodedRequest {
             request,
             status_descriptor: status.index(),
+            writable_data_descriptors,
             writable_data_bytes,
+            used_length,
         })
     }
 
@@ -263,6 +275,37 @@ impl VirtioSplitDescriptorChain {
         Ok(bytes)
     }
 
+    fn writable_payload_targets(
+        &self,
+        raw_type: u32,
+        payload: &[VirtioSplitDescriptor],
+    ) -> Result<Vec<VirtioBlockWritableDescriptor>, VirtioError> {
+        let mut targets = Vec::new();
+        for descriptor in payload {
+            if !descriptor.is_writable() {
+                return Err(VirtioError::InvalidVirtioBlockWritableDescriptor {
+                    raw_type,
+                    index: descriptor.index(),
+                });
+            }
+            targets.push(VirtioBlockWritableDescriptor {
+                index: descriptor.index(),
+                length: descriptor.length(),
+            });
+        }
+        Ok(targets)
+    }
+
+    fn chain_used_length(&self, raw_type: u32) -> Result<u32, VirtioError> {
+        let mut bytes = 0_u64;
+        for descriptor in &self.descriptors {
+            bytes = bytes
+                .checked_add(u64::from(descriptor.length()))
+                .ok_or(VirtioError::VirtioBlockPayloadLengthOverflow { raw_type })?;
+        }
+        u32::try_from(bytes).map_err(|_| VirtioError::VirtioBlockPayloadLengthOverflow { raw_type })
+    }
+
     fn require_no_payload(
         &self,
         raw_type: u32,
@@ -288,7 +331,9 @@ impl VirtioSplitDescriptorChain {
 pub struct VirtioBlockDecodedRequest {
     request: VirtioBlockRequest,
     status_descriptor: u16,
+    writable_data_descriptors: Vec<VirtioBlockWritableDescriptor>,
     writable_data_bytes: u64,
+    used_length: u32,
 }
 
 impl VirtioBlockDecodedRequest {
@@ -304,7 +349,209 @@ impl VirtioBlockDecodedRequest {
         self.writable_data_bytes
     }
 
+    pub const fn used_length(&self) -> u32 {
+        self.used_length
+    }
+
     pub fn into_request(self) -> VirtioBlockRequest {
         self.request
+    }
+
+    fn data_writes(&self, data: &[u8]) -> Result<Vec<VirtioBlockDescriptorWrite>, VirtioError> {
+        if data.len() as u64 > self.writable_data_bytes {
+            return Err(VirtioError::VirtioBlockPayloadLengthOverflow {
+                raw_type: self.request.kind().raw_type(),
+            });
+        }
+        let mut cursor = data;
+        let mut writes = Vec::new();
+        for target in &self.writable_data_descriptors {
+            if cursor.is_empty() {
+                break;
+            }
+            let bytes = cursor.len().min(target.length() as usize);
+            writes.push(VirtioBlockDescriptorWrite {
+                descriptor: target.index(),
+                offset: 0,
+                bytes: cursor[..bytes].to_vec(),
+            });
+            cursor = &cursor[bytes..];
+        }
+        if !cursor.is_empty() {
+            return Err(VirtioError::VirtioBlockPayloadLengthOverflow {
+                raw_type: self.request.kind().raw_type(),
+            });
+        }
+        Ok(writes)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VirtioBlockWritableDescriptor {
+    index: u16,
+    length: u32,
+}
+
+impl VirtioBlockWritableDescriptor {
+    const fn index(self) -> u16 {
+        self.index
+    }
+
+    const fn length(self) -> u32 {
+        self.length
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioBlockDescriptorWrite {
+    descriptor: u16,
+    offset: u32,
+    bytes: Vec<u8>,
+}
+
+impl VirtioBlockDescriptorWrite {
+    pub const fn descriptor(&self) -> u16 {
+        self.descriptor
+    }
+
+    pub const fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtioSplitUsedElement {
+    id: u32,
+    len: u32,
+}
+
+impl VirtioSplitUsedElement {
+    pub const fn new(id: u32, len: u32) -> Self {
+        Self { id, len }
+    }
+
+    pub const fn id(self) -> u32 {
+        self.id
+    }
+
+    pub const fn used_length(self) -> u32 {
+        self.len
+    }
+
+    pub fn to_le_bytes(self) -> [u8; 8] {
+        let id = self.id.to_le_bytes();
+        let len = self.len.to_le_bytes();
+        [id[0], id[1], id[2], id[3], len[0], len[1], len[2], len[3]]
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioBlockQueueCompletionWrite {
+    data_writes: Vec<VirtioBlockDescriptorWrite>,
+    status_write: VirtioBlockDescriptorWrite,
+    used_slot: u16,
+    used_index: u16,
+    used_element: VirtioSplitUsedElement,
+}
+
+impl VirtioBlockQueueCompletionWrite {
+    pub fn data_writes(&self) -> &[VirtioBlockDescriptorWrite] {
+        &self.data_writes
+    }
+
+    pub const fn status_write(&self) -> &VirtioBlockDescriptorWrite {
+        &self.status_write
+    }
+
+    pub const fn used_slot(&self) -> u16 {
+        self.used_slot
+    }
+
+    pub const fn used_index(&self) -> u16 {
+        self.used_index
+    }
+
+    pub const fn used_element(&self) -> VirtioSplitUsedElement {
+        self.used_element
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioSplitUsedRing {
+    queue_size: u16,
+    index: u16,
+    entries: Vec<Option<VirtioSplitUsedElement>>,
+}
+
+impl VirtioSplitUsedRing {
+    pub fn new(queue_size: u16, index: u16) -> Result<Self, VirtioError> {
+        if queue_size == 0 || !queue_size.is_power_of_two() {
+            return Err(VirtioError::InvalidQueueSize {
+                index: 0,
+                size: queue_size,
+            });
+        }
+        Ok(Self {
+            queue_size,
+            index,
+            entries: vec![None; queue_size as usize],
+        })
+    }
+
+    pub const fn queue_size(&self) -> u16 {
+        self.queue_size
+    }
+
+    pub const fn index(&self) -> u16 {
+        self.index
+    }
+
+    pub fn entry(&self, slot: u16) -> Option<&VirtioSplitUsedElement> {
+        self.entries
+            .get(usize::from(slot % self.queue_size))
+            .and_then(Option::as_ref)
+    }
+
+    pub fn complete_block_request(
+        &mut self,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        if completion.request() != decoded.request().id()
+            || completion.queue() != decoded.request().queue()
+        {
+            return Err(VirtioError::PciTransportRuntimeConfig {
+                message: "VirtIO block completion does not match decoded descriptor chain".into(),
+            });
+        }
+        let data_writes = decoded.data_writes(completion.data().unwrap_or(&[]))?;
+        let status_write = VirtioBlockDescriptorWrite {
+            descriptor: decoded.status_descriptor(),
+            offset: 0,
+            bytes: vec![completion.status_byte()],
+        };
+        let used_slot = self.index % self.queue_size;
+        let used_index = self.index.wrapping_add(1);
+        let used_element = VirtioSplitUsedElement::new(
+            u32::try_from(decoded.request().id().get()).map_err(|_| {
+                VirtioError::VirtioBlockPayloadLengthOverflow {
+                    raw_type: decoded.request().kind().raw_type(),
+                }
+            })?,
+            decoded.used_length(),
+        );
+        self.entries[used_slot as usize] = Some(used_element);
+        self.index = used_index;
+        Ok(VirtioBlockQueueCompletionWrite {
+            data_writes,
+            status_write,
+            used_slot,
+            used_index,
+            used_element,
+        })
     }
 }
