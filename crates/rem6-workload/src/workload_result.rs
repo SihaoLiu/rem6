@@ -54,6 +54,50 @@ impl WorkloadCheckpointManifestSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadExpectedCheckpointManifestSummary {
+    label: String,
+    minimum_component_count: usize,
+    minimum_chunk_count: usize,
+    minimum_payload_bytes: usize,
+}
+
+impl WorkloadExpectedCheckpointManifestSummary {
+    pub fn new(
+        label: impl Into<String>,
+        minimum_component_count: usize,
+        minimum_chunk_count: usize,
+        minimum_payload_bytes: usize,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            minimum_component_count,
+            minimum_chunk_count,
+            minimum_payload_bytes,
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub const fn minimum_component_count(&self) -> usize {
+        self.minimum_component_count
+    }
+
+    pub const fn minimum_chunk_count(&self) -> usize {
+        self.minimum_chunk_count
+    }
+
+    pub const fn minimum_payload_bytes(&self) -> usize {
+        self.minimum_payload_bytes
+    }
+
+    pub(crate) fn sort_key(&self) -> &str {
+        &self.label
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResult {
     manifest_identity: WorkloadManifestIdentity,
     start_tick: Tick,

@@ -707,6 +707,46 @@ impl fmt::Display for WorkloadError {
                     "checkpoint restore label {label} was not planned"
                 )
             }
+            Self::DuplicateExpectedCheckpointManifestSummary { label } => write!(
+                formatter,
+                "duplicate checkpoint manifest summary expectation for {label}"
+            ),
+            Self::DuplicateExpectedCheckpointRestoreManifestSummary { label } => write!(
+                formatter,
+                "duplicate checkpoint restore manifest summary expectation for {label}"
+            ),
+            Self::MissingCheckpointManifestSummary { label } => write!(
+                formatter,
+                "checkpoint manifest summary for {label} was not recorded"
+            ),
+            Self::MissingCheckpointRestoreManifestSummary { label } => write!(
+                formatter,
+                "checkpoint restore manifest summary for {label} was not recorded"
+            ),
+            Self::CheckpointManifestSummaryBelowMinimum {
+                label,
+                minimum_component_count,
+                actual_component_count,
+                minimum_chunk_count,
+                actual_chunk_count,
+                minimum_payload_bytes,
+                actual_payload_bytes,
+            } => write!(
+                formatter,
+                "checkpoint manifest summary for {label} has components {actual_component_count}/{minimum_component_count}, chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
+            ),
+            Self::CheckpointRestoreManifestSummaryBelowMinimum {
+                label,
+                minimum_component_count,
+                actual_component_count,
+                minimum_chunk_count,
+                actual_chunk_count,
+                minimum_payload_bytes,
+                actual_payload_bytes,
+            } => write!(
+                formatter,
+                "checkpoint restore manifest summary for {label} has components {actual_component_count}/{minimum_component_count}, chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
+            ),
             Self::MissingExecutionModeSwitch { tick, target, mode } => write!(
                 formatter,
                 "planned execution mode switch for {target} to {} at tick {tick} was not recorded",

@@ -3,29 +3,29 @@ use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
-    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedFabricHopActivity,
-    WorkloadExpectedFabricLaneActivity, WorkloadExpectedFabricLinkActivity,
-    WorkloadExpectedFabricVirtualNetworkActivity, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
-    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
-    WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
-    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
-    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
-    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
-    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
-    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedCheckpointManifestSummary, WorkloadExpectedCleanParallelDiagnostics,
+    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
+    WorkloadExpectedFabricHopActivity, WorkloadExpectedFabricLaneActivity,
+    WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
+    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
+    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelBatchTimelineRecord,
+    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
+    WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
+    WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedParallelFrontier,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
+    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -66,6 +66,10 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelRemoteFlowTiming],
     pub(crate) expected_parallel_progress_transitions:
         &'a [WorkloadExpectedParallelProgressTransition],
+    pub(crate) expected_checkpoint_manifest_summaries:
+        &'a [WorkloadExpectedCheckpointManifestSummary],
+    pub(crate) expected_checkpoint_restore_manifest_summaries:
+        &'a [WorkloadExpectedCheckpointManifestSummary],
     pub(crate) expected_parallel_worker_use: &'a [WorkloadExpectedParallelWorkerUse],
     pub(crate) expected_parallel_worker_activity: &'a [WorkloadExpectedParallelWorkerActivity],
     pub(crate) expected_parallel_scheduler_progress:
@@ -223,6 +227,20 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_progress_transitions {
         hash_expected_parallel_progress_transition(&mut hash, expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_checkpoint_manifest_summaries.len() as u64,
+    );
+    for expected in input.expected_checkpoint_manifest_summaries {
+        hash_expected_checkpoint_manifest_summary(&mut hash, expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_checkpoint_restore_manifest_summaries.len() as u64,
+    );
+    for expected in input.expected_checkpoint_restore_manifest_summaries {
+        hash_expected_checkpoint_manifest_summary(&mut hash, expected);
     }
     hash_u64(&mut hash, input.expected_parallel_worker_use.len() as u64);
     for expected in input.expected_parallel_worker_use {
@@ -561,6 +579,16 @@ fn hash_expected_parallel_progress_transition(
     hash_str(hash, expected.kind().as_str());
     hash_u64(hash, expected.tick());
     hash_u64(hash, expected.order());
+}
+
+fn hash_expected_checkpoint_manifest_summary(
+    hash: &mut u64,
+    expected: &WorkloadExpectedCheckpointManifestSummary,
+) {
+    hash_str(hash, expected.label());
+    hash_u64(hash, expected.minimum_component_count() as u64);
+    hash_u64(hash, expected.minimum_chunk_count() as u64);
+    hash_u64(hash, expected.minimum_payload_bytes() as u64);
 }
 
 fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {

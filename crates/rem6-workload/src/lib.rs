@@ -121,7 +121,9 @@ pub use topology::{
     WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
     WorkloadRouteLatency, WorkloadTopology,
 };
-pub use workload_result::{WorkloadCheckpointManifestSummary, WorkloadResult};
+pub use workload_result::{
+    WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointManifestSummary, WorkloadResult,
+};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WorkloadId(String);
@@ -264,6 +266,8 @@ pub struct WorkloadManifest {
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
+    expected_checkpoint_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
+    expected_checkpoint_restore_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -350,6 +354,18 @@ impl WorkloadManifest {
         &self,
     ) -> Option<&WorkloadExpectedDataCacheRunAttribution> {
         self.expected_data_cache_run_attribution.as_ref()
+    }
+
+    pub fn expected_checkpoint_manifest_summaries(
+        &self,
+    ) -> &[WorkloadExpectedCheckpointManifestSummary] {
+        &self.expected_checkpoint_manifest_summaries
+    }
+
+    pub fn expected_checkpoint_restore_manifest_summaries(
+        &self,
+    ) -> &[WorkloadExpectedCheckpointManifestSummary] {
+        &self.expected_checkpoint_restore_manifest_summaries
     }
 
     pub fn expected_parallel_worker_use(&self) -> &[WorkloadExpectedParallelWorkerUse] {
@@ -445,6 +461,8 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
+    expected_checkpoint_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
+    expected_checkpoint_restore_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -495,6 +513,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_progress_transitions: Vec::new(),
+            expected_checkpoint_manifest_summaries: Vec::new(),
+            expected_checkpoint_restore_manifest_summaries: Vec::new(),
             expected_parallel_worker_use: Vec::new(),
             expected_parallel_worker_activity: Vec::new(),
             expected_parallel_scheduler_progress: Vec::new(),
@@ -556,6 +576,47 @@ impl WorkloadManifestBuilder {
             return Err(WorkloadError::DuplicateExpectedDataCacheRunAttribution);
         }
         self.expected_data_cache_run_attribution = Some(expected);
+        Ok(self)
+    }
+
+    pub fn add_expected_checkpoint_manifest_summary(
+        mut self,
+        expected: WorkloadExpectedCheckpointManifestSummary,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_checkpoint_manifest_summaries
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedCheckpointManifestSummary {
+                label: expected.label().to_string(),
+            });
+        }
+        self.expected_checkpoint_manifest_summaries.push(expected);
+        self.expected_checkpoint_manifest_summaries
+            .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
+        Ok(self)
+    }
+
+    pub fn add_expected_checkpoint_restore_manifest_summary(
+        mut self,
+        expected: WorkloadExpectedCheckpointManifestSummary,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_checkpoint_restore_manifest_summaries
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedCheckpointRestoreManifestSummary {
+                    label: expected.label().to_string(),
+                },
+            );
+        }
+        self.expected_checkpoint_restore_manifest_summaries
+            .push(expected);
+        self.expected_checkpoint_restore_manifest_summaries
+            .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
         Ok(self)
     }
 
@@ -877,6 +938,9 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: &self.expected_parallel_progress_transitions,
+            expected_checkpoint_manifest_summaries: &self.expected_checkpoint_manifest_summaries,
+            expected_checkpoint_restore_manifest_summaries: &self
+                .expected_checkpoint_restore_manifest_summaries,
             expected_parallel_worker_use: &self.expected_parallel_worker_use,
             expected_parallel_worker_activity: &self.expected_parallel_worker_activity,
             expected_parallel_scheduler_progress: &self.expected_parallel_scheduler_progress,
@@ -935,6 +999,9 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: self.expected_parallel_progress_transitions,
+            expected_checkpoint_manifest_summaries: self.expected_checkpoint_manifest_summaries,
+            expected_checkpoint_restore_manifest_summaries: self
+                .expected_checkpoint_restore_manifest_summaries,
             expected_parallel_worker_use: self.expected_parallel_worker_use,
             expected_parallel_worker_activity: self.expected_parallel_worker_activity,
             expected_parallel_scheduler_progress: self.expected_parallel_scheduler_progress,

@@ -474,6 +474,36 @@ pub enum WorkloadError {
     UnexpectedCheckpointRestoreLabel {
         label: String,
     },
+    DuplicateExpectedCheckpointManifestSummary {
+        label: String,
+    },
+    DuplicateExpectedCheckpointRestoreManifestSummary {
+        label: String,
+    },
+    MissingCheckpointManifestSummary {
+        label: String,
+    },
+    MissingCheckpointRestoreManifestSummary {
+        label: String,
+    },
+    CheckpointManifestSummaryBelowMinimum {
+        label: String,
+        minimum_component_count: usize,
+        actual_component_count: usize,
+        minimum_chunk_count: usize,
+        actual_chunk_count: usize,
+        minimum_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    },
+    CheckpointRestoreManifestSummaryBelowMinimum {
+        label: String,
+        minimum_component_count: usize,
+        actual_component_count: usize,
+        minimum_chunk_count: usize,
+        actual_chunk_count: usize,
+        minimum_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    },
     MissingExecutionModeSwitch {
         tick: Tick,
         target: String,

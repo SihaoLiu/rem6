@@ -7,7 +7,8 @@ use crate::host_event::{
 };
 use crate::{parallel_expectation, replay_verify};
 use crate::{
-    CheckpointLineage, WorkloadBootImage, WorkloadError, WorkloadExecutionModeSwitch,
+    CheckpointLineage, WorkloadBootImage, WorkloadCheckpointManifestSummary, WorkloadError,
+    WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointManifestSummary,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedFabricHopActivity,
     WorkloadExpectedFabricLaneActivity, WorkloadExpectedFabricLinkActivity,
@@ -65,6 +66,10 @@ pub struct WorkloadReplayPlan {
     pub(crate) expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     pub(crate) expected_parallel_progress_transitions:
         Vec<WorkloadExpectedParallelProgressTransition>,
+    pub(crate) expected_checkpoint_manifest_summaries:
+        Vec<WorkloadExpectedCheckpointManifestSummary>,
+    pub(crate) expected_checkpoint_restore_manifest_summaries:
+        Vec<WorkloadExpectedCheckpointManifestSummary>,
     pub(crate) expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     pub(crate) expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     pub(crate) expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -151,6 +156,12 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_progress_transitions: manifest
                 .expected_parallel_progress_transitions()
+                .to_vec(),
+            expected_checkpoint_manifest_summaries: manifest
+                .expected_checkpoint_manifest_summaries()
+                .to_vec(),
+            expected_checkpoint_restore_manifest_summaries: manifest
+                .expected_checkpoint_restore_manifest_summaries()
                 .to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_worker_activity: manifest
@@ -246,6 +257,18 @@ impl WorkloadReplayPlan {
 
     pub fn planned_stop_reason(&self) -> Option<&str> {
         self.planned_stop_reason.as_deref()
+    }
+
+    pub fn expected_checkpoint_manifest_summaries(
+        &self,
+    ) -> &[WorkloadExpectedCheckpointManifestSummary] {
+        &self.expected_checkpoint_manifest_summaries
+    }
+
+    pub fn expected_checkpoint_restore_manifest_summaries(
+        &self,
+    ) -> &[WorkloadExpectedCheckpointManifestSummary] {
+        &self.expected_checkpoint_restore_manifest_summaries
     }
 
     pub fn add_expected_data_cache_protocol_run_count(
@@ -562,6 +585,8 @@ impl WorkloadReplayPlan {
         self.verify_all_planned_events_reached(result.final_tick())?;
         self.verify_checkpoint_labels(result)?;
         self.verify_checkpoint_restore_labels(result)?;
+        self.verify_checkpoint_manifest_summaries(result)?;
+        self.verify_checkpoint_restore_manifest_summaries(result)?;
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
@@ -673,6 +698,82 @@ impl WorkloadReplayPlan {
                     label: label.clone(),
                 });
             }
+        }
+
+        Ok(())
+    }
+
+    fn verify_checkpoint_manifest_summaries(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        for expected in &self.expected_checkpoint_manifest_summaries {
+            let actual = result
+                .checkpoint_manifest_summaries()
+                .iter()
+                .find(|summary| summary.label() == expected.label())
+                .ok_or_else(|| WorkloadError::MissingCheckpointManifestSummary {
+                    label: expected.label().to_string(),
+                })?;
+
+            verify_checkpoint_summary_minimum(expected, actual).map_err(
+                |(
+                    minimum_component_count,
+                    actual_component_count,
+                    minimum_chunk_count,
+                    actual_chunk_count,
+                    minimum_payload_bytes,
+                    actual_payload_bytes,
+                )| {
+                    WorkloadError::CheckpointManifestSummaryBelowMinimum {
+                        label: expected.label().to_string(),
+                        minimum_component_count,
+                        actual_component_count,
+                        minimum_chunk_count,
+                        actual_chunk_count,
+                        minimum_payload_bytes,
+                        actual_payload_bytes,
+                    }
+                },
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn verify_checkpoint_restore_manifest_summaries(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        for expected in &self.expected_checkpoint_restore_manifest_summaries {
+            let actual = result
+                .restored_checkpoint_manifest_summaries()
+                .iter()
+                .find(|summary| summary.label() == expected.label())
+                .ok_or_else(|| WorkloadError::MissingCheckpointRestoreManifestSummary {
+                    label: expected.label().to_string(),
+                })?;
+
+            verify_checkpoint_summary_minimum(expected, actual).map_err(
+                |(
+                    minimum_component_count,
+                    actual_component_count,
+                    minimum_chunk_count,
+                    actual_chunk_count,
+                    minimum_payload_bytes,
+                    actual_payload_bytes,
+                )| {
+                    WorkloadError::CheckpointRestoreManifestSummaryBelowMinimum {
+                        label: expected.label().to_string(),
+                        minimum_component_count,
+                        actual_component_count,
+                        minimum_chunk_count,
+                        actual_chunk_count,
+                        minimum_payload_bytes,
+                        actual_payload_bytes,
+                    }
+                },
+            )?;
         }
 
         Ok(())
@@ -864,4 +965,25 @@ impl WorkloadReplayPlan {
         }
         Ok(())
     }
+}
+
+fn verify_checkpoint_summary_minimum(
+    expected: &WorkloadExpectedCheckpointManifestSummary,
+    actual: &WorkloadCheckpointManifestSummary,
+) -> Result<(), (usize, usize, usize, usize, usize, usize)> {
+    if actual.component_count() >= expected.minimum_component_count()
+        && actual.chunk_count() >= expected.minimum_chunk_count()
+        && actual.payload_bytes() >= expected.minimum_payload_bytes()
+    {
+        return Ok(());
+    }
+
+    Err((
+        expected.minimum_component_count(),
+        actual.component_count(),
+        expected.minimum_chunk_count(),
+        actual.chunk_count(),
+        expected.minimum_payload_bytes(),
+        actual.payload_bytes(),
+    ))
 }
