@@ -42,13 +42,13 @@ isolated bugs:
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
   overlapped CPU and cache work instead of inferring it from aggregate
-  counters. Direct DMA scheduler active-partition, worker-count,
-  duration-weighted tick, sustained tick-streak, thresholded worker-tick,
-  exact partition-set, and same-partition-set streak contracts use the same
-  dedicated manifest scopes. Direct GPU and accelerator DMA per-partition
-  activity contracts now use the DMA timeline-derived sets and streaks, and
-  merged full-system partition checks include the same per-partition worker and
-  dispatch activity.
+  counters. Direct DMA scheduler epoch and dispatch progress,
+  active-partition, worker-count, duration-weighted tick, sustained
+  tick-streak, thresholded worker-tick, exact partition-set, and
+  same-partition-set streak contracts use dedicated manifest scopes. Direct GPU
+  and accelerator DMA per-partition activity contracts now use the DMA
+  timeline-derived sets and streaks, and merged full-system partition checks
+  include the same per-partition worker and dispatch activity.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -493,8 +493,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   remote endpoint source/target partition fan-in and fan-out summaries plus
   exact manifest-owned endpoint-set expectations, manifest-verifiable remote
   delay-floor and delay-ceiling expectations, aggregate-flow to exact-send consistency expectations,
-  minimum scheduler epoch progress plus dispatch progress from the strongest
-  available aggregate counts, batch-histogram, exact partition-set, or per-partition evidence, maximum scheduler idle epochs,
+  minimum CPU/cache/full-system scheduler epoch progress plus dispatch progress
+  from the strongest available aggregate counts, batch-histogram, exact
+  partition-set, or per-partition evidence, direct GPU and accelerator DMA
+  scheduler epoch and dispatch progress, maximum scheduler idle epochs,
   minimum max-worker use derived from the strongest available aggregate,
   worker-count, exact partition-set, or streak evidence, minimum total-worker activity
   derived from the strongest available aggregate, worker-count, exact
@@ -607,6 +609,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   partition and endpoint validation, explicit RISC-V data-cache backing-route
   validation and identity hashing, GPU and accelerator command plus DMA endpoint
   validation, manifest-owned parallel remote-flow count, remote-flow timing,
+  CPU/cache/full-system scheduler progress, direct GPU and accelerator DMA
   scheduler progress, scheduler idle bounds, max-worker use, total-worker
   activity, CPU/cache/full-system active-partition, direct GPU and accelerator
   DMA active-partition, CPU/cache/full-system per-partition activity, direct

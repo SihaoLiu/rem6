@@ -5,8 +5,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelSchedulerProgress, WorkloadId,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope,
+    WorkloadParallelSchedulerScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -46,6 +47,19 @@ fn replay_plan() -> WorkloadReplayPlan {
 
 fn expected_progress(
     scope: WorkloadParallelRemoteFlowScope,
+    minimum_epoch_count: usize,
+    minimum_dispatch_count: usize,
+) -> WorkloadExpectedParallelSchedulerProgress {
+    WorkloadExpectedParallelSchedulerProgress::new(
+        scope,
+        minimum_epoch_count,
+        minimum_dispatch_count,
+    )
+    .unwrap()
+}
+
+fn expected_dma_progress(
+    scope: WorkloadParallelSchedulerScope,
     minimum_epoch_count: usize,
     minimum_dispatch_count: usize,
 ) -> WorkloadExpectedParallelSchedulerProgress {
@@ -170,7 +184,7 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_scheduler_progre
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelSchedulerProgressSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             minimum_epoch_count: 5,
             minimum_dispatch_count: 12,
         },
@@ -184,7 +198,7 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_scheduler_progre
     assert_eq!(
         plan.verify_result(&underactive).unwrap_err(),
         WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             minimum_epoch_count: 5,
             actual_epoch_count: 4,
             minimum_dispatch_count: 12,
@@ -364,6 +378,34 @@ fn workload_replay_plan_uses_stronger_dispatch_evidence_than_aggregate_counts() 
 }
 
 #[test]
+fn workload_replay_plan_checks_dma_scheduler_progress_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_dma_progress(
+            WorkloadParallelSchedulerScope::GpuDmaScheduler,
+            2,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_dma_progress(
+            WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+            3,
+            7,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(2, 5, 3, [(2, 8)])
+        .with_accelerator_dma_scheduler_counts(3, 7, 4, [(3, 9)]);
+    assert_eq!(summary.gpu_dma_scheduler_epoch_count(), 2);
+    assert_eq!(summary.gpu_dma_scheduler_dispatch_count(), 5);
+    assert_eq!(summary.accelerator_dma_scheduler_epoch_count(), 3);
+    assert_eq!(summary.accelerator_dma_scheduler_dispatch_count(), 7);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_scheduler_progress() {
     let zero = WorkloadExpectedParallelSchedulerProgress::new(
         WorkloadParallelRemoteFlowScope::Scheduler,
@@ -374,7 +416,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_scheduler_progress
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedParallelSchedulerProgress {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelSchedulerScope::Scheduler,
         },
     );
 
@@ -394,7 +436,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_scheduler_progress
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelSchedulerProgress {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelSchedulerScope::DataCacheScheduler,
         },
     );
 }

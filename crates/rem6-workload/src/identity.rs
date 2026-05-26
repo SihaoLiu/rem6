@@ -19,8 +19,8 @@ use crate::{
     WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
     WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceActivityScope,
-    WorkloadResourceId, WorkloadTopology,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -436,6 +436,10 @@ fn hash_parallel_batch_partition_scope(hash: &mut u64, scope: WorkloadParallelBa
     hash_str(hash, scope.as_str());
 }
 
+fn hash_parallel_scheduler_scope(hash: &mut u64, scope: WorkloadParallelSchedulerScope) {
+    hash_str(hash, scope.as_str());
+}
+
 fn hash_parallel_frontier_stage(hash: &mut u64, stage: WorkloadParallelFrontierStage) {
     hash_str(hash, stage.as_str());
 }
@@ -461,7 +465,7 @@ fn hash_expected_parallel_scheduler_progress(
     hash: &mut u64,
     expected: WorkloadExpectedParallelSchedulerProgress,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_scheduler_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_epoch_count() as u64);
     hash_u64(hash, expected.minimum_dispatch_count() as u64);
 }

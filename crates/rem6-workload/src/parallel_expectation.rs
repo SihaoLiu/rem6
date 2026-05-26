@@ -117,6 +117,47 @@ impl WorkloadParallelRemoteFlowScope {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadParallelSchedulerScope {
+    Scheduler,
+    DataCacheScheduler,
+    GpuDmaScheduler,
+    AcceleratorDmaScheduler,
+    FullSystem,
+}
+
+impl WorkloadParallelSchedulerScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduler => "scheduler",
+            Self::DataCacheScheduler => "data-cache-scheduler",
+            Self::GpuDmaScheduler => "gpu-dma-scheduler",
+            Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::FullSystem => "full-system",
+        }
+    }
+
+    pub(crate) const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Scheduler => 0,
+            Self::DataCacheScheduler => 1,
+            Self::GpuDmaScheduler => 2,
+            Self::AcceleratorDmaScheduler => 3,
+            Self::FullSystem => 4,
+        }
+    }
+}
+
+impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelSchedulerScope {
+    fn from(scope: WorkloadParallelRemoteFlowScope) -> Self {
+        match scope {
+            WorkloadParallelRemoteFlowScope::Scheduler => Self::Scheduler,
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler => Self::DataCacheScheduler,
+            WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadParallelFrontierStage {
     Initial,
     Final,
@@ -1338,17 +1379,18 @@ impl WorkloadExpectedParallelWorkerActivity {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelSchedulerProgress {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelSchedulerScope,
     minimum_epoch_count: usize,
     minimum_dispatch_count: usize,
 }
 
 impl WorkloadExpectedParallelSchedulerProgress {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelSchedulerScope>,
         minimum_epoch_count: usize,
         minimum_dispatch_count: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_epoch_count == 0 && minimum_dispatch_count == 0 {
             return Err(WorkloadError::ZeroExpectedParallelSchedulerProgress { scope });
         }
@@ -1359,7 +1401,7 @@ impl WorkloadExpectedParallelSchedulerProgress {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelSchedulerScope {
         self.scope
     }
 
@@ -1380,15 +1422,23 @@ impl WorkloadExpectedParallelSchedulerProgress {
         summary: &WorkloadParallelExecutionSummary,
     ) -> (usize, usize) {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => (
+            WorkloadParallelSchedulerScope::Scheduler => (
                 summary.scheduler_epoch_count(),
                 summary.scheduler_dispatch_count(),
             ),
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => (
+            WorkloadParallelSchedulerScope::DataCacheScheduler => (
                 summary.data_cache_parallel_scheduler_epoch_count(),
                 summary.data_cache_parallel_scheduler_dispatch_count(),
             ),
-            WorkloadParallelRemoteFlowScope::FullSystem => (
+            WorkloadParallelSchedulerScope::GpuDmaScheduler => (
+                summary.gpu_dma_scheduler_epoch_count(),
+                summary.gpu_dma_scheduler_dispatch_count(),
+            ),
+            WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => (
+                summary.accelerator_dma_scheduler_epoch_count(),
+                summary.accelerator_dma_scheduler_dispatch_count(),
+            ),
+            WorkloadParallelSchedulerScope::FullSystem => (
                 summary.full_system_parallel_scheduler_epoch_count(),
                 summary.full_system_parallel_scheduler_dispatch_count(),
             ),

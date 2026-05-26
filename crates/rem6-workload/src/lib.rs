@@ -79,7 +79,7 @@ pub use parallel_expectation::{
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError,
     WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
-    WorkloadResourceActivityScope,
+    WorkloadParallelSchedulerScope, WorkloadResourceActivityScope,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,

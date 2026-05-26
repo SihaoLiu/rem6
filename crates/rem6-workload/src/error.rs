@@ -9,8 +9,8 @@ use crate::{
     WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
-    WorkloadRouteLatency, WorkloadSuiteIdentity,
+    WorkloadParallelSchedulerScope, WorkloadResourceActivityScope, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency, WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -754,16 +754,16 @@ pub enum WorkloadError {
         actual_total_workers: usize,
     },
     ZeroExpectedParallelSchedulerProgress {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
     },
     DuplicateExpectedParallelSchedulerProgress {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
     },
     DuplicateExpectedParallelSchedulerIdleBound {
         scope: WorkloadParallelRemoteFlowScope,
     },
     MissingParallelSchedulerProgressSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         minimum_epoch_count: usize,
         minimum_dispatch_count: usize,
     },
@@ -772,7 +772,7 @@ pub enum WorkloadError {
         maximum_empty_epoch_count: usize,
     },
     ExpectedParallelSchedulerProgressBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         minimum_epoch_count: usize,
         actual_epoch_count: usize,
         minimum_dispatch_count: usize,

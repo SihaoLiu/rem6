@@ -446,8 +446,8 @@ reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to
 manifest checks.
 GPU and accelerator DMA replay paths also preserve recorded scheduler batch
-timelines, batch counts, worker-count buckets, and duration-weighted
-worker-tick evidence for their internal read and write schedulers, so
+timelines, epoch and dispatch progress, batch counts, worker-count buckets, and
+duration-weighted worker-tick evidence for their internal read and write schedulers, so
 heterogeneous memory movement does not disappear behind copy/completion
 counters. The workload full-system scheduler aggregate includes that DMA
 scheduler evidence alongside CPU and data-cache scheduler evidence, so
@@ -486,11 +486,11 @@ tick bucket contracts, minimum-worker duration-weighted tick activity
 contracts, sustained minimum-worker tick-streak contracts, minimum batch
 worker-tick contracts under a declared minimum worker count, and batch timeline
 records. Batch timeline records additionally support direct GPU DMA scheduler
-and accelerator DMA scheduler scopes, and batch-worker contracts can use the
-same direct DMA scheduler scopes. Exact batch partition-set and
-same-partition-set streak contracts also support direct GPU DMA scheduler and
-accelerator DMA scheduler scopes, while full-system partition contracts include
-the DMA timeline-derived sets and streaks. Replay verification rejects
+and accelerator DMA scheduler scopes, and scheduler-progress plus batch-worker
+contracts can use the same direct DMA scheduler scopes. Exact batch
+partition-set and same-partition-set streak contracts also support direct GPU
+DMA scheduler and accelerator DMA scheduler scopes, while full-system partition
+contracts include the DMA timeline-derived sets and streaks. Replay verification rejects
 underfilled exact worker buckets, underfilled worker-count tick buckets,
 underfilled minimum-worker tick activity, underfilled sustained minimum-worker
 tick streaks, underfilled thresholded batch worker-ticks, and missing or unexpected
