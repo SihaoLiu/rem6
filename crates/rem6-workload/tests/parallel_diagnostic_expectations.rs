@@ -1,12 +1,13 @@
 use rem6_boot::BootImage;
-use rem6_kernel::WaitForEdgeKind;
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
     WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
-    WorkloadId, WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadWaitForEdgeKindWindow,
+    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadId, WorkloadParallelDiagnosticScope,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult, WorkloadWaitForEdgeKindWindow,
+    WorkloadWaitForTargetNodeWindow,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -56,6 +57,23 @@ fn expected_wait_kind_window(
 ) -> WorkloadExpectedParallelWaitForEdgeKindWindow {
     WorkloadExpectedParallelWaitForEdgeKindWindow::new(
         scope, kind, edge_count, first_tick, last_tick,
+    )
+    .unwrap()
+}
+
+fn wait_resource(value: &str) -> WaitForNode {
+    WaitForNode::resource(value).unwrap()
+}
+
+fn expected_wait_target_window(
+    scope: WorkloadParallelDiagnosticScope,
+    node: WaitForNode,
+    edge_count: usize,
+    first_tick: u64,
+    last_tick: u64,
+) -> WorkloadExpectedParallelWaitForTargetNodeWindow {
+    WorkloadExpectedParallelWaitForTargetNodeWindow::new(
+        scope, node, edge_count, first_tick, last_tick,
     )
     .unwrap()
 }
@@ -193,6 +211,47 @@ fn workload_manifest_records_parallel_wait_for_edge_kind_window_expectations() {
 }
 
 #[test]
+fn workload_manifest_records_parallel_wait_for_target_node_window_expectations() {
+    let resource_queue = expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("fabric.queue.0"),
+        2,
+        3,
+        9,
+    );
+    let full_system_bank = expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        wait_resource("dram.bank.0"),
+        1,
+        7,
+        7,
+    );
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("manifest-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(full_system_bank.clone())
+    .unwrap()
+    .add_expected_parallel_wait_for_target_node_window(resource_queue.clone())
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_eq!(
+        manifest.expected_parallel_wait_for_target_node_windows(),
+        &[resource_queue, full_system_bank],
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_parallel_wait_for_target_node_windows(),
+        manifest.expected_parallel_wait_for_target_node_windows(),
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_wait_for_edge_kind_counts() {
     let base = rem6_workload::WorkloadManifest::builder(
         id("identity-wait-kind-diagnostics"),
@@ -285,6 +344,74 @@ fn workload_manifest_identity_changes_with_parallel_wait_for_edge_kind_windows()
     .unwrap();
 
     assert_ne!(base.identity(), queue.identity());
+    assert_ne!(queue.identity(), wider_queue.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_parallel_wait_for_target_node_windows() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let queue = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("fabric.queue.0"),
+        1,
+        3,
+        3,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let credit = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("fabric.credit.0"),
+        1,
+        3,
+        3,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let wider_queue = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("fabric.queue.0"),
+        1,
+        3,
+        8,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), queue.identity());
+    assert_ne!(queue.identity(), credit.identity());
     assert_ne!(queue.identity(), wider_queue.identity());
 }
 
@@ -409,6 +536,77 @@ fn workload_replay_plan_verifies_parallel_wait_for_edge_kind_windows() {
 }
 
 #[test]
+fn workload_replay_plan_verifies_parallel_wait_for_target_node_windows() {
+    let target = wait_resource("fabric.queue.0");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("verify-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        target.clone(),
+        2,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::MissingParallelDiagnosticSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+        },
+    );
+
+    let underactive_summary =
+        WorkloadParallelExecutionSummary::default().with_data_cache_wait_for_target_node_windows([
+            WorkloadWaitForTargetNodeWindow::new(target.clone(), 1, 4, 4),
+        ]);
+    let underactive_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive_summary);
+    assert_eq!(
+        plan.verify_result(&underactive_result).unwrap_err(),
+        WorkloadError::ExpectedParallelWaitForTargetNodeWindowMismatch {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            node: target.clone(),
+            expected_edge_count: 2,
+            actual_edge_count: 1,
+            expected_first_tick: 4,
+            actual_first_tick: Some(4),
+            expected_last_tick: 12,
+            actual_last_tick: Some(4),
+        },
+    );
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+            target.clone(),
+            1,
+            4,
+            6,
+        )])
+        .with_resource_wait_for_target_node_windows(
+            [WorkloadWaitForTargetNodeWindow::new(
+                target.clone(),
+                1,
+                8,
+                12,
+            )],
+            [],
+        );
+    let satisfied_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied_result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_wait_for_edge_kind_windows() {
     assert_eq!(
         WorkloadExpectedParallelWaitForEdgeKindWindow::new(
@@ -469,6 +667,72 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_wait_for_edge_kind
         WorkloadError::DuplicateExpectedParallelWaitForEdgeKindWindow {
             scope: WorkloadParallelDiagnosticScope::DataCache,
             kind: WaitForEdgeKind::Protocol,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_wait_for_target_node_windows() {
+    let target = wait_resource("fabric.queue.0");
+    assert_eq!(
+        WorkloadExpectedParallelWaitForTargetNodeWindow::new(
+            WorkloadParallelDiagnosticScope::Resource,
+            target.clone(),
+            0,
+            3,
+            7,
+        )
+        .unwrap_err(),
+        WorkloadError::ZeroExpectedParallelWaitForTargetNodeWindow {
+            scope: WorkloadParallelDiagnosticScope::Resource,
+            node: target.clone(),
+        },
+    );
+    assert_eq!(
+        WorkloadExpectedParallelWaitForTargetNodeWindow::new(
+            WorkloadParallelDiagnosticScope::Resource,
+            target.clone(),
+            1,
+            9,
+            7,
+        )
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelWaitForTargetNodeWindow {
+            scope: WorkloadParallelDiagnosticScope::Resource,
+            node: target.clone(),
+            first_tick: 9,
+            last_tick: 7,
+        },
+    );
+
+    let duplicate = rem6_workload::WorkloadManifest::builder(
+        id("duplicate-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::DataCache,
+        target.clone(),
+        1,
+        3,
+        3,
+    ))
+    .unwrap()
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::DataCache,
+        target.clone(),
+        1,
+        4,
+        4,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateExpectedParallelWaitForTargetNodeWindow {
+            scope: WorkloadParallelDiagnosticScope::DataCache,
+            node: target,
         },
     );
 }

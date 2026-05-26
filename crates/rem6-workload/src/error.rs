@@ -1,6 +1,6 @@
 use rem6_boot::BootError;
 use rem6_fabric::{QosPriority, QosRequestorId};
-use rem6_kernel::{Tick, WaitForEdgeKind};
+use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 use rem6_memory::MemoryError;
 
 use crate::{
@@ -1103,6 +1103,20 @@ pub enum WorkloadError {
         scope: WorkloadParallelDiagnosticScope,
         kind: WaitForEdgeKind,
     },
+    ZeroExpectedParallelWaitForTargetNodeWindow {
+        scope: WorkloadParallelDiagnosticScope,
+        node: WaitForNode,
+    },
+    InvalidExpectedParallelWaitForTargetNodeWindow {
+        scope: WorkloadParallelDiagnosticScope,
+        node: WaitForNode,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
+    DuplicateExpectedParallelWaitForTargetNodeWindow {
+        scope: WorkloadParallelDiagnosticScope,
+        node: WaitForNode,
+    },
     ZeroExpectedLivelockTransitionThreshold {
         scope: WorkloadParallelDiagnosticScope,
     },
@@ -1143,6 +1157,16 @@ pub enum WorkloadError {
     ExpectedParallelWaitForEdgeKindWindowMismatch {
         scope: WorkloadParallelDiagnosticScope,
         kind: WaitForEdgeKind,
+        expected_edge_count: usize,
+        actual_edge_count: usize,
+        expected_first_tick: Tick,
+        actual_first_tick: Option<Tick>,
+        expected_last_tick: Tick,
+        actual_last_tick: Option<Tick>,
+    },
+    ExpectedParallelWaitForTargetNodeWindowMismatch {
+        scope: WorkloadParallelDiagnosticScope,
+        node: WaitForNode,
         expected_edge_count: usize,
         actual_edge_count: usize,
         expected_first_tick: Tick,

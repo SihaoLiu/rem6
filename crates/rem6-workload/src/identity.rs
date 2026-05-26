@@ -1,5 +1,5 @@
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
-use rem6_kernel::WaitForEdgeKind;
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
@@ -16,13 +16,13 @@ use crate::{
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
     WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForEdgeKindCount,
-    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -42,6 +42,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelWaitForEdgeKindCount],
     pub(crate) expected_parallel_wait_for_edge_kind_windows:
         &'a [WorkloadExpectedParallelWaitForEdgeKindWindow],
+    pub(crate) expected_parallel_wait_for_target_node_windows:
+        &'a [WorkloadExpectedParallelWaitForTargetNodeWindow],
     pub(crate) expected_data_cache_protocol_run_counts:
         &'a [WorkloadExpectedDataCacheProtocolRunCount],
     pub(crate) expected_data_cache_run_attribution:
@@ -139,6 +141,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_wait_for_edge_kind_windows {
         hash_expected_parallel_wait_for_edge_kind_window(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_wait_for_target_node_windows.len() as u64,
+    );
+    for expected in input.expected_parallel_wait_for_target_node_windows {
+        hash_expected_parallel_wait_for_target_node_window(&mut hash, expected);
     }
     hash_u64(
         &mut hash,
@@ -346,6 +355,17 @@ fn hash_expected_parallel_wait_for_edge_kind_window(
     hash_u64(hash, expected.last_tick());
 }
 
+fn hash_expected_parallel_wait_for_target_node_window(
+    hash: &mut u64,
+    expected: &WorkloadExpectedParallelWaitForTargetNodeWindow,
+) {
+    hash_str(hash, expected.scope().as_str());
+    hash_wait_for_node(hash, expected.node());
+    hash_u64(hash, expected.edge_count() as u64);
+    hash_u64(hash, expected.first_tick());
+    hash_u64(hash, expected.last_tick());
+}
+
 fn hash_wait_for_edge_kind(hash: &mut u64, kind: WaitForEdgeKind) {
     hash_u64(
         hash,
@@ -359,6 +379,27 @@ fn hash_wait_for_edge_kind(hash: &mut u64, kind: WaitForEdgeKind) {
             WaitForEdgeKind::Barrier => 6,
         },
     );
+}
+
+fn hash_wait_for_node(hash: &mut u64, node: &WaitForNode) {
+    match node {
+        WaitForNode::Partition(partition) => {
+            hash_u64(hash, 0);
+            hash_u64(hash, partition.index() as u64);
+        }
+        WaitForNode::Component(label) => {
+            hash_u64(hash, 1);
+            hash_str(hash, label);
+        }
+        WaitForNode::Resource(label) => {
+            hash_u64(hash, 2);
+            hash_str(hash, label);
+        }
+        WaitForNode::Transaction(label) => {
+            hash_u64(hash, 3);
+            hash_str(hash, label);
+        }
+    }
 }
 
 fn hash_expected_data_cache_protocol_run_count(

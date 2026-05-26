@@ -20,6 +20,7 @@ mod parallel_batch;
 mod parallel_batch_partition_expectation;
 mod parallel_batch_timeline_expectation;
 mod parallel_batch_worker_count_expectation;
+mod parallel_diagnostic_expectation;
 mod parallel_expectation;
 mod parallel_progress_transition_expectation;
 mod qos;
@@ -67,18 +68,21 @@ pub use parallel_batch_worker_count_expectation::{
     WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
     WorkloadExpectedParallelBatchWorkerTicks, WorkloadParallelBatchWorkerScope,
 };
+pub use parallel_diagnostic_expectation::{
+    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelWaitForEdgeKindCount,
+    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
+    WorkloadParallelDiagnosticScope,
+};
 pub use parallel_expectation::{
-    WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayCeiling,
-    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
+    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
+    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelFrontier,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
     WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
     WorkloadResourceActivityScope,
 };
@@ -240,6 +244,8 @@ pub struct WorkloadManifest {
     expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_parallel_wait_for_edge_kind_windows:
         Vec<WorkloadExpectedParallelWaitForEdgeKindWindow>,
+    expected_parallel_wait_for_target_node_windows:
+        Vec<WorkloadExpectedParallelWaitForTargetNodeWindow>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
@@ -417,6 +423,8 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_parallel_wait_for_edge_kind_windows:
         Vec<WorkloadExpectedParallelWaitForEdgeKindWindow>,
+    expected_parallel_wait_for_target_node_windows:
+        Vec<WorkloadExpectedParallelWaitForTargetNodeWindow>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
@@ -462,6 +470,7 @@ impl WorkloadManifestBuilder {
             expected_clean_parallel_diagnostics: Vec::new(),
             expected_parallel_wait_for_edge_kind_counts: Vec::new(),
             expected_parallel_wait_for_edge_kind_windows: Vec::new(),
+            expected_parallel_wait_for_target_node_windows: Vec::new(),
             expected_data_cache_protocol_run_counts: Vec::new(),
             expected_data_cache_run_attribution: None,
             expected_parallel_remote_flows: Vec::new(),
@@ -854,6 +863,8 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_wait_for_edge_kind_counts,
             expected_parallel_wait_for_edge_kind_windows: &self
                 .expected_parallel_wait_for_edge_kind_windows,
+            expected_parallel_wait_for_target_node_windows: &self
+                .expected_parallel_wait_for_target_node_windows,
             expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
@@ -903,6 +914,8 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_wait_for_edge_kind_counts,
             expected_parallel_wait_for_edge_kind_windows: self
                 .expected_parallel_wait_for_edge_kind_windows,
+            expected_parallel_wait_for_target_node_windows: self
+                .expected_parallel_wait_for_target_node_windows,
             expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
@@ -957,6 +970,8 @@ pub struct WorkloadReplayPlan {
     expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_parallel_wait_for_edge_kind_windows:
         Vec<WorkloadExpectedParallelWaitForEdgeKindWindow>,
+    expected_parallel_wait_for_target_node_windows:
+        Vec<WorkloadExpectedParallelWaitForTargetNodeWindow>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
@@ -1010,6 +1025,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_wait_for_edge_kind_windows: manifest
                 .expected_parallel_wait_for_edge_kind_windows()
+                .to_vec(),
+            expected_parallel_wait_for_target_node_windows: manifest
+                .expected_parallel_wait_for_target_node_windows()
                 .to_vec(),
             expected_data_cache_protocol_run_counts: manifest
                 .expected_data_cache_protocol_run_counts()
@@ -1497,6 +1515,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
         replay_verify::verify_expected_parallel_wait_for_edge_kind_counts(self, result)?;
         replay_verify::verify_expected_parallel_wait_for_edge_kind_windows(self, result)?;
+        replay_verify::verify_expected_parallel_wait_for_target_node_windows(self, result)?;
         Ok(())
     }
 
