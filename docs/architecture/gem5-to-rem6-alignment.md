@@ -380,6 +380,11 @@ Implementation evidence on 2026-05-26:
   aggregate remote-flow evidence too. A replayed aggregate remote flow must
   cross partitions, must have an ordered first/last tick window, and must not
   report inverted delay bounds.
+- Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
+  remote-delay verifier paths now apply the same actual remote evidence
+  structural checks before matching or deriving observations, so malformed
+  sends or aggregate flows fail as invalid replay evidence rather than as
+  ordinary unexpected traffic.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

@@ -301,6 +301,58 @@ fn workload_replay_plan_rejects_missing_or_mismatched_parallel_remote_endpoints(
 }
 
 #[test]
+fn workload_replay_plan_rejects_local_actual_parallel_remote_endpoint_send_evidence() {
+    let plan = WorkloadReplayPlan::from_manifest(
+        &rem6_workload::WorkloadManifest::builder(
+            id("reject-local-parallel-remote-endpoint-evidence"),
+            boot_image(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_expected_parallel_remote_endpoints(endpoint_expectation(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            &[0],
+            &[1],
+        ))
+        .unwrap()
+        .build()
+        .unwrap(),
+    )
+    .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            1,
+            3,
+            7,
+        )])
+        .with_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(2),
+            PartitionId::new(2),
+            5,
+            11,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+            source_tick: 5,
+            delivery_tick: 11,
+            order: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_endpoints() {
     assert_eq!(
         WorkloadExpectedParallelRemoteEndpoints::new(

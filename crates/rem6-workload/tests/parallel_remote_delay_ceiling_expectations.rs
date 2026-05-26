@@ -263,6 +263,40 @@ fn workload_replay_plan_rejects_remote_delay_above_ceiling() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inverted_actual_parallel_remote_delay_ceiling_send_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_delay_ceiling(expected_ceiling(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            10,
+        ))
+        .unwrap();
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(2),
+                PartitionId::new(3),
+                12,
+                4,
+                0,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            source_tick: 12,
+            delivery_tick: 4,
+            order: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_delay_ceilings() {
     assert_eq!(
         replay_plan()

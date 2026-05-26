@@ -350,6 +350,109 @@ fn workload_replay_plan_rejects_unexpected_parallel_remote_flow() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_local_actual_parallel_remote_flow() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 3, 7),
+            ParallelRemoteFlowRecord::new(PartitionId::new(2), PartitionId::new(2), 1, 11, 11),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficFlowEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+            send_count: 1,
+            first_tick: 11,
+            last_tick: 11,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_inverted_actual_parallel_remote_flow_timing() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 3, 7),
+            ParallelRemoteFlowRecord::new(PartitionId::new(2), PartitionId::new(3), 1, 17, 11),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficFlowTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            send_count: 1,
+            first_tick: 17,
+            last_tick: 11,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_inverted_actual_parallel_remote_flow_delay_bounds() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 3, 7),
+            ParallelRemoteFlowRecord::with_delay_bounds(
+                PartitionId::new(2),
+                PartitionId::new(3),
+                1,
+                11,
+                11,
+                9,
+                3,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficFlowDelayBounds {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            minimum_delay: 9,
+            maximum_delay: 3,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_parallel_remote_flow_expectations() {
     let zero = WorkloadExpectedParallelRemoteFlow::new(
         WorkloadParallelRemoteFlowScope::FullSystem,

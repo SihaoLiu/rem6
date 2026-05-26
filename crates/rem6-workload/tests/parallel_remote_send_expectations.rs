@@ -334,6 +334,98 @@ fn workload_replay_plan_rejects_unexpected_parallel_remote_send() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_local_actual_parallel_remote_send() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(expected_send(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            3,
+            11,
+            0,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(2),
+                PartitionId::new(2),
+                4,
+                12,
+                1,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+            source_tick: 4,
+            delivery_tick: 12,
+            order: 1,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_inverted_actual_parallel_remote_send_timing() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(expected_send(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            1,
+            3,
+            11,
+            0,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(2),
+                PartitionId::new(3),
+                12,
+                4,
+                1,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            source_tick: 12,
+            delivery_tick: 4,
+            order: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_duplicate_actual_parallel_remote_send() {
     let plan = replay_plan()
         .add_expected_parallel_remote_send(expected_send(

@@ -253,6 +253,41 @@ fn workload_replay_plan_rejects_underfloor_parallel_remote_delay() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inverted_actual_parallel_remote_delay_floor_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_delay_floor(expected_floor(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            1,
+        ))
+        .unwrap();
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::with_delay_bounds(
+                PartitionId::new(2),
+                PartitionId::new(3),
+                1,
+                11,
+                11,
+                9,
+                3,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficFlowDelayBounds {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            minimum_delay: 9,
+            maximum_delay: 3,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_delay_floors() {
     assert_eq!(
         WorkloadExpectedParallelRemoteDelayFloor::new(

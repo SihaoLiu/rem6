@@ -30,6 +30,12 @@ pub(crate) fn verify_expected_parallel_remote_sends(
         });
     };
 
+    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+        let expected_for_scope = expected_parallel_remote_sends_for_scope(expected_sends, scope);
+        if !expected_for_scope.is_empty() {
+            validate_remote_send_scope_evidence(summary, scope)?;
+        }
+    }
     for expected in expected_sends {
         if expected.actual_record(summary).is_none() {
             return Err(WorkloadError::ExpectedParallelRemoteSendMissing {
@@ -127,6 +133,12 @@ pub(crate) fn verify_expected_parallel_remote_flows(
         });
     };
 
+    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+        let expected_for_scope = expected_parallel_remote_flows_for_scope(expected_flows, scope);
+        if !expected_for_scope.is_empty() {
+            validate_remote_flow_scope_evidence(summary, scope)?;
+        }
+    }
     for expected in expected_flows {
         let actual_send_count = expected.actual_send_count(summary);
         if actual_send_count != expected.send_count() {
@@ -221,6 +233,7 @@ pub(crate) fn verify_expected_parallel_remote_delay_floors(
     };
 
     for expected in expected_floors {
+        validate_remote_flow_scope_evidence(summary, expected.scope())?;
         let flows = actual_parallel_remote_flows_for_scope(summary, expected.scope());
         if flows.is_empty() {
             return Err(WorkloadError::MissingParallelRemoteDelayEvidence {
@@ -268,6 +281,7 @@ pub(crate) fn verify_expected_parallel_remote_delay_ceilings(
     };
 
     for expected in expected_ceilings {
+        validate_remote_flow_scope_evidence(summary, expected.scope())?;
         let flows = actual_parallel_remote_flows_for_scope(summary, expected.scope());
         if flows.is_empty() {
             return Err(WorkloadError::MissingParallelRemoteDelayCeilingEvidence {
@@ -359,6 +373,29 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_remote_send_scope_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Result<(), WorkloadError> {
+    let sends = actual_parallel_remote_sends_for_scope(summary, scope);
+    for send in sends {
+        validate_remote_traffic_send_evidence(scope, send)?;
+    }
+    Ok(())
+}
+
+fn validate_remote_flow_scope_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Result<(), WorkloadError> {
+    validate_remote_send_scope_evidence(summary, scope)?;
+    let flows = actual_parallel_remote_flows_for_scope(summary, scope);
+    for flow in flows {
+        validate_remote_traffic_flow_evidence(scope, flow)?;
     }
     Ok(())
 }
@@ -626,6 +663,7 @@ pub(crate) fn verify_expected_parallel_remote_endpoints(
     };
 
     for expected in expected_endpoints {
+        validate_remote_flow_scope_evidence(summary, expected.scope())?;
         let actual_sources = expected.actual_source_partitions(summary);
         let actual_targets = expected.actual_target_partitions(summary);
         if actual_sources != expected.source_partitions()
@@ -670,6 +708,13 @@ pub(crate) fn verify_expected_parallel_remote_flow_timings(
         });
     };
 
+    for scope in PARALLEL_REMOTE_FLOW_SCOPES {
+        let expected_for_scope =
+            expected_parallel_remote_flow_timings_for_scope(expected_timings, scope);
+        if !expected_for_scope.is_empty() {
+            validate_remote_flow_scope_evidence(summary, scope)?;
+        }
+    }
     for expected in expected_timings {
         let actual = expected.actual_record(summary);
         let actual_send_count = actual.map(|record| record.send_count()).unwrap_or(0);
