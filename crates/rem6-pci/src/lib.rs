@@ -456,6 +456,14 @@ impl PciEndpointConfig {
                 self.config[PCI_COMMAND_OFFSET..PCI_COMMAND_OFFSET + 2].copy_from_slice(&data[..2]);
                 Ok(())
             }
+            PCI_STATUS_OFFSET if data.len() == 2 => {
+                write_common_status(
+                    &mut self.config,
+                    u16::from_le_bytes(data.try_into().unwrap()),
+                    PCI_STATUS_CAPABILITY_LIST as u16,
+                );
+                Ok(())
+            }
             PCI_CACHE_LINE_SIZE_OFFSET | PCI_LATENCY_TIMER_OFFSET if data.len() == 1 => {
                 self.config[span.start] = data[0];
                 Ok(())
@@ -1701,6 +1709,20 @@ fn checked_base_plus_offset(base: Address, offset: Address) -> Result<Address, P
 
 pub(crate) fn write_u16_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u16) {
     config[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+pub(crate) fn write_common_status(
+    config: &mut [u8; PCI_CONFIG_SPACE_SIZE],
+    value: u16,
+    read_only_mask: u16,
+) {
+    let current = u16::from_le_bytes(
+        config[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2]
+            .try_into()
+            .unwrap(),
+    );
+    let writable_clear_mask = value & !read_only_mask;
+    write_u16_at(config, PCI_STATUS_OFFSET, current & !writable_clear_mask);
 }
 
 pub(crate) fn write_u32_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u32) {

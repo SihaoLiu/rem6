@@ -247,6 +247,54 @@ fn pci_type1_bridge_common_header_writes_cache_line_latency_and_snapshots() {
 }
 
 #[test]
+fn pci_type1_bridge_status_writes_do_not_create_status_bits() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0003_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x03, 0x00, 0x00, 0x00])
+    );
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x06).unwrap(),
+            &0xffff_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x03, 0x00, 0x00, 0x00])
+    );
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0xffff_0002_u32.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x02, 0x00, 0x00, 0x00])
+    );
+}
+
+#[test]
 fn pci_type1_bridge_bars_map_on_primary_bus_when_command_bits_enable_space() {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
     let bases = PciHostAddressBases::new(

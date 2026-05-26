@@ -2,7 +2,7 @@ use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciClassCode, PciConfigOffset,
     PciDeviceIdentity, PciEndpointConfig, PciError, PciFunctionAddress, PciInterruptPin,
-    PciType0HeaderFields,
+    PciPowerManagementCapabilitySpec, PciType0HeaderFields,
 };
 
 fn network_endpoint() -> PciEndpointConfig {
@@ -172,6 +172,57 @@ fn pci_endpoint_common_header_writes_cache_line_latency_and_snapshots() {
             offset: PciConfigOffset::new(0x0d).unwrap(),
             size: AccessSize::new(2).unwrap(),
         })
+    );
+}
+
+#[test]
+fn pci_endpoint_status_writes_preserve_read_only_capability_list_bit() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_pm_capability(
+            PciPowerManagementCapabilitySpec::new(
+                PciConfigOffset::new(0x44).unwrap(),
+                0x0003,
+                0x0000,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x10, 0x00])
+    );
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x06).unwrap(),
+            &0xffff_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x10, 0x00])
+    );
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0xffff_0003_u32.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x03, 0x00, 0x10, 0x00])
     );
 }
 

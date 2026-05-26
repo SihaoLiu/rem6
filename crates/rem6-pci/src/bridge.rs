@@ -1,10 +1,10 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{
-    write_u16_at, write_u32_at, PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciBarState,
-    PciClassCode, PciConfigOffset, PciDeviceIdentity, PciError, PciFunctionAddress,
-    PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE, PCI_COMMAND_MEMORY_SPACE,
-    PCI_CONFIG_SPACE_SIZE, PCI_TYPE1_HEADER_TYPE,
+    write_common_status, write_u16_at, write_u32_at, PciBarIndex, PciBarKind, PciBarRange,
+    PciBarSpec, PciBarState, PciClassCode, PciConfigOffset, PciDeviceIdentity, PciError,
+    PciFunctionAddress, PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE,
+    PCI_COMMAND_MEMORY_SPACE, PCI_CONFIG_SPACE_SIZE, PCI_STATUS_OFFSET, PCI_TYPE1_HEADER_TYPE,
 };
 
 const PCI_VENDOR_ID_OFFSET: usize = 0x00;
@@ -250,6 +250,14 @@ impl PciBridgeConfig {
             }
             (PCI_COMMAND_OFFSET, 4) => {
                 self.config[PCI_COMMAND_OFFSET..PCI_COMMAND_OFFSET + 2].copy_from_slice(&data[..2]);
+                Ok(())
+            }
+            (PCI_STATUS_OFFSET, 2) => {
+                write_common_status(
+                    &mut self.config,
+                    u16::from_le_bytes(data.try_into().unwrap()),
+                    0,
+                );
                 Ok(())
             }
             (PCI_CACHE_LINE_SIZE_OFFSET | PCI_LATENCY_TIMER_OFFSET, 1) => {
