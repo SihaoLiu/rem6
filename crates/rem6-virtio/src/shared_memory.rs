@@ -2,24 +2,14 @@ use std::collections::BTreeMap;
 
 use rem6_memory::{AccessSize, Address, AddressRange};
 
-use crate::VirtioError;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct VirtioPciBarIndex(u8);
-
-impl VirtioPciBarIndex {
-    pub const fn new(value: u8) -> Option<Self> {
-        if value < 6 {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
+use crate::{
+    pci_capability::{
+        validate_pci_capability_span, write_u32_le, VirtioPciBarIndex, VirtioPciCapabilityKind,
+        VirtioPciCapabilityOffset, PCI_CONFIG_SPACE_SIZE, PCI_VENDOR_SPECIFIC_CAPABILITY_ID,
+        VIRTIO_PCI_CAP64_SIZE,
+    },
+    VirtioError,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct VirtioPciSharedMemoryId(u8);
@@ -236,6 +226,147 @@ impl VirtioPciSharedMemoryRegistry {
         id: VirtioPciSharedMemoryId,
     ) -> Option<VirtioPciSharedMemoryCap64Fields> {
         self.region(id).map(|region| region.cap64_fields())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtioPciSharedMemoryCapabilityEntry {
+    offset: VirtioPciCapabilityOffset,
+    next: Option<VirtioPciCapabilityOffset>,
+    region: VirtioPciSharedMemoryRegion,
+}
+
+impl VirtioPciSharedMemoryCapabilityEntry {
+    pub const fn new(
+        offset: VirtioPciCapabilityOffset,
+        next: Option<VirtioPciCapabilityOffset>,
+        region: VirtioPciSharedMemoryRegion,
+    ) -> Self {
+        Self {
+            offset,
+            next,
+            region,
+        }
+    }
+
+    pub const fn offset(self) -> VirtioPciCapabilityOffset {
+        self.offset
+    }
+
+    pub const fn next(self) -> Option<VirtioPciCapabilityOffset> {
+        self.next
+    }
+
+    pub const fn region(self) -> VirtioPciSharedMemoryRegion {
+        self.region
+    }
+
+    pub fn bytes(self) -> [u8; VIRTIO_PCI_CAP64_SIZE as usize] {
+        let fields = self.region.cap64_fields();
+        let mut bytes = [0; VIRTIO_PCI_CAP64_SIZE as usize];
+        bytes[0] = PCI_VENDOR_SPECIFIC_CAPABILITY_ID;
+        bytes[1] = self.next.map_or(0, VirtioPciCapabilityOffset::get);
+        bytes[2] = VIRTIO_PCI_CAP64_SIZE;
+        bytes[3] = VirtioPciCapabilityKind::SharedMemoryConfig.cfg_type();
+        bytes[4] = fields.bar().get();
+        bytes[5] = fields.id().get();
+        write_u32_le(&mut bytes, 8, fields.offset());
+        write_u32_le(&mut bytes, 12, fields.length());
+        write_u32_le(&mut bytes, 16, fields.offset_hi());
+        write_u32_le(&mut bytes, 20, fields.length_hi());
+        bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioPciSharedMemoryCapabilities {
+    entries: Vec<VirtioPciSharedMemoryCapabilityEntry>,
+}
+
+impl VirtioPciSharedMemoryCapabilities {
+    pub fn new(
+        start: VirtioPciCapabilityOffset,
+        registry: &VirtioPciSharedMemoryRegistry,
+    ) -> Result<Self, VirtioError> {
+        let mut entries = Vec::with_capacity(registry.regions().len());
+        let mut raw_offset = u16::from(start.get());
+        for (index, region) in registry.regions().iter().copied().enumerate() {
+            validate_pci_capability_span(raw_offset, VIRTIO_PCI_CAP64_SIZE)?;
+            let offset = VirtioPciCapabilityOffset::new(raw_offset as u8).ok_or(
+                VirtioError::PciCapabilityOutOfConfig {
+                    offset: raw_offset,
+                    length: u64::from(VIRTIO_PCI_CAP64_SIZE),
+                },
+            )?;
+            let next = if index + 1 == registry.regions().len() {
+                None
+            } else {
+                let next_offset = raw_offset + u16::from(VIRTIO_PCI_CAP64_SIZE);
+                validate_pci_capability_span(next_offset, VIRTIO_PCI_CAP64_SIZE)?;
+                Some(VirtioPciCapabilityOffset::new(next_offset as u8).ok_or(
+                    VirtioError::PciCapabilityOutOfConfig {
+                        offset: next_offset,
+                        length: u64::from(VIRTIO_PCI_CAP64_SIZE),
+                    },
+                )?)
+            };
+            entries.push(VirtioPciSharedMemoryCapabilityEntry::new(
+                offset, next, region,
+            ));
+            raw_offset += u16::from(VIRTIO_PCI_CAP64_SIZE);
+        }
+        Ok(Self { entries })
+    }
+
+    pub fn entries(&self) -> &[VirtioPciSharedMemoryCapabilityEntry] {
+        &self.entries
+    }
+
+    pub fn first_offset(&self) -> Option<VirtioPciCapabilityOffset> {
+        self.entries.first().map(|entry| entry.offset())
+    }
+
+    pub fn entry_for_region(
+        &self,
+        id: VirtioPciSharedMemoryId,
+    ) -> Option<&VirtioPciSharedMemoryCapabilityEntry> {
+        self.entries.iter().find(|entry| entry.region().id() == id)
+    }
+
+    pub fn entry_at(
+        &self,
+        offset: VirtioPciCapabilityOffset,
+    ) -> Option<&VirtioPciSharedMemoryCapabilityEntry> {
+        self.entries.iter().find(|entry| entry.offset() == offset)
+    }
+
+    pub fn write_into_config(&self, config: &mut [u8]) -> Result<(), VirtioError> {
+        let required = self.required_config_bytes();
+        if config.len() < required {
+            return Err(VirtioError::SharedMemoryCapabilityConfigBufferTooSmall {
+                bytes: config.len(),
+                required,
+            });
+        }
+        for entry in &self.entries {
+            let start = usize::from(entry.offset().get());
+            let end = start + usize::from(VIRTIO_PCI_CAP64_SIZE);
+            config[start..end].copy_from_slice(&entry.bytes());
+        }
+        Ok(())
+    }
+
+    pub fn config_image(&self) -> [u8; PCI_CONFIG_SPACE_SIZE as usize] {
+        let mut config = [0; PCI_CONFIG_SPACE_SIZE as usize];
+        self.write_into_config(&mut config)
+            .expect("validated shared memory capabilities fit config image");
+        config
+    }
+
+    fn required_config_bytes(&self) -> usize {
+        self.entries.last().map_or(0, |entry| {
+            entry.offset().get() as usize + usize::from(VIRTIO_PCI_CAP64_SIZE)
+        })
     }
 }
 

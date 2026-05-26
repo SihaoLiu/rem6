@@ -11,6 +11,7 @@ use rem6_mmio::{
 
 mod device_config;
 mod isr;
+mod pci_capability;
 mod shared_memory;
 
 pub use device_config::{
@@ -21,9 +22,14 @@ pub use isr::{
     VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
     VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,
 };
+pub use pci_capability::{
+    VirtioPciBarIndex, VirtioPciCapabilityEntry, VirtioPciCapabilityKind,
+    VirtioPciCapabilityOffset, VirtioPciNotifyCapabilityEntry,
+};
 pub use shared_memory::{
-    VirtioPciBarIndex, VirtioPciSharedMemoryCap64Fields, VirtioPciSharedMemoryId,
-    VirtioPciSharedMemoryRegion, VirtioPciSharedMemoryRegionSpec, VirtioPciSharedMemoryRegistry,
+    VirtioPciSharedMemoryCap64Fields, VirtioPciSharedMemoryCapabilities,
+    VirtioPciSharedMemoryCapabilityEntry, VirtioPciSharedMemoryId, VirtioPciSharedMemoryRegion,
+    VirtioPciSharedMemoryRegionSpec, VirtioPciSharedMemoryRegistry,
 };
 
 pub const VIRTIO_PCI_COMMON_CONFIG_SIZE: u64 = 0x40;
@@ -1198,6 +1204,16 @@ pub enum VirtioError {
     ReadOnlyDeviceConfigWrite {
         offset: u64,
     },
+    ZeroPciCapabilityRegion {
+        cfg_type: u8,
+    },
+    PciCapabilityOutOfConfig {
+        offset: u16,
+        length: u64,
+    },
+    InvalidNotifyCapabilityKind {
+        cfg_type: u8,
+    },
     ZeroSharedMemoryRegion {
         id: u8,
     },
@@ -1213,6 +1229,10 @@ pub enum VirtioError {
         bar: u8,
         offset: u64,
         length: u64,
+    },
+    SharedMemoryCapabilityConfigBufferTooSmall {
+        bytes: usize,
+        required: usize,
     },
     SharedMemoryRegionOutOfBar {
         id: u8,
@@ -1302,6 +1322,17 @@ impl fmt::Display for VirtioError {
             Self::ReadOnlyDeviceConfigWrite { offset } => {
                 write!(formatter, "VirtIO device config byte {offset} is read-only")
             }
+            Self::ZeroPciCapabilityRegion { cfg_type } => {
+                write!(formatter, "VirtIO PCI capability type {cfg_type} has zero length")
+            }
+            Self::PciCapabilityOutOfConfig { offset, length } => write!(
+                formatter,
+                "VirtIO PCI capability at {offset:#x} for {length} bytes exceeds configuration space"
+            ),
+            Self::InvalidNotifyCapabilityKind { cfg_type } => write!(
+                formatter,
+                "VirtIO notify PCI capability requires cfg_type 2, got {cfg_type}"
+            ),
             Self::ZeroSharedMemoryRegion { id } => {
                 write!(formatter, "VirtIO shared memory region id {id} has zero length")
             }
@@ -1320,6 +1351,10 @@ impl fmt::Display for VirtioError {
             } => write!(
                 formatter,
                 "VirtIO shared memory region id {id} in BAR {bar} offset {offset:#x} overflows with length {length:#x}"
+            ),
+            Self::SharedMemoryCapabilityConfigBufferTooSmall { bytes, required } => write!(
+                formatter,
+                "VirtIO shared memory PCI capability configuration buffer has {bytes} bytes but requires {required}"
             ),
             Self::SharedMemoryRegionOutOfBar {
                 id,
