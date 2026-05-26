@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
-    ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
+    ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
 };
 
 use crate::{WorkloadDramQosPrioritySummary, WorkloadDramQosRequestorSummary};
@@ -57,6 +57,35 @@ pub(crate) fn is_parallel_remote_send_evidence(send: ParallelRemoteSendRecord) -
     send.source() != send.target() && send.source_tick() <= send.delivery_tick()
 }
 
+pub(crate) fn collect_parallel_remote_send_evidence(
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<ParallelRemoteSendRecord> {
+    let mut by_record = BTreeMap::<ParallelRemoteSendEvidenceKey, ParallelRemoteSendRecord>::new();
+    for send in sends {
+        if !is_parallel_remote_send_evidence(send) {
+            continue;
+        }
+        by_record
+            .entry(parallel_remote_send_evidence_key(send))
+            .or_insert(send);
+    }
+    by_record.into_values().collect()
+}
+
+type ParallelRemoteSendEvidenceKey = (PartitionId, PartitionId, Tick, Tick, u64);
+
+fn parallel_remote_send_evidence_key(
+    send: ParallelRemoteSendRecord,
+) -> ParallelRemoteSendEvidenceKey {
+    (
+        send.source(),
+        send.target(),
+        send.source_tick(),
+        send.delivery_tick(),
+        send.order(),
+    )
+}
+
 pub(crate) fn collect_parallel_remote_flow_evidence(
     flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
     sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
@@ -73,10 +102,7 @@ pub(crate) fn collect_parallel_remote_flow_evidence(
             .or_insert(flow);
     }
     let mut send_flows = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
-    for send in sends {
-        if !is_parallel_remote_send_evidence(send) {
-            continue;
-        }
+    for send in collect_parallel_remote_send_evidence(sends) {
         let route = (send.source(), send.target());
         let flow = parallel_remote_flow_from_send(send);
         send_flows
@@ -226,13 +252,9 @@ pub(crate) fn parallel_remote_send_count(
     source: PartitionId,
     target: PartitionId,
 ) -> usize {
-    sends
-        .iter()
-        .filter(|send| {
-            is_parallel_remote_send_evidence(**send)
-                && send.source() == source
-                && send.target() == target
-        })
+    collect_parallel_remote_send_evidence(sends.iter().copied())
+        .into_iter()
+        .filter(|send| send.source() == source && send.target() == target)
         .count()
 }
 
@@ -246,10 +268,8 @@ pub(crate) fn collect_parallel_remote_source_partitions(
             partitions.insert(flow.source());
         }
     }
-    for send in sends {
-        if is_parallel_remote_send_evidence(send) {
-            partitions.insert(send.source());
-        }
+    for send in collect_parallel_remote_send_evidence(sends) {
+        partitions.insert(send.source());
     }
     partitions.into_iter().collect()
 }
@@ -264,10 +284,8 @@ pub(crate) fn collect_parallel_remote_target_partitions(
             partitions.insert(flow.target());
         }
     }
-    for send in sends {
-        if is_parallel_remote_send_evidence(send) {
-            partitions.insert(send.target());
-        }
+    for send in collect_parallel_remote_send_evidence(sends) {
+        partitions.insert(send.target());
     }
     partitions.into_iter().collect()
 }

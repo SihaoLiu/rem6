@@ -409,6 +409,10 @@ Implementation evidence on 2026-05-26:
   windows, and inverted aggregate delay bounds remain visible as raw actual
   records for replay validation, but cannot feed remote evidence, endpoint,
   active-partition, activity, or work summaries.
+- Workload result summaries also derive remote-send evidence through exact
+  record de-duplication. Duplicate raw remote-send records remain visible to
+  replay validation, but cannot inflate derived remote-flow counts,
+  remote-send counts, endpoint summaries, or per-partition remote activity.
 - Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
   remote-delay verifier paths now apply the same actual remote evidence
   structural checks before matching or deriving observations, so malformed

@@ -1465,6 +1465,45 @@ fn workload_result_ignores_malformed_remote_traffic_as_parallel_evidence() {
 }
 
 #[test]
+fn workload_result_deduplicates_remote_send_evidence() {
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+        ]);
+
+    assert_eq!(summary.parallel_scheduler_remote_sends().len(), 2);
+    assert_eq!(
+        summary.parallel_scheduler_remote_flow_count(PartitionId::new(0), PartitionId::new(1)),
+        1,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_remote_send_count(PartitionId::new(0), PartitionId::new(1)),
+        1,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(0)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 1, 0, 0)),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_partition_activity(PartitionId::new(1)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 0, 1, 0)),
+    );
+}
+
+#[test]
 fn workload_result_reports_accelerator_command_kind_counts() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_accelerator_compute_counts(4, 9, 3, 1)

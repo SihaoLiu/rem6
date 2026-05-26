@@ -4,7 +4,10 @@ use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId,
 };
 
-use crate::result_collect::{is_parallel_remote_flow_evidence, is_parallel_remote_send_evidence};
+use crate::result_collect::{
+    collect_parallel_remote_send_evidence, is_parallel_remote_flow_evidence,
+    is_parallel_remote_send_evidence,
+};
 
 pub(crate) fn parallel_active_partition_count(
     activities: &[(PartitionId, ParallelPartitionActivity)],
@@ -156,13 +159,14 @@ fn parallel_remote_send_partition_activity(
     sends: &[ParallelRemoteSendRecord],
     partition: PartitionId,
 ) -> Option<ParallelPartitionActivity> {
-    let remote_send_count = sends
+    let send_evidence = collect_parallel_remote_send_evidence(sends.iter().copied());
+    let remote_send_count = send_evidence
         .iter()
-        .filter(|send| is_parallel_remote_send_evidence(**send) && send.source() == partition)
+        .filter(|send| send.source() == partition)
         .count();
-    let remote_receive_count = sends
+    let remote_receive_count = send_evidence
         .iter()
-        .filter(|send| is_parallel_remote_send_evidence(**send) && send.target() == partition)
+        .filter(|send| send.target() == partition)
         .count();
     if remote_send_count == 0 && remote_receive_count == 0 {
         return None;
