@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
+mod bar;
 mod bridge;
 mod capability;
 mod interrupt;
@@ -11,8 +12,13 @@ mod mmio;
 mod msi;
 mod msix;
 
+use bar::{bar_index_for_offset, host_address_space, PciBarState};
 use capability::PciEndpointCapabilityList;
 
+pub use bar::{
+    PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciHostAddressBases, PciHostAddressSpace,
+    PciHostBarRange,
+};
 pub use bridge::{PciBridgeBusRange, PciBridgeConfig};
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
@@ -29,17 +35,24 @@ const PCI_COMMAND_OFFSET: usize = 0x04;
 pub(crate) const PCI_STATUS_OFFSET: usize = 0x06;
 const PCI_CLASS_REVISION_OFFSET: usize = 0x08;
 const PCI_HEADER_TYPE_OFFSET: usize = 0x0e;
-const PCI_BAR0_OFFSET: usize = 0x10;
+pub(crate) const PCI_BAR0_OFFSET: usize = 0x10;
+const PCI_CARD_BUS_CIS_OFFSET: usize = 0x28;
+const PCI_SUBSYSTEM_VENDOR_ID_OFFSET: usize = 0x2c;
+const PCI_SUBSYSTEM_ID_OFFSET: usize = 0x2e;
+const PCI_EXPANSION_ROM_OFFSET: usize = 0x30;
 pub(crate) const PCI_CAPABILITY_PTR_OFFSET: usize = 0x34;
 const PCI_INTERRUPT_LINE_OFFSET: usize = 0x3c;
 const PCI_INTERRUPT_PIN_OFFSET: usize = 0x3d;
+const PCI_MINIMUM_GRANT_OFFSET: usize = 0x3e;
+const PCI_MAXIMUM_LATENCY_OFFSET: usize = 0x3f;
 const PCI_TYPE0_HEADER_TYPE: u8 = 0x00;
 pub(crate) const PCI_TYPE1_HEADER_TYPE: u8 = 0x01;
 pub(crate) const PCI_STATUS_CAPABILITY_LIST: u8 = 0x10;
 const PCI_COMMAND_IO_SPACE: u16 = 0x0001;
 const PCI_COMMAND_MEMORY_SPACE: u16 = 0x0002;
-const PCI_BAR_COUNT: usize = 6;
+pub(crate) const PCI_BAR_COUNT: usize = 6;
 const PCI_CONFIG_FUNCTIONS_PER_BUS: u64 = 256;
+const PCI_EXPANSION_ROM_SIZE_PROBE: u32 = 0xffff_fffe;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PciFunctionAddress {
@@ -134,6 +147,60 @@ impl PciClassCode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PciType0HeaderFields {
+    cardbus_cis: u32,
+    subsystem_vendor_id: u16,
+    subsystem_id: u16,
+    expansion_rom: u32,
+    minimum_grant: u8,
+    maximum_latency: u8,
+}
+
+impl PciType0HeaderFields {
+    pub const fn new(
+        cardbus_cis: u32,
+        subsystem_vendor_id: u16,
+        subsystem_id: u16,
+        expansion_rom: u32,
+        minimum_grant: u8,
+        maximum_latency: u8,
+    ) -> Self {
+        Self {
+            cardbus_cis,
+            subsystem_vendor_id,
+            subsystem_id,
+            expansion_rom,
+            minimum_grant,
+            maximum_latency,
+        }
+    }
+
+    pub const fn cardbus_cis(self) -> u32 {
+        self.cardbus_cis
+    }
+
+    pub const fn subsystem_vendor_id(self) -> u16 {
+        self.subsystem_vendor_id
+    }
+
+    pub const fn subsystem_id(self) -> u16 {
+        self.subsystem_id
+    }
+
+    pub const fn expansion_rom(self) -> u32 {
+        self.expansion_rom
+    }
+
+    pub const fn minimum_grant(self) -> u8 {
+        self.minimum_grant
+    }
+
+    pub const fn maximum_latency(self) -> u8 {
+        self.maximum_latency
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PciConfigOffset(u16);
 
@@ -151,67 +218,6 @@ impl PciConfigOffset {
 
     pub(crate) const fn as_usize(self) -> usize {
         self.0 as usize
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct PciBarIndex(u8);
-
-impl PciBarIndex {
-    pub const fn new(value: u8) -> Result<Self, PciError> {
-        if value as usize >= PCI_BAR_COUNT {
-            return Err(PciError::InvalidBarIndex { index: value });
-        }
-        Ok(Self(value))
-    }
-
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-
-    const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    const fn config_offset(self) -> usize {
-        PCI_BAR0_OFFSET + self.as_usize() * 4
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PciBarKind {
-    Memory32 { prefetchable: bool },
-    Memory64 { prefetchable: bool },
-    LegacyIo { address: Address },
-    Io,
-}
-
-impl PciBarKind {
-    const fn flags(self) -> u32 {
-        match self {
-            Self::Memory32 { prefetchable } => {
-                if prefetchable {
-                    0x8
-                } else {
-                    0
-                }
-            }
-            Self::Memory64 { prefetchable } => 0x4 | if prefetchable { 0x8 } else { 0 },
-            Self::LegacyIo { .. } => 0,
-            Self::Io => 0x1,
-        }
-    }
-
-    const fn fixed_low_bits(self) -> u64 {
-        match self {
-            Self::Memory32 { .. } | Self::Memory64 { .. } => 0xf,
-            Self::LegacyIo { .. } => 0x3,
-            Self::Io => 0x3,
-        }
-    }
-
-    const fn is_64_bit(self) -> bool {
-        matches!(self, Self::Memory64 { .. })
     }
 }
 
@@ -233,179 +239,6 @@ impl PciInterruptPin {
             Self::IntC => 3,
             Self::IntD => 4,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PciBarSpec {
-    index: PciBarIndex,
-    kind: PciBarKind,
-    size: AccessSize,
-}
-
-impl PciBarSpec {
-    pub fn new(index: PciBarIndex, kind: PciBarKind, size: AccessSize) -> Result<Self, PciError> {
-        if kind.is_64_bit() && index.as_usize() + 1 >= PCI_BAR_COUNT {
-            return Err(PciError::InvalidBarPair { index });
-        }
-        let min_size = kind.fixed_low_bits() + 1;
-        if size.bytes() < min_size || !size.bytes().is_power_of_two() {
-            return Err(PciError::InvalidBarSize { index, kind, size });
-        }
-        if !kind.is_64_bit() && size.bytes() > u32::MAX as u64 {
-            return Err(PciError::InvalidBarSize { index, kind, size });
-        }
-        Ok(Self { index, kind, size })
-    }
-
-    pub const fn index(self) -> PciBarIndex {
-        self.index
-    }
-
-    pub const fn kind(self) -> PciBarKind {
-        self.kind
-    }
-
-    pub const fn size(self) -> AccessSize {
-        self.size
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PciBarRange {
-    index: PciBarIndex,
-    kind: PciBarKind,
-    range: AddressRange,
-}
-
-impl PciBarRange {
-    pub fn new(
-        index: PciBarIndex,
-        kind: PciBarKind,
-        base: Address,
-        size: AccessSize,
-    ) -> Result<Self, PciError> {
-        Ok(Self {
-            index,
-            kind,
-            range: AddressRange::new(base, size).map_err(PciError::Memory)?,
-        })
-    }
-
-    pub const fn index(&self) -> PciBarIndex {
-        self.index
-    }
-
-    pub const fn kind(&self) -> PciBarKind {
-        self.kind
-    }
-
-    pub const fn range(&self) -> AddressRange {
-        self.range
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PciHostAddressSpace {
-    Io,
-    Memory,
-    PrefetchableMemory,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PciHostAddressBases {
-    io_base: Address,
-    memory_base: Address,
-    prefetchable_memory_base: Address,
-}
-
-impl PciHostAddressBases {
-    pub const fn new(
-        io_base: Address,
-        memory_base: Address,
-        prefetchable_memory_base: Address,
-    ) -> Self {
-        Self {
-            io_base,
-            memory_base,
-            prefetchable_memory_base,
-        }
-    }
-
-    pub const fn zero() -> Self {
-        Self {
-            io_base: Address::new(0),
-            memory_base: Address::new(0),
-            prefetchable_memory_base: Address::new(0),
-        }
-    }
-
-    pub const fn io_base(self) -> Address {
-        self.io_base
-    }
-
-    pub const fn memory_base(self) -> Address {
-        self.memory_base
-    }
-
-    pub const fn prefetchable_memory_base(self) -> Address {
-        self.prefetchable_memory_base
-    }
-
-    const fn base_for_space(self, space: PciHostAddressSpace) -> Address {
-        match space {
-            PciHostAddressSpace::Io => self.io_base,
-            PciHostAddressSpace::Memory => self.memory_base,
-            PciHostAddressSpace::PrefetchableMemory => self.prefetchable_memory_base,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PciHostBarRange {
-    function: PciFunctionAddress,
-    bar: PciBarIndex,
-    space: PciHostAddressSpace,
-    pci_range: AddressRange,
-    host_range: AddressRange,
-}
-
-impl PciHostBarRange {
-    pub fn new(
-        function: PciFunctionAddress,
-        bar: PciBarIndex,
-        space: PciHostAddressSpace,
-        pci_base: Address,
-        host_base: Address,
-        size: AccessSize,
-    ) -> Result<Self, PciError> {
-        Ok(Self {
-            function,
-            bar,
-            space,
-            pci_range: AddressRange::new(pci_base, size).map_err(PciError::Memory)?,
-            host_range: AddressRange::new(host_base, size).map_err(PciError::Memory)?,
-        })
-    }
-
-    pub const fn function(&self) -> PciFunctionAddress {
-        self.function
-    }
-
-    pub const fn bar(&self) -> PciBarIndex {
-        self.bar
-    }
-
-    pub const fn space(&self) -> PciHostAddressSpace {
-        self.space
-    }
-
-    pub const fn pci_range(&self) -> AddressRange {
-        self.pci_range
-    }
-
-    pub const fn host_range(&self) -> AddressRange {
-        self.host_range
     }
 }
 
@@ -451,6 +284,32 @@ impl PciEndpointConfig {
     pub fn with_interrupt(mut self, line: u8, pin: PciInterruptPin) -> Self {
         self.config[PCI_INTERRUPT_LINE_OFFSET] = line;
         self.config[PCI_INTERRUPT_PIN_OFFSET] = pin.config_value();
+        self
+    }
+
+    pub fn with_type0_header(mut self, fields: PciType0HeaderFields) -> Self {
+        write_u32_at(
+            &mut self.config,
+            PCI_CARD_BUS_CIS_OFFSET,
+            fields.cardbus_cis(),
+        );
+        write_u16_at(
+            &mut self.config,
+            PCI_SUBSYSTEM_VENDOR_ID_OFFSET,
+            fields.subsystem_vendor_id(),
+        );
+        write_u16_at(
+            &mut self.config,
+            PCI_SUBSYSTEM_ID_OFFSET,
+            fields.subsystem_id(),
+        );
+        write_u32_at(
+            &mut self.config,
+            PCI_EXPANSION_ROM_OFFSET,
+            fields.expansion_rom(),
+        );
+        self.config[PCI_MINIMUM_GRANT_OFFSET] = fields.minimum_grant();
+        self.config[PCI_MAXIMUM_LATENCY_OFFSET] = fields.maximum_latency();
         self
     }
 
@@ -546,6 +405,17 @@ impl PciEndpointConfig {
                 self.config[PCI_INTERRUPT_LINE_OFFSET] = data[0];
                 Ok(())
             }
+            PCI_EXPANSION_ROM_OFFSET if data.len() == 4 => {
+                let value = u32::from_le_bytes(data.try_into().unwrap());
+                let value = if value == PCI_EXPANSION_ROM_SIZE_PROBE {
+                    u32::MAX
+                } else {
+                    value
+                };
+                write_u32_at(&mut self.config, PCI_EXPANSION_ROM_OFFSET, value);
+                Ok(())
+            }
+            PCI_MINIMUM_GRANT_OFFSET | PCI_MAXIMUM_LATENCY_OFFSET if data.len() == 1 => Ok(()),
             _ => Err(PciError::ReadOnlyConfigWrite { offset, size }),
         }
     }
@@ -1061,125 +931,6 @@ impl PciHostBridge {
         }
         self.bridge_for_bus(function.bus())
             .is_some_and(|bridge| bridge.allows_bar_range(range.kind(), range.range()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum PciBarState {
-    Endpoint {
-        spec: PciBarSpec,
-        raw: u32,
-        upper_raw: u32,
-    },
-    Upper {
-        owner: PciBarIndex,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PciBarShape {
-    Endpoint(PciBarSpec),
-    Upper(PciBarIndex),
-}
-
-impl PciBarState {
-    fn new(spec: PciBarSpec) -> Self {
-        Self::Endpoint {
-            spec,
-            raw: spec.kind().flags(),
-            upper_raw: 0,
-        }
-    }
-
-    const fn upper(owner: PciBarIndex) -> Self {
-        Self::Upper { owner }
-    }
-
-    const fn shape(&self) -> PciBarShape {
-        match self {
-            Self::Endpoint { spec, .. } => PciBarShape::Endpoint(*spec),
-            Self::Upper { owner } => PciBarShape::Upper(*owner),
-        }
-    }
-
-    const fn owner(&self) -> Option<PciBarIndex> {
-        match self {
-            Self::Upper { owner } => Some(*owner),
-            Self::Endpoint { .. } => None,
-        }
-    }
-
-    const fn raw(&self) -> Option<u32> {
-        match self {
-            Self::Endpoint { raw, .. } => Some(*raw),
-            Self::Upper { .. } => None,
-        }
-    }
-
-    const fn upper_raw(&self) -> Option<u32> {
-        match self {
-            Self::Endpoint { upper_raw, .. } => Some(*upper_raw),
-            Self::Upper { .. } => None,
-        }
-    }
-
-    const fn kind(&self) -> Option<PciBarKind> {
-        match self {
-            Self::Endpoint { spec, .. } => Some(spec.kind()),
-            Self::Upper { .. } => None,
-        }
-    }
-
-    fn write_lower(&mut self, value: u32) {
-        let Self::Endpoint { spec, raw, .. } = self else {
-            return;
-        };
-        if matches!(spec.kind(), PciBarKind::LegacyIo { .. }) {
-            *raw = 0;
-            return;
-        }
-        let mask = !((spec.size().bytes() - 1) as u32);
-        *raw = (value & mask) | spec.kind().flags();
-    }
-
-    fn write_upper(&mut self, value: u32) {
-        let Self::Endpoint {
-            spec, upper_raw, ..
-        } = self
-        else {
-            return;
-        };
-        let mask = !(((spec.size().bytes() - 1) >> 32) as u32);
-        *upper_raw = value & mask;
-    }
-
-    fn range(&self) -> Result<PciBarRange, PciError> {
-        let Self::Endpoint {
-            spec,
-            raw,
-            upper_raw,
-        } = self
-        else {
-            return Err(PciError::UpperBarRange);
-        };
-        let lower = match spec.kind() {
-            PciBarKind::LegacyIo { address } => address.get(),
-            kind => {
-                let fixed_low_bits = kind.fixed_low_bits() as u32;
-                (raw & !fixed_low_bits) as u64
-            }
-        };
-        let upper = if spec.kind().is_64_bit() {
-            (*upper_raw as u64) << 32
-        } else {
-            0
-        };
-        PciBarRange::new(
-            spec.index(),
-            spec.kind(),
-            Address::new(upper | lower),
-            spec.size(),
-        )
     }
 }
 
@@ -1743,32 +1494,6 @@ fn access_size_from_len(len: usize) -> Result<AccessSize, PciError> {
     let size = AccessSize::new(len as u64).map_err(PciError::Memory)?;
     validate_config_access_size(size)?;
     Ok(size)
-}
-
-fn bar_index_for_offset(offset: PciConfigOffset) -> Option<PciBarIndex> {
-    let offset = offset.as_usize();
-    if !(PCI_BAR0_OFFSET..PCI_BAR0_OFFSET + PCI_BAR_COUNT * 4).contains(&offset) {
-        return None;
-    }
-    if !(offset - PCI_BAR0_OFFSET).is_multiple_of(4) {
-        return None;
-    }
-    PciBarIndex::new(((offset - PCI_BAR0_OFFSET) / 4) as u8).ok()
-}
-
-const fn host_address_space(kind: PciBarKind) -> PciHostAddressSpace {
-    match kind {
-        PciBarKind::Memory32 { prefetchable: true } => PciHostAddressSpace::PrefetchableMemory,
-        PciBarKind::Memory64 { prefetchable: true } => PciHostAddressSpace::PrefetchableMemory,
-        PciBarKind::Memory32 {
-            prefetchable: false,
-        } => PciHostAddressSpace::Memory,
-        PciBarKind::Memory64 {
-            prefetchable: false,
-        } => PciHostAddressSpace::Memory,
-        PciBarKind::LegacyIo { .. } => PciHostAddressSpace::Io,
-        PciBarKind::Io => PciHostAddressSpace::Io,
-    }
 }
 
 fn checked_base_plus_offset(base: Address, offset: Address) -> Result<Address, PciError> {

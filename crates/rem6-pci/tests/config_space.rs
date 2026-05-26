@@ -2,6 +2,7 @@ use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciClassCode, PciConfigOffset,
     PciDeviceIdentity, PciEndpointConfig, PciError, PciFunctionAddress, PciInterruptPin,
+    PciType0HeaderFields,
 };
 
 fn network_endpoint() -> PciEndpointConfig {
@@ -52,6 +53,72 @@ fn pci_endpoint_config_exposes_type0_identity_and_rejects_read_only_writes() {
             offset: PciConfigOffset::new(0x00).unwrap(),
             size: AccessSize::new(2).unwrap(),
         })
+    );
+}
+
+#[test]
+fn pci_endpoint_type0_header_exposes_subsystem_rom_and_latency_fields() {
+    let mut endpoint = network_endpoint().with_type0_header(PciType0HeaderFields::new(
+        0x1122_3344,
+        0x1af4,
+        0x1001,
+        0x8000_0001,
+        3,
+        9,
+    ));
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x28).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x44, 0x33, 0x22, 0x11])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x2c).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0xf4, 0x1a, 0x01, 0x10])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x30).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x01, 0x00, 0x00, 0x80])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x3e).unwrap(),
+            AccessSize::new(2).unwrap()
+        ),
+        Ok(vec![3, 9])
+    );
+
+    endpoint
+        .write_u32(PciConfigOffset::new(0x30).unwrap(), 0x9000_0001)
+        .unwrap();
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x30).unwrap()),
+        Ok(0x9000_0001)
+    );
+    endpoint
+        .write_u32(PciConfigOffset::new(0x30).unwrap(), 0xffff_fffe)
+        .unwrap();
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x30).unwrap()),
+        Ok(0xffff_ffff)
+    );
+    endpoint
+        .write_config(PciConfigOffset::new(0x3e).unwrap(), &[0xaa])
+        .unwrap();
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x3e).unwrap(),
+            AccessSize::new(2).unwrap()
+        ),
+        Ok(vec![3, 9])
     );
 }
 
