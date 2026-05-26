@@ -1236,6 +1236,21 @@ pub(crate) fn verify_expected_fabric_virtual_network_activity(
                 },
             );
         }
+        if let Some((maximum_queue_delay_ticks, maximum_max_queue_delay_ticks)) =
+            expected.queue_delay_budget()
+        {
+            if expected.above_maximum(&actual) {
+                return Err(
+                    WorkloadError::ExpectedFabricVirtualNetworkActivityAboveMaximum {
+                        virtual_network: expected.virtual_network(),
+                        maximum_queue_delay_ticks,
+                        actual_queue_delay_ticks: actual.queue_delay_ticks(),
+                        maximum_max_queue_delay_ticks,
+                        actual_max_queue_delay_ticks: actual.max_queue_delay_ticks(),
+                    },
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -224,12 +224,127 @@ fn workload_replay_plan_rejects_missing_or_underactive_fabric_virtual_network_ac
 }
 
 #[test]
+fn workload_replay_plan_rejects_overbudget_fabric_virtual_network_queue_delay() {
+    let expected = expected_virtual_network_activity(1, 4, 2, 6, 1)
+        .with_queue_delay_budget(9, 5)
+        .unwrap();
+    assert_eq!(expected.queue_delay_budget(), Some((9, 5)));
+    assert_eq!(expected.maximum_queue_delay_ticks(), Some(9));
+    assert_eq!(expected.maximum_max_queue_delay_ticks(), Some(5));
+    let plan = replay_plan()
+        .add_expected_fabric_virtual_network_activity(expected)
+        .unwrap();
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 9, 5, 1, 3, 18,
+        )]);
+    let satisfied = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied).unwrap();
+
+    let over_total_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 10, 5, 1, 3, 18,
+        )]);
+    let over_total = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(over_total_summary);
+    assert_eq!(
+        plan.verify_result(&over_total).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityAboveMaximum {
+            virtual_network: vn(1),
+            maximum_queue_delay_ticks: 9,
+            actual_queue_delay_ticks: 10,
+            maximum_max_queue_delay_ticks: 5,
+            actual_max_queue_delay_ticks: 5,
+        },
+    );
+
+    let over_peak_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 8, 6, 1, 3, 18,
+        )]);
+    let over_peak = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(over_peak_summary);
+    assert_eq!(
+        plan.verify_result(&over_peak).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityAboveMaximum {
+            virtual_network: vn(1),
+            maximum_queue_delay_ticks: 9,
+            actual_queue_delay_ticks: 8,
+            maximum_max_queue_delay_ticks: 5,
+            actual_max_queue_delay_ticks: 6,
+        },
+    );
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_fabric_virtual_network_queue_budget() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-budget"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(expected_virtual_network_activity(1, 4, 2, 6, 1))
+    .unwrap()
+    .build()
+    .unwrap();
+    let budgeted = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-budget"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_queue_delay_budget(9, 5)
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    let tighter = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-budget"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_queue_delay_budget(8, 5)
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), budgeted.identity());
+    assert_ne!(budgeted.identity(), tighter.identity());
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_fabric_virtual_network_activity() {
     let zero = WorkloadExpectedFabricVirtualNetworkActivity::new(vn(1), 0, 0, 0, 0).unwrap_err();
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedFabricVirtualNetworkActivity {
             virtual_network: vn(1),
+        },
+    );
+
+    let invalid_budget = expected_virtual_network_activity(1, 1, 1, 0, 0)
+        .with_queue_delay_budget(4, 5)
+        .unwrap_err();
+    assert_eq!(
+        invalid_budget,
+        WorkloadError::InvalidExpectedFabricVirtualNetworkActivityQueueDelayBudget {
+            virtual_network: vn(1),
+            maximum_queue_delay_ticks: 4,
+            maximum_max_queue_delay_ticks: 5,
         },
     );
 

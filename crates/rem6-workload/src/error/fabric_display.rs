@@ -173,6 +173,15 @@ pub(super) fn format_fabric_activity_error(
                 virtual_network.get()
             )
         }
+        WorkloadError::InvalidExpectedFabricVirtualNetworkActivityQueueDelayBudget {
+            virtual_network,
+            maximum_queue_delay_ticks,
+            maximum_max_queue_delay_ticks,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity queue-delay budget peak {maximum_max_queue_delay_ticks} is above total {maximum_queue_delay_ticks}",
+            virtual_network.get()
+        ),
         WorkloadError::MissingFabricVirtualNetworkActivitySummary {
             virtual_network,
             minimum_transfer_count,
@@ -197,6 +206,17 @@ pub(super) fn format_fabric_activity_error(
         } => write!(
             formatter,
             "expected fabric virtual network {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_lane_count} active lanes, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_lane_count} contended lanes, got {actual_transfer_count} transfers, {actual_active_lane_count} active lanes, {actual_queue_delay_ticks} queue delay ticks, and {actual_contended_lane_count} contended lanes",
+            virtual_network.get()
+        ),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityAboveMaximum {
+            virtual_network,
+            maximum_queue_delay_ticks,
+            actual_queue_delay_ticks,
+            maximum_max_queue_delay_ticks,
+            actual_max_queue_delay_ticks,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity to stay within {maximum_queue_delay_ticks} queue delay ticks and {maximum_max_queue_delay_ticks} maximum queue delay ticks, got {actual_queue_delay_ticks} queue delay ticks and {actual_max_queue_delay_ticks} maximum queue delay ticks",
             virtual_network.get()
         ),
         _ => unreachable!("fabric activity formatter called for non-fabric activity error"),

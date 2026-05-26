@@ -794,6 +794,8 @@ fn hash_expected_fabric_virtual_network_activity(
     hash_u64(hash, expected.minimum_active_lane_count() as u64);
     hash_u64(hash, expected.minimum_queue_delay_ticks());
     hash_u64(hash, expected.minimum_contended_lane_count() as u64);
+    hash_optional_tick(hash, expected.maximum_queue_delay_ticks());
+    hash_optional_tick(hash, expected.maximum_max_queue_delay_ticks());
 }
 
 fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHandoff>) {

@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 
-use rem6_fabric::{FabricVirtualNetworkActivity, VirtualNetworkId};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId, Tick,
+    PartitionFrontier, PartitionId,
 };
 
 use crate::{
@@ -14,9 +13,11 @@ use crate::{
 
 mod fabric_lane_activity;
 mod fabric_link_activity;
+mod fabric_virtual_network_activity;
 
 pub use fabric_lane_activity::WorkloadExpectedFabricLaneActivity;
 pub use fabric_link_activity::WorkloadExpectedFabricLinkActivity;
+pub use fabric_virtual_network_activity::WorkloadExpectedFabricVirtualNetworkActivity;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadParallelRemoteFlowScope {
@@ -367,73 +368,6 @@ impl WorkloadExpectedResourceActivity {
                     .saturating_add(summary.active_dram_target_count()),
             ),
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct WorkloadExpectedFabricVirtualNetworkActivity {
-    virtual_network: VirtualNetworkId,
-    minimum_transfer_count: usize,
-    minimum_active_lane_count: usize,
-    minimum_queue_delay_ticks: Tick,
-    minimum_contended_lane_count: usize,
-}
-
-impl WorkloadExpectedFabricVirtualNetworkActivity {
-    pub fn new(
-        virtual_network: VirtualNetworkId,
-        minimum_transfer_count: usize,
-        minimum_active_lane_count: usize,
-        minimum_queue_delay_ticks: Tick,
-        minimum_contended_lane_count: usize,
-    ) -> Result<Self, WorkloadError> {
-        if minimum_transfer_count == 0
-            && minimum_active_lane_count == 0
-            && minimum_queue_delay_ticks == 0
-            && minimum_contended_lane_count == 0
-        {
-            return Err(WorkloadError::ZeroExpectedFabricVirtualNetworkActivity {
-                virtual_network,
-            });
-        }
-        Ok(Self {
-            virtual_network,
-            minimum_transfer_count,
-            minimum_active_lane_count,
-            minimum_queue_delay_ticks,
-            minimum_contended_lane_count,
-        })
-    }
-
-    pub const fn virtual_network(self) -> VirtualNetworkId {
-        self.virtual_network
-    }
-
-    pub const fn minimum_transfer_count(self) -> usize {
-        self.minimum_transfer_count
-    }
-
-    pub const fn minimum_active_lane_count(self) -> usize {
-        self.minimum_active_lane_count
-    }
-
-    pub const fn minimum_queue_delay_ticks(self) -> Tick {
-        self.minimum_queue_delay_ticks
-    }
-
-    pub const fn minimum_contended_lane_count(self) -> usize {
-        self.minimum_contended_lane_count
-    }
-
-    pub(crate) const fn sort_key(self) -> u16 {
-        self.virtual_network.get()
-    }
-
-    pub(crate) fn below_minimum(self, activity: &FabricVirtualNetworkActivity) -> bool {
-        activity.transfer_count() < self.minimum_transfer_count
-            || activity.active_lane_count() < self.minimum_active_lane_count
-            || activity.queue_delay_ticks() < self.minimum_queue_delay_ticks
-            || activity.contended_lane_count() < self.minimum_contended_lane_count
     }
 }
 
