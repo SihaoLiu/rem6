@@ -4,11 +4,13 @@ use std::fmt;
 
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
+mod bridge;
 mod interrupt;
 mod mmio;
 mod msi;
 mod msix;
 
+pub use bridge::{PciBridgeBusRange, PciBridgeConfig};
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
     PciLegacyInterruptRoute,
@@ -29,6 +31,7 @@ pub(crate) const PCI_CAPABILITY_PTR_OFFSET: usize = 0x34;
 const PCI_INTERRUPT_LINE_OFFSET: usize = 0x3c;
 const PCI_INTERRUPT_PIN_OFFSET: usize = 0x3d;
 const PCI_TYPE0_HEADER_TYPE: u8 = 0x00;
+pub(crate) const PCI_TYPE1_HEADER_TYPE: u8 = 0x01;
 pub(crate) const PCI_STATUS_CAPABILITY_LIST: u8 = 0x10;
 const PCI_COMMAND_IO_SPACE: u16 = 0x0001;
 const PCI_COMMAND_MEMORY_SPACE: u16 = 0x0002;
@@ -870,6 +873,7 @@ impl PciDecodedConfigAddress {
 pub struct PciHostBridge {
     aperture: PciConfigAperture,
     address_bases: PciHostAddressBases,
+    bridges: BTreeMap<PciFunctionAddress, PciBridgeConfig>,
     endpoints: BTreeMap<PciFunctionAddress, PciEndpointConfig>,
 }
 
@@ -885,6 +889,7 @@ impl PciHostBridge {
         Self {
             aperture,
             address_bases,
+            bridges: BTreeMap::new(),
             endpoints: BTreeMap::new(),
         }
     }
@@ -901,6 +906,10 @@ impl PciHostBridge {
         self.endpoints.get(&function)
     }
 
+    pub fn bridge(&self, function: PciFunctionAddress) -> Option<&PciBridgeConfig> {
+        self.bridges.get(&function)
+    }
+
     pub fn endpoint_config_range(
         &self,
         function: PciFunctionAddress,
@@ -911,10 +920,33 @@ impl PciHostBridge {
     pub fn register_endpoint(&mut self, endpoint: PciEndpointConfig) -> Result<(), PciError> {
         let function = endpoint.function();
         self.aperture.validate_function(function)?;
-        if self.endpoints.contains_key(&function) {
+        if self.endpoints.contains_key(&function) || self.bridges.contains_key(&function) {
             return Err(PciError::DuplicateFunction { function });
         }
         self.endpoints.insert(function, endpoint);
+        Ok(())
+    }
+
+    pub fn register_bridge(&mut self, bridge: PciBridgeConfig) -> Result<(), PciError> {
+        let function = bridge.function();
+        self.aperture.validate_function(function)?;
+        if bridge.bus_range().primary() != function.bus() {
+            return Err(PciError::BridgePrimaryBusMismatch {
+                function,
+                primary: bridge.bus_range().primary(),
+            });
+        }
+        if bridge.bus_range().subordinate() >= self.aperture.bus_count() {
+            return Err(PciError::BridgeBusRangeOutsideAperture {
+                secondary: bridge.bus_range().secondary(),
+                subordinate: bridge.bus_range().subordinate(),
+                bus_count: self.aperture.bus_count(),
+            });
+        }
+        if self.endpoints.contains_key(&function) || self.bridges.contains_key(&function) {
+            return Err(PciError::DuplicateFunction { function });
+        }
+        self.bridges.insert(function, bridge);
         Ok(())
     }
 
@@ -925,6 +957,12 @@ impl PciHostBridge {
     ) -> Result<Vec<u8>, PciError> {
         let decoded = self.aperture.decode(address)?;
         config_span(decoded.offset(), size)?;
+        if let Some(bridge) = self.bridge(decoded.function()) {
+            return bridge.read_config(decoded.offset(), size);
+        }
+        if !self.function_config_accessible(decoded.function()) {
+            return Ok(vec![0xff; size.bytes() as usize]);
+        }
         let Some(endpoint) = self.endpoint(decoded.function()) else {
             return Ok(vec![0xff; size.bytes() as usize]);
         };
@@ -935,6 +973,12 @@ impl PciHostBridge {
         let decoded = self.aperture.decode(address)?;
         let size = access_size_from_len(data.len())?;
         config_span(decoded.offset(), size)?;
+        if let Some(bridge) = self.bridges.get_mut(&decoded.function()) {
+            return bridge.write_config(decoded.offset(), data);
+        }
+        if !self.function_config_accessible(decoded.function()) {
+            return Ok(());
+        }
         let Some(endpoint) = self.endpoints.get_mut(&decoded.function()) else {
             return Ok(());
         };
@@ -945,6 +989,9 @@ impl PciHostBridge {
         let mut ranges = Vec::new();
         for (function, endpoint) in &self.endpoints {
             for range in endpoint.active_bar_ranges() {
+                if !self.host_forwards_bar_range(*function, &range) {
+                    continue;
+                }
                 let space = host_address_space(range.kind());
                 let host_base = checked_base_plus_offset(
                     self.address_bases.base_for_space(space),
@@ -973,6 +1020,22 @@ impl PciHostBridge {
             }
         }
         Ok(ranges)
+    }
+
+    fn function_config_accessible(&self, function: PciFunctionAddress) -> bool {
+        function.bus() == 0 || self.bridge_for_bus(function.bus()).is_some()
+    }
+
+    fn bridge_for_bus(&self, bus: u8) -> Option<&PciBridgeConfig> {
+        self.bridges.values().find(|bridge| bridge.routes_bus(bus))
+    }
+
+    fn host_forwards_bar_range(&self, function: PciFunctionAddress, range: &PciBarRange) -> bool {
+        if function.bus() == 0 {
+            return true;
+        }
+        self.bridge_for_bus(function.bus())
+            .is_some_and(|bridge| bridge.allows_bar_range(range.kind(), range.range()))
     }
 }
 
@@ -1143,6 +1206,20 @@ pub enum PciError {
         existing_bar: PciBarIndex,
         requested_function: PciFunctionAddress,
         requested_bar: PciBarIndex,
+    },
+    InvalidBridgeBusRange {
+        primary: u8,
+        secondary: u8,
+        subordinate: u8,
+    },
+    BridgePrimaryBusMismatch {
+        function: PciFunctionAddress,
+        primary: u8,
+    },
+    BridgeBusRangeOutsideAperture {
+        secondary: u8,
+        subordinate: u8,
+        bus_count: u8,
     },
     InvalidBarPair {
         index: PciBarIndex,
@@ -1357,6 +1434,29 @@ impl fmt::Display for PciError {
                 requested_bar.get(),
                 existing_function,
                 existing_bar.get()
+            ),
+            Self::InvalidBridgeBusRange {
+                primary,
+                secondary,
+                subordinate,
+            } => write!(
+                f,
+                "PCI bridge bus range primary {} secondary {} subordinate {} is invalid",
+                primary, secondary, subordinate
+            ),
+            Self::BridgePrimaryBusMismatch { function, primary } => write!(
+                f,
+                "PCI bridge {:?} primary bus {} does not match its config bus",
+                function, primary
+            ),
+            Self::BridgeBusRangeOutsideAperture {
+                secondary,
+                subordinate,
+                bus_count,
+            } => write!(
+                f,
+                "PCI bridge secondary bus {} subordinate bus {} exceed aperture bus count {}",
+                secondary, subordinate, bus_count
             ),
             Self::InvalidBarPair { index } => {
                 write!(f, "PCI BAR {} cannot start a 64-bit BAR pair", index.get())

@@ -1,0 +1,199 @@
+use rem6_memory::{AccessSize, Address};
+use rem6_pci::{
+    PciBarIndex, PciBarKind, PciBarSpec, PciBridgeBusRange, PciBridgeConfig, PciClassCode,
+    PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciFunctionAddress,
+    PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge,
+};
+
+fn bridge_config(function: PciFunctionAddress) -> PciBridgeConfig {
+    PciBridgeConfig::new(
+        function,
+        PciDeviceIdentity::new(0x1011, 0x0026),
+        PciClassCode::new(0x06, 0x04, 0x00, 0x00),
+        PciBridgeBusRange::new(0, 1, 2).unwrap(),
+    )
+}
+
+fn storage_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
+    let mut endpoint = PciEndpointConfig::new(
+        function,
+        PciDeviceIdentity::new(0x1af4, 0x1001),
+        PciClassCode::new(0x01, 0x00, 0x00, 0x00),
+    );
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+}
+
+#[test]
+fn pci_type1_bridge_config_exposes_header_bus_numbers_and_windows() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x00).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x11, 0x10, 0x26, 0x00])
+    );
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x08).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x00, 0x00, 0x04, 0x06])
+    );
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x0e).unwrap(),
+            AccessSize::new(1).unwrap()
+        ),
+        Ok(vec![0x01])
+    );
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x18).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0, 1, 2, 0])
+    );
+
+    bridge
+        .write_config(PciConfigOffset::new(0x18).unwrap(), &[0, 2, 3, 0x20])
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x20).unwrap(),
+            &0x0020_0010_u32.to_le_bytes(),
+        )
+        .unwrap();
+
+    assert_eq!(bridge.bus_range(), PciBridgeBusRange::new(0, 2, 3).unwrap());
+    assert!(bridge.routes_bus(2));
+    assert!(bridge.routes_bus(3));
+    assert!(!bridge.routes_bus(1));
+    assert!(bridge.allows_bar_range(
+        PciBarKind::Memory32 {
+            prefetchable: false,
+        },
+        rem6_memory::AddressRange::new(Address::new(0x0010_0000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    ));
+    assert!(!bridge.allows_bar_range(
+        PciBarKind::Memory32 {
+            prefetchable: false,
+        },
+        rem6_memory::AddressRange::new(Address::new(0x0030_0000), AccessSize::new(0x2000).unwrap())
+            .unwrap(),
+    ));
+}
+
+#[test]
+fn pci_host_routes_subordinate_config_only_through_declared_bridge_bus_numbers() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 4).unwrap();
+    let mut host = PciHostBridge::new(aperture);
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let bus1_function = PciFunctionAddress::new(1, 2, 0).unwrap();
+    let bus3_function = PciFunctionAddress::new(3, 2, 0).unwrap();
+
+    host.register_bridge(bridge_config(bridge_function))
+        .unwrap();
+    host.register_endpoint(storage_endpoint(bus1_function))
+        .unwrap();
+    host.register_endpoint(storage_endpoint(bus3_function))
+        .unwrap();
+
+    let bus1_addr = aperture
+        .config_address(bus1_function, PciConfigOffset::new(0).unwrap())
+        .unwrap();
+    let bus3_addr = aperture
+        .config_address(bus3_function, PciConfigOffset::new(0).unwrap())
+        .unwrap();
+    assert_eq!(
+        host.read_config_address(bus1_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0xf4, 0x1a, 0x01, 0x10])
+    );
+    assert_eq!(
+        host.read_config_address(bus3_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0xff, 0xff, 0xff, 0xff])
+    );
+
+    let bridge_bus_number_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x18).unwrap())
+        .unwrap();
+    host.write_config_address(bridge_bus_number_addr, &[0, 3, 3, 0])
+        .unwrap();
+
+    assert_eq!(
+        host.read_config_address(bus1_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0xff, 0xff, 0xff, 0xff])
+    );
+    assert_eq!(
+        host.read_config_address(bus3_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0xf4, 0x1a, 0x01, 0x10])
+    );
+}
+
+#[test]
+fn pci_host_filters_downstream_bar_ranges_through_type1_memory_window() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(1, 2, 0).unwrap();
+
+    host.register_bridge(bridge_config(bridge_function))
+        .unwrap();
+    host.register_endpoint(storage_endpoint(endpoint_function))
+        .unwrap();
+
+    let endpoint_bar_addr = aperture
+        .config_address(endpoint_function, PciConfigOffset::new(0x10).unwrap())
+        .unwrap();
+    let endpoint_command_addr = aperture
+        .config_address(endpoint_function, PciConfigOffset::new(0x04).unwrap())
+        .unwrap();
+    host.write_config_address(endpoint_bar_addr, &0x0020_1000_u32.to_le_bytes())
+        .unwrap();
+    host.write_config_address(endpoint_command_addr, &0x0002_u16.to_le_bytes())
+        .unwrap();
+
+    assert_eq!(host.active_host_bar_ranges(), Ok(Vec::new()));
+
+    let bridge_memory_window_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x20).unwrap())
+        .unwrap();
+    host.write_config_address(bridge_memory_window_addr, &0x0020_0020_u32.to_le_bytes())
+        .unwrap();
+    assert_eq!(
+        host.active_host_bar_ranges(),
+        Ok(vec![PciHostBarRange::new(
+            endpoint_function,
+            PciBarIndex::new(0).unwrap(),
+            PciHostAddressSpace::Memory,
+            Address::new(0x0020_0000),
+            Address::new(0x8020_0000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap()])
+    );
+
+    host.write_config_address(bridge_memory_window_addr, &0x0040_0040_u32.to_le_bytes())
+        .unwrap();
+    assert_eq!(host.active_host_bar_ranges(), Ok(Vec::new()));
+}
