@@ -5,9 +5,10 @@ use rem6_kernel::{
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionUse, WorkloadId,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -39,6 +40,23 @@ fn expected_partitions(
     minimum_active_partitions: usize,
 ) -> WorkloadExpectedParallelPartitionUse {
     WorkloadExpectedParallelPartitionUse::new(scope, minimum_active_partitions).unwrap()
+}
+
+fn expected_dma_partitions(
+    scope: WorkloadParallelBatchPartitionScope,
+    minimum_active_partitions: usize,
+) -> WorkloadExpectedParallelPartitionUse {
+    WorkloadExpectedParallelPartitionUse::new(scope, minimum_active_partitions).unwrap()
+}
+
+fn timeline_record(
+    scope: WorkloadParallelBatchScope,
+    start_tick: u64,
+    horizon: u64,
+    partitions: impl IntoIterator<Item = PartitionId>,
+    worker_count: usize,
+) -> WorkloadParallelBatchTimelineRecord {
+    WorkloadParallelBatchTimelineRecord::new(scope, start_tick, horizon, partitions, worker_count)
 }
 
 #[test]
@@ -158,7 +176,7 @@ fn workload_replay_plan_rejects_missing_or_underused_parallel_partitions() {
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelPartitionSummary {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchPartitionScope::Scheduler,
             minimum_active_partitions: 2,
         },
     );
@@ -170,7 +188,7 @@ fn workload_replay_plan_rejects_missing_or_underused_parallel_partitions() {
     assert_eq!(
         plan.verify_result(&single_partition_result).unwrap_err(),
         WorkloadError::ExpectedParallelPartitionCountBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchPartitionScope::Scheduler,
             minimum_active_partitions: 2,
             actual_active_partitions: 1,
         },
@@ -412,6 +430,65 @@ fn workload_replay_plan_derives_active_partitions_from_batch_partition_sets() {
 }
 
 #[test]
+fn workload_replay_plan_verifies_direct_dma_active_partitions_from_batch_timelines() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-partitions-from-dma-timelines"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_dma_partitions(
+            WorkloadParallelBatchPartitionScope::GpuDmaScheduler,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_dma_partitions(
+            WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler,
+            3,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            8,
+            10,
+            [PartitionId::new(3), PartitionId::new(4)],
+            2,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                10,
+                12,
+                [PartitionId::new(5), PartitionId::new(6)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                12,
+                14,
+                [PartitionId::new(6), PartitionId::new(7)],
+                2,
+            ),
+        ]);
+
+    assert_eq!(summary.active_gpu_dma_scheduler_partition_count(), 2);
+    assert_eq!(
+        summary.active_accelerator_dma_scheduler_partition_count(),
+        3,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_parallel_partition_expectations() {
     let zero =
         WorkloadExpectedParallelPartitionUse::new(WorkloadParallelRemoteFlowScope::FullSystem, 0)
@@ -419,7 +496,7 @@ fn workload_replay_plan_rejects_invalid_parallel_partition_expectations() {
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedParallelPartitionCount {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchPartitionScope::FullSystem,
         },
     );
 
@@ -441,7 +518,7 @@ fn workload_replay_plan_rejects_invalid_parallel_partition_expectations() {
     assert_eq!(
         manifest,
         WorkloadError::DuplicateExpectedParallelPartitionUse {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchPartitionScope::FullSystem,
         },
     );
 }

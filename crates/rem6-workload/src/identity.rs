@@ -571,7 +571,7 @@ fn hash_expected_parallel_partition_use(
     hash: &mut u64,
     expected: WorkloadExpectedParallelPartitionUse,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_partition_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_active_partitions() as u64);
 }
 

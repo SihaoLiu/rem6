@@ -1596,15 +1596,16 @@ impl WorkloadExpectedParallelPartitionActivity {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelPartitionUse {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchPartitionScope,
     minimum_active_partitions: usize,
 }
 
 impl WorkloadExpectedParallelPartitionUse {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchPartitionScope>,
         minimum_active_partitions: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_active_partitions == 0 {
             return Err(WorkloadError::ZeroExpectedParallelPartitionCount { scope });
         }
@@ -1614,7 +1615,7 @@ impl WorkloadExpectedParallelPartitionUse {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchPartitionScope {
         self.scope
     }
 
@@ -1631,13 +1632,19 @@ impl WorkloadExpectedParallelPartitionUse {
         summary: &WorkloadParallelExecutionSummary,
     ) -> usize {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchPartitionScope::Scheduler => {
                 summary.active_scheduler_partition_count()
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+            WorkloadParallelBatchPartitionScope::DataCacheScheduler => {
                 summary.active_data_cache_parallel_scheduler_partition_count()
             }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
+            WorkloadParallelBatchPartitionScope::GpuDmaScheduler => {
+                summary.active_gpu_dma_scheduler_partition_count()
+            }
+            WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
+                summary.active_accelerator_dma_scheduler_partition_count()
+            }
+            WorkloadParallelBatchPartitionScope::FullSystem => {
                 summary.active_full_system_parallel_scheduler_partition_count()
             }
         }

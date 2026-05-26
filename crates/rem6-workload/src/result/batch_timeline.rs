@@ -4,8 +4,8 @@ use crate::parallel_batch::{
     collect_parallel_batch_partition_sets_from_timeline,
     collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_timeline,
     collect_parallel_batch_worker_count_tick_summaries,
-    collect_parallel_batch_worker_counts_from_timeline, parallel_batch_count_for_partition_set,
-    parallel_batch_longest_tick_streak_at_or_above,
+    collect_parallel_batch_worker_counts_from_timeline, parallel_batch_active_partition_count,
+    parallel_batch_count_for_partition_set, parallel_batch_longest_tick_streak_at_or_above,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
     parallel_batch_streak_count_for_partition_set, parallel_batch_ticks_at_or_above,
     parallel_batch_ticks_for_worker_count, parallel_batch_worker_ticks,
@@ -164,6 +164,18 @@ impl WorkloadParallelExecutionSummary {
         crate::parallel_batch::collect_parallel_batch_partition_streaks(
             gpu_streaks.into_iter().chain(accelerator_streaks),
         )
+    }
+
+    pub fn active_gpu_dma_scheduler_partition_count(&self) -> usize {
+        let sets = self.gpu_dma_scheduler_batch_partition_sets();
+        let streaks = self.gpu_dma_scheduler_batch_partition_streaks();
+        parallel_batch_active_partition_count(&sets, &streaks)
+    }
+
+    pub fn active_accelerator_dma_scheduler_partition_count(&self) -> usize {
+        let sets = self.accelerator_dma_scheduler_batch_partition_sets();
+        let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        parallel_batch_active_partition_count(&sets, &streaks)
     }
 
     pub fn gpu_dma_scheduler_partition_activity(

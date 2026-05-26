@@ -1040,10 +1040,10 @@ pub enum WorkloadError {
         worker_count: usize,
     },
     ZeroExpectedParallelPartitionCount {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
     },
     DuplicateExpectedParallelPartitionUse {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
     },
     ZeroExpectedParallelPartitionActivity {
         scope: WorkloadParallelBatchPartitionScope,
@@ -1054,11 +1054,11 @@ pub enum WorkloadError {
         partition: u32,
     },
     MissingParallelPartitionSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         minimum_active_partitions: usize,
     },
     ExpectedParallelPartitionCountBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         minimum_active_partitions: usize,
         actual_active_partitions: usize,
     },
