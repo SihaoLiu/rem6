@@ -14,6 +14,7 @@ use crate::{
 };
 
 mod display;
+mod fabric_display;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelRemoteTrafficConsistencyMismatch {
@@ -1151,6 +1152,34 @@ pub enum WorkloadError {
         actual_operation_count: usize,
         minimum_active_resource_count: usize,
         actual_active_resource_count: usize,
+    },
+    ZeroExpectedFabricLaneActivity {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    },
+    DuplicateExpectedFabricLaneActivity {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+    },
+    MissingFabricLaneActivitySummary {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        minimum_transfer_count: usize,
+        minimum_byte_count: u64,
+        minimum_occupied_ticks: Tick,
+        minimum_queue_delay_ticks: Tick,
+    },
+    ExpectedFabricLaneActivityBelowMinimum {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        minimum_transfer_count: usize,
+        actual_transfer_count: usize,
+        minimum_byte_count: u64,
+        actual_byte_count: u64,
+        minimum_occupied_ticks: Tick,
+        actual_occupied_ticks: Tick,
+        minimum_queue_delay_ticks: Tick,
+        actual_queue_delay_ticks: Tick,
     },
     ZeroExpectedFabricLinkActivity {
         link: FabricLinkId,

@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use rem6_fabric::{
-    FabricLinkActivity, FabricLinkId, FabricVirtualNetworkActivity, VirtualNetworkId,
+    FabricLaneActivity, FabricLinkActivity, FabricLinkId, FabricVirtualNetworkActivity,
+    VirtualNetworkId,
 };
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
@@ -363,6 +364,81 @@ impl WorkloadExpectedResourceActivity {
                     .saturating_add(summary.active_dram_target_count()),
             ),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedFabricLaneActivity {
+    link: FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    minimum_transfer_count: usize,
+    minimum_byte_count: u64,
+    minimum_occupied_ticks: Tick,
+    minimum_queue_delay_ticks: Tick,
+}
+
+impl WorkloadExpectedFabricLaneActivity {
+    pub fn new(
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        minimum_transfer_count: usize,
+        minimum_byte_count: u64,
+        minimum_occupied_ticks: Tick,
+        minimum_queue_delay_ticks: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_transfer_count == 0
+            && minimum_byte_count == 0
+            && minimum_occupied_ticks == 0
+            && minimum_queue_delay_ticks == 0
+        {
+            return Err(WorkloadError::ZeroExpectedFabricLaneActivity {
+                link,
+                virtual_network,
+            });
+        }
+        Ok(Self {
+            link,
+            virtual_network,
+            minimum_transfer_count,
+            minimum_byte_count,
+            minimum_occupied_ticks,
+            minimum_queue_delay_ticks,
+        })
+    }
+
+    pub fn link(&self) -> &FabricLinkId {
+        &self.link
+    }
+
+    pub const fn virtual_network(&self) -> VirtualNetworkId {
+        self.virtual_network
+    }
+
+    pub const fn minimum_transfer_count(&self) -> usize {
+        self.minimum_transfer_count
+    }
+
+    pub const fn minimum_byte_count(&self) -> u64 {
+        self.minimum_byte_count
+    }
+
+    pub const fn minimum_occupied_ticks(&self) -> Tick {
+        self.minimum_occupied_ticks
+    }
+
+    pub const fn minimum_queue_delay_ticks(&self) -> Tick {
+        self.minimum_queue_delay_ticks
+    }
+
+    pub(crate) fn sort_key(&self) -> (&str, u16) {
+        (self.link.as_str(), self.virtual_network.get())
+    }
+
+    pub(crate) fn below_minimum(&self, activity: &FabricLaneActivity) -> bool {
+        activity.transfer_count() < self.minimum_transfer_count
+            || activity.byte_count() < self.minimum_byte_count
+            || activity.occupied_ticks() < self.minimum_occupied_ticks
+            || activity.queue_delay_ticks() < self.minimum_queue_delay_ticks
     }
 }
 

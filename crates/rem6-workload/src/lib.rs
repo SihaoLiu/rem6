@@ -11,6 +11,7 @@ mod heterogeneous;
 mod host_event;
 mod identity;
 mod manifest_diagnostics;
+mod manifest_fabric_lane_activity;
 mod manifest_fabric_link_activity;
 mod manifest_fabric_virtual_network_activity;
 mod manifest_identity;
@@ -78,17 +79,17 @@ pub use parallel_diagnostic_expectation::{
 };
 pub use parallel_expectation::{
     WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
-    WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
-    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelFrontier,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
-    WorkloadResourceActivityScope,
+    WorkloadExpectedFabricLaneActivity, WorkloadExpectedFabricLinkActivity,
+    WorkloadExpectedFabricVirtualNetworkActivity, WorkloadExpectedParallelBatchActivity,
+    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResourceActivityScope,
 };
 pub use parallel_progress_transition_expectation::{
     WorkloadExpectedParallelProgressTransition, WorkloadParallelProgressTransitionExpectationError,
@@ -282,6 +283,7 @@ pub struct WorkloadManifest {
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
+    expected_fabric_lane_activity: Vec<WorkloadExpectedFabricLaneActivity>,
     expected_fabric_link_activity: Vec<WorkloadExpectedFabricLinkActivity>,
     expected_fabric_virtual_network_activity: Vec<WorkloadExpectedFabricVirtualNetworkActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -461,6 +463,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
+    expected_fabric_lane_activity: Vec<WorkloadExpectedFabricLaneActivity>,
     expected_fabric_link_activity: Vec<WorkloadExpectedFabricLinkActivity>,
     expected_fabric_virtual_network_activity: Vec<WorkloadExpectedFabricVirtualNetworkActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -508,6 +511,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_partition_activity: Vec::new(),
             expected_parallel_frontiers: Vec::new(),
             expected_resource_activity: Vec::new(),
+            expected_fabric_lane_activity: Vec::new(),
             expected_fabric_link_activity: Vec::new(),
             expected_fabric_virtual_network_activity: Vec::new(),
             checkpoint_lineage: None,
@@ -893,6 +897,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_partition_activity: &self.expected_parallel_partition_activity,
             expected_parallel_frontiers: &self.expected_parallel_frontiers,
             expected_resource_activity: &self.expected_resource_activity,
+            expected_fabric_lane_activity: &self.expected_fabric_lane_activity,
             expected_fabric_link_activity: &self.expected_fabric_link_activity,
             expected_fabric_virtual_network_activity: &self
                 .expected_fabric_virtual_network_activity,
@@ -948,6 +953,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_partition_activity: self.expected_parallel_partition_activity,
             expected_parallel_frontiers: self.expected_parallel_frontiers,
             expected_resource_activity: self.expected_resource_activity,
+            expected_fabric_lane_activity: self.expected_fabric_lane_activity,
             expected_fabric_link_activity: self.expected_fabric_link_activity,
             expected_fabric_virtual_network_activity: self.expected_fabric_virtual_network_activity,
             checkpoint_lineage: self.checkpoint_lineage,
@@ -1005,6 +1011,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_partition_activity: Vec<WorkloadExpectedParallelPartitionActivity>,
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
+    expected_fabric_lane_activity: Vec<WorkloadExpectedFabricLaneActivity>,
     expected_fabric_link_activity: Vec<WorkloadExpectedFabricLinkActivity>,
     expected_fabric_virtual_network_activity: Vec<WorkloadExpectedFabricVirtualNetworkActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
@@ -1105,6 +1112,7 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_frontiers: manifest.expected_parallel_frontiers().to_vec(),
             expected_resource_activity: manifest.expected_resource_activity().to_vec(),
+            expected_fabric_lane_activity: manifest.expected_fabric_lane_activity().to_vec(),
             expected_fabric_link_activity: manifest.expected_fabric_link_activity().to_vec(),
             expected_fabric_virtual_network_activity: manifest
                 .expected_fabric_virtual_network_activity()
@@ -1502,6 +1510,7 @@ impl WorkloadReplayPlan {
         self.verify_expected_parallel_partition_activity(result)?;
         replay_verify::verify_expected_parallel_frontiers(self, result)?;
         replay_verify::verify_expected_resource_activity(self, result)?;
+        replay_verify::verify_expected_fabric_lane_activity(self, result)?;
         replay_verify::verify_expected_fabric_link_activity(self, result)?;
         replay_verify::verify_expected_fabric_virtual_network_activity(self, result)?;
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;

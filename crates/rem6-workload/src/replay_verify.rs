@@ -1069,6 +1069,56 @@ pub(crate) fn verify_expected_resource_activity(
     Ok(())
 }
 
+pub(crate) fn verify_expected_fabric_lane_activity(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_activity = plan.expected_fabric_lane_activity();
+    if expected_activity.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = &expected_activity[0];
+        return Err(missing_fabric_lane_activity_summary(expected));
+    };
+
+    for expected in expected_activity {
+        let Some(actual) =
+            summary.fabric_lane_activity(expected.link(), expected.virtual_network())
+        else {
+            return Err(missing_fabric_lane_activity_summary(expected));
+        };
+        if expected.below_minimum(&actual) {
+            return Err(WorkloadError::ExpectedFabricLaneActivityBelowMinimum {
+                link: expected.link().clone(),
+                virtual_network: expected.virtual_network(),
+                minimum_transfer_count: expected.minimum_transfer_count(),
+                actual_transfer_count: actual.transfer_count(),
+                minimum_byte_count: expected.minimum_byte_count(),
+                actual_byte_count: actual.byte_count(),
+                minimum_occupied_ticks: expected.minimum_occupied_ticks(),
+                actual_occupied_ticks: actual.occupied_ticks(),
+                minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
+                actual_queue_delay_ticks: actual.queue_delay_ticks(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn missing_fabric_lane_activity_summary(
+    expected: &crate::WorkloadExpectedFabricLaneActivity,
+) -> WorkloadError {
+    WorkloadError::MissingFabricLaneActivitySummary {
+        link: expected.link().clone(),
+        virtual_network: expected.virtual_network(),
+        minimum_transfer_count: expected.minimum_transfer_count(),
+        minimum_byte_count: expected.minimum_byte_count(),
+        minimum_occupied_ticks: expected.minimum_occupied_ticks(),
+        minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
+    }
+}
+
 pub(crate) fn verify_expected_fabric_link_activity(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
