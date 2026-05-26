@@ -176,13 +176,15 @@ isolated bugs:
   and device behavior behind typed crate boundaries with focused regression
   tests before broad parity claims.
 
-Research anchors refreshed on 2026-05-25:
+Research anchors refreshed on 2026-05-26:
 
 - Parallel M5: <https://old.gem5.org/Parallel_M5.html>
 - gem5 event-driven programming:
   <https://www.gem5.org/documentation/learning_gem5/part2/events/>
 - gem5 event queue API:
   <https://doxygen.gem5.org/release/v21-1-0-2/classgem5_1_1EventQueue.html>
+- gem5 multi-event-queue review:
+  <https://reviews.gem5.org/r/1667/index.html>
 - par-gem5: <https://past.date-conference.com/proceedings-archive/2023/DATA/16.pdf>
 - parti-gem5: <https://arxiv.org/abs/2308.09445>
 - gem5 Python configuration and port wiring:
@@ -191,6 +193,8 @@ Research anchors refreshed on 2026-05-25:
   <https://www.gem5.org/documentation/learning_gem5/part1/example_configs/>
 - gem5 standard library and resources:
   <https://www.gem5.org/documentation/gem5-stdlib/overview>
+- GEM5ART reproducible full-system workflow:
+  <https://www.gem5.org/assets/files/papers/enabling2021ispass.pdf>
 - gem5 error categories:
   <https://www.gem5.org/documentation/general_docs/common-errors/>
 - gem5 call-stack profiling:
@@ -198,6 +202,15 @@ Research anchors refreshed on 2026-05-25:
 - Local read-only reference anchors: gem5 `src/sim`, `src/python`,
   `configs`, `src/mem`, `src/cpu`, and public issues for stats reset,
   syscall emulation, RISC-V vector tracing, and CHI LR/SC behavior.
+
+Implementation evidence on 2026-05-26:
+
+- `rem6-virtio` split queues now treat available-ring interrupt suppression as
+  device-visible state. Completion paths still write descriptor status, data,
+  used-ring element, and used index, but they do not set ISR status or post
+  INTx, MSI, or MSI-X delivery when the guest has requested no completion
+  interrupt. This keeps full-system device behavior observable through typed
+  writeback and interrupt-delivery results instead of relying on implicit logs.
 
 ## Audit Method
 

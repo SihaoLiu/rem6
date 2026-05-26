@@ -17,6 +17,7 @@ use crate::{
 pub const VIRTIO_SPLIT_DESC_F_NEXT: u16 = 1;
 pub const VIRTIO_SPLIT_DESC_F_WRITE: u16 = 2;
 pub const VIRTIO_SPLIT_DESC_F_INDIRECT: u16 = 4;
+pub const VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT: u16 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct VirtioBlockIntxCompletionTarget<'a> {
@@ -348,8 +349,8 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         isr: &VirtioPciIsrDevice,
     ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
-        let writeback = self.complete_block_request(guest, decoded, completion)?;
-        isr.raise_queue_interrupt(completion.tick());
+        let (writeback, _) =
+            self.complete_block_request_and_maybe_raise_isr(guest, decoded, completion, isr)?;
         Ok(writeback)
     }
 
@@ -361,8 +362,15 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         target: VirtioBlockIntxCompletionTarget<'_>,
     ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
-        let writeback =
-            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        let (writeback, should_deliver) = self.complete_block_request_and_maybe_raise_isr(
+            guest,
+            decoded,
+            completion,
+            target.isr(),
+        )?;
+        if !should_deliver {
+            return Ok(VirtioBlockInterruptCompletion::new(writeback, None));
+        }
         let delivery = target
             .port()
             .post(context, target.source())
@@ -381,8 +389,15 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         target: VirtioBlockIntxCompletionTarget<'_>,
     ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
-        let writeback =
-            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        let (writeback, should_deliver) = self.complete_block_request_and_maybe_raise_isr(
+            guest,
+            decoded,
+            completion,
+            target.isr(),
+        )?;
+        if !should_deliver {
+            return Ok(VirtioBlockInterruptCompletion::new(writeback, None));
+        }
         let delivery = target
             .port()
             .post_parallel(context, target.source())
@@ -401,8 +416,15 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         target: VirtioBlockMsiCompletionTarget<'_>,
     ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
-        let writeback =
-            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        let (writeback, should_deliver) = self.complete_block_request_and_maybe_raise_isr(
+            guest,
+            decoded,
+            completion,
+            target.isr(),
+        )?;
+        if !should_deliver {
+            return Ok(VirtioBlockInterruptCompletion::new(writeback, None));
+        }
         let delivery = target
             .port()
             .send(target.endpoint(), context, target.source())
@@ -418,8 +440,15 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         target: VirtioBlockMsiCompletionTarget<'_>,
     ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
-        let writeback =
-            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        let (writeback, should_deliver) = self.complete_block_request_and_maybe_raise_isr(
+            guest,
+            decoded,
+            completion,
+            target.isr(),
+        )?;
+        if !should_deliver {
+            return Ok(VirtioBlockInterruptCompletion::new(writeback, None));
+        }
         let delivery = target
             .port()
             .send_parallel(target.endpoint(), context, target.source())
@@ -435,8 +464,15 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         mut target: VirtioBlockMsixCompletionTarget<'_>,
     ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
-        let writeback =
-            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        let (writeback, should_deliver) = self.complete_block_request_and_maybe_raise_isr(
+            guest,
+            decoded,
+            completion,
+            target.isr(),
+        )?;
+        if !should_deliver {
+            return Ok(VirtioBlockInterruptCompletion::new(writeback, None));
+        }
         let delivery = target.send(context).map_err(virtio_pci_error)?;
         Ok(VirtioBlockInterruptCompletion::new(writeback, delivery))
     }
@@ -449,10 +485,40 @@ impl VirtioSplitQueue {
         completion: &VirtioBlockCompletion,
         mut target: VirtioBlockMsixCompletionTarget<'_>,
     ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
-        let writeback =
-            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        let (writeback, should_deliver) = self.complete_block_request_and_maybe_raise_isr(
+            guest,
+            decoded,
+            completion,
+            target.isr(),
+        )?;
+        if !should_deliver {
+            return Ok(VirtioBlockInterruptCompletion::new(writeback, None));
+        }
         let delivery = target.send_parallel(context).map_err(virtio_pci_error)?;
         Ok(VirtioBlockInterruptCompletion::new(writeback, delivery))
+    }
+
+    fn complete_block_request_and_maybe_raise_isr(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+        isr: &VirtioPciIsrDevice,
+    ) -> Result<(VirtioBlockQueueCompletionWrite, bool), VirtioError> {
+        let writeback = self.complete_block_request(guest, decoded, completion)?;
+        let should_deliver = self.completion_interrupt_enabled(guest)?;
+        if should_deliver {
+            isr.raise_queue_interrupt(completion.tick());
+        }
+        Ok((writeback, should_deliver))
+    }
+
+    fn completion_interrupt_enabled(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+    ) -> Result<bool, VirtioError> {
+        let flags = guest.read_u16(self.available_ring)?;
+        Ok(flags & VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT == 0)
     }
 
     fn write_descriptor(

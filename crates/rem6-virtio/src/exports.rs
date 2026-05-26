@@ -31,8 +31,8 @@ pub use crate::block_queue::{
     VirtioBlockIntxCompletionTarget, VirtioBlockMsiCompletionTarget,
     VirtioBlockMsixCompletionTarget, VirtioBlockQueueCompletionWrite, VirtioGuestMemory,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
-    VirtioSplitUsedRing, VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT,
-    VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioSplitUsedRing, VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT, VIRTIO_SPLIT_DESC_F_INDIRECT,
+    VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 pub use crate::device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
