@@ -15,14 +15,15 @@ use crate::{
     WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
     WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForEdgeKindCount,
-    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
-    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
+    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
+    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -42,6 +43,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelWaitForEdgeKindCount],
     pub(crate) expected_parallel_wait_for_edge_kind_windows:
         &'a [WorkloadExpectedParallelWaitForEdgeKindWindow],
+    pub(crate) expected_parallel_wait_for_blocked_node_windows:
+        &'a [WorkloadExpectedParallelWaitForBlockedNodeWindow],
     pub(crate) expected_parallel_wait_for_target_node_windows:
         &'a [WorkloadExpectedParallelWaitForTargetNodeWindow],
     pub(crate) expected_data_cache_protocol_run_counts:
@@ -141,6 +144,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_wait_for_edge_kind_windows {
         hash_expected_parallel_wait_for_edge_kind_window(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_wait_for_blocked_node_windows.len() as u64,
+    );
+    for expected in input.expected_parallel_wait_for_blocked_node_windows {
+        hash_expected_parallel_wait_for_blocked_node_window(&mut hash, expected);
     }
     hash_u64(
         &mut hash,
@@ -350,6 +360,17 @@ fn hash_expected_parallel_wait_for_edge_kind_window(
 ) {
     hash_str(hash, expected.scope().as_str());
     hash_wait_for_edge_kind(hash, expected.kind());
+    hash_u64(hash, expected.edge_count() as u64);
+    hash_u64(hash, expected.first_tick());
+    hash_u64(hash, expected.last_tick());
+}
+
+fn hash_expected_parallel_wait_for_blocked_node_window(
+    hash: &mut u64,
+    expected: &WorkloadExpectedParallelWaitForBlockedNodeWindow,
+) {
+    hash_str(hash, expected.scope().as_str());
+    hash_wait_for_node(hash, expected.node());
     hash_u64(hash, expected.edge_count() as u64);
     hash_u64(hash, expected.first_tick());
     hash_u64(hash, expected.last_tick());

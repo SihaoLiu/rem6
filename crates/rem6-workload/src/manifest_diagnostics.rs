@@ -1,8 +1,8 @@
 use crate::{
     WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
-    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
-    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadManifest, WorkloadManifestBuilder,
-    WorkloadReplayPlan,
+    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
+    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
+    WorkloadManifest, WorkloadManifestBuilder, WorkloadReplayPlan,
 };
 
 impl WorkloadManifest {
@@ -22,6 +22,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedParallelWaitForEdgeKindWindow] {
         &self.expected_parallel_wait_for_edge_kind_windows
+    }
+
+    pub fn expected_parallel_wait_for_blocked_node_windows(
+        &self,
+    ) -> &[WorkloadExpectedParallelWaitForBlockedNodeWindow] {
+        &self.expected_parallel_wait_for_blocked_node_windows
     }
 
     pub fn expected_parallel_wait_for_target_node_windows(
@@ -93,6 +99,29 @@ impl WorkloadManifestBuilder {
         self.expected_parallel_wait_for_edge_kind_windows
             .push(expected);
         self.expected_parallel_wait_for_edge_kind_windows
+            .sort_by_key(|diagnostics| diagnostics.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_parallel_wait_for_blocked_node_window(
+        mut self,
+        expected: WorkloadExpectedParallelWaitForBlockedNodeWindow,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_wait_for_blocked_node_windows
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelWaitForBlockedNodeWindow {
+                    scope: expected.scope(),
+                    node: expected.node().clone(),
+                },
+            );
+        }
+        self.expected_parallel_wait_for_blocked_node_windows
+            .push(expected);
+        self.expected_parallel_wait_for_blocked_node_windows
             .sort_by_key(|diagnostics| diagnostics.sort_key());
         Ok(self)
     }
@@ -193,6 +222,29 @@ impl WorkloadReplayPlan {
         Ok(self)
     }
 
+    pub fn add_expected_parallel_wait_for_blocked_node_window(
+        mut self,
+        expected: WorkloadExpectedParallelWaitForBlockedNodeWindow,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_parallel_wait_for_blocked_node_windows
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::DuplicateExpectedParallelWaitForBlockedNodeWindow {
+                    scope: expected.scope(),
+                    node: expected.node().clone(),
+                },
+            );
+        }
+        self.expected_parallel_wait_for_blocked_node_windows
+            .push(expected);
+        self.expected_parallel_wait_for_blocked_node_windows
+            .sort_by_key(|diagnostics| diagnostics.sort_key());
+        Ok(self)
+    }
+
     pub fn add_expected_parallel_wait_for_target_node_window(
         mut self,
         expected: WorkloadExpectedParallelWaitForTargetNodeWindow,
@@ -226,6 +278,12 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedParallelWaitForEdgeKindWindow] {
         &self.expected_parallel_wait_for_edge_kind_windows
+    }
+
+    pub fn expected_parallel_wait_for_blocked_node_windows(
+        &self,
+    ) -> &[WorkloadExpectedParallelWaitForBlockedNodeWindow] {
+        &self.expected_parallel_wait_for_blocked_node_windows
     }
 
     pub fn expected_parallel_wait_for_target_node_windows(

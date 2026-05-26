@@ -3,10 +3,11 @@ use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
-    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
-    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadId, WorkloadParallelDiagnosticScope,
-    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult, WorkloadWaitForEdgeKindWindow,
+    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
+    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
+    WorkloadId, WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
     WorkloadWaitForTargetNodeWindow,
 };
 
@@ -73,6 +74,19 @@ fn expected_wait_target_window(
     last_tick: u64,
 ) -> WorkloadExpectedParallelWaitForTargetNodeWindow {
     WorkloadExpectedParallelWaitForTargetNodeWindow::new(
+        scope, node, edge_count, first_tick, last_tick,
+    )
+    .unwrap()
+}
+
+fn expected_wait_blocked_window(
+    scope: WorkloadParallelDiagnosticScope,
+    node: WaitForNode,
+    edge_count: usize,
+    first_tick: u64,
+    last_tick: u64,
+) -> WorkloadExpectedParallelWaitForBlockedNodeWindow {
+    WorkloadExpectedParallelWaitForBlockedNodeWindow::new(
         scope, node, edge_count, first_tick, last_tick,
     )
     .unwrap()
@@ -252,6 +266,47 @@ fn workload_manifest_records_parallel_wait_for_target_node_window_expectations()
 }
 
 #[test]
+fn workload_manifest_records_parallel_wait_for_blocked_node_window_expectations() {
+    let resource_port = expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("fabric.port.0"),
+        2,
+        3,
+        9,
+    );
+    let full_system_core = expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        wait_resource("cpu.core.0"),
+        1,
+        7,
+        7,
+    );
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("manifest-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(full_system_core.clone())
+    .unwrap()
+    .add_expected_parallel_wait_for_blocked_node_window(resource_port.clone())
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_eq!(
+        manifest.expected_parallel_wait_for_blocked_node_windows(),
+        &[resource_port, full_system_core],
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_parallel_wait_for_blocked_node_windows(),
+        manifest.expected_parallel_wait_for_blocked_node_windows(),
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_wait_for_edge_kind_counts() {
     let base = rem6_workload::WorkloadManifest::builder(
         id("identity-wait-kind-diagnostics"),
@@ -413,6 +468,74 @@ fn workload_manifest_identity_changes_with_parallel_wait_for_target_node_windows
     assert_ne!(base.identity(), queue.identity());
     assert_ne!(queue.identity(), credit.identity());
     assert_ne!(queue.identity(), wider_queue.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_parallel_wait_for_blocked_node_windows() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let core = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("cpu.core.0"),
+        1,
+        3,
+        3,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let dma = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("gpu.dma.engine.0"),
+        1,
+        3,
+        3,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let wider_core = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::Resource,
+        wait_resource("cpu.core.0"),
+        1,
+        3,
+        8,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), core.identity());
+    assert_ne!(core.identity(), dma.identity());
+    assert_ne!(core.identity(), wider_core.identity());
 }
 
 #[test]
@@ -607,6 +730,80 @@ fn workload_replay_plan_verifies_parallel_wait_for_target_node_windows() {
 }
 
 #[test]
+fn workload_replay_plan_verifies_parallel_wait_for_blocked_node_windows() {
+    let blocked = wait_resource("cpu.core.0");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("verify-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        blocked.clone(),
+        2,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::MissingParallelDiagnosticSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+        },
+    );
+
+    let underactive_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_blocked_node_windows([WorkloadWaitForBlockedNodeWindow::new(
+            blocked.clone(),
+            1,
+            4,
+            4,
+        )]);
+    let underactive_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive_summary);
+    assert_eq!(
+        plan.verify_result(&underactive_result).unwrap_err(),
+        WorkloadError::ExpectedParallelWaitForBlockedNodeWindowMismatch {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            node: blocked.clone(),
+            expected_edge_count: 2,
+            actual_edge_count: 1,
+            expected_first_tick: 4,
+            actual_first_tick: Some(4),
+            expected_last_tick: 12,
+            actual_last_tick: Some(4),
+        },
+    );
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_blocked_node_windows([WorkloadWaitForBlockedNodeWindow::new(
+            blocked.clone(),
+            1,
+            4,
+            6,
+        )])
+        .with_resource_wait_for_blocked_node_windows(
+            [WorkloadWaitForBlockedNodeWindow::new(
+                blocked.clone(),
+                1,
+                8,
+                12,
+            )],
+            [],
+        );
+    let satisfied_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied_result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_wait_for_edge_kind_windows() {
     assert_eq!(
         WorkloadExpectedParallelWaitForEdgeKindWindow::new(
@@ -733,6 +930,72 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_wait_for_target_no
         WorkloadError::DuplicateExpectedParallelWaitForTargetNodeWindow {
             scope: WorkloadParallelDiagnosticScope::DataCache,
             node: target,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_wait_for_blocked_node_windows() {
+    let blocked = wait_resource("cpu.core.0");
+    assert_eq!(
+        WorkloadExpectedParallelWaitForBlockedNodeWindow::new(
+            WorkloadParallelDiagnosticScope::Resource,
+            blocked.clone(),
+            0,
+            3,
+            7,
+        )
+        .unwrap_err(),
+        WorkloadError::ZeroExpectedParallelWaitForBlockedNodeWindow {
+            scope: WorkloadParallelDiagnosticScope::Resource,
+            node: blocked.clone(),
+        },
+    );
+    assert_eq!(
+        WorkloadExpectedParallelWaitForBlockedNodeWindow::new(
+            WorkloadParallelDiagnosticScope::Resource,
+            blocked.clone(),
+            1,
+            9,
+            7,
+        )
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelWaitForBlockedNodeWindow {
+            scope: WorkloadParallelDiagnosticScope::Resource,
+            node: blocked.clone(),
+            first_tick: 9,
+            last_tick: 7,
+        },
+    );
+
+    let duplicate = rem6_workload::WorkloadManifest::builder(
+        id("duplicate-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::DataCache,
+        blocked.clone(),
+        1,
+        3,
+        3,
+    ))
+    .unwrap()
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::DataCache,
+        blocked.clone(),
+        1,
+        4,
+        4,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateExpectedParallelWaitForBlockedNodeWindow {
+            scope: WorkloadParallelDiagnosticScope::DataCache,
+            node: blocked,
         },
     );
 }

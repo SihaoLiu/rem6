@@ -61,9 +61,10 @@ isolated bugs:
   the same kernel semantics for the resources, queues, transactions, or
   components being waited on, so parallel runs can identify shared contention
   hotspots without scanning raw edges after the run. Workload results carry
-  those target-node windows across data-cache, fabric, DRAM, compute, DMA, and
-  merged full-system scopes, so replay artifacts can preserve the contended
-  resource identity instead of only recording edge-kind totals.
+  blocked-node and target-node windows across data-cache, fabric, DRAM,
+  compute, DMA, and merged full-system scopes, so replay artifacts can preserve
+  both the blocked participant and the contended resource identity instead of
+  only recording edge-kind totals.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -149,10 +150,11 @@ isolated bugs:
   resource, compute, DMA, and full-system scopes, so barrier, queue, protocol,
   credit, message, resource, and host-action waits do not collapse into an
   aggregate dirty count or lose when each kind was observed. They also preserve
-  target-node wait-for windows for contended resources, queues, transactions,
-  and components. Manifests can declare exact scoped wait-for edge-kind and
-  target-node windows, binding edge count and first/last tick evidence into
-  replay verification and manifest identity.
+  blocked-node wait-for windows for blocked partitions, components, resources,
+  or transactions, plus target-node wait-for windows for contended resources,
+  queues, transactions, and components. Manifests can declare exact scoped
+  wait-for edge-kind, blocked-node, and target-node windows, binding edge count
+  and first/last tick evidence into replay verification and manifest identity.
   Workload result summaries also treat
   remote-flow-derived active partitions and recorded frontiers as parallel work
   evidence, so sparse typed traces do not disappear behind empty worker or batch
@@ -392,11 +394,13 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   kernel-owned target-node observation windows. Full-system tests preserve the
   barrier edge kind in wait-for summaries and expose target-node windows across
   merged resource and full-system wait-for graphs. Workload-result tests now
-  preserve scoped target-node wait-for tick windows, and workload replay
-  summary tests carry fabric/data-cache target-node windows into merged
-  full-system artifacts. Workload manifest tests now bind scoped target-node
-  windows into manifest identity and replay verification, including missing,
-  mismatched, invalid, and duplicate expectation failures.
+  preserve scoped blocked-node and target-node wait-for tick windows, and
+  workload replay summary tests carry fabric/data-cache blocked-node and
+  target-node windows into merged full-system artifacts. Workload manifest tests
+  now bind scoped blocked-node and target-node windows into manifest identity
+  and replay
+  verification, including missing, mismatched, invalid, and duplicate
+  expectation failures.
   Progress-monitor tests cover typed livelock diagnostics for
   repeated progress-free transitions, transition-kind accounting, snapshots,
   and useful-work reset of active livelock windows. Scheduler progress tests
@@ -603,7 +607,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   run-count expectations, minimum fabric/DRAM/resource activity expectations,
   clean parallel diagnostic expectations including livelock counts, scoped
   wait-for edge-kind count expectations, scoped wait-for edge-kind window
-  expectations, scoped wait-for target-node window expectations, and
+  expectations, scoped wait-for blocked-node and target-node window
+  expectations, and
   manifest identity changes for those expected communication contracts.
   Workload replay QoS tests cover same-tick DRAM
   batching while a data-cache is present, including operation filtering so
@@ -814,7 +819,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   GPU and accelerator DMA per-partition activity, data-cache run attribution
   contracts, data-cache run-accounting consistency contracts, data-cache
   protocol run-count verification contracts, resource activity contracts,
-  scoped wait-for edge-kind and target-node window contracts, and
+  scoped wait-for edge-kind, blocked-node, and target-node window contracts, and
   clean diagnostic verification contracts, result metadata with
   manifest identity plus start/final ticks, execution mode switches, host
   action summaries, checkpoint restore labels, and statistics snapshots.

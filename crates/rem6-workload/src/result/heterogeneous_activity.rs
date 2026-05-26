@@ -18,7 +18,8 @@ use crate::result_collect::{
 use super::{
     wait_for_diagnostics::{
         merge_wait_for_edge_kind_counts, merge_wait_for_edge_kind_windows,
-        wait_for_edge_kind_count, wait_for_edge_kind_count_sum, wait_for_edge_kind_window,
+        wait_for_blocked_node_window_count_sum, wait_for_edge_kind_count,
+        wait_for_edge_kind_count_sum, wait_for_edge_kind_window,
         wait_for_edge_kind_window_count_sum, wait_for_target_node_window_count_sum,
     },
     WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow,
@@ -175,6 +176,9 @@ impl WorkloadParallelExecutionSummary {
             ))
             .max(wait_for_edge_kind_window_count_sum(
                 &self.gpu_compute_wait_for_edge_kind_windows,
+            ))
+            .max(wait_for_blocked_node_window_count_sum(
+                &self.gpu_compute_wait_for_blocked_node_windows,
             ))
             .max(wait_for_target_node_window_count_sum(
                 &self.gpu_compute_wait_for_target_node_windows,
@@ -377,6 +381,9 @@ impl WorkloadParallelExecutionSummary {
             .max(wait_for_edge_kind_window_count_sum(
                 &self.gpu_dma_wait_for_edge_kind_windows,
             ))
+            .max(wait_for_blocked_node_window_count_sum(
+                &self.gpu_dma_wait_for_blocked_node_windows,
+            ))
             .max(wait_for_target_node_window_count_sum(
                 &self.gpu_dma_wait_for_target_node_windows,
             ))
@@ -477,6 +484,9 @@ impl WorkloadParallelExecutionSummary {
             ))
             .max(wait_for_edge_kind_window_count_sum(
                 &self.accelerator_compute_wait_for_edge_kind_windows,
+            ))
+            .max(wait_for_blocked_node_window_count_sum(
+                &self.accelerator_compute_wait_for_blocked_node_windows,
             ))
             .max(wait_for_target_node_window_count_sum(
                 &self.accelerator_compute_wait_for_target_node_windows,
@@ -746,6 +756,9 @@ impl WorkloadParallelExecutionSummary {
             ))
             .max(wait_for_edge_kind_window_count_sum(
                 &self.accelerator_dma_wait_for_edge_kind_windows,
+            ))
+            .max(wait_for_blocked_node_window_count_sum(
+                &self.accelerator_dma_wait_for_blocked_node_windows,
             ))
             .max(wait_for_target_node_window_count_sum(
                 &self.accelerator_dma_wait_for_target_node_windows,

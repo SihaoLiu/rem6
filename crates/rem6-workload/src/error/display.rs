@@ -1509,6 +1509,26 @@ impl fmt::Display for WorkloadError {
                 "expected {} wait-for edge kind {kind:?} window is already declared",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelWaitForBlockedNodeWindow { scope, node } => write!(
+                formatter,
+                "expected {} wait-for blocked node {node} window must require a positive edge count",
+                scope.as_str()
+            ),
+            Self::InvalidExpectedParallelWaitForBlockedNodeWindow {
+                scope,
+                node,
+                first_tick,
+                last_tick,
+            } => write!(
+                formatter,
+                "expected {} wait-for blocked node {node} window first tick {first_tick} is after last tick {last_tick}",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelWaitForBlockedNodeWindow { scope, node } => write!(
+                formatter,
+                "expected {} wait-for blocked node {node} window is already declared",
+                scope.as_str()
+            ),
             Self::ZeroExpectedParallelWaitForTargetNodeWindow { scope, node } => write!(
                 formatter,
                 "expected {} wait-for target node {node} window must require a positive edge count",
@@ -1612,6 +1632,26 @@ impl fmt::Display for WorkloadError {
             } => write!(
                 formatter,
                 "expected {} wait-for edge kind {kind:?} window to have {expected_edge_count} edges from tick {expected_first_tick} to {expected_last_tick}, got {actual_edge_count} edges from tick {} to {}",
+                scope.as_str(),
+                actual_first_tick
+                    .map(|tick| tick.to_string())
+                    .unwrap_or_else(|| "missing".to_string()),
+                actual_last_tick
+                    .map(|tick| tick.to_string())
+                    .unwrap_or_else(|| "missing".to_string()),
+            ),
+            Self::ExpectedParallelWaitForBlockedNodeWindowMismatch {
+                scope,
+                node,
+                expected_edge_count,
+                actual_edge_count,
+                expected_first_tick,
+                actual_first_tick,
+                expected_last_tick,
+                actual_last_tick,
+            } => write!(
+                formatter,
+                "expected {} wait-for blocked node {node} window to have {expected_edge_count} edges from tick {expected_first_tick} to {expected_last_tick}, got {actual_edge_count} edges from tick {} to {}",
                 scope.as_str(),
                 actual_first_tick
                     .map(|tick| tick.to_string())

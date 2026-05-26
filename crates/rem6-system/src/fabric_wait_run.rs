@@ -34,6 +34,10 @@ impl RiscvSystemRun {
         self.fabric_wait_for.blocked_nodes()
     }
 
+    pub fn fabric_wait_for_blocked_node_windows(&self) -> Vec<WaitForBlockedNodeWindow> {
+        self.fabric_wait_for.blocked_node_windows()
+    }
+
     pub fn fabric_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
         target_nodes_from_windows(self.fabric_wait_for_target_node_windows())
     }
@@ -121,6 +125,10 @@ impl RiscvSystemRun {
 
     pub fn dram_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
         self.dram_wait_for.blocked_nodes()
+    }
+
+    pub fn dram_wait_for_blocked_node_windows(&self) -> Vec<WaitForBlockedNodeWindow> {
+        self.dram_wait_for.blocked_node_windows()
     }
 
     pub fn dram_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
@@ -214,6 +222,10 @@ impl RiscvSystemRun {
         blocked_nodes_from_edges(self.resource_wait_for_edges())
     }
 
+    pub fn resource_wait_for_blocked_node_windows(&self) -> Vec<WaitForBlockedNodeWindow> {
+        WaitForBlockedNodeWindow::from_edges(self.resource_wait_for_edges())
+    }
+
     pub fn resource_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
         target_nodes_from_windows(self.resource_wait_for_target_node_windows())
     }
@@ -261,6 +273,10 @@ impl RiscvSystemRun {
 
     pub fn full_system_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
         blocked_nodes_from_edges(self.full_system_wait_for_edges())
+    }
+
+    pub fn full_system_wait_for_blocked_node_windows(&self) -> Vec<WaitForBlockedNodeWindow> {
+        WaitForBlockedNodeWindow::from_edges(self.full_system_wait_for_edges())
     }
 
     pub fn full_system_wait_for_target_nodes(&self) -> Vec<WaitForNode> {

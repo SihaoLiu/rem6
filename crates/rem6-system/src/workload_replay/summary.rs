@@ -8,8 +8,8 @@ use rem6_workload::{
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
 use crate::workload_replay_heterogeneous::{
-    wait_for_edge_kind_windows_from_edges, wait_for_target_node_windows_from_edges,
-    WorkloadAcceleratorActivity, WorkloadGpuActivity,
+    wait_for_blocked_node_windows_from_edges, wait_for_edge_kind_windows_from_edges,
+    wait_for_target_node_windows_from_edges, WorkloadAcceleratorActivity, WorkloadGpuActivity,
 };
 use crate::{
     RiscvDataCacheProtocol, RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
@@ -201,6 +201,9 @@ pub(super) fn parallel_execution_summary(
         .with_data_cache_wait_for_edge_kind_windows(wait_for_edge_kind_windows_from_edges(
             run.data_cache_wait_for_edges(),
         ))
+        .with_data_cache_wait_for_blocked_node_windows(wait_for_blocked_node_windows_from_edges(
+            run.data_cache_wait_for_edges(),
+        ))
         .with_data_cache_wait_for_target_node_windows(wait_for_target_node_windows_from_edges(
             run.data_cache_wait_for_edges(),
         ))
@@ -260,6 +263,10 @@ pub(super) fn parallel_execution_summary(
             wait_for_edge_kind_windows_from_edges(run.fabric_wait_for_edges()),
             wait_for_edge_kind_windows_from_edges(run.dram_wait_for_edges()),
         )
+        .with_resource_wait_for_blocked_node_windows(
+            wait_for_blocked_node_windows_from_edges(run.fabric_wait_for_edges()),
+            wait_for_blocked_node_windows_from_edges(run.dram_wait_for_edges()),
+        )
         .with_resource_wait_for_target_node_windows(
             wait_for_target_node_windows_from_edges(run.fabric_wait_for_edges()),
             wait_for_target_node_windows_from_edges(run.dram_wait_for_edges()),
@@ -281,6 +288,9 @@ pub(super) fn parallel_execution_summary(
         )
         .with_gpu_compute_wait_for_edge_kind_windows(
             activities.gpu.wait_for_edge_kind_windows.iter().copied(),
+        )
+        .with_gpu_compute_wait_for_blocked_node_windows(
+            activities.gpu.wait_for_blocked_node_windows.iter().cloned(),
         )
         .with_gpu_compute_wait_for_target_node_windows(
             activities.gpu.wait_for_target_node_windows.iter().cloned(),
@@ -339,6 +349,13 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .copied(),
         )
+        .with_gpu_dma_wait_for_blocked_node_windows(
+            activities
+                .gpu_dma
+                .wait_for_blocked_node_windows
+                .iter()
+                .cloned(),
+        )
         .with_gpu_dma_wait_for_target_node_windows(
             activities
                 .gpu_dma
@@ -375,6 +392,13 @@ pub(super) fn parallel_execution_summary(
                 .wait_for_edge_kind_windows
                 .iter()
                 .copied(),
+        )
+        .with_accelerator_compute_wait_for_blocked_node_windows(
+            activities
+                .accelerator
+                .wait_for_blocked_node_windows
+                .iter()
+                .cloned(),
         )
         .with_accelerator_compute_wait_for_target_node_windows(
             activities
@@ -455,6 +479,13 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .copied(),
         )
+        .with_accelerator_dma_wait_for_blocked_node_windows(
+            activities
+                .accelerator_dma
+                .wait_for_blocked_node_windows
+                .iter()
+                .cloned(),
+        )
         .with_accelerator_dma_wait_for_target_node_windows(
             activities
                 .accelerator_dma
@@ -515,8 +546,8 @@ mod tests {
     };
     use rem6_workload::{
         WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
-        WorkloadParallelBatchTimelineRecord, WorkloadWaitForEdgeKindWindow,
-        WorkloadWaitForTargetNodeWindow,
+        WorkloadParallelBatchTimelineRecord, WorkloadWaitForBlockedNodeWindow,
+        WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
     };
 
     use super::*;
@@ -1413,6 +1444,26 @@ mod tests {
                 7,
                 7,
             )),
+        );
+        assert_eq!(
+            summary.fabric_wait_for_blocked_node_window(&packet),
+            Some(WorkloadWaitForBlockedNodeWindow::new(
+                packet.clone(),
+                1,
+                5,
+                5,
+            )),
+        );
+        assert_eq!(
+            summary.data_cache_wait_for_blocked_node_window(&line),
+            Some(WorkloadWaitForBlockedNodeWindow::new(line.clone(), 1, 7, 7)),
+        );
+        assert_eq!(
+            summary.full_system_wait_for_blocked_node_windows(),
+            vec![
+                WorkloadWaitForBlockedNodeWindow::new(line.clone(), 1, 7, 7),
+                WorkloadWaitForBlockedNodeWindow::new(packet.clone(), 1, 5, 5),
+            ],
         );
         assert_eq!(
             summary.fabric_wait_for_target_node_window(&line),

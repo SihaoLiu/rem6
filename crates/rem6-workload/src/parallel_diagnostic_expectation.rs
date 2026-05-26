@@ -1,8 +1,8 @@
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{
-    WorkloadError, WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow,
-    WorkloadWaitForTargetNodeWindow,
+    WorkloadError, WorkloadParallelExecutionSummary, WorkloadWaitForBlockedNodeWindow,
+    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -251,6 +251,95 @@ impl WorkloadExpectedParallelWaitForEdgeKindWindow {
             }
             WorkloadParallelDiagnosticScope::FullSystem => {
                 summary.full_system_wait_for_edge_kind_window(self.kind)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelWaitForBlockedNodeWindow {
+    scope: WorkloadParallelDiagnosticScope,
+    node: WaitForNode,
+    edge_count: usize,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl WorkloadExpectedParallelWaitForBlockedNodeWindow {
+    pub fn new(
+        scope: WorkloadParallelDiagnosticScope,
+        node: WaitForNode,
+        edge_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if edge_count == 0 {
+            return Err(
+                WorkloadError::ZeroExpectedParallelWaitForBlockedNodeWindow { scope, node },
+            );
+        }
+        if first_tick > last_tick {
+            return Err(
+                WorkloadError::InvalidExpectedParallelWaitForBlockedNodeWindow {
+                    scope,
+                    node,
+                    first_tick,
+                    last_tick,
+                },
+            );
+        }
+        Ok(Self {
+            scope,
+            node,
+            edge_count,
+            first_tick,
+            last_tick,
+        })
+    }
+
+    pub const fn scope(&self) -> WorkloadParallelDiagnosticScope {
+        self.scope
+    }
+
+    pub const fn node(&self) -> &WaitForNode {
+        &self.node
+    }
+
+    pub const fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
+    pub const fn first_tick(&self) -> Tick {
+        self.first_tick
+    }
+
+    pub const fn last_tick(&self) -> Tick {
+        self.last_tick
+    }
+
+    pub(crate) fn sort_key(&self) -> (u8, WaitForNode) {
+        (self.scope.sort_rank(), self.node.clone())
+    }
+
+    pub(crate) fn actual_window(
+        &self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<WorkloadWaitForBlockedNodeWindow> {
+        match self.scope {
+            WorkloadParallelDiagnosticScope::Resource => {
+                summary.resource_wait_for_blocked_node_window(&self.node)
+            }
+            WorkloadParallelDiagnosticScope::DataCache => {
+                summary.data_cache_wait_for_blocked_node_window(&self.node)
+            }
+            WorkloadParallelDiagnosticScope::Compute => {
+                summary.compute_wait_for_blocked_node_window(&self.node)
+            }
+            WorkloadParallelDiagnosticScope::Dma => {
+                summary.dma_wait_for_blocked_node_window(&self.node)
+            }
+            WorkloadParallelDiagnosticScope::FullSystem => {
+                summary.full_system_wait_for_blocked_node_window(&self.node)
             }
         }
     }

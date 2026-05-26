@@ -921,6 +921,50 @@ pub(crate) fn verify_expected_parallel_wait_for_edge_kind_windows(
     Ok(())
 }
 
+pub(crate) fn verify_expected_parallel_wait_for_blocked_node_windows(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_windows = plan.expected_parallel_wait_for_blocked_node_windows();
+    if expected_windows.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = &expected_windows[0];
+        return Err(WorkloadError::MissingParallelDiagnosticSummary {
+            scope: expected.scope(),
+        });
+    };
+
+    for expected in expected_windows {
+        let actual_window = expected.actual_window(summary);
+        let actual_edge_count = actual_window
+            .as_ref()
+            .map(|window| window.edge_count())
+            .unwrap_or(0);
+        let actual_first_tick = actual_window.as_ref().map(|window| window.first_tick());
+        let actual_last_tick = actual_window.as_ref().map(|window| window.last_tick());
+        if actual_edge_count != expected.edge_count()
+            || actual_first_tick != Some(expected.first_tick())
+            || actual_last_tick != Some(expected.last_tick())
+        {
+            return Err(
+                WorkloadError::ExpectedParallelWaitForBlockedNodeWindowMismatch {
+                    scope: expected.scope(),
+                    node: expected.node().clone(),
+                    expected_edge_count: expected.edge_count(),
+                    actual_edge_count,
+                    expected_first_tick: expected.first_tick(),
+                    actual_first_tick,
+                    expected_last_tick: expected.last_tick(),
+                    actual_last_tick,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_parallel_wait_for_target_node_windows(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
