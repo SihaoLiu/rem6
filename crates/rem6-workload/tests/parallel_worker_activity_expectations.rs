@@ -505,6 +505,16 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_worker_activity() {
             scope: WorkloadParallelBatchWorkerScope::Scheduler,
         },
     );
+    let serial =
+        WorkloadExpectedParallelWorkerActivity::new(WorkloadParallelRemoteFlowScope::FullSystem, 1)
+            .unwrap_err();
+    assert_eq!(
+        serial,
+        WorkloadError::InvalidExpectedParallelWorkerActivity {
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
+            minimum_total_workers: 1,
+        },
+    );
 
     let duplicate = replay_plan()
         .add_expected_parallel_worker_activity(expected_activity(

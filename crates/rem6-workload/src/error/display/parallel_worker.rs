@@ -30,6 +30,14 @@ pub(super) fn format_parallel_worker_error(
             "expected {} worker activity must require a positive total worker count",
             scope.as_str()
         ),
+        WorkloadError::InvalidExpectedParallelWorkerActivity {
+            scope,
+            minimum_total_workers,
+        } => write!(
+            formatter,
+            "expected {} worker activity must require at least 2 total workers, got {minimum_total_workers}",
+            scope.as_str()
+        ),
         WorkloadError::DuplicateExpectedParallelWorkerActivity { scope } => write!(
             formatter,
             "expected {} worker activity is already declared",

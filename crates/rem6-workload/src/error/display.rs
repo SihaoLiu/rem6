@@ -827,6 +827,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidExpectedParallelWorkerCount { .. }
             | Self::DuplicateExpectedParallelWorkerUse { .. }
             | Self::ZeroExpectedParallelWorkerActivity { .. }
+            | Self::InvalidExpectedParallelWorkerActivity { .. }
             | Self::DuplicateExpectedParallelWorkerActivity { .. }
             | Self::MissingParallelWorkerSummary { .. }
             | Self::ExpectedParallelWorkerCountBelowMinimum { .. }

@@ -1142,6 +1142,12 @@ impl WorkloadExpectedParallelWorkerActivity {
         if minimum_total_workers == 0 {
             return Err(WorkloadError::ZeroExpectedParallelWorkerActivity { scope });
         }
+        if minimum_total_workers < 2 {
+            return Err(WorkloadError::InvalidExpectedParallelWorkerActivity {
+                scope,
+                minimum_total_workers,
+            });
+        }
         Ok(Self {
             scope,
             minimum_total_workers,

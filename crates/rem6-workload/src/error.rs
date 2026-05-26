@@ -777,6 +777,10 @@ pub enum WorkloadError {
     ZeroExpectedParallelWorkerActivity {
         scope: WorkloadParallelBatchWorkerScope,
     },
+    InvalidExpectedParallelWorkerActivity {
+        scope: WorkloadParallelBatchWorkerScope,
+        minimum_total_workers: usize,
+    },
     DuplicateExpectedParallelWorkerActivity {
         scope: WorkloadParallelBatchWorkerScope,
     },
