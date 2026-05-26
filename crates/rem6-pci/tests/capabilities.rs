@@ -4,7 +4,7 @@ use rem6_pci::{
     PciExpressCapability2Spec, PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec,
     PciExpressLinkCapabilitySpec, PciExpressRootCapabilitySpec, PciExpressSlotCapabilitySpec,
     PciFunctionAddress, PciMsiCapabilitySpec, PciMsixCapabilitySpec,
-    PciPowerManagementCapabilitySpec,
+    PciPowerManagementCapabilitySpec, PciRawCapabilitySpec,
 };
 
 fn storage_endpoint() -> PciEndpointConfig {
@@ -65,6 +65,21 @@ fn pcie_with_extended_registers(offset: u16) -> PciExpressCapabilitySpec {
         ))
 }
 
+fn virtio_shared_memory_cap(offset: u16) -> PciRawCapabilitySpec {
+    virtio_shared_memory_cap_with_next(offset, 0xff)
+}
+
+fn virtio_shared_memory_cap_with_next(offset: u16, next: u8) -> PciRawCapabilitySpec {
+    PciRawCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        [
+            0x09, next, 0x18, 0x08, 0x04, 0x07, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x10, 0x00,
+            0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+        ],
+    )
+    .unwrap()
+}
+
 #[test]
 fn pci_endpoint_links_multiple_capabilities_in_install_order() {
     let mut endpoint = storage_endpoint();
@@ -119,6 +134,123 @@ fn pci_endpoint_links_multiple_capabilities_in_install_order() {
             AccessSize::new(4).unwrap(),
         ),
         Ok(vec![0x11, 0x00, 0x03, 0x80])
+    );
+}
+
+#[test]
+fn pci_endpoint_raw_capability_links_read_only_bytes_and_snapshots_shape() {
+    let mut endpoint = storage_endpoint();
+
+    endpoint.install_pm_capability(pm(0x44)).unwrap();
+    endpoint
+        .install_raw_capability(virtio_shared_memory_cap(0x60))
+        .unwrap();
+    endpoint.install_msi_capability(msi(0x80)).unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x34).unwrap(),
+            AccessSize::new(1).unwrap(),
+        ),
+        Ok(vec![0x44])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x44).unwrap(),
+            AccessSize::new(2).unwrap(),
+        ),
+        Ok(vec![0x01, 0x60])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x60).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x09, 0x80, 0x18, 0x08])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x68).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x08, 0x00, 0x00, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x6c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x10, 0x00, 0x00, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x70).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x01, 0x00, 0x00, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x74).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x02, 0x00, 0x00, 0x00])
+    );
+    assert_eq!(
+        endpoint.write_config(PciConfigOffset::new(0x62).unwrap(), &[0x20]),
+        Err(PciError::ReadOnlyConfigWrite {
+            offset: PciConfigOffset::new(0x62).unwrap(),
+            size: AccessSize::new(1).unwrap(),
+        })
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x60).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x09, 0x80, 0x18, 0x08])
+    );
+
+    let snapshot = endpoint.snapshot();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x48).unwrap(),
+            &0x0001_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint.restore(&snapshot).unwrap();
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x48).unwrap(),
+            AccessSize::new(2).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00])
+    );
+
+    let mut same_shape = storage_endpoint();
+    same_shape.install_pm_capability(pm(0x44)).unwrap();
+    same_shape
+        .install_raw_capability(virtio_shared_memory_cap_with_next(0x60, 0x00))
+        .unwrap();
+    same_shape.install_msi_capability(msi(0x80)).unwrap();
+    same_shape.restore(&snapshot).unwrap();
+    assert_eq!(
+        same_shape.read_config(
+            PciConfigOffset::new(0x60).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x09, 0x80, 0x18, 0x08])
+    );
+
+    let mut other = storage_endpoint();
+    other.install_pm_capability(pm(0x44)).unwrap();
+    other
+        .install_raw_capability(virtio_shared_memory_cap(0x64))
+        .unwrap();
+    other.install_msi_capability(msi(0x80)).unwrap();
+    assert_eq!(
+        other.restore(&snapshot),
+        Err(PciError::SnapshotRawCapabilityMismatch)
     );
 }
 
@@ -521,6 +653,51 @@ fn pci_endpoint_rejects_overlapping_capabilities_without_mutating_chain() {
             AccessSize::new(2).unwrap(),
         ),
         Ok(vec![0x05, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x60).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x00, 0x00])
+    );
+}
+
+#[test]
+fn pci_endpoint_rejects_invalid_raw_capabilities_without_mutating_chain() {
+    let mut endpoint = storage_endpoint();
+
+    endpoint.install_msi_capability(msi(0x50)).unwrap();
+
+    assert_eq!(
+        PciRawCapabilitySpec::new(PciConfigOffset::new(0x3c).unwrap(), [0x09, 0x00]),
+        Err(PciError::InvalidRawCapabilityOffset {
+            offset: PciConfigOffset::new(0x3c).unwrap(),
+            size: AccessSize::new(2).unwrap(),
+        })
+    );
+    assert_eq!(
+        PciRawCapabilitySpec::new(PciConfigOffset::new(0x40).unwrap(), [0x09]),
+        Err(PciError::InvalidRawCapabilitySize {
+            offset: PciConfigOffset::new(0x40).unwrap(),
+            size: AccessSize::new(1).unwrap(),
+        })
+    );
+    assert_eq!(
+        endpoint.install_raw_capability(virtio_shared_memory_cap(0x60)),
+        Err(PciError::OverlappingCapability {
+            existing_offset: PciConfigOffset::new(0x50).unwrap(),
+            existing_size: AccessSize::new(0x18).unwrap(),
+            requested_offset: PciConfigOffset::new(0x60).unwrap(),
+            requested_size: AccessSize::new(0x18).unwrap(),
+        })
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x34).unwrap(),
+            AccessSize::new(1).unwrap(),
+        ),
+        Ok(vec![0x50])
     );
     assert_eq!(
         endpoint.read_config(

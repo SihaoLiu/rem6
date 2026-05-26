@@ -1,9 +1,86 @@
 use rem6_memory::AccessSize;
 
 use crate::{
-    PciConfigOffset, PciError, PCI_CAPABILITY_PTR_OFFSET, PCI_STATUS_CAPABILITY_LIST,
-    PCI_STATUS_OFFSET,
+    PciConfigOffset, PciEndpointConfig, PciError, PCI_CAPABILITY_PTR_OFFSET, PCI_CONFIG_SPACE_SIZE,
+    PCI_STATUS_CAPABILITY_LIST, PCI_STATUS_OFFSET,
 };
+
+const PCI_CAPABILITY_MIN_OFFSET: u16 = 0x40;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciRawCapabilitySpec {
+    offset: PciConfigOffset,
+    bytes: Vec<u8>,
+    size: AccessSize,
+}
+
+impl PciRawCapabilitySpec {
+    pub fn new(offset: PciConfigOffset, bytes: impl Into<Vec<u8>>) -> Result<Self, PciError> {
+        let mut bytes = bytes.into();
+        let size = AccessSize::new(bytes.len() as u64).map_err(PciError::Memory)?;
+        if bytes.len() < 2 {
+            return Err(PciError::InvalidRawCapabilitySize { offset, size });
+        }
+        let raw_offset = offset.get();
+        let end = u64::from(raw_offset) + size.bytes();
+        if raw_offset < PCI_CAPABILITY_MIN_OFFSET
+            || !raw_offset.is_multiple_of(4)
+            || end > PCI_CONFIG_SPACE_SIZE as u64
+        {
+            return Err(PciError::InvalidRawCapabilityOffset { offset, size });
+        }
+        bytes[1] = 0;
+        Ok(Self {
+            offset,
+            bytes,
+            size,
+        })
+    }
+
+    pub const fn offset(&self) -> PciConfigOffset {
+        self.offset
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub const fn size(&self) -> AccessSize {
+        self.size
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PciRawCapabilityState {
+    spec: PciRawCapabilitySpec,
+}
+
+impl PciRawCapabilityState {
+    pub(crate) const fn new(spec: PciRawCapabilitySpec) -> Self {
+        Self { spec }
+    }
+
+    pub(crate) const fn spec(&self) -> &PciRawCapabilitySpec {
+        &self.spec
+    }
+
+    pub(crate) fn install_into(&self, config: &mut [u8]) {
+        let start = self.spec.offset().as_usize();
+        let end = start + self.spec.bytes().len();
+        config[start..end].copy_from_slice(self.spec.bytes());
+    }
+}
+
+impl PciEndpointConfig {
+    pub fn install_raw_capability(&mut self, spec: PciRawCapabilitySpec) -> Result<(), PciError> {
+        self.register_capability_region(spec.offset(), spec.size().bytes())?;
+        let state = PciRawCapabilityState::new(spec);
+        state.install_into(&mut self.config);
+        self.raw_capabilities.push(state);
+        self.rebuild_capability_list();
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PciEndpointCapabilityList {

@@ -4,12 +4,13 @@ use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{
     pci_capability::{
-        validate_pci_capability_span, write_u32_le, VirtioPciBarIndex, VirtioPciCapabilityKind,
-        VirtioPciCapabilityOffset, PCI_CONFIG_SPACE_SIZE, PCI_VENDOR_SPECIFIC_CAPABILITY_ID,
-        VIRTIO_PCI_CAP64_SIZE,
+        raw_capability_spec, validate_pci_capability_span, write_u32_le, VirtioPciBarIndex,
+        VirtioPciCapabilityKind, VirtioPciCapabilityOffset, PCI_CONFIG_SPACE_SIZE,
+        PCI_VENDOR_SPECIFIC_CAPABILITY_ID, VIRTIO_PCI_CAP64_SIZE,
     },
     VirtioError,
 };
+use rem6_pci::PciRawCapabilitySpec;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct VirtioPciSharedMemoryId(u8);
@@ -275,6 +276,10 @@ impl VirtioPciSharedMemoryCapabilityEntry {
         write_u32_le(&mut bytes, 16, fields.offset_hi());
         write_u32_le(&mut bytes, 20, fields.length_hi());
         bytes
+    }
+
+    pub fn raw_capability_spec(self) -> PciRawCapabilitySpec {
+        raw_capability_spec(self.offset, self.bytes())
     }
 }
 

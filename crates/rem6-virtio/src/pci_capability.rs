@@ -1,3 +1,5 @@
+use rem6_pci::{PciConfigOffset, PciRawCapabilitySpec};
+
 use crate::VirtioError;
 
 pub(crate) const PCI_CONFIG_SPACE_SIZE: u16 = 0x100;
@@ -139,6 +141,10 @@ impl VirtioPciCapabilityEntry {
         bytes
     }
 
+    pub fn raw_capability_spec(self) -> PciRawCapabilitySpec {
+        raw_capability_spec(self.offset, self.bytes())
+    }
+
     fn write_base_bytes(self, bytes: &mut [u8], cap_len: u8) {
         bytes[0] = PCI_VENDOR_SPECIFIC_CAPABILITY_ID;
         bytes[1] = self.next.map_or(0, VirtioPciCapabilityOffset::get);
@@ -189,6 +195,10 @@ impl VirtioPciNotifyCapabilityEntry {
         write_u32_le(&mut bytes, 16, self.notify_off_multiplier);
         bytes
     }
+
+    pub fn raw_capability_spec(self) -> PciRawCapabilitySpec {
+        raw_capability_spec(self.base.offset(), self.bytes())
+    }
 }
 
 pub(crate) fn validate_pci_capability_span(offset: u16, length: u8) -> Result<(), VirtioError> {
@@ -203,4 +213,15 @@ pub(crate) fn validate_pci_capability_span(offset: u16, length: u8) -> Result<()
 
 pub(crate) fn write_u32_le(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+pub(crate) fn raw_capability_spec<const N: usize>(
+    offset: VirtioPciCapabilityOffset,
+    bytes: [u8; N],
+) -> PciRawCapabilitySpec {
+    PciRawCapabilitySpec::new(
+        PciConfigOffset::new(u16::from(offset.get())).expect("validated PCI capability offset"),
+        bytes,
+    )
+    .expect("validated VirtIO PCI capability bytes")
 }

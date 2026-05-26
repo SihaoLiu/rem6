@@ -26,6 +26,7 @@ pub use bar::{
 pub use bridge::{
     PciBridgeBusRange, PciBridgeConfig, PciBridgeConfigSnapshot, PciType1HeaderFields,
 };
+pub use capability::PciRawCapabilitySpec;
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
     PciLegacyInterruptRoute,
@@ -264,6 +265,7 @@ pub struct PciEndpointConfig {
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
     capabilities: PciEndpointCapabilityList,
+    raw_capabilities: Vec<capability::PciRawCapabilityState>,
     pm: Option<pm::PciPowerManagementCapabilityState>,
     pcie: Option<pcie::PciExpressCapabilityState>,
     msi: Option<msi::PciMsiCapabilityState>,
@@ -292,6 +294,7 @@ impl PciEndpointConfig {
             config,
             bars: std::array::from_fn(|_| None),
             capabilities: PciEndpointCapabilityList::new(),
+            raw_capabilities: Vec::new(),
             pm: None,
             pcie: None,
             msi: None,
@@ -544,6 +547,7 @@ impl PciEndpointConfig {
             config: self.config,
             bars: self.bars.clone(),
             capabilities: self.capabilities.clone(),
+            raw_capabilities: self.raw_capabilities.clone(),
             pm: self.pm.clone(),
             pcie: self.pcie.clone(),
             msi: self.msi.clone(),
@@ -592,6 +596,17 @@ impl PciEndpointConfig {
             return Err(PciError::SnapshotMsixCapabilityMismatch);
         }
         if self
+            .raw_capabilities
+            .iter()
+            .map(capability::PciRawCapabilityState::spec)
+            .ne(snapshot
+                .raw_capabilities
+                .iter()
+                .map(capability::PciRawCapabilityState::spec))
+        {
+            return Err(PciError::SnapshotRawCapabilityMismatch);
+        }
+        if self
             .pm
             .as_ref()
             .map(pm::PciPowerManagementCapabilityState::spec)
@@ -617,6 +632,7 @@ impl PciEndpointConfig {
         self.config = snapshot.config;
         self.bars = snapshot.bars.clone();
         self.capabilities = snapshot.capabilities.clone();
+        self.raw_capabilities = snapshot.raw_capabilities.clone();
         self.pm = snapshot.pm.clone();
         self.pcie = snapshot.pcie.clone();
         self.msi = snapshot.msi.clone();
@@ -703,6 +719,7 @@ pub struct PciEndpointConfigSnapshot {
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
     capabilities: PciEndpointCapabilityList,
+    raw_capabilities: Vec<capability::PciRawCapabilityState>,
     pm: Option<pm::PciPowerManagementCapabilityState>,
     pcie: Option<pcie::PciExpressCapabilityState>,
     msi: Option<msi::PciMsiCapabilityState>,
@@ -1130,6 +1147,15 @@ pub enum PciError {
         requested_offset: PciConfigOffset,
         requested_size: AccessSize,
     },
+    InvalidRawCapabilityOffset {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    InvalidRawCapabilitySize {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    SnapshotRawCapabilityMismatch,
     InvalidPowerManagementCapabilityOffset {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -1402,6 +1428,21 @@ impl fmt::Display for PciError {
                 existing_offset.get(),
                 existing_size.bytes()
             ),
+            Self::InvalidRawCapabilityOffset { offset, size } => write!(
+                f,
+                "PCI raw capability at {:#x} for {} bytes does not fit the writable capability area",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::InvalidRawCapabilitySize { offset, size } => write!(
+                f,
+                "PCI raw capability at {:#x} has invalid size {}",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::SnapshotRawCapabilityMismatch => {
+                write!(f, "PCI snapshot raw capabilities do not match this endpoint")
+            }
             Self::InvalidPowerManagementCapabilityOffset { offset, size } => write!(
                 f,
                 "PCI power-management capability at {:#x} for {} bytes does not fit the writable capability area",
