@@ -586,7 +586,17 @@ impl VirtioSplitQueue {
                         ),
                     });
                 }
-                descriptors.extend(self.load_indirect_descriptors(guest, raw)?);
+                let indirect_descriptors = self.load_indirect_descriptors(guest, raw)?;
+                let chain_len = descriptors.len() + indirect_descriptors.len();
+                if chain_len > usize::from(self.queue_size) {
+                    return Err(VirtioError::PciTransportRuntimeConfig {
+                        message: format!(
+                            "VirtIO split descriptor chain has {chain_len} descriptors, exceeding queue size {}",
+                            self.queue_size
+                        ),
+                    });
+                }
+                descriptors.extend(indirect_descriptors);
                 return VirtioSplitDescriptorChain::from_ordered(head, descriptors);
             }
             let descriptor = self.load_direct_descriptor(guest, index, raw)?;

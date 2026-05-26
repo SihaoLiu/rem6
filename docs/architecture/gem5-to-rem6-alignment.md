@@ -223,7 +223,8 @@ Implementation evidence on 2026-05-26:
   used-ring completion evidence remain replayable. The main descriptor's
   write-only flag is ignored for indirect-table lookup, matching the VirtIO
   device requirement, and direct descriptor prefixes followed by a terminal
-  indirect table expand into one ordered block request.
+  indirect table expand into one ordered block request while logical descriptor
+  length is bounded by queue size before the queue cursor advances.
 
 ## Audit Method
 
@@ -651,8 +652,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   descriptor tracking, writable data-byte accounting, loop rejection, short
   header rejection, missing status rejection, wrong readable/writable
   direction rejection, indirect-table write-only flag ignore behavior, direct
-  prefix plus terminal indirect-table consumption, get-id output shape
-  validation, block completion
+  prefix plus terminal indirect-table consumption, logical descriptor-chain
+  length rejection, get-id output shape validation, block completion
   scatter-data writeback records, status-byte writeback records, used-ring slot
   selection, wrapping used indices, little-endian used elements, and split
   available-ring walking from typed guest memory into decoded block requests,
