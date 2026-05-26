@@ -352,6 +352,11 @@ Implementation evidence on 2026-05-26:
   before they can feed exact timeline contracts or derived batch-count,
   worker-count, partition-set, and partition-activity evidence. Zero-length or
   inverted windows no longer masquerade as natural parallel execution.
+- Workload actual batch timeline records remain available for audit, but only
+  records with positive duration, at least two workers, and at least two
+  partitions feed derived batch worker, tick, partition-set, streak, and
+  partition-activity evidence. Serial or single-partition records no longer
+  satisfy parallelism contracts through secondary summaries.
 - Workload parallel remote-flow and remote-flow timing expectations now reject
   same-partition endpoints. A manifest-declared remote-flow contract must cross
   partition boundaries before replay accepts it as remote parallel evidence.

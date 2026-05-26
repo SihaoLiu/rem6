@@ -964,13 +964,33 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
             && summary.dma_scheduler_max_workers()
                 >= summary.accelerator_dma_scheduler_max_workers()
     );
-    assert!(
-        summary.gpu_dma_scheduler_batch_worker_ticks()
-            >= summary.gpu_dma_scheduler_batch_count() as u64
+    let expected_gpu_dma_batch_worker_ticks = summary
+        .gpu_dma_scheduler_batch_timeline()
+        .iter()
+        .filter(|record| record.is_parallel_evidence())
+        .map(|record| {
+            record
+                .duration_ticks()
+                .saturating_mul(record.worker_count() as u64)
+        })
+        .sum::<u64>();
+    let expected_accelerator_dma_batch_worker_ticks = summary
+        .accelerator_dma_scheduler_batch_timeline()
+        .iter()
+        .filter(|record| record.is_parallel_evidence())
+        .map(|record| {
+            record
+                .duration_ticks()
+                .saturating_mul(record.worker_count() as u64)
+        })
+        .sum::<u64>();
+    assert_eq!(
+        summary.gpu_dma_scheduler_batch_worker_ticks(),
+        expected_gpu_dma_batch_worker_ticks,
     );
-    assert!(
-        summary.accelerator_dma_scheduler_batch_worker_ticks()
-            >= summary.accelerator_dma_scheduler_batch_count() as u64
+    assert_eq!(
+        summary.accelerator_dma_scheduler_batch_worker_ticks(),
+        expected_accelerator_dma_batch_worker_ticks,
     );
     assert_eq!(
         summary.dma_scheduler_batch_worker_ticks(),

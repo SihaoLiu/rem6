@@ -466,6 +466,70 @@ fn workload_replay_plan_ignores_inverted_batch_timeline_activity_evidence() {
 }
 
 #[test]
+fn workload_replay_plan_ignores_single_worker_batch_timeline_activity_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([actual_timeline(
+            WorkloadParallelBatchScope::Scheduler,
+            4,
+            8,
+            [partition(0), partition(1)],
+            1,
+        )]);
+
+    assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
+            minimum_worker_count: 2,
+            minimum_batch_count: 1,
+            actual_batch_count: 0,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_ignores_single_partition_batch_timeline_activity_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([actual_timeline(
+            WorkloadParallelBatchScope::Scheduler,
+            4,
+            8,
+            [partition(0)],
+            2,
+        )]);
+
+    assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
+            minimum_worker_count: 2,
+            minimum_batch_count: 1,
+            actual_batch_count: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_batch_activity() {
     let invalid_worker_count = WorkloadExpectedParallelBatchActivity::new(
         WorkloadParallelRemoteFlowScope::Scheduler,

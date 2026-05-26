@@ -83,6 +83,10 @@ impl WorkloadParallelBatchTimelineRecord {
     pub fn is_empty(&self) -> bool {
         self.worker_count == 0 || self.partitions.is_empty() || self.horizon <= self.start_tick
     }
+
+    pub fn is_parallel_evidence(&self) -> bool {
+        !self.is_empty() && self.worker_count >= 2 && self.partitions.len() >= 2
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -214,6 +218,7 @@ pub(crate) fn collect_parallel_batch_worker_counts_from_timeline(
     collect_parallel_batch_worker_counts(
         records
             .iter()
+            .filter(|record| record.is_parallel_evidence())
             .map(|record| WorkloadParallelBatchWorkerCount::new(record.worker_count(), 1)),
     )
 }
@@ -223,11 +228,12 @@ pub(crate) fn collect_parallel_batch_worker_count_tick_summaries(
 ) -> Vec<(usize, Tick)> {
     let mut by_worker_count = BTreeMap::<usize, Tick>::new();
     for record in records {
-        let duration = record.duration_ticks();
-        if record.worker_count() != 0 && duration != 0 {
-            let ticks = by_worker_count.entry(record.worker_count()).or_default();
-            *ticks = ticks.saturating_add(duration);
+        if !record.is_parallel_evidence() {
+            continue;
         }
+        let duration = record.duration_ticks();
+        let ticks = by_worker_count.entry(record.worker_count()).or_default();
+        *ticks = ticks.saturating_add(duration);
     }
     by_worker_count.into_iter().collect()
 }
@@ -238,6 +244,7 @@ pub(crate) fn parallel_batch_ticks_for_worker_count(
 ) -> Tick {
     records
         .iter()
+        .filter(|record| record.is_parallel_evidence())
         .filter(|record| record.worker_count() == worker_count)
         .map(WorkloadParallelBatchTimelineRecord::duration_ticks)
         .fold(0, Tick::saturating_add)
@@ -249,6 +256,7 @@ pub(crate) fn parallel_batch_ticks_at_or_above(
 ) -> Tick {
     records
         .iter()
+        .filter(|record| record.is_parallel_evidence())
         .filter(|record| record.worker_count() >= minimum_worker_count)
         .map(WorkloadParallelBatchTimelineRecord::duration_ticks)
         .fold(0, Tick::saturating_add)
@@ -257,6 +265,7 @@ pub(crate) fn parallel_batch_ticks_at_or_above(
 pub(crate) fn parallel_batch_worker_ticks(records: &[WorkloadParallelBatchTimelineRecord]) -> Tick {
     records
         .iter()
+        .filter(|record| record.is_parallel_evidence())
         .map(|record| {
             record
                 .duration_ticks()
@@ -271,6 +280,7 @@ pub(crate) fn parallel_batch_worker_ticks_at_or_above(
 ) -> Tick {
     records
         .iter()
+        .filter(|record| record.is_parallel_evidence())
         .filter(|record| record.worker_count() >= minimum_worker_count)
         .map(|record| {
             record
@@ -287,8 +297,11 @@ pub(crate) fn parallel_batch_longest_tick_streak_at_or_above(
     let mut longest = 0;
     let mut current_start = None;
     let mut current_end = 0;
-    for record in records {
-        if record.worker_count() < minimum_worker_count || record.duration_ticks() == 0 {
+    for record in records
+        .iter()
+        .filter(|record| record.is_parallel_evidence())
+    {
+        if record.worker_count() < minimum_worker_count {
             continue;
         }
         let start_tick = record.start_tick();
@@ -318,17 +331,27 @@ pub(crate) fn parallel_batch_longest_tick_streak_at_or_above(
 pub(crate) fn collect_parallel_batch_partition_sets_from_timeline(
     records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Vec<WorkloadParallelBatchPartitionSet> {
-    collect_parallel_batch_partition_sets(records.iter().map(|record| {
-        WorkloadParallelBatchPartitionSet::new(record.partitions().iter().copied(), 1)
-    }))
+    collect_parallel_batch_partition_sets(
+        records
+            .iter()
+            .filter(|record| record.is_parallel_evidence())
+            .map(|record| {
+                WorkloadParallelBatchPartitionSet::new(record.partitions().iter().copied(), 1)
+            }),
+    )
 }
 
 pub(crate) fn collect_parallel_batch_partition_streaks_from_timeline(
     records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Vec<WorkloadParallelBatchPartitionStreak> {
-    collect_parallel_batch_partition_streaks_from_sequence(records.iter().map(|record| {
-        WorkloadParallelBatchPartitionSet::new(record.partitions().iter().copied(), 1)
-    }))
+    collect_parallel_batch_partition_streaks_from_sequence(
+        records
+            .iter()
+            .filter(|record| record.is_parallel_evidence())
+            .map(|record| {
+                WorkloadParallelBatchPartitionSet::new(record.partitions().iter().copied(), 1)
+            }),
+    )
 }
 
 fn sort_parallel_batch_timeline(timeline: &mut [WorkloadParallelBatchTimelineRecord]) {

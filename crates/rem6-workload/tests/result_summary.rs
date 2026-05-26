@@ -781,7 +781,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     assert_eq!(summary.dma_scheduler_total_workers(), 10);
     assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 6);
     assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 4);
-    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 15);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 14);
     assert_eq!(
         summary.gpu_dma_scheduler_batch_worker_counts(),
         &[WorkloadParallelBatchWorkerCount::new(3, 2)],
@@ -802,7 +802,6 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_counts(),
         vec![
-            WorkloadParallelBatchWorkerCount::new(1, 1),
             WorkloadParallelBatchWorkerCount::new(2, 2),
             WorkloadParallelBatchWorkerCount::new(3, 2),
             WorkloadParallelBatchWorkerCount::new(4, 1),
@@ -822,7 +821,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.parallel_scheduler_batch_worker_count_tick_summaries(),
-        vec![(1, 4), (2, 4)],
+        vec![(2, 4)],
     );
     assert_eq!(
         summary.data_cache_parallel_scheduler_batch_worker_count_tick_summaries(),
@@ -830,17 +829,17 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
-        vec![(1, 4), (2, 8), (3, 4), (4, 5)],
+        vec![(2, 8), (3, 4), (4, 5)],
     );
     assert_eq!(
         summary.parallel_scheduler_batch_ticks_for_worker_count(1),
-        4
+        0
     );
     assert_eq!(
         summary.parallel_scheduler_batch_ticks_for_worker_count(2),
         4
     );
-    assert_eq!(summary.parallel_scheduler_batch_ticks_at_or_above(1), 8);
+    assert_eq!(summary.parallel_scheduler_batch_ticks_at_or_above(1), 4);
     assert_eq!(summary.parallel_scheduler_batch_ticks_at_or_above(2), 4);
     assert_eq!(
         summary.data_cache_parallel_scheduler_batch_ticks_for_worker_count(2),
@@ -852,7 +851,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(1),
-        4,
+        0,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(2),
@@ -868,7 +867,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_at_or_above(1),
-        21,
+        17,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_ticks_at_or_above(2),
@@ -878,14 +877,14 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
         summary.full_system_parallel_scheduler_batch_ticks_at_or_above(3),
         9,
     );
-    assert_eq!(summary.parallel_scheduler_batch_worker_ticks(), 12);
+    assert_eq!(summary.parallel_scheduler_batch_worker_ticks(), 8);
     assert_eq!(
         summary.data_cache_parallel_scheduler_batch_worker_ticks(),
         8,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_ticks(),
-        52
+        48
     );
     assert_eq!(
         summary.parallel_scheduler_batch_worker_ticks_at_or_above(2),
@@ -921,7 +920,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
-        12,
+        11,
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
@@ -961,7 +960,6 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
             WorkloadParallelBatchPartitionSet::new([cpu0, cpu1, cache], 1),
             WorkloadParallelBatchPartitionSet::new([cpu0, cache], 1),
             WorkloadParallelBatchPartitionSet::new([cpu1, cache], 2),
-            WorkloadParallelBatchPartitionSet::new([cache], 1),
         ],
     );
     assert_eq!(

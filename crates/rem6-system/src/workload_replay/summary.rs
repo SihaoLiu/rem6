@@ -160,6 +160,7 @@ pub(super) fn parallel_execution_summary(
         .with_full_system_parallel_scheduler_batch_partition_streaks(
             run.full_system_parallel_scheduler_batch_partition_streak_summaries()
                 .into_iter()
+                .filter(|(partitions, _)| partitions.len() >= 2)
                 .map(|(partitions, batch_count)| {
                     WorkloadParallelBatchPartitionStreak::new(partitions, batch_count)
                 }),
@@ -972,38 +973,31 @@ mod tests {
             summary.full_system_parallel_scheduler_remote_flow_count(source, target),
             1,
         );
-        assert_eq!(
-            summary.parallel_scheduler_batch_worker_counts(),
-            &[WorkloadParallelBatchWorkerCount::new(1, 2)],
-        );
-        assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(1), 2);
+        let scheduler_timeline = summary.parallel_scheduler_batch_timeline();
+        assert_eq!(scheduler_timeline.len(), 2);
+        assert!(scheduler_timeline.iter().any(|record| {
+            record.partitions() == [source].as_slice() && record.worker_count() == 1
+        }));
+        assert!(scheduler_timeline.iter().any(|record| {
+            record.partitions() == [target].as_slice() && record.worker_count() == 1
+        }));
+        assert_eq!(summary.parallel_scheduler_batch_worker_counts(), &[]);
+        assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(1), 0);
         assert_eq!(
             summary.full_system_parallel_scheduler_batch_worker_counts(),
-            vec![WorkloadParallelBatchWorkerCount::new(1, 2)],
+            Vec::<WorkloadParallelBatchWorkerCount>::new(),
         );
-        assert_eq!(
-            summary.parallel_scheduler_batch_partition_sets(),
-            &[
-                WorkloadParallelBatchPartitionSet::new([source], 1),
-                WorkloadParallelBatchPartitionSet::new([target], 1),
-            ],
-        );
+        assert_eq!(summary.parallel_scheduler_batch_partition_sets(), &[]);
         assert_eq!(
             summary.full_system_parallel_scheduler_batch_count_for_partition_set([source]),
-            1,
+            0,
         );
-        assert_eq!(
-            summary.parallel_scheduler_batch_partition_streaks(),
-            &[
-                WorkloadParallelBatchPartitionStreak::new([source], 1),
-                WorkloadParallelBatchPartitionStreak::new([target], 1),
-            ],
-        );
+        assert_eq!(summary.parallel_scheduler_batch_partition_streaks(), &[]);
         assert_eq!(
             summary.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
                 source
             ]),
-            1,
+            0,
         );
         let flows = summary.full_system_parallel_scheduler_remote_flows();
         assert_eq!(flows.len(), 1);
