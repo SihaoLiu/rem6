@@ -348,6 +348,37 @@ fn workload_replay_plan_checks_dma_scheduler_frontiers_directly() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inconsistent_scheduler_frontier_summary() {
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            WorkloadParallelFrontierStage::Final,
+            4,
+            21,
+            29,
+        ))
+        .unwrap();
+
+    let invalid_summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(1, 2, 1, 1)
+        .with_parallel_scheduler_frontiers(
+            [PartitionFrontier::new(PartitionId::new(4), 0, 8, None, 0)],
+            [PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0)],
+        );
+    let invalid = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(invalid_summary);
+
+    assert_eq!(
+        plan.verify_result(&invalid).unwrap_err(),
+        WorkloadError::InvalidParallelSchedulerSummary {
+            scope: WorkloadParallelSchedulerScope::Scheduler,
+            epoch_count: 1,
+            empty_epoch_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_frontiers() {
     let zero = WorkloadExpectedParallelFrontier::new(
         WorkloadParallelRemoteFlowScope::Scheduler,

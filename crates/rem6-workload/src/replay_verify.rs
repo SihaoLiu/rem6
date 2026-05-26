@@ -1190,6 +1190,7 @@ pub(crate) fn verify_expected_parallel_frontiers(
     };
 
     for expected in expected_frontiers {
+        validate_scheduler_scope_summary(summary, expected.scope())?;
         let actual = expected.actual_frontier(summary);
         let actual_now = actual.map(|frontier| frontier.now());
         let actual_safe_until = actual.map(|frontier| frontier.safe_until());
