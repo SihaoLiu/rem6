@@ -1063,7 +1063,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
     Ok(())
 }
 
-fn validate_worker_scope_batch_timeline_evidence(
+pub(crate) fn validate_worker_scope_batch_timeline_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelBatchWorkerScope,
 ) -> Result<(), WorkloadError> {

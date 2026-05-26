@@ -958,6 +958,10 @@ impl WorkloadReplayPlan {
         };
 
         for expected in &self.expected_parallel_worker_use {
+            replay_verify::validate_worker_scope_batch_timeline_evidence(
+                summary,
+                expected.scope(),
+            )?;
             let actual_max_workers = expected.actual_max_workers(summary);
             if actual_max_workers < expected.minimum_max_workers() {
                 return Err(WorkloadError::ExpectedParallelWorkerCountBelowMinimum {
@@ -986,6 +990,10 @@ impl WorkloadReplayPlan {
         };
 
         for expected in &self.expected_parallel_worker_activity {
+            replay_verify::validate_worker_scope_batch_timeline_evidence(
+                summary,
+                expected.scope(),
+            )?;
             let actual_total_workers = expected.actual_total_workers(summary);
             if actual_total_workers < expected.minimum_total_workers() {
                 return Err(WorkloadError::ExpectedParallelWorkerActivityBelowMinimum {
