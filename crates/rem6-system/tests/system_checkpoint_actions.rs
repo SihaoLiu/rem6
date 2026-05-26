@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{
-    CheckpointChunk, CheckpointComponentId, CheckpointManifest, CheckpointRegistry, CheckpointState,
+    CheckpointChunk, CheckpointComponentId, CheckpointError, CheckpointManifest,
+    CheckpointRegistry, CheckpointState,
 };
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_isa_riscv::Register;
@@ -293,9 +294,43 @@ fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_liv
 }
 
 #[test]
-fn system_action_executor_preflights_scheduler_quiescence_before_checkpoint_writes() {
+fn system_action_executor_rejects_empty_checkpoint_label_without_chunk_writes() {
     let host = PartitionId::new(1);
     let source = GuestSourceId::new(16);
+    let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
+    let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    core.redirect_pc(Address::new(0x8040));
+    let riscv_bank = RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+        cpu_component.clone(),
+        core.clone(),
+    )])
+    .unwrap();
+    let mut executor =
+        SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+    executor.attach_riscv_checkpoint_bank(riscv_bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        122,
+        host,
+        host,
+        GuestEventId::new(15),
+        source,
+        HostAction::Checkpoint {
+            label: String::new(),
+        },
+    );
+
+    let error = executor.apply(&checkpoint).unwrap_err();
+
+    assert_eq!(error, SystemError::Checkpoint(CheckpointError::EmptyLabel));
+    assert_eq!(executor.checkpoints().chunk(&cpu_component, "pc"), None);
+    assert_eq!(executor.checkpoints().chunk(&cpu_component, "xregs"), None);
+}
+
+#[test]
+fn system_action_executor_preflights_scheduler_quiescence_before_checkpoint_writes() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(17);
     let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
     let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
     let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
@@ -329,7 +364,7 @@ fn system_action_executor_preflights_scheduler_quiescence_before_checkpoint_writ
         123,
         host,
         host,
-        GuestEventId::new(15),
+        GuestEventId::new(16),
         source,
         HostAction::Checkpoint {
             label: "scheduler-not-ready".to_string(),

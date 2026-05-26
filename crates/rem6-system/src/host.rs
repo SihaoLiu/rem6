@@ -428,19 +428,27 @@ impl SystemActionExecutor {
         Ok(component)
     }
 
-    fn capture_execution_modes_into_checkpoint(&mut self) -> Result<(), SystemError> {
+    fn capture_execution_modes_into(
+        &self,
+        checkpoints: &mut CheckpointRegistry,
+    ) -> Result<bool, SystemError> {
         if self.execution_modes.is_empty() && !self.execution_mode_checkpoint_registered {
-            return Ok(());
+            return Ok(false);
         }
 
-        let component = self.ensure_execution_mode_checkpoint_component()?;
-        self.checkpoints
+        let component = execution_mode_checkpoint_component();
+        match checkpoints.register(component.clone()) {
+            Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
+            Err(error) => return Err(SystemError::Checkpoint(error)),
+        }
+        checkpoints
             .write_chunk(
                 &component,
                 EXECUTION_MODE_CHECKPOINT_CHUNK,
                 encode_execution_modes(&self.execution_modes),
             )
             .map_err(SystemError::Checkpoint)
+            .map(|()| true)
     }
 
     fn prepare_execution_mode_checkpoint_restore(
@@ -865,78 +873,83 @@ impl SystemActionExecutor {
                         .validate_quiescent_capture()
                         .map_err(SystemError::SchedulerCheckpoint)?;
                 }
+                let mut staged_checkpoints = self.checkpoints.clone();
                 if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
                     accelerator_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(msi_bank_checkpoints) = &self.msi_bank_checkpoints {
                     msi_bank_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::MsiBankCheckpoint)?;
                 }
                 if let Some(fabric_checkpoints) = &self.fabric_checkpoints {
                     fabric_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::FabricCheckpoint)?;
                 }
                 if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
                     gpu_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
                     riscv_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
                     scheduler_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::SchedulerCheckpoint)?;
                 }
                 if let Some(memory_checkpoints) = &self.memory_checkpoints {
                     memory_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
                     dram_memory_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(interrupt_controller_checkpoints) =
                     &self.interrupt_controller_checkpoints
                 {
                     interrupt_controller_checkpoints
-                        .capture_all_into(&mut self.checkpoints, record.tick())
+                        .capture_all_into(&mut staged_checkpoints, record.tick())
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(clint_checkpoints) = &self.clint_checkpoints {
                     clint_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(timer_checkpoints) = &self.timer_checkpoints {
                     timer_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(uart_checkpoints) = &self.uart_checkpoints {
                     uart_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
                     virtio_split_queue_checkpoints
-                        .capture_all_into(&mut self.checkpoints)
+                        .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::VirtioCheckpoint)?;
                 }
-                self.capture_execution_modes_into_checkpoint()?;
-                let manifest = self
-                    .checkpoints
+                let execution_mode_registered =
+                    self.capture_execution_modes_into(&mut staged_checkpoints)?;
+                let manifest = staged_checkpoints
                     .capture(label.clone(), record.tick())
                     .map_err(SystemError::Checkpoint)?;
+                self.checkpoints = staged_checkpoints;
+                if execution_mode_registered {
+                    self.execution_mode_checkpoint_registered = true;
+                }
                 self.captured_manifests
                     .insert(manifest.label().to_string(), manifest.clone());
                 Ok(SystemActionOutcome::Checkpoint {
