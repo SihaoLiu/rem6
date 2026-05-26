@@ -97,6 +97,15 @@ impl MsiBankCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<MsiBankCheckpointRecord, MsiBankCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<MsiBankCheckpointRecord, MsiBankCheckpointError> {
         let payload = registry
             .chunk(&self.component, MSI_BANK_CHUNK)
             .ok_or_else(|| MsiBankCheckpointError::MissingChunk {
@@ -109,18 +118,41 @@ impl MsiBankCheckpointPort {
                 reason,
             }
         })?;
-        self.harness
-            .lock()
-            .expect("MSI bank checkpoint lock")
-            .restore(&snapshot)
-            .map_err(|error| MsiBankCheckpointError::Harness {
-                component: self.component.clone(),
-                error: Box::new(error),
-            })?;
         Ok(MsiBankCheckpointRecord::new(
             self.component.clone(),
             snapshot,
         ))
+    }
+
+    fn validate_snapshot(
+        &self,
+        snapshot: &MsiBankDirectoryHarnessSnapshot,
+    ) -> Result<(), MsiBankCheckpointError> {
+        let mut harness = self
+            .harness
+            .lock()
+            .expect("MSI bank checkpoint lock")
+            .clone();
+        harness
+            .restore(snapshot)
+            .map_err(|error| MsiBankCheckpointError::Harness {
+                component: self.component.clone(),
+                error: Box::new(error),
+            })
+    }
+
+    fn restore_snapshot(
+        &self,
+        snapshot: &MsiBankDirectoryHarnessSnapshot,
+    ) -> Result<(), MsiBankCheckpointError> {
+        self.harness
+            .lock()
+            .expect("MSI bank checkpoint lock")
+            .restore(snapshot)
+            .map_err(|error| MsiBankCheckpointError::Harness {
+                component: self.component.clone(),
+                error: Box::new(error),
+            })
     }
 }
 
@@ -176,10 +208,19 @@ impl MsiBankCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<MsiBankCheckpointRecord>, MsiBankCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            restored.push(record);
+        }
+        Ok(restored)
     }
 }
 

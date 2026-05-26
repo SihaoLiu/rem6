@@ -246,3 +246,45 @@ fn msi_bank_checkpoint_preserves_parallel_cycle_history() {
     );
     assert_eq!(live.lock().unwrap().parallel_cycle_runs(), &[recorded]);
 }
+
+#[test]
+fn msi_bank_checkpoint_bank_rejects_truncated_payload_without_partial_restore() {
+    let mut bank0 = harness();
+    let mut bank1 = harness();
+    warm_harness(&mut bank0);
+    warm_harness(&mut bank1);
+    let bank0 = Arc::new(Mutex::new(bank0));
+    let bank1 = Arc::new(Mutex::new(bank1));
+    let component0 = CheckpointComponentId::new("l1d-msi0").unwrap();
+    let component1 = CheckpointComponentId::new("l1d-msi1").unwrap();
+    let checkpoint_bank = MsiBankCheckpointBank::new([
+        MsiBankCheckpointPort::new(component0.clone(), Arc::clone(&bank0)),
+        MsiBankCheckpointPort::new(component1.clone(), Arc::clone(&bank1)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    checkpoint_bank.register_all(&mut registry).unwrap();
+    checkpoint_bank.capture_all_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component1, "msi-bank", vec![0xaa, 0xbb, 0xcc])
+        .unwrap();
+    {
+        let mut live = bank0.lock().unwrap();
+        live.submit_cpu_request(agent(2), write(2, 90, 0x1004, vec![0xee; 8]))
+            .unwrap();
+    }
+    {
+        let mut live = bank1.lock().unwrap();
+        live.submit_cpu_request(agent(2), write(2, 91, 0x1018, vec![0xdd; 8]))
+            .unwrap();
+    }
+    let before0 = bank0.lock().unwrap().snapshot();
+    let before1 = bank1.lock().unwrap().snapshot();
+
+    let error = checkpoint_bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(error.component(), Some(&component1));
+    assert_eq!(bank0.lock().unwrap().snapshot(), before0);
+    assert_eq!(bank1.lock().unwrap().snapshot(), before1);
+}
