@@ -805,6 +805,7 @@ impl fmt::Display for WorkloadError {
                 format_remote_endpoint_error(self, formatter)
             }
             Self::ZeroExpectedParallelRemoteDelayFloor { .. }
+            | Self::ZeroExpectedParallelRemoteDelayCeiling { .. }
             | Self::DuplicateExpectedParallelRemoteDelayFloor { .. }
             | Self::DuplicateExpectedParallelRemoteDelayCeiling { .. }
             | Self::DuplicateExpectedParallelRemoteTrafficConsistency { .. }

@@ -255,7 +255,34 @@ fn workload_replay_plan_rejects_remote_delay_above_ceiling() {
 }
 
 #[test]
-fn workload_replay_plan_rejects_duplicate_parallel_remote_delay_ceilings() {
+fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_delay_ceilings() {
+    assert_eq!(
+        replay_plan()
+            .add_expected_parallel_remote_delay_ceiling(expected_ceiling(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                0,
+            ))
+            .unwrap_err(),
+        WorkloadError::ZeroExpectedParallelRemoteDelayCeiling {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+        },
+    );
+
+    assert_eq!(
+        rem6_workload::WorkloadManifest::builder(id("invalid-remote-delay-ceiling"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_remote_delay_ceiling(expected_ceiling(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                0,
+            ))
+            .unwrap_err(),
+        WorkloadError::ZeroExpectedParallelRemoteDelayCeiling {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+        },
+    );
+
     let duplicate = replay_plan()
         .add_expected_parallel_remote_delay_ceiling(expected_ceiling(
             WorkloadParallelRemoteFlowScope::Scheduler,

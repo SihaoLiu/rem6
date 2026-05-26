@@ -680,6 +680,9 @@ pub enum WorkloadError {
     ZeroExpectedParallelRemoteDelayFloor {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    ZeroExpectedParallelRemoteDelayCeiling {
+        scope: WorkloadParallelRemoteFlowScope,
+    },
     DuplicateExpectedParallelRemoteDelayFloor {
         scope: WorkloadParallelRemoteFlowScope,
     },

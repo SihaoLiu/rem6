@@ -222,6 +222,11 @@ pub(crate) fn format_remote_delay_error(
             "expected {} remote delay floor must be positive",
             scope.as_str()
         ),
+        WorkloadError::ZeroExpectedParallelRemoteDelayCeiling { scope } => write!(
+            formatter,
+            "expected {} remote delay ceiling must be positive",
+            scope.as_str()
+        ),
         WorkloadError::DuplicateExpectedParallelRemoteDelayFloor { scope } => write!(
             formatter,
             "expected {} remote delay floor is already declared",

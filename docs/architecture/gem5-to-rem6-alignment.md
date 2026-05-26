@@ -355,6 +355,10 @@ Implementation evidence on 2026-05-26:
   endpoints and delivery ticks earlier than source ticks at manifest and replay
   plan insertion. Exact send evidence therefore remains both cross-partition
   and time-causal before replay can validate it.
+- Workload parallel remote-delay ceiling expectations now reject zero-delay
+  ceilings at manifest and replay plan insertion, matching the scheduler's
+  positive remote-delay invariant before replay can accept bounded remote
+  traffic evidence.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

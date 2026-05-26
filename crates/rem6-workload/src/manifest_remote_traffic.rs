@@ -66,6 +66,17 @@ fn validate_expected_parallel_remote_send(
     Ok(())
 }
 
+fn validate_expected_parallel_remote_delay_ceiling(
+    expected: WorkloadExpectedParallelRemoteDelayCeiling,
+) -> Result<(), WorkloadError> {
+    if expected.maximum_delay() == 0 {
+        return Err(WorkloadError::ZeroExpectedParallelRemoteDelayCeiling {
+            scope: expected.scope(),
+        });
+    }
+    Ok(())
+}
+
 impl WorkloadManifestBuilder {
     pub fn add_expected_parallel_remote_flow(
         mut self,
@@ -111,6 +122,7 @@ impl WorkloadManifestBuilder {
         mut self,
         expected: WorkloadExpectedParallelRemoteDelayCeiling,
     ) -> Result<Self, WorkloadError> {
+        validate_expected_parallel_remote_delay_ceiling(expected)?;
         if self
             .expected_parallel_remote_delay_ceilings
             .iter()
@@ -250,6 +262,7 @@ impl WorkloadReplayPlan {
         mut self,
         expected: WorkloadExpectedParallelRemoteDelayCeiling,
     ) -> Result<Self, WorkloadError> {
+        validate_expected_parallel_remote_delay_ceiling(expected)?;
         if self
             .expected_parallel_remote_delay_ceilings
             .iter()
