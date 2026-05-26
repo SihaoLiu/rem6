@@ -319,13 +319,19 @@ fn host_checkpoint_rejects_scheduler_with_pending_events() {
         },
     );
 
-    assert_eq!(
-        executor.apply(&checkpoint).unwrap_err(),
-        SystemError::SchedulerCheckpoint(SchedulerCheckpointError::Scheduler {
-            component,
-            error: SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 },
-        })
-    );
+    let error = executor.apply(&checkpoint).unwrap_err();
+
+    let SystemError::SchedulerCheckpoint(SchedulerCheckpointError::NonQuiescent { report }) = error
+    else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(report.component(), &component);
+    assert_eq!(report.pending_event_count(), 1);
+    assert_eq!(report.pending_partition_count(), 1);
+    assert_eq!(report.first_pending_tick(), Some(3));
+    assert_eq!(report.last_pending_tick(), Some(3));
+    assert_eq!(report.parallel_pending_event_count(), 1);
+    assert_eq!(report.serial_pending_event_count(), 0);
 }
 
 #[test]
@@ -425,4 +431,39 @@ fn host_checkpoint_bank_reports_quiescence_by_component() {
     assert_eq!(reports[1].pending_event_count(), 1);
     assert_eq!(reports[1].first_pending_tick(), Some(11));
     assert_eq!(reports[1].last_pending_tick(), Some(11));
+}
+
+#[test]
+fn host_checkpoint_bank_rejects_non_quiescent_scheduler_before_chunk_writes() {
+    let component0 = CheckpointComponentId::new("scheduler0").unwrap();
+    let component1 = CheckpointComponentId::new("scheduler1").unwrap();
+    let scheduler0 = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    let scheduler1 = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    scheduler1
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(PartitionId::new(1), 11, |_| {})
+        .unwrap();
+    let bank = SchedulerCheckpointBank::new([
+        SchedulerCheckpointPort::new(component0.clone(), Arc::clone(&scheduler0)),
+        SchedulerCheckpointPort::new(component1.clone(), Arc::clone(&scheduler1)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+
+    let error = bank.capture_all_into(&mut registry).unwrap_err();
+
+    let SchedulerCheckpointError::NonQuiescent { report } = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(report.component(), &component1);
+    assert_eq!(report.pending_event_count(), 1);
+    assert_eq!(report.first_pending_tick(), Some(11));
+    assert_eq!(registry.chunk(&component0, "scheduler"), None);
+    assert_eq!(registry.chunk(&component1, "scheduler"), None);
 }

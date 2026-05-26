@@ -231,6 +231,11 @@ impl SchedulerCheckpointPort {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<SchedulerCheckpointRecord, SchedulerCheckpointError> {
+        let report = self.quiescence_report();
+        if !report.is_quiescent() {
+            return Err(SchedulerCheckpointError::NonQuiescent { report });
+        }
+
         let snapshot = self
             .scheduler
             .lock()
@@ -354,6 +359,7 @@ impl SchedulerCheckpointBank {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<Vec<SchedulerCheckpointRecord>, SchedulerCheckpointError> {
+        self.validate_quiescent_capture()?;
         self.ports
             .values()
             .map(|port| port.capture_into(registry))
@@ -390,10 +396,22 @@ impl SchedulerCheckpointBank {
         }
         Ok(())
     }
+
+    fn validate_quiescent_capture(&self) -> Result<(), SchedulerCheckpointError> {
+        for report in self.quiescence_reports() {
+            if !report.is_quiescent() {
+                return Err(SchedulerCheckpointError::NonQuiescent { report });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchedulerCheckpointError {
+    NonQuiescent {
+        report: SchedulerCheckpointQuiescenceReport,
+    },
     MissingChunk {
         component: CheckpointComponentId,
         name: String,
@@ -412,6 +430,7 @@ pub enum SchedulerCheckpointError {
 impl SchedulerCheckpointError {
     pub fn component(&self) -> Option<&CheckpointComponentId> {
         match self {
+            Self::NonQuiescent { report } => Some(report.component()),
             Self::MissingChunk { component, .. }
             | Self::InvalidChunk { component, .. }
             | Self::Scheduler { component, .. } => Some(component),
@@ -423,6 +442,15 @@ impl SchedulerCheckpointError {
 impl fmt::Display for SchedulerCheckpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NonQuiescent { report } => write!(
+                formatter,
+                "scheduler checkpoint component {} is not quiescent: {} pending events across {} partitions, first tick {:?}, last tick {:?}",
+                report.component().as_str(),
+                report.pending_event_count(),
+                report.pending_partition_count(),
+                report.first_pending_tick(),
+                report.last_pending_tick()
+            ),
             Self::MissingChunk { component, name } => write!(
                 formatter,
                 "scheduler checkpoint component {} is missing chunk {name}",
@@ -448,7 +476,9 @@ impl Error for SchedulerCheckpointError {
         match self {
             Self::Checkpoint(error) => Some(error),
             Self::Scheduler { error, .. } => Some(error),
-            Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
+            Self::NonQuiescent { .. } | Self::MissingChunk { .. } | Self::InvalidChunk { .. } => {
+                None
+            }
         }
     }
 }
