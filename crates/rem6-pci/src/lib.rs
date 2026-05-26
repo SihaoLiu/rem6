@@ -168,6 +168,7 @@ impl PciBarIndex {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PciBarKind {
     Memory32 { prefetchable: bool },
+    Memory64 { prefetchable: bool },
     Io,
 }
 
@@ -181,15 +182,20 @@ impl PciBarKind {
                     0
                 }
             }
+            Self::Memory64 { prefetchable } => 0x4 | if prefetchable { 0x8 } else { 0 },
             Self::Io => 0x1,
         }
     }
 
     const fn fixed_low_bits(self) -> u64 {
         match self {
-            Self::Memory32 { .. } => 0xf,
+            Self::Memory32 { .. } | Self::Memory64 { .. } => 0xf,
             Self::Io => 0x3,
         }
+    }
+
+    const fn is_64_bit(self) -> bool {
+        matches!(self, Self::Memory64 { .. })
     }
 }
 
@@ -223,11 +229,14 @@ pub struct PciBarSpec {
 
 impl PciBarSpec {
     pub fn new(index: PciBarIndex, kind: PciBarKind, size: AccessSize) -> Result<Self, PciError> {
+        if kind.is_64_bit() && index.as_usize() + 1 >= PCI_BAR_COUNT {
+            return Err(PciError::InvalidBarPair { index });
+        }
         let min_size = kind.fixed_low_bits() + 1;
         if size.bytes() < min_size || !size.bytes().is_power_of_two() {
             return Err(PciError::InvalidBarSize { index, kind, size });
         }
-        if size.bytes() > u32::MAX as u64 {
+        if !kind.is_64_bit() && size.bytes() > u32::MAX as u64 {
             return Err(PciError::InvalidBarSize { index, kind, size });
         }
         Ok(Self { index, kind, size })
@@ -437,15 +446,27 @@ impl PciEndpointConfig {
 
     pub fn install_bar(&mut self, spec: PciBarSpec) -> Result<(), PciError> {
         let index = spec.index().as_usize();
-        if self.bars[index].is_some() {
-            return Err(PciError::DuplicateBar {
-                index: spec.index(),
-            });
-        }
+        self.validate_bar_slot_free(spec.index())?;
+        let upper_index = if spec.kind().is_64_bit() {
+            let upper =
+                PciBarIndex::new(spec.index().get() + 1).expect("validated 64-bit BAR pair");
+            self.validate_bar_slot_free(upper)?;
+            Some(upper)
+        } else {
+            None
+        };
 
         let state = PciBarState::new(spec);
-        write_u32_at(&mut self.config, spec.index().config_offset(), state.raw);
+        write_u32_at(
+            &mut self.config,
+            spec.index().config_offset(),
+            state.raw().expect("new PCI BAR endpoint raw value"),
+        );
         self.bars[index] = Some(state);
+        if let Some(upper) = upper_index {
+            write_u32_at(&mut self.config, upper.config_offset(), 0);
+            self.bars[upper.as_usize()] = Some(PciBarState::upper(spec.index()));
+        }
         Ok(())
     }
 
@@ -499,7 +520,8 @@ impl PciEndpointConfig {
             .iter()
             .filter_map(|bar| {
                 let bar = bar.as_ref()?;
-                if !self.bar_enabled(bar.spec.kind()) {
+                let kind = bar.kind()?;
+                if !self.bar_enabled(kind) {
                     return None;
                 }
                 bar.range().ok()
@@ -537,7 +559,8 @@ impl PciEndpointConfig {
             });
         }
         for (index, (current, restored)) in self.bars.iter().zip(snapshot.bars.iter()).enumerate() {
-            if current.as_ref().map(PciBarState::spec) != restored.as_ref().map(PciBarState::spec) {
+            if current.as_ref().map(PciBarState::shape) != restored.as_ref().map(PciBarState::shape)
+            {
                 return Err(PciError::SnapshotBarMismatch {
                     index: PciBarIndex::new(index as u8).expect("snapshot bar index"),
                 });
@@ -550,12 +573,43 @@ impl PciEndpointConfig {
     }
 
     fn write_bar(&mut self, index: PciBarIndex, value: u32) -> Result<(), PciError> {
+        if let Some(owner) = self.bars[index.as_usize()]
+            .as_ref()
+            .and_then(PciBarState::owner)
+        {
+            let bar = self.bars[owner.as_usize()]
+                .as_mut()
+                .ok_or(PciError::MissingBar { index: owner })?;
+            bar.write_upper(value);
+            write_u32_at(
+                &mut self.config,
+                index.config_offset(),
+                bar.upper_raw().expect("64-bit PCI BAR upper value"),
+            );
+            return Ok(());
+        }
+
         let bar = self.bars[index.as_usize()]
             .as_mut()
             .ok_or(PciError::MissingBar { index })?;
-        bar.write(value);
-        write_u32_at(&mut self.config, index.config_offset(), bar.raw);
+        bar.write_lower(value);
+        write_u32_at(
+            &mut self.config,
+            index.config_offset(),
+            bar.raw().expect("PCI BAR endpoint raw value"),
+        );
         Ok(())
+    }
+
+    fn validate_bar_slot_free(&self, index: PciBarIndex) -> Result<(), PciError> {
+        match self.bars[index.as_usize()].as_ref() {
+            None => Ok(()),
+            Some(PciBarState::Endpoint { .. }) => Err(PciError::DuplicateBar { index }),
+            Some(PciBarState::Upper { owner }) => Err(PciError::ReservedBar {
+                index,
+                owner: *owner,
+            }),
+        }
     }
 
     fn command(&self) -> u16 {
@@ -569,7 +623,9 @@ impl PciEndpointConfig {
     fn bar_enabled(&self, kind: PciBarKind) -> bool {
         let command = self.command();
         match kind {
-            PciBarKind::Memory32 { .. } => command & PCI_COMMAND_MEMORY_SPACE != 0,
+            PciBarKind::Memory32 { .. } | PciBarKind::Memory64 { .. } => {
+                command & PCI_COMMAND_MEMORY_SPACE != 0
+            }
             PciBarKind::Io => command & PCI_COMMAND_IO_SPACE != 0,
         }
     }
@@ -864,36 +920,111 @@ impl PciHostBridge {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PciBarState {
-    spec: PciBarSpec,
-    raw: u32,
+enum PciBarState {
+    Endpoint {
+        spec: PciBarSpec,
+        raw: u32,
+        upper_raw: u32,
+    },
+    Upper {
+        owner: PciBarIndex,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PciBarShape {
+    Endpoint(PciBarSpec),
+    Upper(PciBarIndex),
 }
 
 impl PciBarState {
     fn new(spec: PciBarSpec) -> Self {
-        Self {
+        Self::Endpoint {
             spec,
             raw: spec.kind().flags(),
+            upper_raw: 0,
         }
     }
 
-    const fn spec(&self) -> PciBarSpec {
-        self.spec
+    const fn upper(owner: PciBarIndex) -> Self {
+        Self::Upper { owner }
     }
 
-    fn write(&mut self, value: u32) {
-        let mask = !((self.spec.size().bytes() as u32) - 1);
-        self.raw = (value & mask) | self.spec.kind().flags();
+    const fn shape(&self) -> PciBarShape {
+        match self {
+            Self::Endpoint { spec, .. } => PciBarShape::Endpoint(*spec),
+            Self::Upper { owner } => PciBarShape::Upper(*owner),
+        }
+    }
+
+    const fn owner(&self) -> Option<PciBarIndex> {
+        match self {
+            Self::Upper { owner } => Some(*owner),
+            Self::Endpoint { .. } => None,
+        }
+    }
+
+    const fn raw(&self) -> Option<u32> {
+        match self {
+            Self::Endpoint { raw, .. } => Some(*raw),
+            Self::Upper { .. } => None,
+        }
+    }
+
+    const fn upper_raw(&self) -> Option<u32> {
+        match self {
+            Self::Endpoint { upper_raw, .. } => Some(*upper_raw),
+            Self::Upper { .. } => None,
+        }
+    }
+
+    const fn kind(&self) -> Option<PciBarKind> {
+        match self {
+            Self::Endpoint { spec, .. } => Some(spec.kind()),
+            Self::Upper { .. } => None,
+        }
+    }
+
+    fn write_lower(&mut self, value: u32) {
+        let Self::Endpoint { spec, raw, .. } = self else {
+            return;
+        };
+        let mask = !((spec.size().bytes() - 1) as u32);
+        *raw = (value & mask) | spec.kind().flags();
+    }
+
+    fn write_upper(&mut self, value: u32) {
+        let Self::Endpoint {
+            spec, upper_raw, ..
+        } = self
+        else {
+            return;
+        };
+        let mask = !(((spec.size().bytes() - 1) >> 32) as u32);
+        *upper_raw = value & mask;
     }
 
     fn range(&self) -> Result<PciBarRange, PciError> {
-        let fixed_low_bits = self.spec.kind().fixed_low_bits() as u32;
-        let base = self.raw & !fixed_low_bits;
+        let Self::Endpoint {
+            spec,
+            raw,
+            upper_raw,
+        } = self
+        else {
+            return Err(PciError::UpperBarRange);
+        };
+        let fixed_low_bits = spec.kind().fixed_low_bits() as u32;
+        let lower = (raw & !fixed_low_bits) as u64;
+        let upper = if spec.kind().is_64_bit() {
+            (*upper_raw as u64) << 32
+        } else {
+            0
+        };
         PciBarRange::new(
-            self.spec.index(),
-            self.spec.kind(),
-            Address::new(base as u64),
-            self.spec.size(),
+            spec.index(),
+            spec.kind(),
+            Address::new(upper | lower),
+            spec.size(),
         )
     }
 }
@@ -956,6 +1087,14 @@ pub enum PciError {
         requested_function: PciFunctionAddress,
         requested_bar: PciBarIndex,
     },
+    InvalidBarPair {
+        index: PciBarIndex,
+    },
+    ReservedBar {
+        index: PciBarIndex,
+        owner: PciBarIndex,
+    },
+    UpperBarRange,
     ZeroLegacyInterruptLines,
     MissingLegacyInterruptPin {
         function: PciFunctionAddress,
@@ -1090,6 +1229,16 @@ impl fmt::Display for PciError {
                 existing_function,
                 existing_bar.get()
             ),
+            Self::InvalidBarPair { index } => {
+                write!(f, "PCI BAR {} cannot start a 64-bit BAR pair", index.get())
+            }
+            Self::ReservedBar { index, owner } => write!(
+                f,
+                "PCI BAR {} is reserved as the upper half of BAR {}",
+                index.get(),
+                owner.get()
+            ),
+            Self::UpperBarRange => write!(f, "PCI upper BAR slots do not expose ranges"),
             Self::ZeroLegacyInterruptLines => {
                 write!(f, "PCI legacy interrupt line count must be positive")
             }
@@ -1219,7 +1368,11 @@ fn bar_index_for_offset(offset: PciConfigOffset) -> Option<PciBarIndex> {
 const fn host_address_space(kind: PciBarKind) -> PciHostAddressSpace {
     match kind {
         PciBarKind::Memory32 { prefetchable: true } => PciHostAddressSpace::PrefetchableMemory,
+        PciBarKind::Memory64 { prefetchable: true } => PciHostAddressSpace::PrefetchableMemory,
         PciBarKind::Memory32 {
+            prefetchable: false,
+        } => PciHostAddressSpace::Memory,
+        PciBarKind::Memory64 {
             prefetchable: false,
         } => PciHostAddressSpace::Memory,
         PciBarKind::Io => PciHostAddressSpace::Io,

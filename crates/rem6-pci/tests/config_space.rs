@@ -109,7 +109,147 @@ fn pci_endpoint_bar_writes_apply_size_masks_and_enable_ranges() {
 }
 
 #[test]
+fn pci_endpoint_memory64_bar_writes_lower_and_upper_config_dwords() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory64 { prefetchable: true },
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0x0c)
+    );
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x14).unwrap()),
+        Ok(0)
+    );
+
+    endpoint
+        .write_u32(PciConfigOffset::new(0x10).unwrap(), 0x0000_2345)
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x14).unwrap(), 0x0000_0001)
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0x0000_200c)
+    );
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x14).unwrap()),
+        Ok(0x0000_0001)
+    );
+}
+
+#[test]
+fn pci_endpoint_memory64_bar_consumes_upper_slot_and_rejects_bad_pairing() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory64 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        endpoint.install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(1).unwrap(),
+                PciBarKind::Io,
+                AccessSize::new(0x100).unwrap(),
+            )
+            .unwrap(),
+        ),
+        Err(PciError::ReservedBar {
+            index: PciBarIndex::new(1).unwrap(),
+            owner: PciBarIndex::new(0).unwrap(),
+        })
+    );
+    assert_eq!(
+        PciBarSpec::new(
+            PciBarIndex::new(5).unwrap(),
+            PciBarKind::Memory64 {
+                prefetchable: false,
+            },
+            AccessSize::new(0x1000).unwrap(),
+        ),
+        Err(PciError::InvalidBarPair {
+            index: PciBarIndex::new(5).unwrap(),
+        })
+    );
+}
+
+#[test]
+fn pci_endpoint_memory64_bar_enables_single_active_range() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(2).unwrap(),
+                PciBarKind::Memory64 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    endpoint
+        .write_u32(PciConfigOffset::new(0x18).unwrap(), 0x0000_2345)
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x1c).unwrap(), 0x0000_0001)
+        .unwrap();
+    assert_eq!(endpoint.active_bar_ranges(), Vec::new());
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0002_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        endpoint.active_bar_ranges(),
+        vec![PciBarRange::new(
+            PciBarIndex::new(2).unwrap(),
+            PciBarKind::Memory64 {
+                prefetchable: false,
+            },
+            Address::new(0x1_0000_2000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap()]
+    );
+}
+
+#[test]
 fn pci_endpoint_rejects_oversized_32_bit_bar() {
+    assert_eq!(
+        PciBarSpec::new(
+            PciBarIndex::new(0).unwrap(),
+            PciBarKind::Memory64 {
+                prefetchable: false,
+            },
+            AccessSize::new(0x1_0000_0000).unwrap(),
+        )
+        .unwrap()
+        .size(),
+        AccessSize::new(0x1_0000_0000).unwrap()
+    );
     assert_eq!(
         PciBarSpec::new(
             PciBarIndex::new(0).unwrap(),
