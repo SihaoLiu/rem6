@@ -75,6 +75,16 @@ impl TimerCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<TimerCheckpointRecord, TimerCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.validate_snapshot(record.snapshot())?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<TimerCheckpointRecord, TimerCheckpointError> {
         let payload = registry
             .chunk(&self.component, TIMER_CHUNK)
             .ok_or_else(|| TimerCheckpointError::MissingChunk {
@@ -82,13 +92,37 @@ impl TimerCheckpointPort {
                 name: TIMER_CHUNK.to_string(),
             })?;
         let snapshot = decode_timer(&self.component, payload)?;
+        Ok(TimerCheckpointRecord::new(self.component.clone(), snapshot))
+    }
+
+    fn validate_snapshot(&self, snapshot: &TimerSnapshot) -> Result<(), TimerCheckpointError> {
+        if self.timer.id() == snapshot.id()
+            && self.timer.partition() == snapshot.partition()
+            && self.timer.source() == snapshot.source()
+        {
+            return Ok(());
+        }
+
+        Err(TimerCheckpointError::Timer {
+            component: self.component.clone(),
+            error: TimerError::SnapshotIdentityMismatch {
+                expected_id: self.timer.id(),
+                actual_id: snapshot.id(),
+                expected_partition: self.timer.partition(),
+                actual_partition: snapshot.partition(),
+                expected_source: self.timer.source(),
+                actual_source: snapshot.source(),
+            },
+        })
+    }
+
+    fn restore_snapshot(&self, snapshot: &TimerSnapshot) -> Result<(), TimerCheckpointError> {
         self.timer
-            .restore(&snapshot)
+            .restore(snapshot)
             .map_err(|error| TimerCheckpointError::Timer {
                 component: self.component.clone(),
                 error,
-            })?;
-        Ok(TimerCheckpointRecord::new(self.component.clone(), snapshot))
+            })
     }
 }
 
@@ -145,10 +179,19 @@ impl TimerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<TimerCheckpointRecord>, TimerCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut records = Vec::with_capacity(decoded.len());
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            records.push(record);
+        }
+        Ok(records)
     }
 }
 

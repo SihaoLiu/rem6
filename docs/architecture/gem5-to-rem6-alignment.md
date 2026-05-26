@@ -408,7 +408,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   cannot partially rewind another live NoC lane frontier, cache bank,
   architectural PC, or integer register file. Heterogeneous checkpoint-bank
   tests cover decode-first accelerator and GPU restore so a malformed later
-  device chunk cannot partially restore an earlier live device. RISC-V
+  device chunk cannot partially restore an earlier live device. Peripheral
+  checkpoint-bank tests cover CLINT, UART, interrupt-controller, and timer
+  decode-first restore so malformed later device chunks cannot partially
+  restore earlier live platform devices. RISC-V
   cluster tests cover peer reservation invalidation after a completed overlapping store so a later
   `SC.D` fails instead of overwriting the peer's data. RISC-V topology tests
   cover MSI data-cache snoop invalidation before the peer store response reaches

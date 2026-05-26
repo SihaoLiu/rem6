@@ -74,6 +74,15 @@ impl UartCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<UartCheckpointRecord, UartCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.device.restore(record.snapshot());
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<UartCheckpointRecord, UartCheckpointError> {
         let payload = registry.chunk(&self.component, UART_CHUNK).ok_or_else(|| {
             UartCheckpointError::MissingChunk {
                 component: self.component.clone(),
@@ -81,7 +90,6 @@ impl UartCheckpointPort {
             }
         })?;
         let snapshot = decode_uart(&self.component, payload)?;
-        self.device.restore(&snapshot);
         Ok(UartCheckpointRecord::new(self.component.clone(), snapshot))
     }
 }
@@ -139,10 +147,15 @@ impl UartCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<UartCheckpointRecord>, UartCheckpointError> {
-        self.ports
+        let records = self
+            .ports
             .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+            .map(|port| port.decode_from(registry))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in self.ports.values().zip(&records) {
+            port.device.restore(record.snapshot());
+        }
+        Ok(records)
     }
 }
 

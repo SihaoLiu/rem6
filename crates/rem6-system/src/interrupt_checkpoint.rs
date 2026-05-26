@@ -92,6 +92,18 @@ impl InterruptControllerCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<InterruptControllerCheckpointRecord, InterruptControllerCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.controller
+            .lock()
+            .expect("interrupt controller lock")
+            .restore(record.snapshot());
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<InterruptControllerCheckpointRecord, InterruptControllerCheckpointError> {
         let payload = registry
             .chunk(&self.component, INTERRUPT_CHUNK)
             .ok_or_else(|| InterruptControllerCheckpointError::MissingChunk {
@@ -99,10 +111,6 @@ impl InterruptControllerCheckpointPort {
                 name: INTERRUPT_CHUNK.to_string(),
             })?;
         let snapshot = decode_interrupt(&self.component, payload)?;
-        self.controller
-            .lock()
-            .expect("interrupt controller lock")
-            .restore(&snapshot);
         Ok(InterruptControllerCheckpointRecord::new(
             self.component.clone(),
             snapshot,
@@ -164,10 +172,18 @@ impl InterruptControllerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<InterruptControllerCheckpointRecord>, InterruptControllerCheckpointError> {
-        self.ports
+        let records = self
+            .ports
             .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+            .map(|port| port.decode_from(registry))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in self.ports.values().zip(&records) {
+            port.controller
+                .lock()
+                .expect("interrupt controller lock")
+                .restore(record.snapshot());
+        }
+        Ok(records)
     }
 }
 

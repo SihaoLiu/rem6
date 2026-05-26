@@ -69,6 +69,16 @@ impl ClintCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<ClintCheckpointRecord, ClintCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.validate_snapshot(record.snapshot())?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<ClintCheckpointRecord, ClintCheckpointError> {
         let payload = registry
             .chunk(&self.component, CLINT_CHUNK)
             .ok_or_else(|| ClintCheckpointError::MissingChunk {
@@ -76,13 +86,49 @@ impl ClintCheckpointPort {
                 name: CLINT_CHUNK.to_string(),
             })?;
         let snapshot = decode_clint(&self.component, payload)?;
+        Ok(ClintCheckpointRecord::new(self.component.clone(), snapshot))
+    }
+
+    fn validate_snapshot(&self, snapshot: &ClintSnapshot) -> Result<(), ClintCheckpointError> {
+        if snapshot.base() != self.device.base() {
+            return Err(ClintCheckpointError::Clint {
+                component: self.component.clone(),
+                error: TimerError::ClintSnapshotBaseMismatch {
+                    expected: self.device.base(),
+                    actual: snapshot.base(),
+                },
+            });
+        }
+
+        let expected = self
+            .device
+            .snapshot()
+            .harts()
+            .iter()
+            .map(ClintHartSnapshot::hart)
+            .collect::<Vec<_>>();
+        let actual = snapshot
+            .harts()
+            .iter()
+            .map(ClintHartSnapshot::hart)
+            .collect::<Vec<_>>();
+        if actual != expected {
+            return Err(ClintCheckpointError::Clint {
+                component: self.component.clone(),
+                error: TimerError::ClintSnapshotHartMismatch { expected, actual },
+            });
+        }
+
+        Ok(())
+    }
+
+    fn restore_snapshot(&self, snapshot: &ClintSnapshot) -> Result<(), ClintCheckpointError> {
         self.device
-            .restore(&snapshot)
+            .restore(snapshot)
             .map_err(|error| ClintCheckpointError::Clint {
                 component: self.component.clone(),
                 error,
-            })?;
-        Ok(ClintCheckpointRecord::new(self.component.clone(), snapshot))
+            })
     }
 }
 
@@ -139,10 +185,19 @@ impl ClintCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<ClintCheckpointRecord>, ClintCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut records = Vec::with_capacity(decoded.len());
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            records.push(record);
+        }
+        Ok(records)
     }
 }
 
