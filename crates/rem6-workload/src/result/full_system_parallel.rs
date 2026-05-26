@@ -45,9 +45,14 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
-        self.scheduler_dispatch_count()
+        (self.scheduler_dispatch_count()
             + self.data_cache_parallel_scheduler_dispatch_count()
-            + self.dma_scheduler_dispatch_count()
+            + self.dma_scheduler_dispatch_count())
+        .max(total_parallel_batch_activity_worker_count(
+            &[],
+            &[],
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        ))
     }
 
     pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {

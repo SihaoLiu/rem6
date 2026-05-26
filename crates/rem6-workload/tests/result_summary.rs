@@ -1748,6 +1748,20 @@ fn workload_result_batch_worker_counts_use_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_dispatch_count_uses_full_system_streak_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(1, 0, 3, 1)
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache, dma], 4),
+        ]);
+
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 12);
+}
+
+#[test]
 fn workload_result_partition_sets_use_full_system_streak_evidence() {
     let cpu = PartitionId::new(1);
     let cache = PartitionId::new(2);
