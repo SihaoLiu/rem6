@@ -612,6 +612,22 @@ pub enum WorkloadError {
         delivery_tick: Tick,
         order: u64,
     },
+    InvalidExpectedParallelRemoteSendEndpoints {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
+    InvalidExpectedParallelRemoteSendTiming {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
     MissingParallelExecutionSummary {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,

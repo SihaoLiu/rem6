@@ -56,6 +56,30 @@ pub(crate) fn format_remote_traffic_error(
             "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} is already declared",
             scope.as_str()
         ),
+        WorkloadError::InvalidExpectedParallelRemoteSendEndpoints {
+            scope,
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            order,
+        } => write!(
+            formatter,
+            "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} must cross partitions",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidExpectedParallelRemoteSendTiming {
+            scope,
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            order,
+        } => write!(
+            formatter,
+            "expected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} must not deliver before the source tick",
+            scope.as_str()
+        ),
         WorkloadError::MissingParallelExecutionSummary {
             scope,
             source,

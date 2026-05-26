@@ -413,3 +413,71 @@ fn workload_replay_plan_rejects_duplicate_parallel_remote_send_expectations() {
         },
     );
 }
+
+#[test]
+fn workload_replay_plan_rejects_invalid_parallel_remote_send_expectations() {
+    let same_partition = replay_plan().add_expected_parallel_remote_send(expected_send(
+        WorkloadParallelRemoteFlowScope::Scheduler,
+        2,
+        2,
+        3,
+        11,
+        0,
+    ));
+    assert_eq!(
+        same_partition.unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteSendEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+            source_tick: 3,
+            delivery_tick: 11,
+            order: 0,
+        },
+    );
+
+    let inverted_ticks = replay_plan().add_expected_parallel_remote_send(expected_send(
+        WorkloadParallelRemoteFlowScope::Scheduler,
+        0,
+        1,
+        11,
+        3,
+        0,
+    ));
+    assert_eq!(
+        inverted_ticks.unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteSendTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            source_tick: 11,
+            delivery_tick: 3,
+            order: 0,
+        },
+    );
+
+    let manifest_same_partition =
+        rem6_workload::WorkloadManifest::builder(id("invalid-manifest-remote-send"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_remote_send(expected_send(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                3,
+                3,
+                5,
+                13,
+                0,
+            ));
+    assert_eq!(
+        manifest_same_partition.unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteSendEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 3,
+            target: 3,
+            source_tick: 5,
+            delivery_tick: 13,
+            order: 0,
+        },
+    );
+}

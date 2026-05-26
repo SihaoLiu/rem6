@@ -775,6 +775,8 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidExpectedParallelRemoteFlowEndpoints { .. }
             | Self::DuplicateExpectedParallelRemoteFlow { .. }
             | Self::DuplicateExpectedParallelRemoteSend { .. }
+            | Self::InvalidExpectedParallelRemoteSendEndpoints { .. }
+            | Self::InvalidExpectedParallelRemoteSendTiming { .. }
             | Self::MissingParallelExecutionSummary { .. }
             | Self::ExpectedParallelRemoteFlowCountMismatch { .. }
             | Self::UnexpectedParallelRemoteFlow { .. }

@@ -40,6 +40,32 @@ impl WorkloadManifest {
     }
 }
 
+fn validate_expected_parallel_remote_send(
+    expected: WorkloadExpectedParallelRemoteSend,
+) -> Result<(), WorkloadError> {
+    if expected.source() == expected.target() {
+        return Err(WorkloadError::InvalidExpectedParallelRemoteSendEndpoints {
+            scope: expected.scope(),
+            source: expected.source().index(),
+            target: expected.target().index(),
+            source_tick: expected.source_tick(),
+            delivery_tick: expected.delivery_tick(),
+            order: expected.order(),
+        });
+    }
+    if expected.delivery_tick() < expected.source_tick() {
+        return Err(WorkloadError::InvalidExpectedParallelRemoteSendTiming {
+            scope: expected.scope(),
+            source: expected.source().index(),
+            target: expected.target().index(),
+            source_tick: expected.source_tick(),
+            delivery_tick: expected.delivery_tick(),
+            order: expected.order(),
+        });
+    }
+    Ok(())
+}
+
 impl WorkloadManifestBuilder {
     pub fn add_expected_parallel_remote_flow(
         mut self,
@@ -126,6 +152,7 @@ impl WorkloadManifestBuilder {
         mut self,
         expected: WorkloadExpectedParallelRemoteSend,
     ) -> Result<Self, WorkloadError> {
+        validate_expected_parallel_remote_send(expected)?;
         if self
             .expected_parallel_remote_sends
             .iter()
@@ -276,6 +303,7 @@ impl WorkloadReplayPlan {
         mut self,
         expected: WorkloadExpectedParallelRemoteSend,
     ) -> Result<Self, WorkloadError> {
+        validate_expected_parallel_remote_send(expected)?;
         if self
             .expected_parallel_remote_sends
             .iter()
