@@ -374,6 +374,9 @@ Implementation evidence on 2026-05-26:
   worker-tick replay paths now validate scoped raw batch timeline records
   before deriving worker evidence. Duration or worker-count contracts cannot
   pass by silently discarding malformed timeline windows.
+- Workload batch-activity replay now applies the same scoped raw batch
+  timeline validation before deriving minimum-worker batch counts, so a valid
+  batch cannot hide a malformed raw timeline record in the same scope.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

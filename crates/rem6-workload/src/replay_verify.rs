@@ -877,6 +877,7 @@ pub(crate) fn verify_expected_parallel_batch_activity(
     };
 
     for expected in expected_activity {
+        validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_batch_count = expected.actual_batch_count(summary);
         if actual_batch_count < expected.minimum_batch_count() {
             return Err(WorkloadError::ExpectedParallelBatchActivityBelowMinimum {

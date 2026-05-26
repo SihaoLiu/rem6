@@ -4,10 +4,10 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchActivity, WorkloadId,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -424,11 +424,13 @@ fn workload_replay_plan_ignores_zero_duration_batch_timeline_activity_evidence()
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     assert_eq!(
         plan.verify_result(&result).unwrap_err(),
-        WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
-            scope: WorkloadParallelBatchWorkerScope::Scheduler,
-            minimum_worker_count: 2,
-            minimum_batch_count: 1,
-            actual_batch_count: 0,
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 4,
+            horizon: 4,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 }
@@ -456,11 +458,55 @@ fn workload_replay_plan_ignores_inverted_batch_timeline_activity_evidence() {
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     assert_eq!(
         plan.verify_result(&result).unwrap_err(),
-        WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
-            scope: WorkloadParallelBatchWorkerScope::Scheduler,
-            minimum_worker_count: 2,
-            minimum_batch_count: 1,
-            actual_batch_count: 0,
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 9,
+            horizon: 5,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_activity() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            actual_timeline(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0), partition(1)],
+                2,
+            ),
+            actual_timeline(
+                WorkloadParallelBatchScope::Scheduler,
+                9,
+                5,
+                [partition(0), partition(1)],
+                2,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 9,
+            horizon: 5,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 }
