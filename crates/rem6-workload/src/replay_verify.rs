@@ -5,14 +5,19 @@ use rem6_kernel::ParallelProgressTransitionRecord;
 use crate::{
     parallel_batch_timeline_expectation::actual_parallel_batch_timeline_records, WorkloadError,
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelProgressTransition,
-    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
     WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
     WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
     WorkloadReplayPlan, WorkloadResult,
 };
 
+mod batch_timeline;
 mod remote_traffic;
+
+use batch_timeline::validate_scheduler_scope_batch_timeline_evidence;
+pub(crate) use batch_timeline::{
+    validate_partition_scope_batch_timeline_evidence, validate_worker_scope_batch_timeline_evidence,
+};
 
 pub(crate) use remote_traffic::{
     validate_remote_partition_scope_evidence, verify_expected_parallel_remote_delay_ceilings,
@@ -841,6 +846,7 @@ pub(crate) fn verify_expected_parallel_scheduler_progress(
     };
 
     for expected in expected_progress {
+        validate_scheduler_scope_batch_timeline_evidence(summary, expected.scope())?;
         let (actual_epoch_count, actual_dispatch_count) = expected.actual_counts(summary);
         if actual_epoch_count < expected.minimum_epoch_count()
             || actual_dispatch_count < expected.minimum_dispatch_count()
@@ -1063,14 +1069,6 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
     Ok(())
 }
 
-pub(crate) fn validate_worker_scope_batch_timeline_evidence(
-    summary: &WorkloadParallelExecutionSummary,
-    scope: WorkloadParallelBatchWorkerScope,
-) -> Result<(), WorkloadError> {
-    let timeline_scope = batch_timeline_scope_for_worker_scope(scope);
-    validate_batch_timeline_records_for_scope(summary, timeline_scope)
-}
-
 pub(crate) fn verify_expected_parallel_batch_partition_sets(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,
@@ -1103,83 +1101,6 @@ pub(crate) fn verify_expected_parallel_batch_partition_sets(
         }
     }
     Ok(())
-}
-
-pub(crate) fn validate_partition_scope_batch_timeline_evidence(
-    summary: &WorkloadParallelExecutionSummary,
-    scope: WorkloadParallelBatchPartitionScope,
-) -> Result<(), WorkloadError> {
-    validate_batch_timeline_records_for_scope(
-        summary,
-        batch_timeline_scope_for_partition_scope(scope),
-    )
-}
-
-fn validate_batch_timeline_records_for_scope(
-    summary: &WorkloadParallelExecutionSummary,
-    timeline_scope: WorkloadParallelBatchTimelineScope,
-) -> Result<(), WorkloadError> {
-    for record in actual_parallel_batch_timeline_records(timeline_scope, summary) {
-        if record.is_empty() {
-            return Err(WorkloadError::UnexpectedParallelBatchTimelineRecord {
-                scope: timeline_scope,
-                batch_scope: record.scope(),
-                start_tick: record.start_tick(),
-                horizon: record.horizon(),
-                partitions: record
-                    .partitions()
-                    .iter()
-                    .map(|partition| partition.index())
-                    .collect(),
-                worker_count: record.worker_count(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn batch_timeline_scope_for_worker_scope(
-    scope: WorkloadParallelBatchWorkerScope,
-) -> WorkloadParallelBatchTimelineScope {
-    match scope {
-        WorkloadParallelBatchWorkerScope::Scheduler => {
-            WorkloadParallelBatchTimelineScope::Scheduler
-        }
-        WorkloadParallelBatchWorkerScope::DataCacheScheduler => {
-            WorkloadParallelBatchTimelineScope::DataCacheScheduler
-        }
-        WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
-            WorkloadParallelBatchTimelineScope::GpuDmaScheduler
-        }
-        WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
-            WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler
-        }
-        WorkloadParallelBatchWorkerScope::FullSystem => {
-            WorkloadParallelBatchTimelineScope::FullSystem
-        }
-    }
-}
-
-fn batch_timeline_scope_for_partition_scope(
-    scope: WorkloadParallelBatchPartitionScope,
-) -> WorkloadParallelBatchTimelineScope {
-    match scope {
-        WorkloadParallelBatchPartitionScope::Scheduler => {
-            WorkloadParallelBatchTimelineScope::Scheduler
-        }
-        WorkloadParallelBatchPartitionScope::DataCacheScheduler => {
-            WorkloadParallelBatchTimelineScope::DataCacheScheduler
-        }
-        WorkloadParallelBatchPartitionScope::GpuDmaScheduler => {
-            WorkloadParallelBatchTimelineScope::GpuDmaScheduler
-        }
-        WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
-            WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler
-        }
-        WorkloadParallelBatchPartitionScope::FullSystem => {
-            WorkloadParallelBatchTimelineScope::FullSystem
-        }
-    }
 }
 
 pub(crate) fn verify_expected_parallel_batch_partition_streaks(
