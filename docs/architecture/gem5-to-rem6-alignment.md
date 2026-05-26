@@ -445,6 +445,10 @@ Implementation evidence on 2026-05-26:
   bucket evidence between scoped worker histograms and explicit full-system
   partition streaks. Reporting APIs therefore cannot understate worker buckets
   that replay contracts already accept through full-system streak evidence.
+- Workload full-system batch partition-set summaries now keep the strongest
+  per-set evidence between scoped partition-set histograms and explicit
+  full-system partition streaks. Reporting APIs therefore expose the same
+  full-system partition coverage that replay contracts use for set minima.
 - Workload direct per-partition activity now normalizes dispatch counts without
   worker evidence to zero while preserving remote send and receive evidence.
   A replay artifact can still prove cross-partition communication, but it

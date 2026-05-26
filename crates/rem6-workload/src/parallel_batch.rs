@@ -390,6 +390,17 @@ pub(crate) fn collect_parallel_batch_partition_sets_from_timeline(
     )
 }
 
+pub(crate) fn collect_parallel_batch_partition_sets_from_streaks(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+) -> Vec<WorkloadParallelBatchPartitionSet> {
+    collect_parallel_batch_partition_sets(streaks.iter().map(|streak| {
+        WorkloadParallelBatchPartitionSet::new(
+            streak.partitions().iter().copied(),
+            streak.consecutive_batch_count(),
+        )
+    }))
+}
+
 pub(crate) fn collect_parallel_batch_partition_streaks_from_timeline(
     records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Vec<WorkloadParallelBatchPartitionStreak> {
@@ -424,6 +435,28 @@ pub(crate) fn collect_parallel_batch_partition_sets(
             continue;
         }
         *by_partitions.entry(set.partitions().to_vec()).or_default() += set.batch_count();
+    }
+    by_partitions
+        .into_iter()
+        .map(|(partitions, batch_count)| {
+            WorkloadParallelBatchPartitionSet::new(partitions, batch_count)
+        })
+        .collect()
+}
+
+pub(crate) fn collect_strongest_parallel_batch_partition_sets(
+    left: impl IntoIterator<Item = WorkloadParallelBatchPartitionSet>,
+    right: impl IntoIterator<Item = WorkloadParallelBatchPartitionSet>,
+) -> Vec<WorkloadParallelBatchPartitionSet> {
+    let mut by_partitions = BTreeMap::<Vec<PartitionId>, usize>::new();
+    for set in left.into_iter().chain(right) {
+        if !set.is_parallel_evidence() {
+            continue;
+        }
+        by_partitions
+            .entry(set.partitions().to_vec())
+            .and_modify(|stored| *stored = (*stored).max(set.batch_count()))
+            .or_insert(set.batch_count());
     }
     by_partitions
         .into_iter()

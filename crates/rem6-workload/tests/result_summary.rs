@@ -1748,6 +1748,38 @@ fn workload_result_batch_worker_counts_use_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_partition_sets_use_full_system_streak_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [cpu, cache],
+            3,
+        )])
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 4),
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache, dma], 2),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache]),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache, dma]),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 4),
+            WorkloadParallelBatchPartitionSet::new([cpu, cache, dma], 2),
+        ],
+    );
+}
+
+#[test]
 fn workload_result_reports_remote_endpoint_partitions() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_remote_flows([

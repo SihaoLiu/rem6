@@ -6,8 +6,10 @@ use rem6_kernel::{
 };
 
 use crate::parallel_batch::{
-    collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
-    collect_parallel_batch_worker_counts, collect_parallel_batch_worker_counts_from_streaks,
+    collect_parallel_batch_partition_sets, collect_parallel_batch_partition_sets_from_streaks,
+    collect_parallel_batch_partition_streaks, collect_parallel_batch_worker_counts,
+    collect_parallel_batch_worker_counts_from_streaks,
+    collect_strongest_parallel_batch_partition_sets,
     collect_strongest_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
     normalize_partition_set, parallel_batch_active_partition_count,
     parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
@@ -138,7 +140,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_partition_sets(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionSet> {
-        collect_parallel_batch_partition_sets(
+        let scoped_sets = collect_parallel_batch_partition_sets(
             self.parallel_scheduler_batch_partition_sets
                 .iter()
                 .cloned()
@@ -148,7 +150,11 @@ impl WorkloadParallelExecutionSummary {
                         .cloned(),
                 )
                 .chain(self.dma_scheduler_batch_partition_sets()),
-        )
+        );
+        let full_system_sets = collect_parallel_batch_partition_sets_from_streaks(
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        );
+        collect_strongest_parallel_batch_partition_sets(scoped_sets, full_system_sets)
     }
 
     pub fn full_system_parallel_scheduler_batch_partition_streaks(
