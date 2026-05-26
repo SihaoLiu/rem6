@@ -123,6 +123,59 @@ fn pci_endpoint_type0_header_exposes_subsystem_rom_and_latency_fields() {
 }
 
 #[test]
+fn pci_endpoint_common_header_writes_cache_line_latency_and_snapshots() {
+    let mut endpoint = network_endpoint();
+
+    endpoint
+        .write_config(PciConfigOffset::new(0x0c).unwrap(), &[0x40])
+        .unwrap();
+    endpoint
+        .write_config(PciConfigOffset::new(0x0d).unwrap(), &[0x20])
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x40, 0x20, 0x00, 0x00])
+    );
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            &0x3322_u16.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x22, 0x33, 0x00, 0x00])
+    );
+    assert_eq!(
+        endpoint.write_config(
+            PciConfigOffset::new(0x0d).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        ),
+        Err(PciError::ReadOnlyConfigWrite {
+            offset: PciConfigOffset::new(0x0d).unwrap(),
+            size: AccessSize::new(2).unwrap(),
+        })
+    );
+}
+
+#[test]
 fn pci_endpoint_bar_writes_apply_size_masks_and_enable_ranges() {
     let mut endpoint = network_endpoint();
     endpoint

@@ -11,6 +11,8 @@ const PCI_VENDOR_ID_OFFSET: usize = 0x00;
 const PCI_DEVICE_ID_OFFSET: usize = 0x02;
 const PCI_COMMAND_OFFSET: usize = 0x04;
 const PCI_CLASS_REVISION_OFFSET: usize = 0x08;
+const PCI_CACHE_LINE_SIZE_OFFSET: usize = 0x0c;
+const PCI_LATENCY_TIMER_OFFSET: usize = 0x0d;
 const PCI_HEADER_TYPE_OFFSET: usize = 0x0e;
 const PCI_TYPE1_BAR0_OFFSET: usize = 0x10;
 const PCI_TYPE1_BAR1_OFFSET: usize = 0x14;
@@ -248,6 +250,14 @@ impl PciBridgeConfig {
             }
             (PCI_COMMAND_OFFSET, 4) => {
                 self.config[PCI_COMMAND_OFFSET..PCI_COMMAND_OFFSET + 2].copy_from_slice(&data[..2]);
+                Ok(())
+            }
+            (PCI_CACHE_LINE_SIZE_OFFSET | PCI_LATENCY_TIMER_OFFSET, 1) => {
+                self.config[span.start] = data[0];
+                Ok(())
+            }
+            (PCI_CACHE_LINE_SIZE_OFFSET, 2) => {
+                self.config[span.start..span.end].copy_from_slice(data);
                 Ok(())
             }
             (PCI_TYPE1_PRIMARY_BUS_OFFSET, 4) => self.write_bus_block(data),

@@ -1,9 +1,9 @@
 use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciBridgeBusRange, PciBridgeConfig, PciClassCode,
-    PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciFunctionAddress,
-    PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge, PciInterruptPin,
-    PciType1HeaderFields,
+    PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciError,
+    PciFunctionAddress, PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge,
+    PciInterruptPin, PciType1HeaderFields,
 };
 
 fn bridge_config(function: PciFunctionAddress) -> PciBridgeConfig {
@@ -189,6 +189,60 @@ fn pci_type1_bridge_header_exposes_interrupt_rom_and_control_fields() {
             AccessSize::new(4).unwrap()
         ),
         Ok(vec![9, 2, 0x80, 0x00])
+    );
+}
+
+#[test]
+fn pci_type1_bridge_common_header_writes_cache_line_latency_and_snapshots() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+
+    bridge
+        .write_config(PciConfigOffset::new(0x0c).unwrap(), &[0x80])
+        .unwrap();
+    bridge
+        .write_config(PciConfigOffset::new(0x0d).unwrap(), &[0x10])
+        .unwrap();
+
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x80, 0x10, 0x01, 0x00])
+    );
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            &0x5544_u16.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = bridge.snapshot();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        )
+        .unwrap();
+    bridge.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x44, 0x55, 0x01, 0x00])
+    );
+    assert_eq!(
+        bridge.write_config(
+            PciConfigOffset::new(0x0d).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        ),
+        Err(PciError::ReadOnlyConfigWrite {
+            offset: PciConfigOffset::new(0x0d).unwrap(),
+            size: AccessSize::new(2).unwrap(),
+        })
     );
 }
 
