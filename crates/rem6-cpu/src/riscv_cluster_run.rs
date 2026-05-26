@@ -160,6 +160,8 @@ pub struct RiscvClusterSchedulerEpoch {
     final_frontiers: Vec<PartitionFrontier>,
     dispatches: Vec<SchedulerDispatchRecord>,
     batches: Vec<ParallelEpochBatchRecord>,
+    batch_worker_counts: Vec<(usize, usize)>,
+    batch_worker_count_ticks: Vec<(usize, Tick)>,
     batch_partition_sets: Vec<(Vec<PartitionId>, usize)>,
     batch_partition_streaks: Vec<(Vec<PartitionId>, usize)>,
     remote_flows: Vec<ParallelRemoteFlowRecord>,
@@ -171,6 +173,8 @@ impl RiscvClusterSchedulerEpoch {
     pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
         let profile = recorded.profile();
         let partition_activities = recorded.partition_activities();
+        let batch_worker_counts = recorded.batch_worker_count_summaries();
+        let batch_worker_count_ticks = recorded.batch_worker_count_tick_summaries();
         let batch_partition_sets = recorded.batch_partition_set_summaries();
         let batch_partition_streaks = recorded.batch_partition_streak_summaries();
         let remote_flows = recorded.remote_flows();
@@ -180,6 +184,8 @@ impl RiscvClusterSchedulerEpoch {
             final_frontiers: recorded.final_frontiers().to_vec(),
             dispatches: recorded.dispatches().to_vec(),
             batches: recorded.batches().to_vec(),
+            batch_worker_counts,
+            batch_worker_count_ticks,
             batch_partition_sets,
             batch_partition_streaks,
             remote_flows,
@@ -277,6 +283,55 @@ impl RiscvClusterSchedulerEpoch {
 
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
+    }
+
+    pub fn batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
+        self.batch_worker_counts.clone()
+    }
+
+    pub fn batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        self.batch_worker_counts
+            .iter()
+            .find_map(|(workers, count)| (*workers == worker_count).then_some(*count))
+            .unwrap_or(0)
+    }
+
+    pub fn batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
+        self.batch_worker_counts
+            .iter()
+            .filter(|(workers, _)| *workers >= minimum_worker_count)
+            .map(|(_, count)| *count)
+            .sum()
+    }
+
+    pub fn batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        self.batch_worker_count_ticks.clone()
+    }
+
+    pub fn batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        self.batch_worker_count_ticks
+            .iter()
+            .find_map(|(workers, ticks)| (*workers == worker_count).then_some(*ticks))
+            .unwrap_or(0)
+    }
+
+    pub fn batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        self.batch_worker_count_ticks
+            .iter()
+            .filter(|(workers, _)| *workers >= minimum_worker_count)
+            .map(|(_, ticks)| *ticks)
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn batch_worker_ticks(&self) -> Tick {
+        batch_worker_ticks_from_tick_summaries(&self.batch_worker_count_ticks)
+    }
+
+    pub fn batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        batch_worker_ticks_at_or_above_from_tick_summaries(
+            &self.batch_worker_count_ticks,
+            minimum_worker_count,
+        )
     }
 
     pub fn batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
@@ -507,6 +562,67 @@ impl RiscvClusterRun {
             .collect()
     }
 
+    pub fn parallel_scheduler_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
+        collect_worker_count_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(RiscvClusterSchedulerEpoch::batch_worker_count_summaries),
+        )
+    }
+
+    pub fn parallel_scheduler_batch_count_for_worker_count(&self, worker_count: usize) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_count_for_worker_count(worker_count))
+            .sum()
+    }
+
+    pub fn parallel_scheduler_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_count_at_or_above(minimum_worker_count))
+            .sum()
+    }
+
+    pub fn parallel_scheduler_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_worker_count_tick_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(RiscvClusterSchedulerEpoch::batch_worker_count_tick_summaries),
+        )
+    }
+
+    pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_ticks_for_worker_count(worker_count))
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn parallel_scheduler_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_ticks_at_or_above(minimum_worker_count))
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn parallel_scheduler_batch_worker_ticks(&self) -> Tick {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(RiscvClusterSchedulerEpoch::batch_worker_ticks)
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn parallel_scheduler_batch_worker_ticks_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_worker_ticks_at_or_above(minimum_worker_count))
+            .fold(0, Tick::saturating_add)
+    }
+
     pub fn parallel_scheduler_batch_partition_set_summaries(
         &self,
     ) -> Vec<(Vec<PartitionId>, usize)> {
@@ -679,6 +795,46 @@ fn merge_parallel_partition_activity_maps(
             })
             .or_insert(*activity);
     }
+}
+
+fn collect_worker_count_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (usize, usize)>,
+) -> Vec<(usize, usize)> {
+    let mut collected = BTreeMap::<usize, usize>::new();
+    for (worker_count, count) in summaries {
+        if worker_count != 0 && count != 0 {
+            *collected.entry(worker_count).or_default() += count;
+        }
+    }
+    collected.into_iter().collect()
+}
+
+fn collect_worker_count_tick_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (usize, Tick)>,
+) -> Vec<(usize, Tick)> {
+    let mut collected = BTreeMap::<usize, Tick>::new();
+    for (worker_count, ticks) in summaries {
+        if worker_count != 0 && ticks != 0 {
+            let stored = collected.entry(worker_count).or_default();
+            *stored = stored.saturating_add(ticks);
+        }
+    }
+    collected.into_iter().collect()
+}
+
+fn batch_worker_ticks_from_tick_summaries(summaries: &[(usize, Tick)]) -> Tick {
+    batch_worker_ticks_at_or_above_from_tick_summaries(summaries, 1)
+}
+
+fn batch_worker_ticks_at_or_above_from_tick_summaries(
+    summaries: &[(usize, Tick)],
+    minimum_worker_count: usize,
+) -> Tick {
+    summaries
+        .iter()
+        .filter(|(worker_count, _)| *worker_count >= minimum_worker_count)
+        .map(|(worker_count, ticks)| ticks.saturating_mul(*worker_count as Tick))
+        .fold(0, Tick::saturating_add)
 }
 
 fn collect_partition_set_summaries_from_summaries(

@@ -98,7 +98,11 @@ impl RiscvSystemRun {
     }
 
     pub fn parallel_scheduler_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
-        collect_batch_worker_count_tick_summaries(self.parallel_scheduler_batch_timeline())
+        collect_worker_count_tick_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| epoch.batch_worker_count_tick_summaries()),
+        )
     }
 
     pub fn data_cache_parallel_scheduler_batch_worker_count_tick_summaries(
@@ -112,34 +116,42 @@ impl RiscvSystemRun {
     pub fn full_system_parallel_scheduler_batch_worker_count_tick_summaries(
         &self,
     ) -> Vec<(usize, Tick)> {
-        collect_batch_worker_count_tick_summaries(
-            self.full_system_parallel_scheduler_batch_timeline(),
+        collect_worker_count_tick_summaries_from_summaries(
+            self.parallel_scheduler_batch_worker_count_tick_summaries()
+                .into_iter()
+                .chain(self.data_cache_parallel_scheduler_batch_worker_count_tick_summaries()),
         )
     }
 
     pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
-        batch_ticks_for_worker_count(self.parallel_scheduler_batch_timeline(), worker_count)
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_ticks_for_worker_count(worker_count))
+            .fold(0, Tick::saturating_add)
     }
 
     pub fn parallel_scheduler_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
-        batch_ticks_at_or_above(
-            self.parallel_scheduler_batch_timeline(),
-            minimum_worker_count,
-        )
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_ticks_at_or_above(minimum_worker_count))
+            .fold(0, Tick::saturating_add)
     }
 
     pub fn parallel_scheduler_batch_worker_ticks(&self) -> Tick {
-        batch_worker_ticks(self.parallel_scheduler_batch_timeline())
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_worker_ticks())
+            .fold(0, Tick::saturating_add)
     }
 
     pub fn parallel_scheduler_batch_worker_ticks_at_or_above(
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        batch_worker_ticks_at_or_above(
-            self.parallel_scheduler_batch_timeline(),
-            minimum_worker_count,
-        )
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_worker_ticks_at_or_above(minimum_worker_count))
+            .fold(0, Tick::saturating_add)
     }
 
     pub fn parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -200,34 +212,30 @@ impl RiscvSystemRun {
         &self,
         worker_count: usize,
     ) -> Tick {
-        batch_ticks_for_worker_count(
-            self.full_system_parallel_scheduler_batch_timeline(),
-            worker_count,
-        )
+        self.parallel_scheduler_batch_ticks_for_worker_count(worker_count)
+            + self.data_cache_parallel_scheduler_batch_ticks_for_worker_count(worker_count)
     }
 
     pub fn full_system_parallel_scheduler_batch_ticks_at_or_above(
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        batch_ticks_at_or_above(
-            self.full_system_parallel_scheduler_batch_timeline(),
-            minimum_worker_count,
-        )
+        self.parallel_scheduler_batch_ticks_at_or_above(minimum_worker_count)
+            + self.data_cache_parallel_scheduler_batch_ticks_at_or_above(minimum_worker_count)
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
-        batch_worker_ticks(self.full_system_parallel_scheduler_batch_timeline())
+        self.parallel_scheduler_batch_worker_ticks()
+            + self.data_cache_parallel_scheduler_batch_worker_ticks()
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        batch_worker_ticks_at_or_above(
-            self.full_system_parallel_scheduler_batch_timeline(),
-            minimum_worker_count,
-        )
+        self.parallel_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count)
+            + self
+                .data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count)
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -241,7 +249,11 @@ impl RiscvSystemRun {
     }
 
     pub fn parallel_scheduler_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
-        collect_batch_worker_count_summaries(self.parallel_scheduler_batches())
+        collect_worker_count_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| epoch.batch_worker_count_summaries()),
+        )
     }
 
     pub fn data_cache_parallel_scheduler_batch_worker_count_summaries(
@@ -253,11 +265,18 @@ impl RiscvSystemRun {
     pub fn full_system_parallel_scheduler_batch_worker_count_summaries(
         &self,
     ) -> Vec<(usize, usize)> {
-        collect_batch_worker_count_summaries(self.full_system_parallel_scheduler_batches())
+        collect_worker_count_summaries_from_summaries(
+            self.parallel_scheduler_batch_worker_count_summaries()
+                .into_iter()
+                .chain(self.data_cache_parallel_scheduler_batch_worker_count_summaries()),
+        )
     }
 
     pub fn parallel_scheduler_batch_count_for_worker_count(&self, worker_count: usize) -> usize {
-        batch_count_for_worker_count(self.parallel_scheduler_batches(), worker_count)
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_count_for_worker_count(worker_count))
+            .sum()
     }
 
     pub fn data_cache_parallel_scheduler_batch_count_for_worker_count(
@@ -276,7 +295,10 @@ impl RiscvSystemRun {
     }
 
     pub fn parallel_scheduler_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
-        batch_count_at_or_above(self.parallel_scheduler_batches(), minimum_worker_count)
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_count_at_or_above(minimum_worker_count))
+            .sum()
     }
 
     pub fn data_cache_parallel_scheduler_batch_count_at_or_above(
@@ -534,6 +556,31 @@ fn collect_batch_worker_count_summaries(
         }
     }
     summaries.into_iter().collect()
+}
+
+fn collect_worker_count_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (usize, usize)>,
+) -> Vec<(usize, usize)> {
+    let mut collected = BTreeMap::<usize, usize>::new();
+    for (worker_count, count) in summaries {
+        if worker_count != 0 && count != 0 {
+            *collected.entry(worker_count).or_default() += count;
+        }
+    }
+    collected.into_iter().collect()
+}
+
+fn collect_worker_count_tick_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (usize, Tick)>,
+) -> Vec<(usize, Tick)> {
+    let mut collected = BTreeMap::<usize, Tick>::new();
+    for (worker_count, ticks) in summaries {
+        if worker_count != 0 && ticks != 0 {
+            let stored = collected.entry(worker_count).or_default();
+            *stored = stored.saturating_add(ticks);
+        }
+    }
+    collected.into_iter().collect()
 }
 
 fn batch_count_at_or_above(
