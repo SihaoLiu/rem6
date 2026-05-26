@@ -20,8 +20,8 @@ pub use scheduler::{
     SchedulerSnapshot,
 };
 pub use wait_for::{
-    DeadlockDiagnostic, WaitForEdge, WaitForEdgeKind, WaitForGraph, WaitForGraphError,
-    WaitForGraphSnapshot, WaitForNode,
+    DeadlockDiagnostic, WaitForEdge, WaitForEdgeKind, WaitForEdgeKindWindow, WaitForGraph,
+    WaitForGraphError, WaitForGraphSnapshot, WaitForNode,
 };
 
 pub type Tick = u64;

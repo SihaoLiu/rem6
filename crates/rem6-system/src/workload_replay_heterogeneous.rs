@@ -9,7 +9,10 @@ use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuKernelId, GpuKernelLaunch,
     GpuWaitForMarker,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdge, WaitForEdgeKind, WaitForGraph};
+use rem6_kernel::{
+    PartitionId, PartitionedScheduler, WaitForEdge, WaitForEdgeKind, WaitForEdgeKindWindow,
+    WaitForGraph,
+};
 use rem6_workload::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadError, WorkloadGpuDevice, WorkloadMemoryRoute, WorkloadTopology,
@@ -184,34 +187,31 @@ impl WorkloadAcceleratorActivity {
 pub(crate) fn wait_for_edge_kind_windows(
     wait_for: &WaitForGraph,
 ) -> Vec<WorkloadWaitForEdgeKindWindow> {
-    wait_for_edge_kind_windows_from_edges(wait_for.edges())
+    wait_for
+        .edge_kind_windows()
+        .into_iter()
+        .map(workload_wait_for_edge_kind_window)
+        .collect()
 }
 
 pub(crate) fn wait_for_edge_kind_windows_from_edges(
     edges: impl IntoIterator<Item = WaitForEdge>,
 ) -> Vec<WorkloadWaitForEdgeKindWindow> {
-    let mut by_kind = BTreeMap::new();
-    for edge in edges {
-        let window = WorkloadWaitForEdgeKindWindow::new(
-            edge.kind(),
-            1,
-            edge.first_observed_tick(),
-            edge.last_observed_tick(),
-        );
-        by_kind
-            .entry(edge.kind())
-            .and_modify(|stored: &mut WorkloadWaitForEdgeKindWindow| {
-                let edge_count = stored.edge_count().saturating_add(1);
-                *stored = WorkloadWaitForEdgeKindWindow::new(
-                    stored.kind(),
-                    edge_count,
-                    stored.first_tick().min(window.first_tick()),
-                    stored.last_tick().max(window.last_tick()),
-                );
-            })
-            .or_insert(window);
-    }
-    by_kind.into_values().collect()
+    WaitForEdgeKindWindow::from_edges(edges)
+        .into_iter()
+        .map(workload_wait_for_edge_kind_window)
+        .collect()
+}
+
+fn workload_wait_for_edge_kind_window(
+    window: WaitForEdgeKindWindow,
+) -> WorkloadWaitForEdgeKindWindow {
+    WorkloadWaitForEdgeKindWindow::new(
+        window.kind(),
+        window.edge_count(),
+        window.first_tick(),
+        window.last_tick(),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

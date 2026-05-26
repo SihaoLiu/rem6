@@ -49,7 +49,11 @@ isolated bugs:
   contracts use dedicated manifest scopes. Direct GPU
   and accelerator DMA per-partition activity contracts now use the DMA
   timeline-derived sets and streaks, and merged full-system partition checks
-  include the same per-partition worker and dispatch activity.
+  include the same per-partition worker and dispatch activity. Wait-for
+  edge-kind observation windows are now owned by `rem6-kernel`, so every
+  subsystem can report distinct edge counts plus first and last observed ticks
+  with the same deterministic semantics before the data is converted into
+  workload summaries.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -371,8 +375,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   snapshots, including prevalidated scheduler checkpoint-bank restore so
   truncated chunks cannot partially mutate live scheduler frontiers. Wait-for
   graph tests cover checkpoint barrier nodes, barrier wait edges, repeated
-  observations, resource-scoped barrier release, and full-system preservation
-  of the barrier edge kind in wait-for summaries.
+  observations, resource-scoped barrier release, kernel-owned edge-kind
+  observation windows, and full-system preservation of the barrier edge kind in
+  wait-for summaries.
   Progress-monitor tests cover typed livelock diagnostics for
   repeated progress-free transitions, transition-kind accounting, snapshots,
   and useful-work reset of active livelock windows. Scheduler progress tests

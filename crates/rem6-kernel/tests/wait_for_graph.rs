@@ -1,4 +1,7 @@
-use rem6_kernel::{PartitionId, WaitForEdgeKind, WaitForGraph, WaitForGraphError, WaitForNode};
+use rem6_kernel::{
+    PartitionId, WaitForEdgeKind, WaitForEdgeKindWindow, WaitForGraph, WaitForGraphError,
+    WaitForNode,
+};
 
 fn component(name: &str) -> WaitForNode {
     WaitForNode::component(name).unwrap()
@@ -232,6 +235,55 @@ fn wait_for_graph_exposes_deterministic_edge_snapshot() {
     assert_eq!(snapshot.newest_observed_edge(), Some(&edges[1]));
     assert_eq!(snapshot.total_observation_count(), 3);
     assert_eq!(snapshot.longest_observed_span(), Some(4));
+}
+
+#[test]
+fn wait_for_graph_summarizes_edge_kind_observation_windows() {
+    let first_core = WaitForNode::partition(PartitionId::new(0));
+    let second_core = WaitForNode::partition(PartitionId::new(1));
+    let queue = resource("l1d0.mshr");
+    let memory = component("mem0");
+    let transaction = transaction("miss.7");
+    let mut graph = WaitForGraph::new();
+
+    graph
+        .record_wait(
+            first_core.clone(),
+            queue.clone(),
+            WaitForEdgeKind::Queue,
+            10,
+        )
+        .unwrap();
+    graph
+        .record_wait(first_core, queue.clone(), WaitForEdgeKind::Queue, 14)
+        .unwrap();
+    graph
+        .record_wait(second_core, queue.clone(), WaitForEdgeKind::Queue, 12)
+        .unwrap();
+    graph
+        .record_wait(queue.clone(), memory.clone(), WaitForEdgeKind::Resource, 7)
+        .unwrap();
+    graph
+        .record_wait(
+            memory.clone(),
+            transaction.clone(),
+            WaitForEdgeKind::Message,
+            20,
+        )
+        .unwrap();
+    graph
+        .record_wait(memory, transaction, WaitForEdgeKind::Message, 23)
+        .unwrap();
+
+    let expected = vec![
+        WaitForEdgeKindWindow::new(WaitForEdgeKind::Resource, 1, 7, 7),
+        WaitForEdgeKindWindow::new(WaitForEdgeKind::Message, 1, 20, 23),
+        WaitForEdgeKindWindow::new(WaitForEdgeKind::Queue, 2, 10, 14),
+    ];
+    let snapshot = graph.snapshot();
+
+    assert_eq!(snapshot.edge_kind_windows(), expected);
+    assert_eq!(graph.edge_kind_windows(), expected);
 }
 
 #[test]
