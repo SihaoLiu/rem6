@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rem6_cpu::{RiscvClusterParallelBatchTimelineRecord, RiscvClusterSchedulerEpoch};
 use rem6_kernel::{ParallelEpochBatchRecord, PartitionId, Tick};
 
 use crate::RiscvSystemRun;
@@ -46,6 +47,19 @@ impl RiscvSystemParallelBatchTimelineRecord {
         }
     }
 
+    pub fn from_cluster(
+        scope: RiscvSystemParallelBatchScope,
+        record: &RiscvClusterParallelBatchTimelineRecord,
+    ) -> Self {
+        Self {
+            scope,
+            start_tick: record.start_tick(),
+            horizon: record.horizon(),
+            worker_count: record.worker_count(),
+            partitions: record.partitions().to_vec(),
+        }
+    }
+
     pub const fn scope(&self) -> RiscvSystemParallelBatchScope {
         self.scope
     }
@@ -73,10 +87,19 @@ impl RiscvSystemParallelBatchTimelineRecord {
 
 impl RiscvSystemRun {
     pub fn parallel_scheduler_batch_timeline(&self) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
-        collect_batch_timeline(
-            RiscvSystemParallelBatchScope::Scheduler,
-            self.parallel_scheduler_batches(),
-        )
+        let mut timeline = self
+            .parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(RiscvClusterSchedulerEpoch::batch_timeline)
+            .map(|record| {
+                RiscvSystemParallelBatchTimelineRecord::from_cluster(
+                    RiscvSystemParallelBatchScope::Scheduler,
+                    &record,
+                )
+            })
+            .collect::<Vec<_>>();
+        sort_batch_timeline(&mut timeline);
+        timeline
     }
 
     pub fn data_cache_parallel_scheduler_batch_timeline(

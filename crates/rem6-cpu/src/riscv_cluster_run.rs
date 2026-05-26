@@ -171,6 +171,45 @@ pub struct RiscvClusterSchedulerEpoch {
     partition_activities: BTreeMap<PartitionId, ParallelPartitionActivity>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvClusterParallelBatchTimelineRecord {
+    start_tick: Tick,
+    horizon: Tick,
+    partitions: Vec<PartitionId>,
+    worker_count: usize,
+}
+
+impl RiscvClusterParallelBatchTimelineRecord {
+    pub fn new(batch: &ParallelEpochBatchRecord) -> Self {
+        Self {
+            start_tick: batch_start_tick(batch),
+            horizon: batch.horizon(),
+            partitions: batch.partition_set(),
+            worker_count: batch.worker_count(),
+        }
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn horizon(&self) -> Tick {
+        self.horizon
+    }
+
+    pub const fn duration_ticks(&self) -> Tick {
+        self.horizon.saturating_sub(self.start_tick)
+    }
+
+    pub fn partitions(&self) -> &[PartitionId] {
+        &self.partitions
+    }
+
+    pub const fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+}
+
 impl RiscvClusterSchedulerEpoch {
     pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
         let profile = recorded.profile();
@@ -277,6 +316,10 @@ impl RiscvClusterSchedulerEpoch {
         &self.batches
     }
 
+    pub fn batch_timeline(&self) -> Vec<RiscvClusterParallelBatchTimelineRecord> {
+        collect_parallel_batch_timeline(self.batches.iter())
+    }
+
     pub const fn profile(&self) -> ParallelRunProfile {
         self.profile
     }
@@ -358,6 +401,10 @@ impl RiscvClusterSchedulerEpoch {
             &self.batch_worker_count_ticks,
             minimum_worker_count,
         )
+    }
+
+    pub fn longest_batch_tick_streak_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        longest_batch_tick_streak_at_or_above(self.batch_timeline(), minimum_worker_count)
     }
 
     pub fn batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
@@ -588,6 +635,16 @@ impl RiscvClusterRun {
             .collect()
     }
 
+    pub fn parallel_scheduler_batch_timeline(
+        &self,
+    ) -> Vec<RiscvClusterParallelBatchTimelineRecord> {
+        collect_parallel_batch_timeline(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| epoch.batches().iter()),
+        )
+    }
+
     pub fn parallel_scheduler_progress_transition_count(&self) -> usize {
         self.parallel_scheduler_epochs()
             .into_iter()
@@ -679,6 +736,16 @@ impl RiscvClusterRun {
             .into_iter()
             .map(|epoch| epoch.batch_worker_ticks_at_or_above(minimum_worker_count))
             .fold(0, Tick::saturating_add)
+    }
+
+    pub fn parallel_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        longest_batch_tick_streak_at_or_above(
+            self.parallel_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
     }
 
     pub fn parallel_scheduler_batch_partition_set_summaries(
@@ -910,6 +977,70 @@ fn collect_worker_count_tick_summaries_from_summaries(
         }
     }
     collected.into_iter().collect()
+}
+
+fn collect_parallel_batch_timeline<'a, I>(
+    batches: I,
+) -> Vec<RiscvClusterParallelBatchTimelineRecord>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut timeline = batches
+        .into_iter()
+        .map(RiscvClusterParallelBatchTimelineRecord::new)
+        .collect::<Vec<_>>();
+    timeline.sort_by_key(|record| {
+        (
+            record.start_tick(),
+            record.horizon(),
+            record.partitions().to_vec(),
+        )
+    });
+    timeline
+}
+
+fn longest_batch_tick_streak_at_or_above(
+    records: impl IntoIterator<Item = RiscvClusterParallelBatchTimelineRecord>,
+    minimum_worker_count: usize,
+) -> Tick {
+    let mut longest = 0;
+    let mut current_start = None;
+    let mut current_end = 0;
+    for record in records {
+        if record.worker_count() < minimum_worker_count || record.duration_ticks() == 0 {
+            continue;
+        }
+        let start_tick = record.start_tick();
+        let horizon = record.horizon();
+        match current_start {
+            Some(streak_start) if start_tick <= current_end => {
+                current_end = current_end.max(horizon);
+                longest = longest.max(current_end.saturating_sub(streak_start));
+            }
+            Some(streak_start) => {
+                longest = longest.max(current_end.saturating_sub(streak_start));
+                current_start = Some(start_tick);
+                current_end = horizon;
+            }
+            None => {
+                current_start = Some(start_tick);
+                current_end = horizon;
+            }
+        }
+    }
+    if let Some(streak_start) = current_start {
+        longest = longest.max(current_end.saturating_sub(streak_start));
+    }
+    longest
+}
+
+fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch
+        .workers()
+        .iter()
+        .map(|worker| worker.start_tick())
+        .min()
+        .unwrap_or_else(|| batch.horizon())
 }
 
 fn batch_worker_ticks_from_tick_summaries(summaries: &[(usize, Tick)]) -> Tick {

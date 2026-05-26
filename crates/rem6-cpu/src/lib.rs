@@ -94,8 +94,8 @@ pub use multiperspective_perceptron::{
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{RiscvCluster, RiscvClusterError};
 pub use riscv_cluster_run::{
-    RiscvClusterDriveEvent, RiscvClusterRun, RiscvClusterSchedulerEpoch, RiscvClusterStopReason,
-    RiscvClusterTurn,
+    RiscvClusterDriveEvent, RiscvClusterParallelBatchTimelineRecord, RiscvClusterRun,
+    RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,
 };
 pub use riscv_data_access::{
     RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
