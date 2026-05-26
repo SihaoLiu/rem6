@@ -262,6 +262,42 @@ pub struct VirtioSplitQueue {
     event_index: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioSplitQueueSnapshot {
+    queue_size: u16,
+    descriptor_table: Address,
+    available_ring: Address,
+    used_ring: Address,
+    last_available_index: u16,
+    event_index: bool,
+}
+
+impl VirtioSplitQueueSnapshot {
+    pub const fn queue_size(&self) -> u16 {
+        self.queue_size
+    }
+
+    pub const fn descriptor_table(&self) -> Address {
+        self.descriptor_table
+    }
+
+    pub const fn available_ring(&self) -> Address {
+        self.available_ring
+    }
+
+    pub const fn used_ring(&self) -> Address {
+        self.used_ring
+    }
+
+    pub const fn last_available_index(&self) -> u16 {
+        self.last_available_index
+    }
+
+    pub const fn event_index_enabled(&self) -> bool {
+        self.event_index
+    }
+}
+
 impl VirtioSplitQueue {
     pub fn new(
         queue_size: u16,
@@ -291,6 +327,32 @@ impl VirtioSplitQueue {
         self
     }
 
+    pub const fn snapshot(&self) -> VirtioSplitQueueSnapshot {
+        VirtioSplitQueueSnapshot {
+            queue_size: self.queue_size,
+            descriptor_table: self.descriptor_table,
+            available_ring: self.available_ring,
+            used_ring: self.used_ring,
+            last_available_index: self.last_available_index,
+            event_index: self.event_index,
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &VirtioSplitQueueSnapshot) -> Result<(), VirtioError> {
+        if self.queue_size != snapshot.queue_size
+            || self.descriptor_table != snapshot.descriptor_table
+            || self.available_ring != snapshot.available_ring
+            || self.used_ring != snapshot.used_ring
+        {
+            return Err(VirtioError::PciTransportRuntimeConfig {
+                message: "VirtIO split queue snapshot shape mismatch".to_string(),
+            });
+        }
+        self.last_available_index = snapshot.last_available_index;
+        self.event_index = snapshot.event_index;
+        Ok(())
+    }
+
     pub const fn queue_size(&self) -> u16 {
         self.queue_size
     }
@@ -309,6 +371,10 @@ impl VirtioSplitQueue {
 
     pub const fn last_available_index(&self) -> u16 {
         self.last_available_index
+    }
+
+    pub const fn event_index_enabled(&self) -> bool {
+        self.event_index
     }
 
     pub fn consume_available_block(

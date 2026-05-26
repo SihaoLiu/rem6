@@ -499,6 +499,89 @@ fn virtio_split_queue_uses_event_index_for_isr_suppression() {
 }
 
 #[test]
+fn virtio_split_queue_restores_checkpointed_cursor_and_event_index() {
+    let mut store = guest_store();
+    write_guest_read_queue(&mut store, 0, 1);
+    let mut source_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap()
+    .with_event_index(true);
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+        let decoded = source_queue
+            .consume_available_block(&mut guest, queue(2))
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(
+            decoded.request().kind(),
+            VirtioBlockRequestKind::Read { bytes } if *bytes == VIRTIO_BLOCK_SECTOR_SIZE
+        ));
+    }
+    let snapshot = source_queue.snapshot();
+    assert_eq!(snapshot.last_available_index(), 1);
+    assert!(snapshot.event_index_enabled());
+
+    let mut restored_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    restored_queue.restore(&snapshot).unwrap();
+
+    assert_eq!(restored_queue.last_available_index(), 1);
+    assert!(restored_queue.event_index_enabled());
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(19));
+        assert!(restored_queue
+            .consume_available_block(&mut guest, queue(2))
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[test]
+fn virtio_split_queue_rejects_snapshot_shape_mismatch_without_mutation() {
+    let source_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        3,
+    )
+    .unwrap()
+    .with_event_index(true);
+    let snapshot = source_queue.snapshot();
+    let mut target_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1900),
+        7,
+    )
+    .unwrap();
+
+    let error = target_queue.restore(&snapshot).unwrap_err();
+
+    match error {
+        rem6_virtio::VirtioError::PciTransportRuntimeConfig { message } => {
+            assert!(message.contains("snapshot shape mismatch"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(target_queue.last_available_index(), 7);
+    assert!(!target_queue.event_index_enabled());
+}
+
+#[test]
 fn virtio_split_queue_posts_serial_intx_after_completion_writeback() {
     let cpu = PartitionId::new(0);
     let pci = PartitionId::new(1);
