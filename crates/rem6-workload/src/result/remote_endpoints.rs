@@ -57,6 +57,56 @@ impl WorkloadParallelExecutionSummary {
             .len()
     }
 
+    pub fn gpu_dma_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_parallel_remote_source_partitions(
+            self.gpu_dma_scheduler_remote_flow_evidence(),
+            self.gpu_dma_scheduler_remote_sends().iter().copied(),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_remote_source_partition_count(&self) -> usize {
+        self.gpu_dma_scheduler_remote_source_partitions().len()
+    }
+
+    pub fn gpu_dma_scheduler_remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_parallel_remote_target_partitions(
+            self.gpu_dma_scheduler_remote_flow_evidence(),
+            self.gpu_dma_scheduler_remote_sends().iter().copied(),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_remote_target_partition_count(&self) -> usize {
+        self.gpu_dma_scheduler_remote_target_partitions().len()
+    }
+
+    pub fn accelerator_dma_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_parallel_remote_source_partitions(
+            self.accelerator_dma_scheduler_remote_flow_evidence(),
+            self.accelerator_dma_scheduler_remote_sends()
+                .iter()
+                .copied(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_remote_source_partition_count(&self) -> usize {
+        self.accelerator_dma_scheduler_remote_source_partitions()
+            .len()
+    }
+
+    pub fn accelerator_dma_scheduler_remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_parallel_remote_target_partitions(
+            self.accelerator_dma_scheduler_remote_flow_evidence(),
+            self.accelerator_dma_scheduler_remote_sends()
+                .iter()
+                .copied(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_remote_target_partition_count(&self) -> usize {
+        self.accelerator_dma_scheduler_remote_target_partitions()
+            .len()
+    }
+
     pub fn full_system_parallel_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
         collect_parallel_remote_source_partitions(
             self.full_system_parallel_scheduler_remote_flows(),

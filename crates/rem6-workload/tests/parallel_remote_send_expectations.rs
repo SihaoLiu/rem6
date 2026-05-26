@@ -133,6 +133,58 @@ fn workload_manifest_records_parallel_remote_send_expectations() {
 }
 
 #[test]
+fn workload_replay_plan_validates_direct_dma_scheduler_remote_sends() {
+    let gpu_send = expected_send(
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler,
+        6,
+        9,
+        3,
+        11,
+        0,
+    );
+    let accelerator_send = expected_send(
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler,
+        7,
+        10,
+        2,
+        10,
+        0,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(accelerator_send)
+        .unwrap()
+        .add_expected_parallel_remote_send(gpu_send)
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(6),
+            PartitionId::new(9),
+            3,
+            11,
+            0,
+        )])
+        .with_accelerator_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(7),
+            PartitionId::new(10),
+            2,
+            10,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler.as_str(),
+        "gpu-dma-scheduler",
+    );
+    assert_eq!(
+        plan.expected_parallel_remote_sends(),
+        &[gpu_send, accelerator_send],
+    );
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_remote_send_expectations() {
     let base = rem6_workload::WorkloadManifest::builder(id("identity-remote-send"), boot_image())
         .add_resource(kernel_resource())

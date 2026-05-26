@@ -205,6 +205,53 @@ fn workload_replay_plan_validates_parallel_remote_endpoint_expectations() {
 }
 
 #[test]
+fn workload_replay_plan_validates_direct_dma_scheduler_remote_endpoint_expectations() {
+    let plan = WorkloadReplayPlan::from_manifest(
+        &rem6_workload::WorkloadManifest::builder(
+            id("validate-dma-remote-endpoints"),
+            boot_image(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_expected_parallel_remote_endpoints(endpoint_expectation(
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler,
+            &[6],
+            &[9],
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_endpoints(endpoint_expectation(
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler,
+            &[7],
+            &[10],
+        ))
+        .unwrap()
+        .build()
+        .unwrap(),
+    )
+    .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(6),
+            PartitionId::new(9),
+            3,
+            11,
+            0,
+        )])
+        .with_accelerator_dma_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(7),
+            PartitionId::new(10),
+            1,
+            10,
+            10,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_missing_or_mismatched_parallel_remote_endpoints() {
     let plan = WorkloadReplayPlan::from_manifest(
         &rem6_workload::WorkloadManifest::builder(

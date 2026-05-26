@@ -38,6 +38,10 @@ impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelBatchPartitionSco
         match scope {
             WorkloadParallelRemoteFlowScope::Scheduler => Self::Scheduler,
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => Self::DataCacheScheduler,
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => Self::GpuDmaScheduler,
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                Self::AcceleratorDmaScheduler
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
         }
     }

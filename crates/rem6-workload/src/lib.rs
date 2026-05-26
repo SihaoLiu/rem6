@@ -20,6 +20,7 @@ mod parallel_batch_partition_expectation;
 mod parallel_batch_timeline_expectation;
 mod parallel_batch_worker_count_expectation;
 mod parallel_expectation;
+mod parallel_progress_transition_expectation;
 mod qos;
 mod replay_verify;
 mod resource_payload;
@@ -69,17 +70,19 @@ pub use parallel_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedParallelBatchActivity,
     WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
-    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
-    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
-    WorkloadParallelProgressTransitionExpectationError,
-    WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
-    WorkloadParallelSchedulerScope, WorkloadResourceActivityScope,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadResourceActivityScope,
+};
+pub use parallel_progress_transition_expectation::{
+    WorkloadExpectedParallelProgressTransition, WorkloadParallelProgressTransitionExpectationError,
+    WorkloadParallelProgressTransitionExpectationFailure,
 };
 pub use qos::{
     WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,

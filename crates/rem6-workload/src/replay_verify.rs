@@ -16,9 +16,11 @@ use crate::{
     WorkloadReplayPlan, WorkloadResult,
 };
 
-const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 3] = [
+const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 5] = [
     WorkloadParallelRemoteFlowScope::Scheduler,
     WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+    WorkloadParallelRemoteFlowScope::GpuDmaScheduler,
+    WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler,
     WorkloadParallelRemoteFlowScope::FullSystem,
 ];
 
@@ -230,6 +232,8 @@ fn actual_parallel_progress_transitions_for_scope(
         WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
             .data_cache_parallel_scheduler_progress_transitions()
             .to_vec(),
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler
+        | WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => Vec::new(),
         WorkloadParallelRemoteFlowScope::FullSystem => summary.full_system_progress_transitions(),
     }
 }
@@ -267,6 +271,12 @@ fn actual_parallel_remote_sends_for_scope(
         WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
             .data_cache_parallel_scheduler_remote_sends()
             .to_vec(),
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+            summary.gpu_dma_scheduler_remote_sends().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+            summary.accelerator_dma_scheduler_remote_sends().to_vec()
+        }
         WorkloadParallelRemoteFlowScope::FullSystem => {
             summary.full_system_parallel_scheduler_remote_sends()
         }
@@ -355,6 +365,12 @@ fn actual_parallel_remote_flows_for_scope(
         }
         WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
             summary.data_cache_parallel_scheduler_remote_flow_evidence()
+        }
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+            summary.gpu_dma_scheduler_remote_flow_evidence()
+        }
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+            summary.accelerator_dma_scheduler_remote_flow_evidence()
         }
         WorkloadParallelRemoteFlowScope::FullSystem => {
             summary.full_system_parallel_scheduler_remote_flows()
@@ -517,6 +533,12 @@ fn explicit_parallel_remote_flows_for_scope(
         WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
             .data_cache_parallel_scheduler_remote_flows()
             .to_vec(),
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+            summary.gpu_dma_scheduler_remote_flows().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+            summary.accelerator_dma_scheduler_remote_flows().to_vec()
+        }
         WorkloadParallelRemoteFlowScope::FullSystem => merge_explicit_parallel_remote_flows(
             summary
                 .parallel_scheduler_remote_flows()
@@ -525,6 +547,13 @@ fn explicit_parallel_remote_flows_for_scope(
                 .chain(
                     summary
                         .data_cache_parallel_scheduler_remote_flows()
+                        .iter()
+                        .copied(),
+                )
+                .chain(summary.gpu_dma_scheduler_remote_flows().iter().copied())
+                .chain(
+                    summary
+                        .accelerator_dma_scheduler_remote_flows()
                         .iter()
                         .copied(),
                 ),

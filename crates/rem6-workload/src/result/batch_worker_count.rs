@@ -53,6 +53,12 @@ impl WorkloadParallelExecutionSummary {
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
                 self.data_cache_parallel_scheduler_batch_count_for_worker_count(worker_count)
             }
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+                self.gpu_dma_scheduler_batch_count_for_worker_count(worker_count)
+            }
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                self.accelerator_dma_scheduler_batch_count_for_worker_count(worker_count)
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 self.full_system_parallel_scheduler_batch_count_for_worker_count(worker_count)
             }

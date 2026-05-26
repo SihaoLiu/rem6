@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 
 use rem6_kernel::{
-    LivelockTransitionKind, ParallelPartitionActivity, ParallelProgressTransitionRecord,
-    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
-    WaitForNode,
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    PartitionFrontier, PartitionId,
 };
 
 use crate::{
@@ -16,87 +15,9 @@ use crate::{
 pub enum WorkloadParallelRemoteFlowScope {
     Scheduler,
     DataCacheScheduler,
+    GpuDmaScheduler,
+    AcceleratorDmaScheduler,
     FullSystem,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum WorkloadParallelProgressTransitionExpectationFailure {
-    Duplicate,
-    MissingSummary,
-    MissingRecord,
-    UnexpectedRecord,
-}
-
-impl WorkloadParallelProgressTransitionExpectationFailure {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Duplicate => "duplicate expected",
-            Self::MissingSummary => "missing summary for expected",
-            Self::MissingRecord => "missing expected",
-            Self::UnexpectedRecord => "unexpected",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadParallelProgressTransitionExpectationError {
-    failure: WorkloadParallelProgressTransitionExpectationFailure,
-    scope: WorkloadParallelRemoteFlowScope,
-    partition: PartitionId,
-    subject: WaitForNode,
-    kind: LivelockTransitionKind,
-    tick: u64,
-    order: u64,
-}
-
-impl WorkloadParallelProgressTransitionExpectationError {
-    pub const fn new(
-        failure: WorkloadParallelProgressTransitionExpectationFailure,
-        scope: WorkloadParallelRemoteFlowScope,
-        partition: PartitionId,
-        subject: WaitForNode,
-        kind: LivelockTransitionKind,
-        tick: u64,
-        order: u64,
-    ) -> Self {
-        Self {
-            failure,
-            scope,
-            partition,
-            subject,
-            kind,
-            tick,
-            order,
-        }
-    }
-
-    pub const fn failure(&self) -> WorkloadParallelProgressTransitionExpectationFailure {
-        self.failure
-    }
-
-    pub const fn scope(&self) -> WorkloadParallelRemoteFlowScope {
-        self.scope
-    }
-
-    pub const fn partition(&self) -> PartitionId {
-        self.partition
-    }
-
-    pub const fn subject(&self) -> &WaitForNode {
-        &self.subject
-    }
-
-    pub const fn kind(&self) -> LivelockTransitionKind {
-        self.kind
-    }
-
-    pub const fn tick(&self) -> u64 {
-        self.tick
-    }
-
-    pub const fn order(&self) -> u64 {
-        self.order
-    }
 }
 
 impl WorkloadParallelRemoteFlowScope {
@@ -104,6 +25,8 @@ impl WorkloadParallelRemoteFlowScope {
         match self {
             Self::Scheduler => "scheduler",
             Self::DataCacheScheduler => "data-cache-scheduler",
+            Self::GpuDmaScheduler => "gpu-dma-scheduler",
+            Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
             Self::FullSystem => "full-system",
         }
     }
@@ -112,7 +35,9 @@ impl WorkloadParallelRemoteFlowScope {
         match self {
             Self::Scheduler => 0,
             Self::DataCacheScheduler => 1,
-            Self::FullSystem => 2,
+            Self::GpuDmaScheduler => 2,
+            Self::AcceleratorDmaScheduler => 3,
+            Self::FullSystem => 4,
         }
     }
 }
@@ -153,6 +78,10 @@ impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelSchedulerScope {
         match scope {
             WorkloadParallelRemoteFlowScope::Scheduler => Self::Scheduler,
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => Self::DataCacheScheduler,
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => Self::GpuDmaScheduler,
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                Self::AcceleratorDmaScheduler
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
         }
     }
@@ -673,6 +602,12 @@ impl WorkloadExpectedParallelRemoteFlow {
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_remote_flow_count(self.source, self.target)
             }
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_remote_flow_count(self.source, self.target)
+            }
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_remote_flow_count(self.source, self.target)
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_remote_flow_count(self.source, self.target)
             }
@@ -755,6 +690,12 @@ impl WorkloadExpectedParallelRemoteEndpoints {
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_remote_source_partitions()
             }
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_remote_source_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_remote_source_partitions()
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_remote_source_partitions()
             }
@@ -771,6 +712,12 @@ impl WorkloadExpectedParallelRemoteEndpoints {
             }
             WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_remote_target_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_remote_target_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_remote_target_partitions()
             }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_remote_target_partitions()
@@ -960,128 +907,22 @@ impl WorkloadExpectedParallelRemoteSend {
                     .copied(),
                 self,
             ),
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => find_parallel_remote_send(
+                summary.gpu_dma_scheduler_remote_sends().iter().copied(),
+                self,
+            ),
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => find_parallel_remote_send(
+                summary
+                    .accelerator_dma_scheduler_remote_sends()
+                    .iter()
+                    .copied(),
+                self,
+            ),
             WorkloadParallelRemoteFlowScope::FullSystem => find_parallel_remote_send(
                 summary.full_system_parallel_scheduler_remote_sends(),
                 self,
             ),
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct WorkloadExpectedParallelProgressTransition {
-    scope: WorkloadParallelRemoteFlowScope,
-    partition: PartitionId,
-    subject: WaitForNode,
-    kind: LivelockTransitionKind,
-    tick: u64,
-    order: u64,
-}
-
-impl WorkloadExpectedParallelProgressTransition {
-    pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
-        partition: PartitionId,
-        subject: WaitForNode,
-        kind: LivelockTransitionKind,
-        tick: u64,
-        order: u64,
-    ) -> Self {
-        Self {
-            scope,
-            partition,
-            subject,
-            kind,
-            tick,
-            order,
-        }
-    }
-
-    pub const fn scope(&self) -> WorkloadParallelRemoteFlowScope {
-        self.scope
-    }
-
-    pub const fn partition(&self) -> PartitionId {
-        self.partition
-    }
-
-    pub const fn subject(&self) -> &WaitForNode {
-        &self.subject
-    }
-
-    pub const fn kind(&self) -> LivelockTransitionKind {
-        self.kind
-    }
-
-    pub const fn tick(&self) -> u64 {
-        self.tick
-    }
-
-    pub const fn order(&self) -> u64 {
-        self.order
-    }
-
-    pub(crate) fn sort_key(&self) -> (u8, u32, WaitForNode, LivelockTransitionKind, u64, u64) {
-        (
-            self.scope.sort_rank(),
-            self.partition.index(),
-            self.subject.clone(),
-            self.kind,
-            self.tick,
-            self.order,
-        )
-    }
-
-    pub(crate) fn matches_record(&self, transition: &ParallelProgressTransitionRecord) -> bool {
-        transition.partition() == self.partition
-            && transition.subject() == &self.subject
-            && transition.kind() == self.kind
-            && transition.tick() == self.tick
-            && transition.order() == self.order
-    }
-
-    pub(crate) fn actual_record(
-        &self,
-        summary: &WorkloadParallelExecutionSummary,
-    ) -> Option<ParallelProgressTransitionRecord> {
-        match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => find_parallel_progress_transition(
-                summary
-                    .parallel_scheduler_progress_transitions()
-                    .iter()
-                    .cloned(),
-                self,
-            ),
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
-                find_parallel_progress_transition(
-                    summary
-                        .data_cache_parallel_scheduler_progress_transitions()
-                        .iter()
-                        .cloned(),
-                    self,
-                )
-            }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
-                find_parallel_progress_transition(summary.full_system_progress_transitions(), self)
-            }
-        }
-    }
-
-    pub(crate) fn to_error(
-        &self,
-        failure: WorkloadParallelProgressTransitionExpectationFailure,
-    ) -> WorkloadError {
-        WorkloadError::ParallelProgressTransitionExpectation(
-            WorkloadParallelProgressTransitionExpectationError::new(
-                failure,
-                self.scope,
-                self.partition,
-                self.subject.clone(),
-                self.kind,
-                self.tick,
-                self.order,
-            ),
-        )
     }
 }
 
@@ -1244,6 +1085,16 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
                 self.source,
                 self.target,
             ),
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => find_parallel_remote_flow(
+                summary.gpu_dma_scheduler_remote_flow_evidence(),
+                self.source,
+                self.target,
+            ),
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => find_parallel_remote_flow(
+                summary.accelerator_dma_scheduler_remote_flow_evidence(),
+                self.source,
+                self.target,
+            ),
             WorkloadParallelRemoteFlowScope::FullSystem => find_parallel_remote_flow(
                 summary.full_system_parallel_scheduler_remote_flows(),
                 self.source,
@@ -1309,18 +1160,6 @@ where
     sends
         .into_iter()
         .find(|send| expected.matches_record(*send))
-}
-
-fn find_parallel_progress_transition<I>(
-    transitions: I,
-    expected: &WorkloadExpectedParallelProgressTransition,
-) -> Option<ParallelProgressTransitionRecord>
-where
-    I: IntoIterator<Item = ParallelProgressTransitionRecord>,
-{
-    transitions
-        .into_iter()
-        .find(|transition| expected.matches_record(transition))
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

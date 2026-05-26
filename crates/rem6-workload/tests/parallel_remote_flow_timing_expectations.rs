@@ -261,6 +261,65 @@ fn workload_replay_plan_derives_parallel_remote_flow_timing_from_remote_sends() 
 }
 
 #[test]
+fn workload_replay_plan_validates_direct_dma_scheduler_remote_flow_timing() {
+    let gpu_timing = expected_timing_with_delay_bounds(
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler,
+        6,
+        9,
+        2,
+        11,
+        13,
+        (8, 8),
+    );
+    let accelerator_timing = expected_timing_with_delay_bounds(
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler,
+        7,
+        10,
+        1,
+        10,
+        10,
+        (8, 8),
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow_timing(accelerator_timing)
+        .unwrap()
+        .add_expected_parallel_remote_flow_timing(gpu_timing)
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(6),
+                PartitionId::new(9),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(6),
+                PartitionId::new(9),
+                5,
+                13,
+                1,
+            ),
+        ])
+        .with_accelerator_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(7),
+            PartitionId::new(10),
+            2,
+            10,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.expected_parallel_remote_flow_timings(),
+        &[gpu_timing, accelerator_timing],
+    );
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_prefers_remote_send_delay_bounds_over_unbounded_aggregates() {
     let plan = replay_plan()
         .add_expected_parallel_remote_flow_timing(expected_timing_with_delay_bounds(

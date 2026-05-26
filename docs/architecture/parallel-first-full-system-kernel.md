@@ -468,8 +468,12 @@ full-system per-partition worker and dispatch activity, so a manifest can name
 the exact partition that participated in heterogeneous memory movement instead
 of only checking an aggregate active-partition count. Batch-timeline
 expectations expose dedicated GPU DMA scheduler and accelerator DMA scheduler
-scopes, keeping exact DMA occupancy checks separate from remote-flow contracts
-while still allowing full-system aggregate checks. Batch-worker, worker-use,
+scopes, keeping exact DMA occupancy checks directly attributable while still
+allowing full-system aggregate checks. Remote-send, remote-flow timing,
+remote-endpoint, delay-bound, and traffic-consistency expectations also expose
+the same direct DMA scheduler scopes, so manifests can constrain heterogeneous
+memory-movement traffic without accepting only a merged full-system view.
+Batch-worker, worker-use,
 worker-activity, batch-activity, and batch-partition expectations use the same
 split for exact worker-count buckets, max-worker use, total-worker activity,
 multi-worker batch activity, duration-weighted tick buckets, minimum tick
@@ -515,8 +519,11 @@ conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
 They may also require individual remote-send records, exact progress-free
 transition records with kind, partition, and subject result counts, remote-flow
-delivery windows, and optional min/max delay bounds, turning cross-partition
-timing and livelock evidence into replayable data instead of aggregate counters.
+delivery windows, optional min/max delay bounds, remote endpoints, and
+traffic-consistency checks for CPU scheduler, data-cache scheduler, GPU DMA
+scheduler, accelerator DMA scheduler, or merged full-system scopes, turning
+cross-partition timing and livelock evidence into replayable data instead of
+aggregate counters.
 Result summaries expose livelock diagnostic subject queries, transition-kind
 summaries with exact kind tick windows, subject summaries, kind-filtered records, and tick windows across the
 same scopes so replay failures and post-run analysis can point to the stalled
