@@ -860,6 +860,11 @@ impl SystemActionExecutor {
                 })
             }
             HostAction::Checkpoint { label } => {
+                if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+                    scheduler_checkpoints
+                        .validate_quiescent_capture()
+                        .map_err(SystemError::SchedulerCheckpoint)?;
+                }
                 if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
                     accelerator_checkpoints
                         .capture_all_into(&mut self.checkpoints)

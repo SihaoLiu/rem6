@@ -5,12 +5,13 @@ use rem6_checkpoint::{
 };
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_isa_riscv::Register;
-use rem6_kernel::PartitionId;
+use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, MemoryStoreCheckpointBank,
     MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
+    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
     SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
@@ -288,5 +289,67 @@ fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_liv
             .line_data(target, Address::new(0x1000))
             .unwrap(),
         line_data(0xaa)
+    );
+}
+
+#[test]
+fn system_action_executor_preflights_scheduler_quiescence_before_checkpoint_writes() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(16);
+    let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
+    let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
+    let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    core.redirect_pc(Address::new(0x8040));
+    let riscv_bank = RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+        cpu_component.clone(),
+        core.clone(),
+    )])
+    .unwrap();
+    let scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
+    ));
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(PartitionId::new(0), 7, |_| {})
+        .unwrap();
+    let scheduler_bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+        scheduler_component.clone(),
+        Arc::clone(&scheduler),
+    )])
+    .unwrap();
+    let mut executor =
+        SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+    executor.attach_riscv_checkpoint_bank(riscv_bank).unwrap();
+    executor
+        .attach_scheduler_checkpoint_bank(scheduler_bank)
+        .unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        123,
+        host,
+        host,
+        GuestEventId::new(15),
+        source,
+        HostAction::Checkpoint {
+            label: "scheduler-not-ready".to_string(),
+        },
+    );
+
+    let error = executor.apply(&checkpoint).unwrap_err();
+
+    let SystemError::SchedulerCheckpoint(SchedulerCheckpointError::NonQuiescent { report }) = error
+    else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert_eq!(report.component(), &scheduler_component);
+    assert_eq!(report.pending_event_count(), 1);
+    assert_eq!(report.first_pending_tick(), Some(7));
+    assert_eq!(executor.checkpoints().chunk(&cpu_component, "pc"), None);
+    assert_eq!(
+        executor
+            .checkpoints()
+            .chunk(&scheduler_component, "scheduler"),
+        None
     );
 }

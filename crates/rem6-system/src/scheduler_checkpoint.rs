@@ -397,7 +397,7 @@ impl SchedulerCheckpointBank {
         Ok(())
     }
 
-    fn validate_quiescent_capture(&self) -> Result<(), SchedulerCheckpointError> {
+    pub fn validate_quiescent_capture(&self) -> Result<(), SchedulerCheckpointError> {
         for report in self.quiescence_reports() {
             if !report.is_quiescent() {
                 return Err(SchedulerCheckpointError::NonQuiescent { report });
