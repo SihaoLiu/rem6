@@ -1161,6 +1161,12 @@ pub enum WorkloadError {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
     },
+    InvalidExpectedFabricLaneActivityWindow {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
     MissingFabricLaneActivitySummary {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
@@ -1168,6 +1174,9 @@ pub enum WorkloadError {
         minimum_byte_count: u64,
         minimum_occupied_ticks: Tick,
         minimum_queue_delay_ticks: Tick,
+        minimum_max_queue_delay_ticks: Tick,
+        required_first_tick: Option<Tick>,
+        required_last_tick: Option<Tick>,
     },
     ExpectedFabricLaneActivityBelowMinimum {
         link: FabricLinkId,
@@ -1180,6 +1189,12 @@ pub enum WorkloadError {
         actual_occupied_ticks: Tick,
         minimum_queue_delay_ticks: Tick,
         actual_queue_delay_ticks: Tick,
+        minimum_max_queue_delay_ticks: Tick,
+        actual_max_queue_delay_ticks: Tick,
+        required_first_tick: Option<Tick>,
+        actual_first_tick: Tick,
+        required_last_tick: Option<Tick>,
+        actual_last_tick: Tick,
     },
     ZeroExpectedFabricLinkActivity {
         link: FabricLinkId,

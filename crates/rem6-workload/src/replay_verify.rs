@@ -1100,6 +1100,12 @@ pub(crate) fn verify_expected_fabric_lane_activity(
                 actual_occupied_ticks: actual.occupied_ticks(),
                 minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
                 actual_queue_delay_ticks: actual.queue_delay_ticks(),
+                minimum_max_queue_delay_ticks: expected.minimum_max_queue_delay_ticks(),
+                actual_max_queue_delay_ticks: actual.max_queue_delay_ticks(),
+                required_first_tick: expected.required_first_tick(),
+                actual_first_tick: actual.first_tick(),
+                required_last_tick: expected.required_last_tick(),
+                actual_last_tick: actual.last_tick(),
             });
         }
     }
@@ -1116,6 +1122,9 @@ fn missing_fabric_lane_activity_summary(
         minimum_byte_count: expected.minimum_byte_count(),
         minimum_occupied_ticks: expected.minimum_occupied_ticks(),
         minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
+        minimum_max_queue_delay_ticks: expected.minimum_max_queue_delay_ticks(),
+        required_first_tick: expected.required_first_tick(),
+        required_last_tick: expected.required_last_tick(),
     }
 }
 

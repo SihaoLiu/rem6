@@ -1,5 +1,7 @@
 use std::fmt;
 
+use rem6_kernel::Tick;
+
 use super::WorkloadError;
 
 pub(super) fn format_fabric_activity_error(
@@ -25,6 +27,17 @@ pub(super) fn format_fabric_activity_error(
             link.as_str(),
             virtual_network.get()
         ),
+        WorkloadError::InvalidExpectedFabricLaneActivityWindow {
+            link,
+            virtual_network,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "expected fabric lane {} virtual network {} activity window first tick {first_tick} is after last tick {last_tick}",
+            link.as_str(),
+            virtual_network.get()
+        ),
         WorkloadError::MissingFabricLaneActivitySummary {
             link,
             virtual_network,
@@ -32,11 +45,16 @@ pub(super) fn format_fabric_activity_error(
             minimum_byte_count,
             minimum_occupied_ticks,
             minimum_queue_delay_ticks,
+            minimum_max_queue_delay_ticks,
+            required_first_tick,
+            required_last_tick,
         } => write!(
             formatter,
-            "missing parallel summary for expected fabric lane {} virtual network {} activity with at least {minimum_transfer_count} transfers, {minimum_byte_count} bytes, {minimum_occupied_ticks} occupied ticks, and {minimum_queue_delay_ticks} queue delay ticks",
+            "missing parallel summary for expected fabric lane {} virtual network {} activity with at least {minimum_transfer_count} transfers, {minimum_byte_count} bytes, {minimum_occupied_ticks} occupied ticks, {minimum_queue_delay_ticks} queue delay ticks, maximum queue delay {minimum_max_queue_delay_ticks}, first tick {}, and last tick {}",
             link.as_str(),
-            virtual_network.get()
+            virtual_network.get(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
         ),
         WorkloadError::ExpectedFabricLaneActivityBelowMinimum {
             link,
@@ -49,11 +67,19 @@ pub(super) fn format_fabric_activity_error(
             actual_occupied_ticks,
             minimum_queue_delay_ticks,
             actual_queue_delay_ticks,
+            minimum_max_queue_delay_ticks,
+            actual_max_queue_delay_ticks,
+            required_first_tick,
+            actual_first_tick,
+            required_last_tick,
+            actual_last_tick,
         } => write!(
             formatter,
-            "expected fabric lane {} virtual network {} activity to reach at least {minimum_transfer_count} transfers, {minimum_byte_count} bytes, {minimum_occupied_ticks} occupied ticks, and {minimum_queue_delay_ticks} queue delay ticks, got {actual_transfer_count} transfers, {actual_byte_count} bytes, {actual_occupied_ticks} occupied ticks, and {actual_queue_delay_ticks} queue delay ticks",
+            "expected fabric lane {} virtual network {} activity to reach at least {minimum_transfer_count} transfers, {minimum_byte_count} bytes, {minimum_occupied_ticks} occupied ticks, {minimum_queue_delay_ticks} queue delay ticks, maximum queue delay {minimum_max_queue_delay_ticks}, first tick {}, and last tick {}, got {actual_transfer_count} transfers, {actual_byte_count} bytes, {actual_occupied_ticks} occupied ticks, {actual_queue_delay_ticks} queue delay ticks, maximum queue delay {actual_max_queue_delay_ticks}, first tick {actual_first_tick}, and last tick {actual_last_tick}",
             link.as_str(),
-            virtual_network.get()
+            virtual_network.get(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
         ),
         WorkloadError::ZeroExpectedFabricLinkActivity { link } => write!(
             formatter,
@@ -131,4 +157,8 @@ pub(super) fn format_fabric_activity_error(
         ),
         _ => unreachable!("fabric activity formatter called for non-fabric activity error"),
     }
+}
+
+fn format_optional_tick(tick: &Option<Tick>) -> String {
+    tick.map_or_else(|| "none".to_owned(), |tick| tick.to_string())
 }

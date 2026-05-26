@@ -1,5 +1,5 @@
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
-use rem6_kernel::{WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
@@ -752,6 +752,19 @@ fn hash_expected_fabric_lane_activity(
     hash_u64(hash, expected.minimum_byte_count());
     hash_u64(hash, expected.minimum_occupied_ticks());
     hash_u64(hash, expected.minimum_queue_delay_ticks());
+    hash_u64(hash, expected.minimum_max_queue_delay_ticks());
+    hash_optional_tick(hash, expected.required_first_tick());
+    hash_optional_tick(hash, expected.required_last_tick());
+}
+
+fn hash_optional_tick(hash: &mut u64, tick: Option<Tick>) {
+    match tick {
+        Some(tick) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, tick);
+        }
+        None => hash_u64(hash, 0),
+    }
 }
 
 fn hash_expected_fabric_link_activity(

@@ -1587,6 +1587,7 @@ impl fmt::Display for WorkloadError {
             ),
             Self::ZeroExpectedFabricLaneActivity { .. }
             | Self::DuplicateExpectedFabricLaneActivity { .. }
+            | Self::InvalidExpectedFabricLaneActivityWindow { .. }
             | Self::MissingFabricLaneActivitySummary { .. }
             | Self::ExpectedFabricLaneActivityBelowMinimum { .. }
             | Self::ZeroExpectedFabricLinkActivity { .. }
