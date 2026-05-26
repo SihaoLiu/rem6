@@ -426,6 +426,51 @@ fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records
 }
 
 #[test]
+fn workload_replay_plan_rejects_malformed_actual_parallel_batch_timeline_records() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(expected_timeline(
+            WorkloadParallelBatchTimelineScope::Scheduler,
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        ))
+        .unwrap();
+    let malformed_timeline = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0), partition(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                9,
+                5,
+                [partition(0), partition(1)],
+                2,
+            ),
+        ]);
+    let malformed = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(malformed_timeline);
+
+    assert_eq!(
+        plan.verify_result(&malformed).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 9,
+            horizon: 5,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_records() {
     let zero_worker = WorkloadExpectedParallelBatchTimelineRecord::new(
         WorkloadParallelBatchTimelineScope::Scheduler,

@@ -357,6 +357,11 @@ Implementation evidence on 2026-05-26:
   partitions feed derived batch worker, tick, partition-set, streak, and
   partition-activity evidence. Serial or single-partition records no longer
   satisfy parallelism contracts through secondary summaries.
+- Workload batch timeline summaries now preserve malformed nonblank actual
+  records for exact replay validation while excluding them from derived batch
+  counts and DMA timeline fallback decisions. Inverted or zero-duration batch
+  windows can be rejected as unexpected actual evidence instead of disappearing
+  before replay validation.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

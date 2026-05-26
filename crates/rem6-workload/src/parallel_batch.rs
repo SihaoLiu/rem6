@@ -84,6 +84,10 @@ impl WorkloadParallelBatchTimelineRecord {
         self.worker_count == 0 || self.partitions.is_empty() || self.horizon <= self.start_tick
     }
 
+    pub fn has_record_shape(&self) -> bool {
+        self.worker_count != 0 && !self.partitions.is_empty()
+    }
+
     pub fn is_parallel_evidence(&self) -> bool {
         !self.is_empty() && self.worker_count >= 2 && self.partitions.len() >= 2
     }
@@ -218,7 +222,7 @@ pub(crate) fn collect_parallel_batch_timeline(
 ) -> Vec<WorkloadParallelBatchTimelineRecord> {
     let mut timeline = records
         .into_iter()
-        .filter(|record| !record.is_empty())
+        .filter(WorkloadParallelBatchTimelineRecord::has_record_shape)
         .collect::<Vec<_>>();
     sort_parallel_batch_timeline(&mut timeline);
     timeline
