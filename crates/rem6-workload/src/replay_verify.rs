@@ -1174,6 +1174,19 @@ pub(crate) fn verify_expected_fabric_link_activity(
                 actual_contended_virtual_network_count: actual.contended_virtual_network_count(),
             });
         }
+        if let Some((maximum_queue_delay_ticks, maximum_max_queue_delay_ticks)) =
+            expected.queue_delay_budget()
+        {
+            if expected.above_maximum(&actual) {
+                return Err(WorkloadError::ExpectedFabricLinkActivityAboveMaximum {
+                    link: expected.link().clone(),
+                    maximum_queue_delay_ticks,
+                    actual_queue_delay_ticks: actual.queue_delay_ticks(),
+                    maximum_max_queue_delay_ticks,
+                    actual_max_queue_delay_ticks: actual.max_queue_delay_ticks(),
+                });
+            }
+        }
     }
     Ok(())
 }

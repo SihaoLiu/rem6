@@ -115,6 +115,15 @@ pub(super) fn format_fabric_activity_error(
             "expected fabric link {} activity is already declared",
             link.as_str()
         ),
+        WorkloadError::InvalidExpectedFabricLinkActivityQueueDelayBudget {
+            link,
+            maximum_queue_delay_ticks,
+            maximum_max_queue_delay_ticks,
+        } => write!(
+            formatter,
+            "expected fabric link {} activity queue-delay budget peak {maximum_max_queue_delay_ticks} is above total {maximum_queue_delay_ticks}",
+            link.as_str()
+        ),
         WorkloadError::MissingFabricLinkActivitySummary {
             link,
             minimum_transfer_count,
@@ -139,6 +148,17 @@ pub(super) fn format_fabric_activity_error(
         } => write!(
             formatter,
             "expected fabric link {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_virtual_network_count} contended virtual networks, got {actual_transfer_count} transfers, {actual_active_virtual_network_count} active virtual networks, {actual_queue_delay_ticks} queue delay ticks, and {actual_contended_virtual_network_count} contended virtual networks",
+            link.as_str()
+        ),
+        WorkloadError::ExpectedFabricLinkActivityAboveMaximum {
+            link,
+            maximum_queue_delay_ticks,
+            actual_queue_delay_ticks,
+            maximum_max_queue_delay_ticks,
+            actual_max_queue_delay_ticks,
+        } => write!(
+            formatter,
+            "expected fabric link {} activity to stay within {maximum_queue_delay_ticks} queue delay ticks and {maximum_max_queue_delay_ticks} maximum queue delay ticks, got {actual_queue_delay_ticks} queue delay ticks and {actual_max_queue_delay_ticks} maximum queue delay ticks",
             link.as_str()
         ),
         WorkloadError::ZeroExpectedFabricVirtualNetworkActivity { virtual_network } => write!(

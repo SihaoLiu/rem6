@@ -1216,6 +1216,11 @@ pub enum WorkloadError {
     DuplicateExpectedFabricLinkActivity {
         link: FabricLinkId,
     },
+    InvalidExpectedFabricLinkActivityQueueDelayBudget {
+        link: FabricLinkId,
+        maximum_queue_delay_ticks: Tick,
+        maximum_max_queue_delay_ticks: Tick,
+    },
     MissingFabricLinkActivitySummary {
         link: FabricLinkId,
         minimum_transfer_count: usize,
@@ -1233,6 +1238,13 @@ pub enum WorkloadError {
         actual_queue_delay_ticks: Tick,
         minimum_contended_virtual_network_count: usize,
         actual_contended_virtual_network_count: usize,
+    },
+    ExpectedFabricLinkActivityAboveMaximum {
+        link: FabricLinkId,
+        maximum_queue_delay_ticks: Tick,
+        actual_queue_delay_ticks: Tick,
+        maximum_max_queue_delay_ticks: Tick,
+        actual_max_queue_delay_ticks: Tick,
     },
     ZeroExpectedFabricVirtualNetworkActivity {
         virtual_network: VirtualNetworkId,

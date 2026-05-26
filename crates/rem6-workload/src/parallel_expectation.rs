@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 
-use rem6_fabric::{
-    FabricLinkActivity, FabricLinkId, FabricVirtualNetworkActivity, VirtualNetworkId,
-};
+use rem6_fabric::{FabricVirtualNetworkActivity, VirtualNetworkId};
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
     PartitionFrontier, PartitionId, Tick,
@@ -15,8 +13,10 @@ use crate::{
 };
 
 mod fabric_lane_activity;
+mod fabric_link_activity;
 
 pub use fabric_lane_activity::WorkloadExpectedFabricLaneActivity;
+pub use fabric_link_activity::WorkloadExpectedFabricLinkActivity;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadParallelRemoteFlowScope {
@@ -367,72 +367,6 @@ impl WorkloadExpectedResourceActivity {
                     .saturating_add(summary.active_dram_target_count()),
             ),
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct WorkloadExpectedFabricLinkActivity {
-    link: FabricLinkId,
-    minimum_transfer_count: usize,
-    minimum_active_virtual_network_count: usize,
-    minimum_queue_delay_ticks: Tick,
-    minimum_contended_virtual_network_count: usize,
-}
-
-impl WorkloadExpectedFabricLinkActivity {
-    pub fn new(
-        link: FabricLinkId,
-        minimum_transfer_count: usize,
-        minimum_active_virtual_network_count: usize,
-        minimum_queue_delay_ticks: Tick,
-        minimum_contended_virtual_network_count: usize,
-    ) -> Result<Self, WorkloadError> {
-        if minimum_transfer_count == 0
-            && minimum_active_virtual_network_count == 0
-            && minimum_queue_delay_ticks == 0
-            && minimum_contended_virtual_network_count == 0
-        {
-            return Err(WorkloadError::ZeroExpectedFabricLinkActivity { link });
-        }
-        Ok(Self {
-            link,
-            minimum_transfer_count,
-            minimum_active_virtual_network_count,
-            minimum_queue_delay_ticks,
-            minimum_contended_virtual_network_count,
-        })
-    }
-
-    pub fn link(&self) -> &FabricLinkId {
-        &self.link
-    }
-
-    pub const fn minimum_transfer_count(&self) -> usize {
-        self.minimum_transfer_count
-    }
-
-    pub const fn minimum_active_virtual_network_count(&self) -> usize {
-        self.minimum_active_virtual_network_count
-    }
-
-    pub const fn minimum_queue_delay_ticks(&self) -> Tick {
-        self.minimum_queue_delay_ticks
-    }
-
-    pub const fn minimum_contended_virtual_network_count(&self) -> usize {
-        self.minimum_contended_virtual_network_count
-    }
-
-    pub(crate) fn sort_key(&self) -> &str {
-        self.link.as_str()
-    }
-
-    pub(crate) fn below_minimum(&self, activity: &FabricLinkActivity) -> bool {
-        activity.transfer_count() < self.minimum_transfer_count
-            || activity.active_virtual_network_count() < self.minimum_active_virtual_network_count
-            || activity.queue_delay_ticks() < self.minimum_queue_delay_ticks
-            || activity.contended_virtual_network_count()
-                < self.minimum_contended_virtual_network_count
     }
 }
 

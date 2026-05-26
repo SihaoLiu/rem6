@@ -781,6 +781,8 @@ fn hash_expected_fabric_link_activity(
         hash,
         expected.minimum_contended_virtual_network_count() as u64,
     );
+    hash_optional_tick(hash, expected.maximum_queue_delay_ticks());
+    hash_optional_tick(hash, expected.maximum_max_queue_delay_ticks());
 }
 
 fn hash_expected_fabric_virtual_network_activity(
