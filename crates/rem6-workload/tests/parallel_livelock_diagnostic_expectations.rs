@@ -649,6 +649,37 @@ fn workload_replay_plan_rejects_livelock_dirty_parallel_diagnostics() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_incomplete_full_system_livelock_merge() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            1,
+            [livelock_diagnostic(
+                component("cpu-progress-loop"),
+                1,
+                [(LivelockTransitionKind::ProtocolRetry, 0)],
+            )],
+        )
+        .with_full_system_livelock_diagnostic_records(Vec::new());
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelLivelockMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            merged_evidence_count: 0,
+            scoped_evidence_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_clean_livelock_threshold_breach_from_transitions() {
     let plan = replay_plan()
         .add_expected_clean_parallel_diagnostics(expected_clean_with_livelock_threshold(

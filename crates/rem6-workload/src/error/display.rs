@@ -1190,6 +1190,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelWaitForEdgeKindWindowSummary { .. }
             | Self::InvalidParallelLivelockDiagnosticCountSummary { .. }
             | Self::InvalidParallelLivelockTransitionCountSummary { .. }
+            | Self::InvalidParallelLivelockMergeSummary { .. }
             | Self::ExpectedParallelWaitForEdgeKindWindowMismatch { .. }
             | Self::ExpectedParallelWaitForBlockedNodeWindowMismatch { .. }
             | Self::ExpectedParallelWaitForTargetNodeWindowMismatch { .. } => {

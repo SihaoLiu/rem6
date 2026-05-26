@@ -80,6 +80,15 @@ pub(super) fn format_diagnostic_error(
             "invalid {} livelock summary: progress transition count {progress_transition_count} is below diagnostic transition evidence count {evidence_transition_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelLivelockMergeSummary {
+            scope,
+            merged_evidence_count,
+            scoped_evidence_count,
+        } => write!(
+            formatter,
+            "invalid {} livelock merge summary: merged evidence count {merged_evidence_count} is below scoped evidence count {scoped_evidence_count}",
+            scope.as_str()
+        ),
         WorkloadError::ExpectedParallelWaitForEdgeKindWindowMismatch {
             scope,
             kind,

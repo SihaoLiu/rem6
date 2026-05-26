@@ -228,9 +228,39 @@ impl WorkloadParallelExecutionSummary {
                     self.full_system_progress_transition_count(),
                     self.full_system_livelock_diagnostic_count(),
                     self.full_system_livelock_diagnostic_subject_summaries(),
-                )
+                )?;
+                self.validate_full_system_livelock_merge_summary()
             }
         }
+    }
+
+    fn validate_full_system_livelock_merge_summary(&self) -> Result<(), WorkloadError> {
+        if !self.has_merged_full_system_livelock_diagnostic_count {
+            return Ok(());
+        }
+
+        let merged_evidence_count = livelock_summary_evidence_count(
+            self.merged_full_system_livelock_diagnostic_count,
+            self.full_system_livelock_diagnostic_subject_summaries(),
+        );
+        let scoped_subject_summaries = self
+            .parallel_scheduler_livelock_diagnostic_subject_summaries()
+            .into_iter()
+            .chain(self.data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries())
+            .collect();
+        let scoped_evidence_count = livelock_summary_evidence_count(
+            self.parallel_scheduler_livelock_diagnostic_count()
+                .saturating_add(self.data_cache_parallel_scheduler_livelock_diagnostic_count()),
+            scoped_subject_summaries,
+        );
+        if merged_evidence_count < scoped_evidence_count {
+            return Err(WorkloadError::InvalidParallelLivelockMergeSummary {
+                scope: WorkloadParallelDiagnosticScope::FullSystem,
+                merged_evidence_count,
+                scoped_evidence_count,
+            });
+        }
+        Ok(())
     }
 
     fn validate_resource_diagnostic_summary(&self) -> Result<(), WorkloadError> {
@@ -1253,6 +1283,18 @@ fn validate_livelock_transition_count_summary(
         );
     }
     Ok(())
+}
+
+fn livelock_summary_evidence_count(
+    livelock_diagnostic_count: usize,
+    subject_summaries: Vec<(WaitForNode, usize, u64, Tick, Tick)>,
+) -> u64 {
+    let transition_evidence_count = subject_summaries
+        .into_iter()
+        .map(|(_, _, transition_count, _, _)| transition_count)
+        .sum::<u64>();
+    let diagnostic_evidence_count = u64::try_from(livelock_diagnostic_count).unwrap_or(u64::MAX);
+    diagnostic_evidence_count.max(transition_evidence_count)
 }
 
 pub(super) fn wait_for_edge_kind_count(

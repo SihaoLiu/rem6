@@ -420,6 +420,10 @@ Implementation evidence on 2026-05-26:
   diagnostic counts that exceed the aggregate progress-transition count. A
   result cannot claim dirty livelock diagnostics unless it also carries enough
   scoped progress-transition evidence to make those diagnostics possible.
+- Workload full-system livelock merge validation rejects explicit merged
+  full-system diagnostic evidence that is weaker than the scheduler or
+  data-cache scoped livelock evidence it replaces. Empty or under-covered
+  merged full-system records can no longer hide dirty scoped diagnostics.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,
