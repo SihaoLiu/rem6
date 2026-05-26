@@ -783,6 +783,8 @@ fn hash_expected_fabric_link_activity(
     );
     hash_optional_tick(hash, expected.maximum_queue_delay_ticks());
     hash_optional_tick(hash, expected.maximum_max_queue_delay_ticks());
+    hash_optional_tick(hash, expected.required_first_tick());
+    hash_optional_tick(hash, expected.required_last_tick());
 }
 
 fn hash_expected_fabric_virtual_network_activity(

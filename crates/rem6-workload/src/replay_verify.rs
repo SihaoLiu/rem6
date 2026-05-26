@@ -1172,6 +1172,10 @@ pub(crate) fn verify_expected_fabric_link_activity(
                 minimum_contended_virtual_network_count: expected
                     .minimum_contended_virtual_network_count(),
                 actual_contended_virtual_network_count: actual.contended_virtual_network_count(),
+                required_first_tick: expected.required_first_tick(),
+                actual_first_tick: actual.first_tick(),
+                required_last_tick: expected.required_last_tick(),
+                actual_last_tick: actual.last_tick(),
             });
         }
         if let Some((maximum_queue_delay_ticks, maximum_max_queue_delay_ticks)) =
@@ -1200,6 +1204,8 @@ fn missing_fabric_link_activity_summary(
         minimum_active_virtual_network_count: expected.minimum_active_virtual_network_count(),
         minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
         minimum_contended_virtual_network_count: expected.minimum_contended_virtual_network_count(),
+        required_first_tick: expected.required_first_tick(),
+        required_last_tick: expected.required_last_tick(),
     }
 }
 

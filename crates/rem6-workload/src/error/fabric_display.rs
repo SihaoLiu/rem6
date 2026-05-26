@@ -115,6 +115,15 @@ pub(super) fn format_fabric_activity_error(
             "expected fabric link {} activity is already declared",
             link.as_str()
         ),
+        WorkloadError::InvalidExpectedFabricLinkActivityWindow {
+            link,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "expected fabric link {} activity window first tick {first_tick} is after last tick {last_tick}",
+            link.as_str()
+        ),
         WorkloadError::InvalidExpectedFabricLinkActivityQueueDelayBudget {
             link,
             maximum_queue_delay_ticks,
@@ -130,10 +139,14 @@ pub(super) fn format_fabric_activity_error(
             minimum_active_virtual_network_count,
             minimum_queue_delay_ticks,
             minimum_contended_virtual_network_count,
+            required_first_tick,
+            required_last_tick,
         } => write!(
             formatter,
-            "missing parallel summary for expected fabric link {} activity with at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_virtual_network_count} contended virtual networks",
-            link.as_str()
+            "missing parallel summary for expected fabric link {} activity with at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, {minimum_contended_virtual_network_count} contended virtual networks, first tick {}, and last tick {}",
+            link.as_str(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
         ),
         WorkloadError::ExpectedFabricLinkActivityBelowMinimum {
             link,
@@ -145,10 +158,16 @@ pub(super) fn format_fabric_activity_error(
             actual_queue_delay_ticks,
             minimum_contended_virtual_network_count,
             actual_contended_virtual_network_count,
+            required_first_tick,
+            actual_first_tick,
+            required_last_tick,
+            actual_last_tick,
         } => write!(
             formatter,
-            "expected fabric link {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_virtual_network_count} contended virtual networks, got {actual_transfer_count} transfers, {actual_active_virtual_network_count} active virtual networks, {actual_queue_delay_ticks} queue delay ticks, and {actual_contended_virtual_network_count} contended virtual networks",
-            link.as_str()
+            "expected fabric link {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, {minimum_contended_virtual_network_count} contended virtual networks, first tick {}, and last tick {}, got {actual_transfer_count} transfers, {actual_active_virtual_network_count} active virtual networks, {actual_queue_delay_ticks} queue delay ticks, {actual_contended_virtual_network_count} contended virtual networks, first tick {actual_first_tick}, and last tick {actual_last_tick}",
+            link.as_str(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
         ),
         WorkloadError::ExpectedFabricLinkActivityAboveMaximum {
             link,

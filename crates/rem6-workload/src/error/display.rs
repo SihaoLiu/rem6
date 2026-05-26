@@ -1594,6 +1594,7 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedFabricLaneActivityAboveMaximum { .. }
             | Self::ZeroExpectedFabricLinkActivity { .. }
             | Self::DuplicateExpectedFabricLinkActivity { .. }
+            | Self::InvalidExpectedFabricLinkActivityWindow { .. }
             | Self::InvalidExpectedFabricLinkActivityQueueDelayBudget { .. }
             | Self::MissingFabricLinkActivitySummary { .. }
             | Self::ExpectedFabricLinkActivityBelowMinimum { .. }
