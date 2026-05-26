@@ -47,10 +47,10 @@ pub use block::{
 };
 pub use block_queue::{
     VirtioBlockDecodedRequest, VirtioBlockDescriptorWrite, VirtioBlockIntxCompletionTarget,
-    VirtioBlockMsiCompletionTarget, VirtioBlockQueueCompletionWrite, VirtioGuestMemory,
-    VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
-    VirtioSplitUsedRing, VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT,
-    VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioBlockMsiCompletionTarget, VirtioBlockMsixCompletionTarget,
+    VirtioBlockQueueCompletionWrite, VirtioGuestMemory, VirtioSplitDescriptor,
+    VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing,
+    VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 pub use device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,

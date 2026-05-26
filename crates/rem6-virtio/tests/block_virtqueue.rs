@@ -10,19 +10,20 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_pci::{
-    PciClassCode, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciFunctionAddress,
-    PciInterruptPin, PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
-    PciMsiCapabilitySpec, PciMsiPort, PciMsiRoute,
+    PciBarIndex, PciClassCode, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig,
+    PciFunctionAddress, PciInterruptPin, PciLegacyInterruptMapper, PciLegacyInterruptPolicy,
+    PciLegacyInterruptPort, PciMsiCapabilitySpec, PciMsiPort, PciMsiRoute, PciMsixCapabilitySpec,
+    PciMsixPort, PciMsixRoute,
 };
 use rem6_virtio::{
     VirtioBlockConfigSpec, VirtioBlockDecodedRequest, VirtioBlockDevice,
     VirtioBlockIntxCompletionTarget, VirtioBlockMemoryBackend, VirtioBlockMsiCompletionTarget,
-    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioGuestMemory, VirtioPciIsrDevice,
-    VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrStatus, VirtioQueueIndex,
-    VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
-    VirtioSplitUsedRing, VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_FLUSH,
-    VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT, VIRTIO_SPLIT_DESC_F_NEXT,
-    VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioBlockMsixCompletionTarget, VirtioBlockRequestId, VirtioBlockRequestKind,
+    VirtioGuestMemory, VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind,
+    VirtioPciIsrStatus, VirtioQueueIndex, VirtioSplitDescriptor, VirtioSplitDescriptorChain,
+    VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing, VIRTIO_BLOCK_SECTOR_SIZE,
+    VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
+    VIRTIO_BLOCK_T_OUT, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -255,6 +256,72 @@ fn msi_port(
     )
     .unwrap();
     let port = PciMsiPort::new(route, Arc::clone(&controller)).unwrap();
+    (controller, endpoint, port)
+}
+
+fn program_enabled_msix(endpoint: &mut PciEndpointConfig, vector: u16, data: u16) {
+    endpoint
+        .install_msix_capability(
+            PciMsixCapabilitySpec::new(
+                PciConfigOffset::new(0x70).unwrap(),
+                4,
+                PciBarIndex::new(2).unwrap(),
+                Address::new(0x100),
+                PciBarIndex::new(2).unwrap(),
+                Address::new(0x180),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let offset = 0x100 + u64::from(vector) * 16;
+    endpoint
+        .write_msix_region(Address::new(offset), &0xfee0_0123_u32.to_le_bytes())
+        .unwrap();
+    endpoint
+        .write_msix_region(Address::new(offset + 4), &0x0000_0001_u32.to_le_bytes())
+        .unwrap();
+    endpoint
+        .write_msix_region(Address::new(offset + 8), &u32::from(data).to_le_bytes())
+        .unwrap();
+    endpoint
+        .write_msix_region(Address::new(offset + 12), &0_u32.to_le_bytes())
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x72).unwrap(),
+            &0x8000_u16.to_le_bytes(),
+        )
+        .unwrap();
+}
+
+fn msix_port(
+    target_partition: PartitionId,
+    signal_latency: u64,
+    vector: u16,
+    line: InterruptLineId,
+) -> (
+    Arc<Mutex<InterruptController>>,
+    PciEndpointConfig,
+    PciMsixPort,
+) {
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let mut endpoint = virtio_block_endpoint();
+    program_enabled_msix(&mut endpoint, vector, 0x0080 + vector);
+    let interrupt_route = InterruptRoute::new(line, InterruptTargetId::new(0), target_partition);
+    controller
+        .lock()
+        .unwrap()
+        .register_route(interrupt_route)
+        .unwrap();
+    let route = PciMsixRoute::new(
+        endpoint.function(),
+        vector,
+        endpoint.msix_message(vector).unwrap().unwrap(),
+        interrupt_route,
+        signal_latency,
+    )
+    .unwrap();
+    let port = PciMsixPort::new(route, Arc::clone(&controller)).unwrap();
     (controller, endpoint, port)
 }
 
@@ -602,6 +669,154 @@ fn virtio_split_queue_posts_parallel_msi_after_completion_writeback() {
         controller.lock().unwrap().history(),
         &[InterruptEvent::routed(
             88,
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
+fn virtio_split_queue_posts_serial_msix_after_completion_writeback() {
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let source = InterruptSourceId::new(94);
+    let (controller, mut endpoint, port) = msix_port(cpu, 8, 2, InterruptLineId::new(52));
+    let line = port.route().interrupt_route().line();
+    let store = Arc::new(Mutex::new(guest_store()));
+    {
+        let mut store = store.lock().unwrap();
+        write_guest_read_queue(&mut store, 0, 41);
+    }
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0x88)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let isr = VirtioPciIsrDevice::new();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    let event_store = Arc::clone(&store);
+    let event_isr = isr.clone();
+    let event_port = port.clone();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+    scheduler
+        .schedule_at(pci, 85, move |context| {
+            let mut store = event_store.lock().unwrap();
+            let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+            let decoded = split_queue
+                .consume_available_block(&mut guest, queue(2))
+                .unwrap()
+                .unwrap();
+            let completion = device.execute(context, decoded.request().clone()).unwrap();
+            split_queue
+                .complete_block_request_and_post_msix(
+                    context,
+                    &mut guest,
+                    &decoded,
+                    &completion,
+                    VirtioBlockMsixCompletionTarget::new(
+                        &event_isr,
+                        &mut endpoint,
+                        &event_port,
+                        source,
+                    ),
+                )
+                .unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        read_guest(&mut store.lock().unwrap(), 0x1300, 512, 500),
+        sector(0x88)
+    );
+    assert_eq!(isr.status(), VirtioPciIsrStatus::queue_interrupt());
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            93,
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
+fn virtio_split_queue_posts_parallel_msix_after_completion_writeback() {
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let source = InterruptSourceId::new(95);
+    let (controller, mut endpoint, port) = msix_port(cpu, 9, 3, InterruptLineId::new(53));
+    let line = port.route().interrupt_route().line();
+    let store = Arc::new(Mutex::new(guest_store()));
+    {
+        let mut store = store.lock().unwrap();
+        write_guest_read_queue(&mut store, 0, 51);
+    }
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0x99)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let isr = VirtioPciIsrDevice::new();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    let event_store = Arc::clone(&store);
+    let event_isr = isr.clone();
+    let event_port = port.clone();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 89, move |context| {
+            let mut store = event_store.lock().unwrap();
+            let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+            let decoded = split_queue
+                .consume_available_block(&mut guest, queue(2))
+                .unwrap()
+                .unwrap();
+            let completion = device
+                .execute_parallel(context, decoded.request().clone())
+                .unwrap();
+            split_queue
+                .complete_block_request_and_post_msix_parallel(
+                    context,
+                    &mut guest,
+                    &decoded,
+                    &completion,
+                    VirtioBlockMsixCompletionTarget::new(
+                        &event_isr,
+                        &mut endpoint,
+                        &event_port,
+                        source,
+                    ),
+                )
+                .unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        read_guest(&mut store.lock().unwrap(), 0x1300, 512, 600),
+        sector(0x99)
+    );
+    assert_eq!(isr.status(), VirtioPciIsrStatus::queue_interrupt());
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            98,
             line,
             InterruptTargetId::new(0),
             cpu,
