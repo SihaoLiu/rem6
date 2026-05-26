@@ -1584,6 +1584,42 @@ impl fmt::Display for WorkloadError {
                 "expected {} resource activity to reach at least {minimum_operation_count} operations and {minimum_active_resource_count} active resources, got {actual_operation_count} operations and {actual_active_resource_count} active resources",
                 scope.as_str()
             ),
+            Self::ZeroExpectedFabricLinkActivity { link } => write!(
+                formatter,
+                "expected fabric link {} activity must require a positive transfer, active virtual network, queue delay, or contended virtual network count",
+                link.as_str()
+            ),
+            Self::DuplicateExpectedFabricLinkActivity { link } => write!(
+                formatter,
+                "expected fabric link {} activity is already declared",
+                link.as_str()
+            ),
+            Self::MissingFabricLinkActivitySummary {
+                link,
+                minimum_transfer_count,
+                minimum_active_virtual_network_count,
+                minimum_queue_delay_ticks,
+                minimum_contended_virtual_network_count,
+            } => write!(
+                formatter,
+                "missing parallel summary for expected fabric link {} activity with at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_virtual_network_count} contended virtual networks",
+                link.as_str()
+            ),
+            Self::ExpectedFabricLinkActivityBelowMinimum {
+                link,
+                minimum_transfer_count,
+                actual_transfer_count,
+                minimum_active_virtual_network_count,
+                actual_active_virtual_network_count,
+                minimum_queue_delay_ticks,
+                actual_queue_delay_ticks,
+                minimum_contended_virtual_network_count,
+                actual_contended_virtual_network_count,
+            } => write!(
+                formatter,
+                "expected fabric link {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_virtual_network_count} active virtual networks, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_virtual_network_count} contended virtual networks, got {actual_transfer_count} transfers, {actual_active_virtual_network_count} active virtual networks, {actual_queue_delay_ticks} queue delay ticks, and {actual_contended_virtual_network_count} contended virtual networks",
+                link.as_str()
+            ),
             Self::MissingParallelDiagnosticSummary { scope } => write!(
                 formatter,
                 "missing parallel summary for expected clean {} diagnostics",

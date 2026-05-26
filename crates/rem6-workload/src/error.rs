@@ -1,5 +1,5 @@
 use rem6_boot::BootError;
-use rem6_fabric::{QosPriority, QosRequestorId};
+use rem6_fabric::{FabricLinkId, QosPriority, QosRequestorId};
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 use rem6_memory::MemoryError;
 
@@ -1151,6 +1151,30 @@ pub enum WorkloadError {
         actual_operation_count: usize,
         minimum_active_resource_count: usize,
         actual_active_resource_count: usize,
+    },
+    ZeroExpectedFabricLinkActivity {
+        link: FabricLinkId,
+    },
+    DuplicateExpectedFabricLinkActivity {
+        link: FabricLinkId,
+    },
+    MissingFabricLinkActivitySummary {
+        link: FabricLinkId,
+        minimum_transfer_count: usize,
+        minimum_active_virtual_network_count: usize,
+        minimum_queue_delay_ticks: Tick,
+        minimum_contended_virtual_network_count: usize,
+    },
+    ExpectedFabricLinkActivityBelowMinimum {
+        link: FabricLinkId,
+        minimum_transfer_count: usize,
+        actual_transfer_count: usize,
+        minimum_active_virtual_network_count: usize,
+        actual_active_virtual_network_count: usize,
+        minimum_queue_delay_ticks: Tick,
+        actual_queue_delay_ticks: Tick,
+        minimum_contended_virtual_network_count: usize,
+        actual_contended_virtual_network_count: usize,
     },
     MissingParallelDiagnosticSummary {
         scope: WorkloadParallelDiagnosticScope,
