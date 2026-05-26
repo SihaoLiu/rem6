@@ -1,0 +1,189 @@
+use rem6_memory::{AccessSize, Address};
+use rem6_pci::{
+    PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciClassCode, PciConfigOffset,
+    PciDeviceIdentity, PciEndpointConfig, PciError, PciFunctionAddress, PciInterruptPin,
+};
+
+fn network_endpoint() -> PciEndpointConfig {
+    PciEndpointConfig::new(
+        PciFunctionAddress::new(0, 3, 0).unwrap(),
+        PciDeviceIdentity::new(0x1234, 0xabcd),
+        PciClassCode::new(0x02, 0x00, 0x01, 0x07),
+    )
+    .with_interrupt(11, PciInterruptPin::IntA)
+}
+
+#[test]
+fn pci_endpoint_config_exposes_type0_identity_and_rejects_read_only_writes() {
+    let mut endpoint = network_endpoint();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x00).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x34, 0x12, 0xcd, 0xab])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x08).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x07, 0x01, 0x00, 0x02])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x0e).unwrap(),
+            AccessSize::new(1).unwrap()
+        ),
+        Ok(vec![0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x3c).unwrap(),
+            AccessSize::new(2).unwrap()
+        ),
+        Ok(vec![11, 1])
+    );
+
+    assert_eq!(
+        endpoint.write_config(PciConfigOffset::new(0x00).unwrap(), &[0x00, 0x00]),
+        Err(PciError::ReadOnlyConfigWrite {
+            offset: PciConfigOffset::new(0x00).unwrap(),
+            size: AccessSize::new(2).unwrap(),
+        })
+    );
+}
+
+#[test]
+fn pci_endpoint_bar_writes_apply_size_masks_and_enable_ranges() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 { prefetchable: true },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0x8)
+    );
+    endpoint
+        .write_u32(PciConfigOffset::new(0x10).unwrap(), 0xffff_ffff)
+        .unwrap();
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0xffff_f008)
+    );
+
+    endpoint
+        .write_u32(PciConfigOffset::new(0x10).unwrap(), 0x8000_1234)
+        .unwrap();
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0x8000_1008)
+    );
+    assert_eq!(endpoint.active_bar_ranges(), Vec::new());
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0002_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        endpoint.active_bar_ranges(),
+        vec![PciBarRange::new(
+            PciBarIndex::new(0).unwrap(),
+            PciBarKind::Memory32 { prefetchable: true },
+            Address::new(0x8000_1000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap()]
+    );
+}
+
+#[test]
+fn pci_endpoint_rejects_oversized_32_bit_bar() {
+    assert_eq!(
+        PciBarSpec::new(
+            PciBarIndex::new(0).unwrap(),
+            PciBarKind::Memory32 {
+                prefetchable: false,
+            },
+            AccessSize::new(0x1_0000_0000).unwrap(),
+        ),
+        Err(PciError::InvalidBarSize {
+            index: PciBarIndex::new(0).unwrap(),
+            kind: PciBarKind::Memory32 {
+                prefetchable: false,
+            },
+            size: AccessSize::new(0x1_0000_0000).unwrap(),
+        })
+    );
+}
+
+#[test]
+fn pci_endpoint_snapshot_restore_preserves_command_and_bar_state() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(2).unwrap(),
+                PciBarKind::Io,
+                AccessSize::new(0x100).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x18).unwrap(), 0x0000_c123)
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0001_u16.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    endpoint
+        .write_u32(PciConfigOffset::new(0x18).unwrap(), 0x0000_d123)
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        )
+        .unwrap();
+
+    endpoint.restore(&snapshot).unwrap();
+    assert_eq!(
+        endpoint.active_bar_ranges(),
+        vec![PciBarRange::new(
+            PciBarIndex::new(2).unwrap(),
+            PciBarKind::Io,
+            Address::new(0x0000_c100),
+            AccessSize::new(0x100).unwrap(),
+        )
+        .unwrap()]
+    );
+
+    let mut other = PciEndpointConfig::new(
+        PciFunctionAddress::new(0, 4, 0).unwrap(),
+        PciDeviceIdentity::new(0x1234, 0xabcd),
+        PciClassCode::new(0x02, 0x00, 0x01, 0x07),
+    );
+    assert_eq!(
+        other.restore(&snapshot),
+        Err(PciError::SnapshotFunctionMismatch {
+            expected: PciFunctionAddress::new(0, 4, 0).unwrap(),
+            actual: PciFunctionAddress::new(0, 3, 0).unwrap(),
+        })
+    );
+}

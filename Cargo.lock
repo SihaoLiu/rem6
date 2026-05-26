@@ -138,6 +138,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-pci"
+version = "0.1.0"
+dependencies = [
+ "rem6-memory",
+]
+
+[[package]]
 name = "rem6-platform"
 version = "0.1.0"
 dependencies = [
