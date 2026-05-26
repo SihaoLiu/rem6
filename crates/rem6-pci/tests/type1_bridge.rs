@@ -193,6 +193,62 @@ fn pci_type1_bridge_header_exposes_interrupt_rom_and_control_fields() {
 }
 
 #[test]
+fn pci_type1_bridge_bars_map_on_primary_bus_when_command_bits_enable_space() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(bridge_function);
+    bridge
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    host.register_bridge(bridge).unwrap();
+
+    let bridge_bar_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x10).unwrap())
+        .unwrap();
+    let bridge_command_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x04).unwrap())
+        .unwrap();
+
+    host.write_config_address(bridge_bar_addr, &0x0040_0000_u32.to_le_bytes())
+        .unwrap();
+    assert_eq!(host.active_host_bar_ranges(), Ok(Vec::new()));
+
+    host.write_config_address(bridge_command_addr, &0x0002_u16.to_le_bytes())
+        .unwrap();
+    assert_eq!(
+        host.read_config_address(bridge_bar_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0x00, 0x00, 0x40, 0x00])
+    );
+    assert_eq!(
+        host.active_host_bar_ranges(),
+        Ok(vec![PciHostBarRange::new(
+            bridge_function,
+            PciBarIndex::new(0).unwrap(),
+            PciHostAddressSpace::Memory,
+            Address::new(0x0040_0000),
+            Address::new(0x8040_0000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap()])
+    );
+}
+
+#[test]
 fn pci_host_routes_subordinate_config_only_through_declared_bridge_bus_numbers() {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 4).unwrap();
     let mut host = PciHostBridge::new(aperture);

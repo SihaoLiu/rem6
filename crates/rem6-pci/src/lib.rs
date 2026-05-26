@@ -882,36 +882,20 @@ impl PciHostBridge {
 
     pub fn active_host_bar_ranges(&self) -> Result<Vec<PciHostBarRange>, PciError> {
         let mut ranges = Vec::new();
+        for (function, bridge) in &self.bridges {
+            for range in bridge.active_bar_ranges() {
+                if !self.host_forwards_bar_range(*function, &range) {
+                    continue;
+                }
+                self.push_host_bar_range(&mut ranges, *function, range)?;
+            }
+        }
         for (function, endpoint) in &self.endpoints {
             for range in endpoint.active_bar_ranges() {
                 if !self.host_forwards_bar_range(*function, &range) {
                     continue;
                 }
-                let space = host_address_space(range.kind());
-                let host_base = checked_base_plus_offset(
-                    self.address_bases.base_for_space(space),
-                    range.range().start(),
-                )?;
-                let host_range = PciHostBarRange::new(
-                    *function,
-                    range.index(),
-                    space,
-                    range.range().start(),
-                    host_base,
-                    range.range().size(),
-                )?;
-                if let Some(existing) = ranges.iter().find(|existing: &&PciHostBarRange| {
-                    existing.space() == host_range.space()
-                        && existing.host_range().overlaps(host_range.host_range())
-                }) {
-                    return Err(PciError::OverlappingHostBarRange {
-                        existing_function: existing.function(),
-                        existing_bar: existing.bar(),
-                        requested_function: host_range.function(),
-                        requested_bar: host_range.bar(),
-                    });
-                }
-                ranges.push(host_range);
+                self.push_host_bar_range(&mut ranges, *function, range)?;
             }
         }
         Ok(ranges)
@@ -931,6 +915,40 @@ impl PciHostBridge {
         }
         self.bridge_for_bus(function.bus())
             .is_some_and(|bridge| bridge.allows_bar_range(range.kind(), range.range()))
+    }
+
+    fn push_host_bar_range(
+        &self,
+        ranges: &mut Vec<PciHostBarRange>,
+        function: PciFunctionAddress,
+        range: PciBarRange,
+    ) -> Result<(), PciError> {
+        let space = host_address_space(range.kind());
+        let host_base = checked_base_plus_offset(
+            self.address_bases.base_for_space(space),
+            range.range().start(),
+        )?;
+        let host_range = PciHostBarRange::new(
+            function,
+            range.index(),
+            space,
+            range.range().start(),
+            host_base,
+            range.range().size(),
+        )?;
+        if let Some(existing) = ranges.iter().find(|existing: &&PciHostBarRange| {
+            existing.space() == host_range.space()
+                && existing.host_range().overlaps(host_range.host_range())
+        }) {
+            return Err(PciError::OverlappingHostBarRange {
+                existing_function: existing.function(),
+                existing_bar: existing.bar(),
+                requested_function: host_range.function(),
+                requested_bar: host_range.bar(),
+            });
+        }
+        ranges.push(host_range);
+        Ok(())
     }
 }
 
@@ -1013,6 +1031,9 @@ pub enum PciError {
         bus_count: u8,
     },
     InvalidBarPair {
+        index: PciBarIndex,
+    },
+    InvalidBridgeBarIndex {
         index: PciBarIndex,
     },
     ReservedBar {
@@ -1264,6 +1285,13 @@ impl fmt::Display for PciError {
             ),
             Self::InvalidBarPair { index } => {
                 write!(f, "PCI BAR {} cannot start a 64-bit BAR pair", index.get())
+            }
+            Self::InvalidBridgeBarIndex { index } => {
+                write!(
+                    f,
+                    "PCI bridge BAR {} is outside type-1 BAR0..BAR1",
+                    index.get()
+                )
             }
             Self::ReservedBar { index, owner } => write!(
                 f,

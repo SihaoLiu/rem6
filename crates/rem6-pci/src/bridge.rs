@@ -1,9 +1,10 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{
-    write_u16_at, write_u32_at, PciBarKind, PciClassCode, PciConfigOffset, PciDeviceIdentity,
-    PciError, PciFunctionAddress, PciHostAddressSpace, PciInterruptPin, PCI_CONFIG_SPACE_SIZE,
-    PCI_TYPE1_HEADER_TYPE,
+    write_u16_at, write_u32_at, PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciBarState,
+    PciClassCode, PciConfigOffset, PciDeviceIdentity, PciError, PciFunctionAddress,
+    PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE, PCI_COMMAND_MEMORY_SPACE,
+    PCI_CONFIG_SPACE_SIZE, PCI_TYPE1_HEADER_TYPE,
 };
 
 const PCI_VENDOR_ID_OFFSET: usize = 0x00;
@@ -35,6 +36,7 @@ const PCI_TYPE1_BRIDGE_CONTROL_OFFSET: usize = 0x3e;
 const PCI_BRIDGE_MEMORY_GRANULARITY: u64 = 0x0010_0000;
 const PCI_BRIDGE_IO_GRANULARITY: u64 = 0x1000;
 const PCI_TYPE1_EXPANSION_ROM_SIZE_PROBE: u32 = 0xffff_fffe;
+const PCI_TYPE1_BAR_COUNT: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciBridgeBusRange {
@@ -122,6 +124,7 @@ pub struct PciBridgeConfig {
     identity: PciDeviceIdentity,
     class: PciClassCode,
     config: [u8; PCI_CONFIG_SPACE_SIZE],
+    bars: [Option<PciBarState>; PCI_TYPE1_BAR_COUNT],
 }
 
 impl PciBridgeConfig {
@@ -148,6 +151,7 @@ impl PciBridgeConfig {
             identity,
             class,
             config,
+            bars: std::array::from_fn(|_| None),
         }
     }
 
@@ -179,6 +183,33 @@ impl PciBridgeConfig {
         self
     }
 
+    pub fn install_bar(&mut self, spec: PciBarSpec) -> Result<(), PciError> {
+        self.validate_type1_bar_index(spec.index())?;
+        self.validate_bar_slot_free(spec.index())?;
+        let upper_index = if spec.kind().is_64_bit() {
+            let upper =
+                PciBarIndex::new(spec.index().get() + 1).expect("validated 64-bit BAR pair");
+            self.validate_type1_bar_index(upper)?;
+            self.validate_bar_slot_free(upper)?;
+            Some(upper)
+        } else {
+            None
+        };
+
+        let state = PciBarState::new(spec);
+        write_u32_at(
+            &mut self.config,
+            spec.index().config_offset(),
+            state.raw().expect("new PCI bridge BAR raw value"),
+        );
+        self.bars[spec.index().as_usize()] = Some(state);
+        if let Some(upper) = upper_index {
+            write_u32_at(&mut self.config, upper.config_offset(), 0);
+            self.bars[upper.as_usize()] = Some(PciBarState::upper(spec.index()));
+        }
+        Ok(())
+    }
+
     pub fn bus_range(&self) -> PciBridgeBusRange {
         PciBridgeBusRange::new(
             self.config[PCI_TYPE1_PRIMARY_BUS_OFFSET],
@@ -204,6 +235,12 @@ impl PciBridgeConfig {
     pub fn write_config(&mut self, offset: PciConfigOffset, data: &[u8]) -> Result<(), PciError> {
         let size = access_size_from_len(data.len())?;
         let span = config_span(offset, size)?;
+        if let Some(index) = type1_bar_index_for_offset(offset) {
+            if data.len() != 4 {
+                return Err(PciError::UnalignedBarAccess { offset, size });
+            }
+            return self.write_bar(index, u32::from_le_bytes(data.try_into().unwrap()));
+        }
         match (offset.as_usize(), data.len()) {
             (PCI_COMMAND_OFFSET, 2) => {
                 self.config[span.start..span.end].copy_from_slice(data);
@@ -256,10 +293,6 @@ impl PciBridgeConfig {
                 self.config[PCI_INTERRUPT_LINE_OFFSET] = data[0];
                 Ok(())
             }
-            (PCI_TYPE1_BAR0_OFFSET, 4) | (PCI_TYPE1_BAR1_OFFSET, 4) => {
-                write_u32_at(&mut self.config, offset.as_usize(), 0);
-                Ok(())
-            }
             _ => Err(PciError::ReadOnlyConfigWrite { offset, size }),
         }
     }
@@ -267,6 +300,20 @@ impl PciBridgeConfig {
     pub fn allows_bar_range(&self, kind: PciBarKind, range: AddressRange) -> bool {
         self.window_for_kind(kind)
             .is_some_and(|window| window.contains_range(range))
+    }
+
+    pub fn active_bar_ranges(&self) -> Vec<PciBarRange> {
+        self.bars
+            .iter()
+            .filter_map(|bar| {
+                let bar = bar.as_ref()?;
+                let kind = bar.kind()?;
+                if !self.bar_enabled(kind) {
+                    return None;
+                }
+                bar.range().ok()
+            })
+            .collect()
     }
 
     fn write_bus_block(&mut self, data: &[u8]) -> Result<(), PciError> {
@@ -295,6 +342,64 @@ impl PciBridgeConfig {
         self.config[PCI_TYPE1_SECONDARY_BUS_OFFSET] = next.secondary();
         self.config[PCI_TYPE1_SUBORDINATE_BUS_OFFSET] = next.subordinate();
         Ok(())
+    }
+
+    fn write_bar(&mut self, index: PciBarIndex, value: u32) -> Result<(), PciError> {
+        if let Some(owner) = self.bars[index.as_usize()]
+            .as_ref()
+            .and_then(PciBarState::owner)
+        {
+            let bar = self.bars[owner.as_usize()]
+                .as_mut()
+                .ok_or(PciError::MissingBar { index: owner })?;
+            bar.write_upper(value);
+            write_u32_at(
+                &mut self.config,
+                index.config_offset(),
+                bar.upper_raw().expect("64-bit PCI bridge BAR upper value"),
+            );
+            return Ok(());
+        }
+
+        let Some(bar) = self.bars[index.as_usize()].as_mut() else {
+            write_u32_at(&mut self.config, index.config_offset(), 0);
+            return Ok(());
+        };
+        bar.write_lower(value);
+        write_u32_at(
+            &mut self.config,
+            index.config_offset(),
+            bar.raw().expect("PCI bridge BAR raw value"),
+        );
+        Ok(())
+    }
+
+    fn validate_bar_slot_free(&self, index: PciBarIndex) -> Result<(), PciError> {
+        match self.bars[index.as_usize()].as_ref() {
+            None => Ok(()),
+            Some(PciBarState::Endpoint { .. }) => Err(PciError::DuplicateBar { index }),
+            Some(PciBarState::Upper { owner }) => Err(PciError::ReservedBar {
+                index,
+                owner: *owner,
+            }),
+        }
+    }
+
+    fn validate_type1_bar_index(&self, index: PciBarIndex) -> Result<(), PciError> {
+        if index.as_usize() >= PCI_TYPE1_BAR_COUNT {
+            return Err(PciError::InvalidBridgeBarIndex { index });
+        }
+        Ok(())
+    }
+
+    fn bar_enabled(&self, kind: PciBarKind) -> bool {
+        let command = self.read_u16(PCI_COMMAND_OFFSET);
+        match kind {
+            PciBarKind::Memory32 { .. } | PciBarKind::Memory64 { .. } => {
+                command & PCI_COMMAND_MEMORY_SPACE != 0
+            }
+            PciBarKind::LegacyIo { .. } | PciBarKind::Io => command & PCI_COMMAND_IO_SPACE != 0,
+        }
     }
 
     fn window_for_kind(&self, kind: PciBarKind) -> Option<AddressRange> {
@@ -343,6 +448,14 @@ impl PciBridgeConfig {
 
     fn read_u32(&self, offset: usize) -> u32 {
         u32::from_le_bytes(self.config[offset..offset + 4].try_into().unwrap())
+    }
+}
+
+fn type1_bar_index_for_offset(offset: PciConfigOffset) -> Option<PciBarIndex> {
+    match offset.as_usize() {
+        PCI_TYPE1_BAR0_OFFSET => Some(PciBarIndex::new(0).expect("type-1 BAR0 index")),
+        PCI_TYPE1_BAR1_OFFSET => Some(PciBarIndex::new(1).expect("type-1 BAR1 index")),
+        _ => None,
     }
 }
 
