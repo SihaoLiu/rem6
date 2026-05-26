@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_kernel::{WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{WorkloadError, WorkloadParallelDiagnosticScope};
 
@@ -140,6 +140,11 @@ impl WorkloadParallelExecutionSummary {
                     scope,
                     &self.data_cache_wait_for_edge_kind_counts,
                     &self.data_cache_wait_for_edge_kind_windows,
+                )?;
+                validate_livelock_transition_count_summary(
+                    scope,
+                    self.data_cache_parallel_scheduler_progress_transition_count(),
+                    self.data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries(),
                 )
             }
             WorkloadParallelDiagnosticScope::Compute => {
@@ -210,6 +215,16 @@ impl WorkloadParallelExecutionSummary {
                 )?;
                 self.validate_parallel_diagnostic_scope_summary(
                     WorkloadParallelDiagnosticScope::Dma,
+                )?;
+                validate_livelock_transition_count_summary(
+                    scope,
+                    self.parallel_scheduler_progress_transition_count(),
+                    self.parallel_scheduler_livelock_diagnostic_subject_summaries(),
+                )?;
+                validate_livelock_transition_count_summary(
+                    scope,
+                    self.full_system_progress_transition_count(),
+                    self.full_system_livelock_diagnostic_subject_summaries(),
                 )
             }
         }
@@ -1200,6 +1215,29 @@ fn validate_wait_for_edge_kind_window_summary(
                 window_edge_count: window.edge_count(),
             });
         }
+    }
+    Ok(())
+}
+
+fn validate_livelock_transition_count_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    progress_transition_count: usize,
+    subject_summaries: Vec<(WaitForNode, usize, u64, Tick, Tick)>,
+) -> Result<(), WorkloadError> {
+    let evidence_transition_count = subject_summaries
+        .into_iter()
+        .map(|(_, _, transition_count, _, _)| transition_count)
+        .sum::<u64>();
+    let progress_transition_count_u64 =
+        u64::try_from(progress_transition_count).unwrap_or(u64::MAX);
+    if progress_transition_count_u64 < evidence_transition_count {
+        return Err(
+            WorkloadError::InvalidParallelLivelockTransitionCountSummary {
+                scope,
+                progress_transition_count,
+                evidence_transition_count,
+            },
+        );
     }
     Ok(())
 }

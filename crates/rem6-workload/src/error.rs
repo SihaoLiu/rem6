@@ -1579,6 +1579,11 @@ pub enum WorkloadError {
         edge_kind_count: usize,
         window_edge_count: usize,
     },
+    InvalidParallelLivelockTransitionCountSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        progress_transition_count: usize,
+        evidence_transition_count: u64,
+    },
     ExpectedParallelWaitForEdgeKindWindowMismatch {
         scope: WorkloadParallelDiagnosticScope,
         kind: WaitForEdgeKind,

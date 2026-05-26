@@ -412,6 +412,10 @@ Implementation evidence on 2026-05-26:
   result with no materialized livelock diagnostic record is still rejected when
   scheduler or data-cache transition evidence reaches the manifest threshold
   for a subject in the checked scope.
+- Workload diagnostic-scope validation now rejects livelock summaries whose
+  aggregate progress-transition count is below the transition evidence stored
+  in scoped livelock diagnostic records. Dirty livelock records therefore
+  cannot be reported while a weaker aggregate counter hides the same evidence.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,
