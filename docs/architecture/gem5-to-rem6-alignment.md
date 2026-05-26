@@ -366,6 +366,10 @@ Implementation evidence on 2026-05-26:
   windows before deriving partition-set counts. A partition-set contract can no
   longer pass by filtering out an inverted or zero-duration actual timeline
   record while another valid record satisfies the minimum count.
+- Workload batch partition-streak replay applies the same scoped raw batch
+  timeline validation before deriving sustained partition-set streak counts.
+  Streak contracts can no longer pass by filtering out a malformed timeline
+  window while another valid record satisfies the consecutive-count threshold.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

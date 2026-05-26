@@ -1154,6 +1154,7 @@ pub(crate) fn verify_expected_parallel_batch_partition_streaks(
     };
 
     for expected in expected_streaks {
+        validate_partition_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_consecutive_batch_count = expected.actual_consecutive_batch_count(summary);
         if actual_consecutive_batch_count < expected.minimum_consecutive_batch_count() {
             return Err(
