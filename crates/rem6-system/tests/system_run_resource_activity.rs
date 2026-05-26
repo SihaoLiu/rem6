@@ -537,6 +537,17 @@ fn system_run_reports_parallel_scheduler_remote_flows() {
     assert_eq!(core_flows[0].send_count(), 1);
     let core_sends = run.parallel_scheduler_remote_sends();
     assert_eq!(core_sends.len(), 1);
+    assert_eq!(run.parallel_scheduler_total_remote_send_count(), 1);
+    assert_eq!(run.parallel_scheduler_remote_send_count(core, memory), 1);
+    assert_eq!(run.parallel_scheduler_remote_send_count(memory, core), 0);
+    assert_eq!(
+        run.parallel_scheduler_remote_source_partitions(),
+        vec![core]
+    );
+    assert_eq!(
+        run.parallel_scheduler_remote_target_partitions(),
+        vec![memory]
+    );
     assert_eq!(core_sends[0].source(), core);
     assert_eq!(core_sends[0].target(), memory);
     assert_eq!(core_sends[0].source_tick(), 0);

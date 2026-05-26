@@ -472,15 +472,38 @@ impl RiscvClusterSchedulerEpoch {
             .sum()
     }
 
+    pub fn total_remote_send_count(&self) -> usize {
+        self.batches
+            .iter()
+            .map(ParallelEpochBatchRecord::remote_send_count)
+            .sum()
+    }
+
+    pub fn remote_send_count(&self, source: PartitionId, target: PartitionId) -> usize {
+        self.remote_sends()
+            .into_iter()
+            .filter(|send| send.source() == source && send.target() == target)
+            .count()
+    }
+
+    pub fn remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_source_partitions(self.remote_sends())
+    }
+
+    pub fn remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_target_partitions(self.remote_sends())
+    }
+
     pub fn remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         self.remote_flows.clone()
     }
 
     pub fn remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
-        self.batches
-            .iter()
-            .flat_map(|batch| batch.remote_sends().iter().copied())
-            .collect()
+        collect_parallel_remote_sends(
+            self.batches
+                .iter()
+                .flat_map(|batch| batch.remote_sends().iter().copied()),
+        )
     }
 
     pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
@@ -810,12 +833,46 @@ impl RiscvClusterRun {
             .sum()
     }
 
+    pub fn parallel_scheduler_total_remote_send_count(&self) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(RiscvClusterSchedulerEpoch::total_remote_send_count)
+            .sum()
+    }
+
+    pub fn parallel_scheduler_remote_send_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.remote_send_count(source, target))
+            .sum()
+    }
+
     pub fn parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         merge_parallel_remote_flow_records(
             self.parallel_scheduler_epochs()
                 .into_iter()
                 .flat_map(RiscvClusterSchedulerEpoch::remote_flows),
         )
+    }
+
+    pub fn parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
+        collect_parallel_remote_sends(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(RiscvClusterSchedulerEpoch::remote_sends),
+        )
+    }
+
+    pub fn parallel_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_source_partitions(self.parallel_scheduler_remote_sends())
+    }
+
+    pub fn parallel_scheduler_remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_target_partitions(self.parallel_scheduler_remote_sends())
     }
 
     pub fn max_parallel_scheduler_workers(&self) -> usize {
@@ -937,6 +994,45 @@ where
         )
     });
     transitions
+}
+
+fn collect_parallel_remote_sends<I>(sends: I) -> Vec<ParallelRemoteSendRecord>
+where
+    I: IntoIterator<Item = ParallelRemoteSendRecord>,
+{
+    let mut sends = sends.into_iter().collect::<Vec<_>>();
+    sends.sort_by_key(|send| {
+        (
+            send.source(),
+            send.target(),
+            send.source_tick(),
+            send.delivery_tick(),
+            send.order(),
+        )
+    });
+    sends
+}
+
+fn collect_remote_source_partitions(
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<PartitionId> {
+    sends
+        .into_iter()
+        .map(|send| send.source())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_remote_target_partitions(
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<PartitionId> {
+    sends
+        .into_iter()
+        .map(|send| send.target())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn progress_monitor_snapshot(

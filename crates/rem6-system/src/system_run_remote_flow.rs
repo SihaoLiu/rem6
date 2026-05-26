@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::RiscvClusterSchedulerEpoch;
 use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId};
@@ -17,6 +17,24 @@ impl RiscvSystemRun {
             .sum()
     }
 
+    pub fn parallel_scheduler_total_remote_send_count(&self) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(RiscvClusterSchedulerEpoch::total_remote_send_count)
+            .sum()
+    }
+
+    pub fn parallel_scheduler_remote_send_count(
+        &self,
+        source: PartitionId,
+        target: PartitionId,
+    ) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.remote_send_count(source, target))
+            .sum()
+    }
+
     pub fn parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
         merge_parallel_remote_flow_records(
             self.parallel_scheduler_epochs()
@@ -31,6 +49,14 @@ impl RiscvSystemRun {
                 .into_iter()
                 .flat_map(RiscvClusterSchedulerEpoch::remote_sends),
         )
+    }
+
+    pub fn parallel_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_source_partitions(self.parallel_scheduler_remote_sends())
+    }
+
+    pub fn parallel_scheduler_remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_remote_target_partitions(self.parallel_scheduler_remote_sends())
     }
 }
 
@@ -64,4 +90,26 @@ where
         )
     });
     sends
+}
+
+fn collect_remote_source_partitions(
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<PartitionId> {
+    sends
+        .into_iter()
+        .map(|send| send.source())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn collect_remote_target_partitions(
+    sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+) -> Vec<PartitionId> {
+    sends
+        .into_iter()
+        .map(|send| send.target())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
