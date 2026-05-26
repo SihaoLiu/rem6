@@ -589,6 +589,11 @@ pub enum WorkloadError {
     EmptyExpectedParallelRemoteEndpointTargets {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    InvalidExpectedParallelRemoteEndpointOverlap {
+        scope: WorkloadParallelRemoteFlowScope,
+        source_partitions: Vec<u32>,
+        target_partitions: Vec<u32>,
+    },
     DuplicateExpectedParallelRemoteEndpoints {
         scope: WorkloadParallelRemoteFlowScope,
     },

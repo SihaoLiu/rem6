@@ -798,6 +798,7 @@ impl fmt::Display for WorkloadError {
             ),
             Self::EmptyExpectedParallelRemoteEndpointSources { .. }
             | Self::EmptyExpectedParallelRemoteEndpointTargets { .. }
+            | Self::InvalidExpectedParallelRemoteEndpointOverlap { .. }
             | Self::DuplicateExpectedParallelRemoteEndpoints { .. }
             | Self::MissingParallelRemoteEndpointSummary { .. }
             | Self::ExpectedParallelRemoteEndpointsMismatch { .. } => {

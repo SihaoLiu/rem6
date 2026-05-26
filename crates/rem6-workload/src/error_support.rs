@@ -166,6 +166,17 @@ pub(crate) fn format_remote_endpoint_error(
             "expected {} remote endpoints must declare at least one target partition",
             scope.as_str()
         ),
+        WorkloadError::InvalidExpectedParallelRemoteEndpointOverlap {
+            scope,
+            source_partitions,
+            target_partitions,
+        } => write!(
+            formatter,
+            "expected {} remote endpoint source and target partitions must be disjoint, got {} and {}",
+            scope.as_str(),
+            format_partition_indexes(source_partitions),
+            format_partition_indexes(target_partitions)
+        ),
         WorkloadError::DuplicateExpectedParallelRemoteEndpoints { scope } => write!(
             formatter,
             "expected {} remote endpoints are already declared",

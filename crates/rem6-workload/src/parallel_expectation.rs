@@ -556,6 +556,18 @@ impl WorkloadExpectedParallelRemoteEndpoints {
         if target_partitions.is_empty() {
             return Err(WorkloadError::EmptyExpectedParallelRemoteEndpointTargets { scope });
         }
+        if source_partitions
+            .iter()
+            .any(|source| target_partitions.contains(source))
+        {
+            return Err(
+                WorkloadError::InvalidExpectedParallelRemoteEndpointOverlap {
+                    scope,
+                    source_partitions: parallel_endpoint_partition_indexes(&source_partitions),
+                    target_partitions: parallel_endpoint_partition_indexes(&target_partitions),
+                },
+            );
+        }
         Ok(Self {
             scope,
             source_partitions,
@@ -576,17 +588,11 @@ impl WorkloadExpectedParallelRemoteEndpoints {
     }
 
     pub(crate) fn source_partition_indexes(&self) -> Vec<u32> {
-        self.source_partitions
-            .iter()
-            .map(|partition| partition.index())
-            .collect()
+        parallel_endpoint_partition_indexes(&self.source_partitions)
     }
 
     pub(crate) fn target_partition_indexes(&self) -> Vec<u32> {
-        self.target_partitions
-            .iter()
-            .map(|partition| partition.index())
-            .collect()
+        parallel_endpoint_partition_indexes(&self.target_partitions)
     }
 
     pub(crate) const fn sort_key(&self) -> u8 {
@@ -647,6 +653,13 @@ fn normalize_parallel_endpoint_partitions(
         .into_iter()
         .collect::<BTreeSet<_>>()
         .into_iter()
+        .collect()
+}
+
+fn parallel_endpoint_partition_indexes(partitions: &[PartitionId]) -> Vec<u32> {
+    partitions
+        .iter()
+        .map(|partition| partition.index())
         .collect()
 }
 

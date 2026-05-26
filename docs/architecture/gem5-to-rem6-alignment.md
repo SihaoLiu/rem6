@@ -705,7 +705,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   replay-plan
   validation of exact expected remote-flow actual sets and first/last tick windows,
   remote endpoint source/target partition fan-in and fan-out summaries plus
-  exact manifest-owned endpoint-set expectations, manifest-verifiable remote
+  exact manifest-owned endpoint-set expectations with disjoint source/target
+  partition-set validation, manifest-verifiable remote
   delay-floor and delay-ceiling expectations, aggregate-flow to exact-send consistency expectations,
   direct GPU and accelerator DMA scheduler remote-send, remote-flow, timing,
   endpoint, delay-bound, and consistency contracts plus full-system remote
@@ -936,7 +937,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   backing-route validation and identity hashing, GPU and accelerator command
   plus DMA endpoint validation,
   manifest-owned parallel remote-flow count, remote-flow timing,
-  remote endpoints, remote delay bounds, and exact remote-send contracts for
+  remote endpoints with disjoint source/target endpoint-set validation, remote
+  delay bounds, and exact remote-send contracts for
   CPU/cache/full-system plus direct GPU and accelerator DMA scheduler scopes,
   CPU/cache/full-system scheduler progress, direct GPU and accelerator DMA
   scheduler progress, direct GPU and accelerator DMA scheduler idle bounds,

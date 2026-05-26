@@ -324,6 +324,32 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_endpoints()
             scope: WorkloadParallelRemoteFlowScope::Scheduler,
         },
     );
+    assert_eq!(
+        WorkloadExpectedParallelRemoteEndpoints::new(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            [PartitionId::new(0)],
+            [PartitionId::new(0)],
+        )
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteEndpointOverlap {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source_partitions: vec![0],
+            target_partitions: vec![0],
+        },
+    );
+    assert_eq!(
+        WorkloadExpectedParallelRemoteEndpoints::new(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            [PartitionId::new(0), PartitionId::new(1)],
+            [PartitionId::new(1), PartitionId::new(2)],
+        )
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteEndpointOverlap {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source_partitions: vec![0, 1],
+            target_partitions: vec![1, 2],
+        },
+    );
 
     let duplicate = rem6_workload::WorkloadManifest::builder(
         id("duplicate-parallel-remote-endpoints"),
