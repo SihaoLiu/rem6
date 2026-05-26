@@ -169,7 +169,7 @@ impl CheckpointRegistry {
         }
 
         let mut seen_components = BTreeSet::new();
-        let mut restored = Vec::new();
+        let mut restored = BTreeMap::new();
         for state in manifest.states() {
             let component = state.component().clone();
             if !self.components.contains_key(&component) {
@@ -195,12 +195,13 @@ impl CheckpointRegistry {
                 }
                 chunks.insert(chunk.name().to_string(), chunk.payload().to_vec());
             }
-            restored.push((component, chunks));
+            restored.insert(component, chunks);
         }
 
-        for (component, chunks) in restored {
-            self.components.insert(component, chunks);
+        for component in self.components.keys() {
+            restored.entry(component.clone()).or_default();
         }
+        self.components = restored;
         Ok(())
     }
 }
@@ -262,3 +263,35 @@ impl fmt::Display for CheckpointError {
 }
 
 impl Error for CheckpointError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CheckpointChunk, CheckpointComponentId, CheckpointManifest, CheckpointRegistry,
+        CheckpointState,
+    };
+
+    #[test]
+    fn restore_clears_registered_components_absent_from_manifest() {
+        let cpu = CheckpointComponentId::new("cpu0").unwrap();
+        let memory = CheckpointComponentId::new("memory0").unwrap();
+        let mut registry = CheckpointRegistry::new();
+        registry.register(cpu.clone()).unwrap();
+        registry.register(memory.clone()).unwrap();
+        registry.write_chunk(&cpu, "pc", vec![1]).unwrap();
+        registry.write_chunk(&memory, "store", vec![2]).unwrap();
+        let manifest = CheckpointManifest::new(
+            "cpu-only",
+            12,
+            vec![CheckpointState::new(
+                cpu.clone(),
+                vec![CheckpointChunk::new("pc", vec![3])],
+            )],
+        );
+
+        registry.restore(&manifest).unwrap();
+
+        assert_eq!(registry.chunk(&cpu, "pc"), Some(&[3][..]));
+        assert_eq!(registry.chunk(&memory, "store"), None);
+    }
+}

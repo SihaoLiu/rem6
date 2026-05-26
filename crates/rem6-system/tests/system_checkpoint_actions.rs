@@ -11,9 +11,9 @@ use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, MemoryStoreCheckpointBank,
-    MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
-    SystemActionExecutor, SystemActionOutcome, SystemError,
+    MemoryStoreCheckpointError, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
+    RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointError,
+    SchedulerCheckpointPort, SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -198,9 +198,103 @@ fn system_action_executor_checkpoints_and_restores_live_cpu_and_memory_together(
 }
 
 #[test]
-fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_live_state() {
+fn system_action_executor_rejects_manifest_missing_attached_bank_without_stale_chunk_restore() {
     let host = PartitionId::new(1);
     let source = GuestSourceId::new(15);
+    let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
+    let memory_component = CheckpointComponentId::new("memory0").unwrap();
+    let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    core.redirect_pc(Address::new(0x8040));
+    core.write_register(reg(1), 0x1234);
+    let (store, target) = partitioned_memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let riscv_bank = RiscvCoreCheckpointBank::new([RiscvCoreCheckpointPort::new(
+        cpu_component.clone(),
+        core.clone(),
+    )])
+    .unwrap();
+    let memory_bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+        memory_component.clone(),
+        Arc::clone(&store),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    riscv_bank.register_all(&mut checkpoints).unwrap();
+    memory_bank.register_all(&mut checkpoints).unwrap();
+    let mut executor = SystemActionExecutor::with_checkpoint_banks(
+        StatsRegistry::new(),
+        checkpoints,
+        riscv_bank,
+        memory_bank,
+    );
+    let checkpoint = HostActionRecord::new(
+        121,
+        host,
+        host,
+        GuestEventId::new(13),
+        source,
+        HostAction::Checkpoint {
+            label: "full-system".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let cpu_only_manifest = CheckpointManifest::new(
+        "cpu-only-restore",
+        manifest.tick(),
+        manifest
+            .states()
+            .iter()
+            .filter(|state| state.component() == &cpu_component)
+            .cloned()
+            .collect(),
+    );
+
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(reg(1), 0);
+    store
+        .lock()
+        .unwrap()
+        .insert_line(target, Address::new(0x1000), line_data(0xaa))
+        .unwrap();
+    let restore = HostActionRecord::new(
+        122,
+        host,
+        host,
+        GuestEventId::new(14),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: cpu_only_manifest,
+        },
+    );
+
+    let error = executor.apply(&restore).unwrap_err();
+
+    assert_eq!(
+        error,
+        SystemError::MemoryCheckpoint(MemoryStoreCheckpointError::MissingChunk {
+            component: memory_component,
+            name: "store".to_string(),
+        })
+    );
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.read_register(reg(1)), 0);
+    assert_eq!(
+        store
+            .lock()
+            .unwrap()
+            .line_data(target, Address::new(0x1000))
+            .unwrap(),
+        line_data(0xaa)
+    );
+}
+
+#[test]
+fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_live_state() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(16);
     let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
     let memory_component = CheckpointComponentId::new("memory0").unwrap();
     let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
@@ -231,7 +325,7 @@ fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_liv
         121,
         host,
         host,
-        GuestEventId::new(13),
+        GuestEventId::new(15),
         source,
         HostAction::Checkpoint {
             label: "cross-bank".to_string(),
@@ -271,7 +365,7 @@ fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_liv
         122,
         host,
         host,
-        GuestEventId::new(14),
+        GuestEventId::new(16),
         source,
         HostAction::RestoreCheckpoint {
             manifest: bad_manifest,
@@ -296,7 +390,7 @@ fn system_action_executor_rejects_cross_bank_invalid_restore_without_partial_liv
 #[test]
 fn system_action_executor_rejects_empty_checkpoint_label_without_chunk_writes() {
     let host = PartitionId::new(1);
-    let source = GuestSourceId::new(16);
+    let source = GuestSourceId::new(17);
     let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
     let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
     core.redirect_pc(Address::new(0x8040));
@@ -313,7 +407,7 @@ fn system_action_executor_rejects_empty_checkpoint_label_without_chunk_writes() 
         122,
         host,
         host,
-        GuestEventId::new(15),
+        GuestEventId::new(17),
         source,
         HostAction::Checkpoint {
             label: String::new(),
@@ -330,7 +424,7 @@ fn system_action_executor_rejects_empty_checkpoint_label_without_chunk_writes() 
 #[test]
 fn system_action_executor_preflights_scheduler_quiescence_before_checkpoint_writes() {
     let host = PartitionId::new(1);
-    let source = GuestSourceId::new(17);
+    let source = GuestSourceId::new(18);
     let cpu_component = CheckpointComponentId::new("cpu0").unwrap();
     let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
     let core = riscv_core(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
@@ -364,7 +458,7 @@ fn system_action_executor_preflights_scheduler_quiescence_before_checkpoint_writ
         123,
         host,
         host,
-        GuestEventId::new(16),
+        GuestEventId::new(18),
         source,
         HostAction::Checkpoint {
             label: "scheduler-not-ready".to_string(),
