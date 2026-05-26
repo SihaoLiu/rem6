@@ -14,7 +14,7 @@ use crate::{
     GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
     RiscvCoreCheckpointBank, SchedulerCheckpointBank, StopRequest, SystemError,
-    TimerCheckpointBank, UartCheckpointBank,
+    TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -137,6 +137,7 @@ pub struct SystemActionExecutor {
     clint_checkpoints: Option<ClintCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
+    virtio_split_queue_checkpoints: Option<VirtioSplitQueueCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
     guest_host_call_responses: BTreeMap<u64, GuestHostCallResponse>,
     execution_mode_checkpoint_registered: bool,
@@ -164,6 +165,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -191,6 +193,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -218,6 +221,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -245,6 +249,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -272,6 +277,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -299,6 +305,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -327,6 +334,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -355,6 +363,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -585,6 +594,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_virtio_split_queue_checkpoint_bank(
+        &mut self,
+        virtio_split_queue_checkpoints: VirtioSplitQueueCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        virtio_split_queue_checkpoints.register_all(&mut self.checkpoints)?;
+        self.virtio_split_queue_checkpoints = Some(virtio_split_queue_checkpoints);
+        Ok(())
+    }
+
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
     }
@@ -633,6 +651,12 @@ impl SystemActionExecutor {
 
     pub const fn uart_checkpoint_bank(&self) -> Option<&UartCheckpointBank> {
         self.uart_checkpoints.as_ref()
+    }
+
+    pub const fn virtio_split_queue_checkpoint_bank(
+        &self,
+    ) -> Option<&VirtioSplitQueueCheckpointBank> {
+        self.virtio_split_queue_checkpoints.as_ref()
     }
 
     fn restore_checkpoint_manifest(
@@ -703,6 +727,11 @@ impl SystemActionExecutor {
             uart_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::UartCheckpoint)?;
+        }
+        if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
+            virtio_split_queue_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::VirtioCheckpoint)?;
         }
         Ok(())
     }
@@ -813,6 +842,11 @@ impl SystemActionExecutor {
                     uart_checkpoints
                         .capture_all_into(&mut self.checkpoints)
                         .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
+                    virtio_split_queue_checkpoints
+                        .capture_all_into(&mut self.checkpoints)
+                        .map_err(SystemError::VirtioCheckpoint)?;
                 }
                 self.capture_execution_modes_into_checkpoint()?;
                 let manifest = self

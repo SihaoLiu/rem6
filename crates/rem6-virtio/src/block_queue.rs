@@ -273,6 +273,30 @@ pub struct VirtioSplitQueueSnapshot {
 }
 
 impl VirtioSplitQueueSnapshot {
+    pub fn new(
+        queue_size: u16,
+        descriptor_table: Address,
+        available_ring: Address,
+        used_ring: Address,
+        last_available_index: u16,
+        event_index: bool,
+    ) -> Result<Self, VirtioError> {
+        if queue_size == 0 || !queue_size.is_power_of_two() {
+            return Err(VirtioError::InvalidQueueSize {
+                index: 0,
+                size: queue_size,
+            });
+        }
+        Ok(Self {
+            queue_size,
+            descriptor_table,
+            available_ring,
+            used_ring,
+            last_available_index,
+            event_index,
+        })
+    }
+
     pub const fn queue_size(&self) -> u16 {
         self.queue_size
     }

@@ -238,6 +238,7 @@ dependencies = [
  "rem6-topology",
  "rem6-transport",
  "rem6-uart",
+ "rem6-virtio",
  "rem6-workload",
 ]
 

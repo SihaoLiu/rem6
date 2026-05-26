@@ -44,6 +44,7 @@ mod system_run_remote_flow;
 mod timer_checkpoint;
 mod topology;
 mod uart_checkpoint;
+mod virtio_checkpoint;
 mod workload_replay;
 mod workload_replay_heterogeneous;
 mod workload_replay_host;
@@ -108,6 +109,10 @@ pub use topology::{
 };
 pub use uart_checkpoint::{
     UartCheckpointBank, UartCheckpointError, UartCheckpointPort, UartCheckpointRecord,
+};
+pub use virtio_checkpoint::{
+    VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
+    VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
 };
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
@@ -1348,6 +1353,7 @@ pub enum SystemError {
     ClintCheckpoint(ClintCheckpointError),
     TimerCheckpoint(TimerCheckpointError),
     UartCheckpoint(UartCheckpointError),
+    VirtioCheckpoint(VirtioSplitQueueCheckpointError),
 }
 
 impl fmt::Display for SystemError {
@@ -1376,6 +1382,7 @@ impl fmt::Display for SystemError {
             Self::ClintCheckpoint(error) => write!(formatter, "{error}"),
             Self::TimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
+            Self::VirtioCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1401,6 +1408,7 @@ impl Error for SystemError {
             Self::ClintCheckpoint(error) => Some(error),
             Self::TimerCheckpoint(error) => Some(error),
             Self::UartCheckpoint(error) => Some(error),
+            Self::VirtioCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }
     }
