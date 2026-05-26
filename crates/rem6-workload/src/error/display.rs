@@ -819,6 +819,7 @@ impl fmt::Display for WorkloadError {
             | Self::MissingParallelRemoteFlowMaximumDelayEvidence { .. }
             | Self::ExpectedParallelRemoteDelayAboveCeiling { .. }
             | Self::MissingParallelRemoteTrafficConsistencySummary { .. }
+            | Self::MissingParallelRemoteTrafficAggregateFlow { .. }
             | Self::ParallelRemoteTrafficConsistencyMismatch(_)
             | Self::InvalidExpectedParallelRemoteFlowTimingWindow { .. }
             | Self::InvalidExpectedParallelRemoteFlowDelayBounds { .. }

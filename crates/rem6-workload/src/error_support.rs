@@ -330,6 +330,20 @@ pub(crate) fn format_remote_delay_error(
             "missing parallel summary for expected {} remote traffic consistency",
             scope.as_str()
         ),
+        WorkloadError::MissingParallelRemoteTrafficAggregateFlow {
+            scope,
+            source,
+            target,
+            send_record_count,
+            send_first_tick,
+            send_last_tick,
+            send_minimum_delay,
+            send_maximum_delay,
+        } => write!(
+            formatter,
+            "missing {} aggregate remote flow for exact send evidence {source}->{target} with {send_record_count} records, ticks {send_first_tick} to {send_last_tick}, delay {send_minimum_delay} to {send_maximum_delay}",
+            scope.as_str()
+        ),
         WorkloadError::ParallelRemoteTrafficConsistencyMismatch(mismatch) => write!(
             formatter,
             "expected {} remote traffic {source}->{target} flow evidence count {flow_send_count}, ticks {flow_first_tick} to {flow_last_tick}, delay {} to {}; send evidence count {send_record_count}, ticks {} to {}, delay {} to {}",

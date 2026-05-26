@@ -367,6 +367,11 @@ Implementation evidence on 2026-05-26:
   aggregate remote-flow evidence without matching exact remote-send evidence.
   This keeps aggregate flow contracts tied to replayable per-send timing
   records instead of accepting summary-only remote traffic.
+- Workload parallel remote-traffic consistency expectations also reject exact
+  remote-send routes that are omitted from an explicit same-scope aggregate
+  remote-flow set. Exact sends can still provide stronger derived evidence when
+  aggregate records are absent, but a present aggregate must be complete for its
+  scope.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

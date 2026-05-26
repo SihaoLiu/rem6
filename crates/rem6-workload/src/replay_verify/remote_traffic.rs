@@ -320,20 +320,37 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
         let flows = explicit_parallel_remote_flows_for_scope(summary, expected.scope());
         let sends = actual_parallel_remote_sends_for_scope(summary, expected.scope());
         let send_observations = remote_send_observations(&sends);
-        for flow in flows {
-            let Some(send_observation) = send_observations.get(&(flow.source(), flow.target()))
+        for flow in &flows {
+            let flow_record = *flow;
+            let Some(send_observation) =
+                send_observations.get(&(flow_record.source(), flow_record.target()))
             else {
                 return Err(remote_traffic_missing_sends_mismatch(
                     expected.scope(),
-                    flow,
+                    flow_record,
                 ));
             };
-            if !remote_traffic_observation_matches(flow, *send_observation) {
+            if !remote_traffic_observation_matches(flow_record, *send_observation) {
                 return Err(remote_traffic_consistency_mismatch(
                     expected.scope(),
-                    flow,
+                    flow_record,
                     *send_observation,
                 ));
+            }
+        }
+        if !flows.is_empty() {
+            for ((source, target), send_observation) in &send_observations {
+                if !flows
+                    .iter()
+                    .any(|flow| flow.source() == *source && flow.target() == *target)
+                {
+                    return Err(remote_traffic_missing_flow_mismatch(
+                        expected.scope(),
+                        *source,
+                        *target,
+                        *send_observation,
+                    ));
+                }
             }
         }
     }
@@ -476,6 +493,24 @@ fn remote_traffic_missing_sends_mismatch(
             send_maximum_delay: None,
         },
     ))
+}
+
+fn remote_traffic_missing_flow_mismatch(
+    scope: WorkloadParallelRemoteFlowScope,
+    source: PartitionId,
+    target: PartitionId,
+    sends: RemoteSendObservation,
+) -> WorkloadError {
+    WorkloadError::MissingParallelRemoteTrafficAggregateFlow {
+        scope,
+        source: source.index(),
+        target: target.index(),
+        send_record_count: sends.send_count,
+        send_first_tick: sends.first_tick,
+        send_last_tick: sends.last_tick,
+        send_minimum_delay: sends.minimum_delay,
+        send_maximum_delay: sends.maximum_delay,
+    }
 }
 
 fn remote_traffic_consistency_mismatch(
