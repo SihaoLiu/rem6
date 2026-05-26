@@ -370,6 +370,10 @@ Implementation evidence on 2026-05-26:
   timeline validation before deriving sustained partition-set streak counts.
   Streak contracts can no longer pass by filtering out a malformed timeline
   window while another valid record satisfies the consecutive-count threshold.
+- Workload batch worker-count, tick-bucket, tick-activity, tick-streak, and
+  worker-tick replay paths now validate scoped raw batch timeline records
+  before deriving worker evidence. Duration or worker-count contracts cannot
+  pass by silently discarding malformed timeline windows.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

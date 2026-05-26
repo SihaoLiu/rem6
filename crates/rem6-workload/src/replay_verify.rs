@@ -6,9 +6,10 @@ use crate::{
     parallel_batch_timeline_expectation::actual_parallel_batch_timeline_records, WorkloadError,
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelProgressTransition,
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelDiagnosticScope,
-    WorkloadParallelExecutionSummary, WorkloadParallelProgressTransitionExpectationFailure,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResult,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
+    WorkloadReplayPlan, WorkloadResult,
 };
 
 mod remote_traffic;
@@ -907,6 +908,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_buckets(
     };
 
     for expected in expected_buckets {
+        validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_batch_count = expected.actual_batch_count(summary);
         if actual_batch_count < expected.minimum_batch_count() {
             return Err(
@@ -940,6 +942,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_tick_buckets(
     };
 
     for expected in expected_buckets {
+        validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_ticks = expected.actual_ticks(summary);
         if actual_ticks < expected.minimum_ticks() {
             return Err(
@@ -975,6 +978,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_tick_activity(
     };
 
     for expected in expected_activity {
+        validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_ticks = expected.actual_ticks(summary);
         if actual_ticks < expected.minimum_ticks() {
             return Err(
@@ -1008,6 +1012,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_tick_streaks(
     };
 
     for expected in expected_streaks {
+        validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_consecutive_ticks = expected.actual_consecutive_ticks(summary);
         if actual_consecutive_ticks < expected.minimum_consecutive_ticks() {
             return Err(
@@ -1041,6 +1046,7 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
     };
 
     for expected in expected_worker_ticks {
+        validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
         let actual_worker_ticks = expected.actual_worker_ticks(summary);
         if actual_worker_ticks < expected.minimum_worker_ticks() {
             return Err(
@@ -1054,6 +1060,14 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
         }
     }
     Ok(())
+}
+
+fn validate_worker_scope_batch_timeline_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelBatchWorkerScope,
+) -> Result<(), WorkloadError> {
+    let timeline_scope = batch_timeline_scope_for_worker_scope(scope);
+    validate_batch_timeline_records_for_scope(summary, timeline_scope)
 }
 
 pub(crate) fn verify_expected_parallel_batch_partition_sets(
@@ -1094,7 +1108,16 @@ fn validate_partition_scope_batch_timeline_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelBatchPartitionScope,
 ) -> Result<(), WorkloadError> {
-    let timeline_scope = batch_timeline_scope_for_partition_scope(scope);
+    validate_batch_timeline_records_for_scope(
+        summary,
+        batch_timeline_scope_for_partition_scope(scope),
+    )
+}
+
+fn validate_batch_timeline_records_for_scope(
+    summary: &WorkloadParallelExecutionSummary,
+    timeline_scope: WorkloadParallelBatchTimelineScope,
+) -> Result<(), WorkloadError> {
     for record in actual_parallel_batch_timeline_records(timeline_scope, summary) {
         if record.is_empty() {
             return Err(WorkloadError::UnexpectedParallelBatchTimelineRecord {
@@ -1112,6 +1135,28 @@ fn validate_partition_scope_batch_timeline_evidence(
         }
     }
     Ok(())
+}
+
+fn batch_timeline_scope_for_worker_scope(
+    scope: WorkloadParallelBatchWorkerScope,
+) -> WorkloadParallelBatchTimelineScope {
+    match scope {
+        WorkloadParallelBatchWorkerScope::Scheduler => {
+            WorkloadParallelBatchTimelineScope::Scheduler
+        }
+        WorkloadParallelBatchWorkerScope::DataCacheScheduler => {
+            WorkloadParallelBatchTimelineScope::DataCacheScheduler
+        }
+        WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::GpuDmaScheduler
+        }
+        WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler
+        }
+        WorkloadParallelBatchWorkerScope::FullSystem => {
+            WorkloadParallelBatchTimelineScope::FullSystem
+        }
+    }
 }
 
 fn batch_timeline_scope_for_partition_scope(

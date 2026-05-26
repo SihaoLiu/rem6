@@ -6,10 +6,10 @@ use rem6_workload::{
     WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
     WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
     WorkloadId, WorkloadParallelBatchPartitionSet, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -172,6 +172,39 @@ fn partition(index: u32) -> PartitionId {
     PartitionId::new(index)
 }
 
+fn scheduler_timeline_with_malformed_record() -> WorkloadParallelExecutionSummary {
+    WorkloadParallelExecutionSummary::default().with_parallel_scheduler_batch_timeline([
+        timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        ),
+        timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            9,
+            5,
+            [partition(0), partition(1)],
+            2,
+        ),
+    ])
+}
+
+fn assert_malformed_scheduler_timeline(error: WorkloadError) {
+    assert_eq!(
+        error,
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 9,
+            horizon: 5,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
+}
+
 #[test]
 fn workload_replay_plan_checks_dma_scheduler_batch_worker_expectations_directly() {
     let plan = replay_plan()
@@ -252,6 +285,81 @@ fn workload_replay_plan_checks_dma_scheduler_batch_worker_expectations_directly(
             actual_ticks: 5,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_buckets() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(expected_bucket(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            1,
+        ))
+        .unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(scheduler_timeline_with_malformed_record());
+
+    assert_malformed_scheduler_timeline(plan.verify_result(&result).unwrap_err());
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_tick_buckets() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_bucket(expected_tick_bucket(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            4,
+        ))
+        .unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(scheduler_timeline_with_malformed_record());
+
+    assert_malformed_scheduler_timeline(plan.verify_result(&result).unwrap_err());
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_tick_activity() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_activity(expected_tick_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            4,
+        ))
+        .unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(scheduler_timeline_with_malformed_record());
+
+    assert_malformed_scheduler_timeline(plan.verify_result(&result).unwrap_err());
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_tick_streaks() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            4,
+        ))
+        .unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(scheduler_timeline_with_malformed_record());
+
+    assert_malformed_scheduler_timeline(plan.verify_result(&result).unwrap_err());
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_ticks() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_ticks(expected_worker_ticks_at_or_above(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+            8,
+        ))
+        .unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(scheduler_timeline_with_malformed_record());
+
+    assert_malformed_scheduler_timeline(plan.verify_result(&result).unwrap_err());
 }
 
 #[test]
