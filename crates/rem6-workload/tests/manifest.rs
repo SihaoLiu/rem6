@@ -10,7 +10,8 @@ use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadCheckpointComponentSummary,
-    WorkloadCheckpointManifestSummary, WorkloadError, WorkloadExecutionMode,
+    WorkloadCheckpointManifestSummary, WorkloadDiskImageConstruction,
+    WorkloadDiskImageConstructionStep, WorkloadError, WorkloadExecutionMode,
     WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointComponentSummary,
     WorkloadExpectedCheckpointManifestSummary, WorkloadGpuDevice, WorkloadGpuDmaCopy,
     WorkloadGpuKernelLaunch, WorkloadGuestHostCallResponse, WorkloadHostActionSummary,
@@ -18,9 +19,9 @@ use rem6_workload::{
     WorkloadMemoryTarget, WorkloadQosPolicy, WorkloadQosQueuePolicyKind,
     WorkloadQosRequestorPriority, WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan,
     WorkloadResource, WorkloadResourceAcquisition, WorkloadResourceAcquisitionField,
-    WorkloadResourceAcquisitionKind, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
-    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope,
-    WorkloadTopology,
+    WorkloadResourceAcquisitionKind, WorkloadResourceConstructionField, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResourceKindField, WorkloadResult, WorkloadRiscvCore,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1170,6 +1171,103 @@ fn workload_manifest_records_resource_acquisition_provenance() {
             .unwrap_err(),
         WorkloadError::EmptyResourceAcquisitionField {
             field: WorkloadResourceAcquisitionField::Tool,
+        }
+    );
+}
+
+#[test]
+fn workload_manifest_records_disk_image_construction_provenance() {
+    let construction = WorkloadDiskImageConstruction::new("raw", 8 * 1024 * 1024)
+        .unwrap()
+        .with_step(
+            WorkloadDiskImageConstructionStep::new("mkfs.ext4", "format", "rootfs.ext4")
+                .unwrap()
+                .with_argument("-O ^metadata_csum")
+                .unwrap(),
+        );
+    let disk = disk_resource()
+        .with_disk_image_construction(construction.clone())
+        .unwrap();
+    let manifest = WorkloadManifest::builder(id("disk-image-construction"), boot_image())
+        .add_resource(disk.clone())
+        .unwrap()
+        .add_required_resource(resource_id("disk"))
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        manifest
+            .resource(disk.id())
+            .unwrap()
+            .disk_image_construction(),
+        Some(&construction)
+    );
+    assert_eq!(construction.image_format(), "raw");
+    assert_eq!(construction.virtual_size_bytes(), 8 * 1024 * 1024);
+    assert_eq!(construction.steps().len(), 1);
+    assert_eq!(construction.steps()[0].tool(), "mkfs.ext4");
+    assert_eq!(construction.steps()[0].operation(), "format");
+    assert_eq!(construction.steps()[0].input(), "rootfs.ext4");
+    assert_eq!(construction.steps()[0].arguments(), &["-O ^metadata_csum"]);
+
+    let without_construction =
+        WorkloadManifest::builder(id("disk-image-construction"), boot_image())
+            .add_resource(disk_resource())
+            .unwrap()
+            .add_required_resource(resource_id("disk"))
+            .build()
+            .unwrap();
+    let different_argument = WorkloadManifest::builder(id("disk-image-construction"), boot_image())
+        .add_resource(
+            disk_resource()
+                .with_disk_image_construction(
+                    WorkloadDiskImageConstruction::new("raw", 8 * 1024 * 1024)
+                        .unwrap()
+                        .with_step(
+                            WorkloadDiskImageConstructionStep::new(
+                                "mkfs.ext4",
+                                "format",
+                                "rootfs.ext4",
+                            )
+                            .unwrap()
+                            .with_argument("-O metadata_csum")
+                            .unwrap(),
+                        ),
+                )
+                .unwrap(),
+        )
+        .unwrap()
+        .add_required_resource(resource_id("disk"))
+        .build()
+        .unwrap();
+
+    assert_ne!(manifest.identity(), without_construction.identity());
+    assert_ne!(manifest.identity(), different_argument.identity());
+    assert_eq!(
+        kernel_resource()
+            .with_disk_image_construction(construction)
+            .unwrap_err(),
+        WorkloadError::ResourceKindFieldMismatch {
+            resource: resource_id("kernel"),
+            field: WorkloadResourceKindField::DiskImageConstruction,
+            expected: WorkloadResourceKind::DiskImage,
+            actual: WorkloadResourceKind::Kernel,
+        }
+    );
+    assert_eq!(
+        WorkloadDiskImageConstruction::new("", 4096).unwrap_err(),
+        WorkloadError::EmptyResourceConstructionField {
+            field: WorkloadResourceConstructionField::ImageFormat,
+        }
+    );
+    assert_eq!(
+        WorkloadDiskImageConstruction::new("raw", 0).unwrap_err(),
+        WorkloadError::ZeroDiskImageVirtualSizeBytes
+    );
+    assert_eq!(
+        WorkloadDiskImageConstructionStep::new("", "format", "rootfs.ext4").unwrap_err(),
+        WorkloadError::EmptyResourceConstructionField {
+            field: WorkloadResourceConstructionField::Tool,
         }
     );
 }

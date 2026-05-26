@@ -49,6 +49,14 @@ impl fmt::Display for WorkloadError {
                 "resource acquisition {} must not be empty",
                 field.as_str()
             ),
+            Self::EmptyResourceConstructionField { field } => write!(
+                formatter,
+                "resource construction {} must not be empty",
+                field.as_str()
+            ),
+            Self::ZeroDiskImageVirtualSizeBytes => {
+                write!(formatter, "disk image virtual size bytes must be positive")
+            }
             Self::DuplicateResource { resource } => {
                 write!(
                     formatter,
@@ -102,6 +110,19 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "resource {} has kind {}, expected {}",
                 resource.as_str(),
+                actual.as_str(),
+                expected.as_str()
+            ),
+            Self::ResourceKindFieldMismatch {
+                resource,
+                field,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "resource {} cannot set {} for kind {}, expected {}",
+                resource.as_str(),
+                field.as_str(),
                 actual.as_str(),
                 expected.as_str()
             ),

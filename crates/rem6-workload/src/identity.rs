@@ -131,6 +131,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         hash_str(&mut hash, resource.digest());
         hash_str(&mut hash, resource.locator());
         hash_resource_acquisition(&mut hash, resource.acquisition());
+        hash_disk_image_construction(&mut hash, resource.disk_image_construction());
     }
     hash_u64(&mut hash, input.required_resources.len() as u64);
     for resource in input.required_resources {
@@ -634,6 +635,29 @@ fn hash_resource_acquisition(
     hash_str(hash, acquisition.locator());
     hash_optional_str(hash, acquisition.tool());
     hash_optional_str(hash, acquisition.revision());
+}
+
+fn hash_disk_image_construction(
+    hash: &mut u64,
+    construction: Option<&crate::WorkloadDiskImageConstruction>,
+) {
+    let Some(construction) = construction else {
+        hash_u64(hash, 0);
+        return;
+    };
+    hash_u64(hash, 1);
+    hash_str(hash, construction.image_format());
+    hash_u64(hash, construction.virtual_size_bytes());
+    hash_u64(hash, construction.steps().len() as u64);
+    for step in construction.steps() {
+        hash_str(hash, step.tool());
+        hash_str(hash, step.operation());
+        hash_str(hash, step.input());
+        hash_u64(hash, step.arguments().len() as u64);
+        for argument in step.arguments() {
+            hash_str(hash, argument);
+        }
+    }
 }
 
 fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {

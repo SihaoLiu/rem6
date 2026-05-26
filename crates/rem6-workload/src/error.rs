@@ -10,8 +10,9 @@ use crate::{
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
     WorkloadParallelSchedulerScope, WorkloadResourceAcquisitionField,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
-    WorkloadRouteLatency, WorkloadSuiteIdentity,
+    WorkloadResourceActivityScope, WorkloadResourceConstructionField, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
+    WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -54,6 +55,10 @@ pub enum WorkloadError {
     EmptyResourceAcquisitionField {
         field: WorkloadResourceAcquisitionField,
     },
+    EmptyResourceConstructionField {
+        field: WorkloadResourceConstructionField,
+    },
+    ZeroDiskImageVirtualSizeBytes,
     DuplicateResource {
         resource: WorkloadResourceId,
     },
@@ -81,6 +86,12 @@ pub enum WorkloadError {
     },
     ResourceKindMismatch {
         resource: WorkloadResourceId,
+        expected: WorkloadResourceKind,
+        actual: WorkloadResourceKind,
+    },
+    ResourceKindFieldMismatch {
+        resource: WorkloadResourceId,
+        field: WorkloadResourceKindField,
         expected: WorkloadResourceKind,
         actual: WorkloadResourceKind,
     },
