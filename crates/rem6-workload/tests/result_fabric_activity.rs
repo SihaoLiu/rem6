@@ -1,5 +1,6 @@
 use rem6_fabric::{
-    FabricLaneActivity, FabricLinkId, FabricVirtualNetworkActivity, VirtualNetworkId,
+    FabricLaneActivity, FabricLinkActivity, FabricLinkId, FabricVirtualNetworkActivity,
+    VirtualNetworkId,
 };
 use rem6_workload::WorkloadParallelExecutionSummary;
 
@@ -57,6 +58,32 @@ fn virtual_network(
     )
 }
 
+fn link_activity(
+    link: &str,
+    active_virtual_network_count: usize,
+    transfer_count: usize,
+    byte_count: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    contended_virtual_network_count: usize,
+    first_tick: u64,
+    last_tick: u64,
+) -> FabricLinkActivity {
+    FabricLinkActivity::new(
+        self::link(link),
+        active_virtual_network_count,
+        transfer_count,
+        byte_count,
+        occupied_ticks,
+        queue_delay_ticks,
+        max_queue_delay_ticks,
+        contended_virtual_network_count,
+        first_tick,
+        last_tick,
+    )
+}
+
 #[test]
 fn workload_result_preserves_fabric_lane_and_virtual_network_activity() {
     let summary = WorkloadParallelExecutionSummary::default().with_fabric_lane_activities([
@@ -99,6 +126,20 @@ fn workload_result_preserves_fabric_lane_and_virtual_network_activity() {
         virtual_networks[0],
     );
 
+    let links = summary.fabric_link_activities();
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].link(), &link("mesh_a"));
+    assert_eq!(links[0].active_virtual_network_count(), 1);
+    assert_eq!(links[0].transfer_count(), 3);
+    assert_eq!(links[0].queue_delay_ticks(), 10);
+    assert_eq!(links[0].contended_virtual_network_count(), 1);
+    assert_eq!(links[1].link(), &link("mesh_b"));
+    assert_eq!(links[1].byte_count(), 32);
+    assert_eq!(
+        summary.fabric_link_activity(&link("mesh_a")).unwrap(),
+        links[0],
+    );
+
     let merged_virtual_networks = WorkloadParallelExecutionSummary::default()
         .with_fabric_virtual_network_activities([
             virtual_network(3, 1, 2, 64, 6, 4, 4, 1, 10, 20),
@@ -113,5 +154,15 @@ fn workload_result_preserves_fabric_lane_and_virtual_network_activity() {
             .fabric_virtual_network_activity(VirtualNetworkId::new(3))
             .unwrap(),
         virtual_network(3, 3, 5, 160, 14, 11, 5, 2, 2, 20),
+    );
+
+    let merged_links = WorkloadParallelExecutionSummary::default().with_fabric_link_activities([
+        link_activity("mesh_c", 1, 2, 64, 6, 4, 4, 1, 10, 20),
+        link_activity("mesh_c", 2, 3, 96, 8, 7, 5, 1, 2, 9),
+    ]);
+    assert_eq!(merged_links.active_fabric_link_count(), 1);
+    assert_eq!(
+        merged_links.fabric_link_activity(&link("mesh_c")).unwrap(),
+        link_activity("mesh_c", 3, 5, 160, 14, 11, 5, 2, 2, 20),
     );
 }

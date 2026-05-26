@@ -187,6 +187,44 @@ fn fabric_summarizes_activity_by_virtual_network() {
 }
 
 #[test]
+fn fabric_summarizes_activity_by_link_across_virtual_networks() {
+    let mut fabric = FabricModel::new();
+    let activity_start = fabric.mark_activity();
+    let shared = link("mesh_link_summary");
+    let route = path([FabricPathHop::new(shared.clone(), 2, 8)
+        .unwrap()
+        .with_credit_depth(1)
+        .unwrap()]);
+
+    fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(3, 8, 1), route.clone()),
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 2), route.clone()),
+            ],
+        )
+        .unwrap();
+
+    let activities = fabric.link_activities();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].link(), &shared);
+    assert_eq!(activities[0].active_virtual_network_count(), 2);
+    assert_eq!(activities[0].transfer_count(), 3);
+    assert_eq!(activities[0].byte_count(), 24);
+    assert_eq!(activities[0].occupied_ticks(), 3);
+    assert_eq!(activities[0].queue_delay_ticks(), 3);
+    assert_eq!(activities[0].max_queue_delay_ticks(), 3);
+    assert_eq!(activities[0].contended_virtual_network_count(), 1);
+    assert_eq!(activities[0].first_tick(), 0);
+    assert_eq!(activities[0].last_tick(), 6);
+    assert!(activities[0].has_contention());
+    assert_eq!(fabric.link_activity(&shared).unwrap(), activities[0]);
+    assert_eq!(fabric.link_activities_since(activity_start), activities);
+}
+
+#[test]
 fn fabric_wait_for_graph_tracks_credit_blocked_packets_until_credit_returns() {
     let mut fabric = FabricModel::new();
     let route = path([FabricPathHop::new(link("mesh_wait_credit"), 10, 8)
