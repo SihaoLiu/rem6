@@ -9,8 +9,13 @@ use rem6_mmio::{
     MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse,
 };
 
+mod device_config;
 mod isr;
 
+pub use device_config::{
+    VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
+    VirtioPciDeviceConfigSpec,
+};
 pub use isr::{
     VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
     VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,
@@ -1180,6 +1185,14 @@ pub enum VirtioError {
         address: Address,
         value: u16,
     },
+    EmptyDeviceConfig,
+    DeviceConfigWritableMaskSizeMismatch {
+        bytes: u64,
+        mask: u64,
+    },
+    ReadOnlyDeviceConfigWrite {
+        offset: u64,
+    },
 }
 
 impl fmt::Display for VirtioError {
@@ -1243,6 +1256,16 @@ impl fmt::Display for VirtioError {
                 "VirtIO notify value {value} does not match any queue at address {:#x}",
                 address.get()
             ),
+            Self::EmptyDeviceConfig => {
+                write!(formatter, "VirtIO device config must contain at least one byte")
+            }
+            Self::DeviceConfigWritableMaskSizeMismatch { bytes, mask } => write!(
+                formatter,
+                "VirtIO device config writable mask has {mask} bytes for {bytes} config bytes"
+            ),
+            Self::ReadOnlyDeviceConfigWrite { offset } => {
+                write!(formatter, "VirtIO device config byte {offset} is read-only")
+            }
         }
     }
 }
