@@ -62,6 +62,15 @@ pub(super) fn format_diagnostic_error(
             "invalid {} wait-for edge kind {kind:?} summary: kind count {edge_kind_count} is below exact window count {window_edge_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelLivelockDiagnosticCountSummary {
+            scope,
+            progress_transition_count,
+            livelock_diagnostic_count,
+        } => write!(
+            formatter,
+            "invalid {} livelock summary: diagnostic count {livelock_diagnostic_count} exceeds progress transition count {progress_transition_count}",
+            scope.as_str()
+        ),
         WorkloadError::InvalidParallelLivelockTransitionCountSummary {
             scope,
             progress_transition_count,

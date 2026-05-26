@@ -144,6 +144,7 @@ impl WorkloadParallelExecutionSummary {
                 validate_livelock_transition_count_summary(
                     scope,
                     self.data_cache_parallel_scheduler_progress_transition_count(),
+                    self.data_cache_parallel_scheduler_livelock_diagnostic_count(),
                     self.data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries(),
                 )
             }
@@ -219,11 +220,13 @@ impl WorkloadParallelExecutionSummary {
                 validate_livelock_transition_count_summary(
                     scope,
                     self.parallel_scheduler_progress_transition_count(),
+                    self.parallel_scheduler_livelock_diagnostic_count(),
                     self.parallel_scheduler_livelock_diagnostic_subject_summaries(),
                 )?;
                 validate_livelock_transition_count_summary(
                     scope,
                     self.full_system_progress_transition_count(),
+                    self.full_system_livelock_diagnostic_count(),
                     self.full_system_livelock_diagnostic_subject_summaries(),
                 )
             }
@@ -1222,8 +1225,18 @@ fn validate_wait_for_edge_kind_window_summary(
 fn validate_livelock_transition_count_summary(
     scope: WorkloadParallelDiagnosticScope,
     progress_transition_count: usize,
+    livelock_diagnostic_count: usize,
     subject_summaries: Vec<(WaitForNode, usize, u64, Tick, Tick)>,
 ) -> Result<(), WorkloadError> {
+    if progress_transition_count < livelock_diagnostic_count {
+        return Err(
+            WorkloadError::InvalidParallelLivelockDiagnosticCountSummary {
+                scope,
+                progress_transition_count,
+                livelock_diagnostic_count,
+            },
+        );
+    }
     let evidence_transition_count = subject_summaries
         .into_iter()
         .map(|(_, _, transition_count, _, _)| transition_count)

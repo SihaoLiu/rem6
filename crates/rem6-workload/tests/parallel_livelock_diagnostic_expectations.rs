@@ -738,6 +738,29 @@ fn workload_replay_plan_rejects_inconsistent_livelock_transition_summary() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inconsistent_livelock_diagnostic_summary() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::DataCache,
+        ))
+        .unwrap();
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_livelock_diagnostics(0, 1);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelLivelockDiagnosticCountSummary {
+            scope: WorkloadParallelDiagnosticScope::DataCache,
+            progress_transition_count: 0,
+            livelock_diagnostic_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_clean_data_cache_diagnostics_include_data_cache_livelock() {
     let plan = replay_plan()
         .add_expected_clean_parallel_diagnostics(expected_clean(
