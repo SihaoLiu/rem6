@@ -359,6 +359,10 @@ Implementation evidence on 2026-05-26:
   ceilings at manifest and replay plan insertion, matching the scheduler's
   positive remote-delay invariant before replay can accept bounded remote
   traffic evidence.
+- Workload parallel remote-delay floor and ceiling expectations now reject
+  contradictory same-scope windows at manifest and replay plan insertion. A
+  declared minimum remote delay cannot exceed the declared maximum remote delay,
+  so impossible timing contracts fail before result replay.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

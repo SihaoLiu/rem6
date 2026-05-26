@@ -806,6 +806,7 @@ impl fmt::Display for WorkloadError {
             }
             Self::ZeroExpectedParallelRemoteDelayFloor { .. }
             | Self::ZeroExpectedParallelRemoteDelayCeiling { .. }
+            | Self::InvalidExpectedParallelRemoteDelayWindow { .. }
             | Self::DuplicateExpectedParallelRemoteDelayFloor { .. }
             | Self::DuplicateExpectedParallelRemoteDelayCeiling { .. }
             | Self::DuplicateExpectedParallelRemoteTrafficConsistency { .. }

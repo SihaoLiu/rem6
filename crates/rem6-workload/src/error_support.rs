@@ -227,6 +227,15 @@ pub(crate) fn format_remote_delay_error(
             "expected {} remote delay ceiling must be positive",
             scope.as_str()
         ),
+        WorkloadError::InvalidExpectedParallelRemoteDelayWindow {
+            scope,
+            minimum_delay,
+            maximum_delay,
+        } => write!(
+            formatter,
+            "expected {} remote delay floor {minimum_delay} must not exceed ceiling {maximum_delay}",
+            scope.as_str()
+        ),
         WorkloadError::DuplicateExpectedParallelRemoteDelayFloor { scope } => write!(
             formatter,
             "expected {} remote delay floor is already declared",

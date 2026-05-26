@@ -2,9 +2,10 @@ use rem6_boot::BootImage;
 use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
-    WorkloadError, WorkloadExpectedParallelRemoteDelayCeiling, WorkloadId,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadError, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadId, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -47,6 +48,13 @@ fn expected_ceiling(
     maximum_delay: u64,
 ) -> WorkloadExpectedParallelRemoteDelayCeiling {
     WorkloadExpectedParallelRemoteDelayCeiling::new(scope, maximum_delay)
+}
+
+fn expected_floor(
+    scope: WorkloadParallelRemoteFlowScope,
+    minimum_delay: u64,
+) -> WorkloadExpectedParallelRemoteDelayFloor {
+    WorkloadExpectedParallelRemoteDelayFloor::new(scope, minimum_delay).unwrap()
 }
 
 #[test]
@@ -280,6 +288,49 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_remote_delay_ceili
             .unwrap_err(),
         WorkloadError::ZeroExpectedParallelRemoteDelayCeiling {
             scope: WorkloadParallelRemoteFlowScope::Scheduler,
+        },
+    );
+    assert_eq!(
+        replay_plan()
+            .add_expected_parallel_remote_delay_floor(expected_floor(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                8,
+            ))
+            .unwrap()
+            .add_expected_parallel_remote_delay_ceiling(expected_ceiling(
+                WorkloadParallelRemoteFlowScope::Scheduler,
+                4,
+            ))
+            .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteDelayWindow {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            minimum_delay: 8,
+            maximum_delay: 4,
+        },
+    );
+
+    assert_eq!(
+        rem6_workload::WorkloadManifest::builder(
+            id("invalid-remote-delay-ceiling-window"),
+            boot_image(),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_expected_parallel_remote_delay_floor(expected_floor(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            8,
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_delay_ceiling(expected_ceiling(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            4,
+        ))
+        .unwrap_err(),
+        WorkloadError::InvalidExpectedParallelRemoteDelayWindow {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            minimum_delay: 8,
+            maximum_delay: 4,
         },
     );
 

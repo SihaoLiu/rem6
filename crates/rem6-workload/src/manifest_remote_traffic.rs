@@ -77,6 +77,39 @@ fn validate_expected_parallel_remote_delay_ceiling(
     Ok(())
 }
 
+fn validate_expected_parallel_remote_delay_floor_window(
+    expected: WorkloadExpectedParallelRemoteDelayFloor,
+    ceilings: &[WorkloadExpectedParallelRemoteDelayCeiling],
+) -> Result<(), WorkloadError> {
+    for ceiling in ceilings {
+        if ceiling.scope() == expected.scope() && expected.minimum_delay() > ceiling.maximum_delay()
+        {
+            return Err(WorkloadError::InvalidExpectedParallelRemoteDelayWindow {
+                scope: expected.scope(),
+                minimum_delay: expected.minimum_delay(),
+                maximum_delay: ceiling.maximum_delay(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_expected_parallel_remote_delay_ceiling_window(
+    expected: WorkloadExpectedParallelRemoteDelayCeiling,
+    floors: &[WorkloadExpectedParallelRemoteDelayFloor],
+) -> Result<(), WorkloadError> {
+    for floor in floors {
+        if floor.scope() == expected.scope() && floor.minimum_delay() > expected.maximum_delay() {
+            return Err(WorkloadError::InvalidExpectedParallelRemoteDelayWindow {
+                scope: expected.scope(),
+                minimum_delay: floor.minimum_delay(),
+                maximum_delay: expected.maximum_delay(),
+            });
+        }
+    }
+    Ok(())
+}
+
 impl WorkloadManifestBuilder {
     pub fn add_expected_parallel_remote_flow(
         mut self,
@@ -112,6 +145,10 @@ impl WorkloadManifestBuilder {
                 scope: expected.scope(),
             });
         }
+        validate_expected_parallel_remote_delay_floor_window(
+            expected,
+            &self.expected_parallel_remote_delay_ceilings,
+        )?;
         self.expected_parallel_remote_delay_floors.push(expected);
         self.expected_parallel_remote_delay_floors
             .sort_by_key(|floor| floor.sort_key());
@@ -132,6 +169,10 @@ impl WorkloadManifestBuilder {
                 scope: expected.scope(),
             });
         }
+        validate_expected_parallel_remote_delay_ceiling_window(
+            expected,
+            &self.expected_parallel_remote_delay_floors,
+        )?;
         self.expected_parallel_remote_delay_ceilings.push(expected);
         self.expected_parallel_remote_delay_ceilings
             .sort_by_key(|ceiling| ceiling.sort_key());
@@ -246,6 +287,10 @@ impl WorkloadReplayPlan {
                 scope: expected.scope(),
             });
         }
+        validate_expected_parallel_remote_delay_floor_window(
+            expected,
+            &self.expected_parallel_remote_delay_ceilings,
+        )?;
         self.expected_parallel_remote_delay_floors.push(expected);
         self.expected_parallel_remote_delay_floors
             .sort_by_key(|floor| floor.sort_key());
@@ -272,6 +317,10 @@ impl WorkloadReplayPlan {
                 scope: expected.scope(),
             });
         }
+        validate_expected_parallel_remote_delay_ceiling_window(
+            expected,
+            &self.expected_parallel_remote_delay_floors,
+        )?;
         self.expected_parallel_remote_delay_ceilings.push(expected);
         self.expected_parallel_remote_delay_ceilings
             .sort_by_key(|ceiling| ceiling.sort_key());
