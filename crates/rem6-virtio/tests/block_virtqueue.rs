@@ -1,9 +1,14 @@
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    MemoryTargetId, PartitionedMemoryStore,
+};
 use rem6_virtio::{
     VirtioBlockConfigSpec, VirtioBlockDecodedRequest, VirtioBlockDevice, VirtioBlockMemoryBackend,
-    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioQueueIndex, VirtioSplitDescriptor,
-    VirtioSplitDescriptorChain, VirtioSplitUsedElement, VirtioSplitUsedRing,
-    VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID,
-    VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
+    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioGuestMemory, VirtioQueueIndex,
+    VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
+    VirtioSplitUsedRing, VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_FLUSH,
+    VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT, VIRTIO_SPLIT_DESC_F_NEXT,
+    VIRTIO_SPLIT_DESC_F_WRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -22,8 +27,124 @@ fn sector(byte: u8) -> Vec<u8> {
     vec![byte; VIRTIO_BLOCK_SECTOR_SIZE as usize]
 }
 
+fn layout() -> CacheLineLayout {
+    CacheLineLayout::new(64).unwrap()
+}
+
+fn request_id(sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(7), sequence)
+}
+
+fn guest_store() -> PartitionedMemoryStore {
+    let target = MemoryTargetId::new(2);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    for line in (0x1000..0x2000).step_by(64) {
+        store
+            .insert_line(target, Address::new(line), vec![0; 64])
+            .unwrap();
+    }
+    store
+}
+
+fn write_guest(store: &mut PartitionedMemoryStore, address: u64, bytes: &[u8], sequence: u64) {
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let current = address + cursor as u64;
+        let line_remaining = 64 - (current % 64) as usize;
+        let count = line_remaining.min(bytes.len() - cursor);
+        let request = MemoryRequest::write(
+            request_id(sequence + cursor as u64),
+            Address::new(current),
+            AccessSize::new(count as u64).unwrap(),
+            bytes[cursor..cursor + count].to_vec(),
+            ByteMask::from_bits(vec![true; count]).unwrap(),
+            layout(),
+        )
+        .unwrap();
+        store.respond(&request).unwrap();
+        cursor += count;
+    }
+}
+
+fn descriptor(address: u64, length: u32, flags: u16, next: u16) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend(address.to_le_bytes());
+    bytes.extend(length.to_le_bytes());
+    bytes.extend(flags.to_le_bytes());
+    bytes.extend(next.to_le_bytes());
+    bytes
+}
+
 fn decoded(chain: VirtioSplitDescriptorChain) -> VirtioBlockDecodedRequest {
     chain.decode_block_request(queue(3)).unwrap()
+}
+
+#[test]
+fn virtio_split_queue_walks_available_block_request_from_guest_memory() {
+    let mut store = guest_store();
+    write_guest(
+        &mut store,
+        0x1000,
+        &descriptor(0x1200, 16, VIRTIO_SPLIT_DESC_F_NEXT, 1),
+        1,
+    );
+    write_guest(
+        &mut store,
+        0x1010,
+        &descriptor(
+            0x1300,
+            VIRTIO_BLOCK_SECTOR_SIZE as u32,
+            VIRTIO_SPLIT_DESC_F_NEXT,
+            2,
+        ),
+        2,
+    );
+    write_guest(
+        &mut store,
+        0x1020,
+        &descriptor(0x1500, 1, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        3,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 4);
+    write_guest(&mut store, 0x1104, &0_u16.to_le_bytes(), 5);
+    write_guest(&mut store, 0x1200, &header(VIRTIO_BLOCK_T_OUT, 3), 6);
+    write_guest(&mut store, 0x1300, &sector(0x6a), 7);
+
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+    let decoded = split_queue
+        .consume_available_block(&mut guest, queue(2))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(split_queue.last_available_index(), 1);
+    assert_eq!(decoded.request().id(), VirtioBlockRequestId::new(0));
+    assert_eq!(decoded.request().queue(), queue(2));
+    assert_eq!(decoded.request().sector(), 3);
+    assert_eq!(decoded.status_descriptor(), 2);
+    assert_eq!(
+        decoded.request().kind(),
+        &VirtioBlockRequestKind::Write { data: sector(0x6a) }
+    );
+    assert!(split_queue
+        .consume_available_block(&mut guest, queue(2))
+        .unwrap()
+        .is_none());
 }
 
 #[test]

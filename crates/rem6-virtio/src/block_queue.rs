@@ -1,5 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    PartitionedMemoryStore,
+};
+
 use crate::{
     VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
     VirtioError, VirtioQueueIndex, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
@@ -9,6 +14,197 @@ use crate::{
 pub const VIRTIO_SPLIT_DESC_F_NEXT: u16 = 1;
 pub const VIRTIO_SPLIT_DESC_F_WRITE: u16 = 2;
 pub const VIRTIO_SPLIT_DESC_F_INDIRECT: u16 = 4;
+
+pub struct VirtioGuestMemory<'a> {
+    store: &'a mut PartitionedMemoryStore,
+    line_layout: CacheLineLayout,
+    agent: AgentId,
+    sequence: u64,
+}
+
+impl<'a> VirtioGuestMemory<'a> {
+    pub const fn new(
+        store: &'a mut PartitionedMemoryStore,
+        line_layout: CacheLineLayout,
+        agent: AgentId,
+    ) -> Self {
+        Self {
+            store,
+            line_layout,
+            agent,
+            sequence: 0,
+        }
+    }
+
+    fn read_exact(&mut self, address: Address, bytes: u64) -> Result<Vec<u8>, VirtioError> {
+        let mut data = Vec::new();
+        let mut cursor = address;
+        let mut remaining = bytes;
+        while remaining > 0 {
+            let line_remaining = self.line_layout.bytes() - self.line_layout.line_offset(cursor);
+            let chunk = remaining.min(line_remaining);
+            let request = MemoryRequest::read_shared(
+                self.next_request_id(),
+                cursor,
+                AccessSize::new(chunk).map_err(virtio_memory_error)?,
+                self.line_layout,
+            )
+            .map_err(virtio_memory_error)?;
+            let outcome = self.store.respond(&request).map_err(virtio_memory_error)?;
+            let response =
+                outcome
+                    .response()
+                    .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+                        message: "VirtIO guest memory read completed without a response".into(),
+                    })?;
+            let bytes = response
+                .data()
+                .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+                    message: "VirtIO guest memory read completed without data".into(),
+                })?;
+            data.extend_from_slice(bytes);
+            cursor = add_address(cursor, chunk)?;
+            remaining -= chunk;
+        }
+        Ok(data)
+    }
+
+    fn read_u16(&mut self, address: Address) -> Result<u16, VirtioError> {
+        let bytes = self.read_exact(address, 2)?;
+        Ok(u16::from_le_bytes(bytes.as_slice().try_into().unwrap()))
+    }
+
+    fn next_request_id(&mut self) -> MemoryRequestId {
+        let id = MemoryRequestId::new(self.agent, self.sequence);
+        self.sequence = self.sequence.wrapping_add(1);
+        id
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioSplitQueue {
+    queue_size: u16,
+    descriptor_table: Address,
+    available_ring: Address,
+    used_ring: Address,
+    last_available_index: u16,
+}
+
+impl VirtioSplitQueue {
+    pub fn new(
+        queue_size: u16,
+        descriptor_table: Address,
+        available_ring: Address,
+        used_ring: Address,
+        last_available_index: u16,
+    ) -> Result<Self, VirtioError> {
+        if queue_size == 0 || !queue_size.is_power_of_two() {
+            return Err(VirtioError::InvalidQueueSize {
+                index: 0,
+                size: queue_size,
+            });
+        }
+        Ok(Self {
+            queue_size,
+            descriptor_table,
+            available_ring,
+            used_ring,
+            last_available_index,
+        })
+    }
+
+    pub const fn queue_size(&self) -> u16 {
+        self.queue_size
+    }
+
+    pub const fn descriptor_table(&self) -> Address {
+        self.descriptor_table
+    }
+
+    pub const fn available_ring(&self) -> Address {
+        self.available_ring
+    }
+
+    pub const fn used_ring(&self) -> Address {
+        self.used_ring
+    }
+
+    pub const fn last_available_index(&self) -> u16 {
+        self.last_available_index
+    }
+
+    pub fn consume_available_block(
+        &mut self,
+        guest: &mut VirtioGuestMemory<'_>,
+        queue: VirtioQueueIndex,
+    ) -> Result<Option<VirtioBlockDecodedRequest>, VirtioError> {
+        let available_index = guest.read_u16(add_address(self.available_ring, 2)?)?;
+        if available_index == self.last_available_index {
+            return Ok(None);
+        }
+        let slot = self.last_available_index % self.queue_size;
+        let head = guest.read_u16(add_address(self.available_ring, 4 + u64::from(slot) * 2)?)?;
+        let chain = self.load_descriptor_chain(guest, head)?;
+        let decoded = chain.decode_block_request(queue)?;
+        self.last_available_index = self.last_available_index.wrapping_add(1);
+        Ok(Some(decoded))
+    }
+
+    fn load_descriptor_chain(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        head: u16,
+    ) -> Result<VirtioSplitDescriptorChain, VirtioError> {
+        let mut descriptors = Vec::new();
+        let mut visited = BTreeSet::new();
+        let mut index = head;
+        loop {
+            if index >= self.queue_size {
+                return Err(VirtioError::MissingVirtioDescriptor { index });
+            }
+            if !visited.insert(index) {
+                return Err(VirtioError::VirtioDescriptorLoop { index });
+            }
+            let descriptor = self.load_descriptor(guest, index)?;
+            let next = descriptor.next();
+            descriptors.push(descriptor);
+            let Some(next) = next else {
+                break;
+            };
+            index = next;
+        }
+        VirtioSplitDescriptorChain::new(head, descriptors)
+    }
+
+    fn load_descriptor(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        index: u16,
+    ) -> Result<VirtioSplitDescriptor, VirtioError> {
+        let descriptor_address = add_address(
+            self.descriptor_table,
+            u64::from(index) * VIRTIO_SPLIT_DESCRIPTOR_SIZE,
+        )?;
+        let bytes = guest.read_exact(descriptor_address, VIRTIO_SPLIT_DESCRIPTOR_SIZE)?;
+        let address = Address::new(u64::from_le_bytes(bytes[0..8].try_into().unwrap()));
+        let length = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let flags = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
+        let next = u16::from_le_bytes(bytes[14..16].try_into().unwrap());
+        if flags & VIRTIO_SPLIT_DESC_F_INDIRECT != 0 {
+            return Err(VirtioError::PciTransportRuntimeConfig {
+                message: format!("VirtIO split descriptor {index} uses unsupported indirect flag"),
+            });
+        }
+        let next = (flags & VIRTIO_SPLIT_DESC_F_NEXT != 0).then_some(next);
+        if flags & VIRTIO_SPLIT_DESC_F_WRITE != 0 {
+            return Ok(VirtioSplitDescriptor::device_writable(index, length, next));
+        }
+        let data = guest.read_exact(address, u64::from(length))?;
+        Ok(VirtioSplitDescriptor::device_readable(index, data, next))
+    }
+}
+
+const VIRTIO_SPLIT_DESCRIPTOR_SIZE: u64 = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VirtioSplitDescriptor {
@@ -553,5 +749,24 @@ impl VirtioSplitUsedRing {
             used_index,
             used_element,
         })
+    }
+}
+
+fn add_address(address: Address, offset: u64) -> Result<Address, VirtioError> {
+    address
+        .get()
+        .checked_add(offset)
+        .map(Address::new)
+        .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+            message: format!(
+                "VirtIO guest memory address {:#x} overflows with offset {offset}",
+                address.get()
+            ),
+        })
+}
+
+fn virtio_memory_error(error: rem6_memory::MemoryError) -> VirtioError {
+    VirtioError::PciTransportRuntimeConfig {
+        message: format!("VirtIO guest memory access failed: {error}"),
     }
 }
