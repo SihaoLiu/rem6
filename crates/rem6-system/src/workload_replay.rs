@@ -36,13 +36,14 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId, TransportError,
 };
 use rem6_workload::{
-    WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol, WorkloadError,
-    WorkloadExpectedCleanParallelDiagnostics, WorkloadGpuDmaCopy, WorkloadHostActionSummary,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount, WorkloadReplayPlan,
-    WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
-    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology, WorkloadWaitForBlockedNodeWindow,
-    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
+    WorkloadCheckpointComponentSummary, WorkloadCheckpointManifestSummary,
+    WorkloadDataCacheProtocol, WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
+    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerCount, WorkloadReplayPlan, WorkloadResolvedResources,
+    WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
+    WorkloadTopology, WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
+    WorkloadWaitForTargetNodeWindow,
 };
 
 mod cache_response;
@@ -1491,12 +1492,16 @@ fn workload_execution_mode_from_system(
 
 fn workload_checkpoint_summary(manifest: &CheckpointManifest) -> WorkloadCheckpointManifestSummary {
     let summary = manifest.summary();
-    WorkloadCheckpointManifestSummary::new(
+    WorkloadCheckpointManifestSummary::with_component_summaries(
         manifest.label(),
         manifest.tick(),
-        summary.component_count(),
-        summary.chunk_count(),
-        summary.payload_bytes(),
+        summary.component_summaries().iter().map(|component| {
+            WorkloadCheckpointComponentSummary::new(
+                component.component().as_str(),
+                component.chunk_count(),
+                component.payload_bytes(),
+            )
+        }),
     )
 }
 

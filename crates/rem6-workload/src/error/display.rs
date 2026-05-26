@@ -7,9 +7,11 @@ use crate::error_support::{
 use super::fabric_display::format_fabric_activity_error;
 use super::WorkloadError;
 
+mod checkpoint;
 mod parallel_batch;
 mod parallel_frontier;
 
+use self::checkpoint::format_checkpoint_error;
 use self::parallel_batch::format_parallel_batch_error;
 use self::parallel_frontier::format_parallel_frontier_error;
 
@@ -707,46 +709,20 @@ impl fmt::Display for WorkloadError {
                     "checkpoint restore label {label} was not planned"
                 )
             }
-            Self::DuplicateExpectedCheckpointManifestSummary { label } => write!(
-                formatter,
-                "duplicate checkpoint manifest summary expectation for {label}"
-            ),
-            Self::DuplicateExpectedCheckpointRestoreManifestSummary { label } => write!(
-                formatter,
-                "duplicate checkpoint restore manifest summary expectation for {label}"
-            ),
-            Self::MissingCheckpointManifestSummary { label } => write!(
-                formatter,
-                "checkpoint manifest summary for {label} was not recorded"
-            ),
-            Self::MissingCheckpointRestoreManifestSummary { label } => write!(
-                formatter,
-                "checkpoint restore manifest summary for {label} was not recorded"
-            ),
-            Self::CheckpointManifestSummaryBelowMinimum {
-                label,
-                minimum_component_count,
-                actual_component_count,
-                minimum_chunk_count,
-                actual_chunk_count,
-                minimum_payload_bytes,
-                actual_payload_bytes,
-            } => write!(
-                formatter,
-                "checkpoint manifest summary for {label} has components {actual_component_count}/{minimum_component_count}, chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
-            ),
-            Self::CheckpointRestoreManifestSummaryBelowMinimum {
-                label,
-                minimum_component_count,
-                actual_component_count,
-                minimum_chunk_count,
-                actual_chunk_count,
-                minimum_payload_bytes,
-                actual_payload_bytes,
-            } => write!(
-                formatter,
-                "checkpoint restore manifest summary for {label} has components {actual_component_count}/{minimum_component_count}, chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
-            ),
+            error @ (Self::DuplicateExpectedCheckpointManifestSummary { .. }
+            | Self::DuplicateExpectedCheckpointRestoreManifestSummary { .. }
+            | Self::DuplicateExpectedCheckpointComponentSummary { .. }
+            | Self::DuplicateExpectedCheckpointRestoreComponentSummary { .. }
+            | Self::MissingCheckpointManifestSummary { .. }
+            | Self::MissingCheckpointRestoreManifestSummary { .. }
+            | Self::MissingCheckpointComponentSummary { .. }
+            | Self::MissingCheckpointRestoreComponentSummary { .. }
+            | Self::CheckpointManifestSummaryBelowMinimum { .. }
+            | Self::CheckpointRestoreManifestSummaryBelowMinimum { .. }
+            | Self::CheckpointComponentSummaryBelowMinimum { .. }
+            | Self::CheckpointRestoreComponentSummaryBelowMinimum { .. }) => {
+                format_checkpoint_error(error, formatter)
+            }
             Self::MissingExecutionModeSwitch { tick, target, mode } => write!(
                 formatter,
                 "planned execution mode switch for {target} to {} at tick {tick} was not recorded",

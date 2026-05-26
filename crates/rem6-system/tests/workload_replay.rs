@@ -9,13 +9,14 @@ use rem6_system::{
     RiscvWorkloadReplay, SystemActionOutcome,
 };
 use rem6_workload::{
-    HostEventIntent, WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol,
-    WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedDataCacheRunAttribution, WorkloadGuestHostCallResponse,
-    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    HostEventIntent, WorkloadCheckpointComponentSummary, WorkloadCheckpointManifestSummary,
+    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
+    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
+    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -1495,17 +1496,25 @@ fn workload_replay_records_checkpoint_manifest_summaries() {
             _ => None,
         })
         .unwrap();
-    let expected = WorkloadCheckpointManifestSummary::new(
+    let expected = WorkloadCheckpointManifestSummary::with_component_summaries(
         "after-mode-switch",
         1,
-        captured.component_count(),
-        captured.chunk_count(),
-        captured.payload_bytes(),
+        captured.component_summaries().iter().map(|component| {
+            WorkloadCheckpointComponentSummary::new(
+                component.component().as_str(),
+                component.chunk_count(),
+                component.payload_bytes(),
+            )
+        }),
     );
 
     assert!(expected.component_count() >= 1);
     assert!(expected.chunk_count() >= 1);
     assert!(expected.payload_bytes() >= 1);
+    assert!(expected
+        .component_summaries()
+        .iter()
+        .any(|component| component.component() == "host.execution_modes"));
     assert_eq!(
         outcome.result().checkpoint_manifest_summaries(),
         std::slice::from_ref(&expected)

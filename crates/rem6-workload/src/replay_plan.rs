@@ -7,8 +7,9 @@ use crate::host_event::{
 };
 use crate::{parallel_expectation, replay_verify};
 use crate::{
-    CheckpointLineage, WorkloadBootImage, WorkloadCheckpointManifestSummary, WorkloadError,
-    WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointManifestSummary,
+    CheckpointLineage, WorkloadBootImage, WorkloadCheckpointComponentSummary,
+    WorkloadCheckpointManifestSummary, WorkloadError, WorkloadExecutionModeSwitch,
+    WorkloadExpectedCheckpointComponentSummary, WorkloadExpectedCheckpointManifestSummary,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedFabricHopActivity,
     WorkloadExpectedFabricLaneActivity, WorkloadExpectedFabricLinkActivity,
@@ -70,6 +71,10 @@ pub struct WorkloadReplayPlan {
         Vec<WorkloadExpectedCheckpointManifestSummary>,
     pub(crate) expected_checkpoint_restore_manifest_summaries:
         Vec<WorkloadExpectedCheckpointManifestSummary>,
+    pub(crate) expected_checkpoint_component_summaries:
+        Vec<WorkloadExpectedCheckpointComponentSummary>,
+    pub(crate) expected_checkpoint_restore_component_summaries:
+        Vec<WorkloadExpectedCheckpointComponentSummary>,
     pub(crate) expected_parallel_worker_use: Vec<WorkloadExpectedParallelWorkerUse>,
     pub(crate) expected_parallel_worker_activity: Vec<WorkloadExpectedParallelWorkerActivity>,
     pub(crate) expected_parallel_scheduler_progress: Vec<WorkloadExpectedParallelSchedulerProgress>,
@@ -162,6 +167,12 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_checkpoint_restore_manifest_summaries: manifest
                 .expected_checkpoint_restore_manifest_summaries()
+                .to_vec(),
+            expected_checkpoint_component_summaries: manifest
+                .expected_checkpoint_component_summaries()
+                .to_vec(),
+            expected_checkpoint_restore_component_summaries: manifest
+                .expected_checkpoint_restore_component_summaries()
                 .to_vec(),
             expected_parallel_worker_use: manifest.expected_parallel_worker_use().to_vec(),
             expected_parallel_worker_activity: manifest
@@ -269,6 +280,18 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedCheckpointManifestSummary] {
         &self.expected_checkpoint_restore_manifest_summaries
+    }
+
+    pub fn expected_checkpoint_component_summaries(
+        &self,
+    ) -> &[WorkloadExpectedCheckpointComponentSummary] {
+        &self.expected_checkpoint_component_summaries
+    }
+
+    pub fn expected_checkpoint_restore_component_summaries(
+        &self,
+    ) -> &[WorkloadExpectedCheckpointComponentSummary] {
+        &self.expected_checkpoint_restore_component_summaries
     }
 
     pub fn add_expected_data_cache_protocol_run_count(
@@ -587,6 +610,8 @@ impl WorkloadReplayPlan {
         self.verify_checkpoint_restore_labels(result)?;
         self.verify_checkpoint_manifest_summaries(result)?;
         self.verify_checkpoint_restore_manifest_summaries(result)?;
+        self.verify_checkpoint_component_summaries(result)?;
+        self.verify_checkpoint_restore_component_summaries(result)?;
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
@@ -767,6 +792,92 @@ impl WorkloadReplayPlan {
                         label: expected.label().to_string(),
                         minimum_component_count,
                         actual_component_count,
+                        minimum_chunk_count,
+                        actual_chunk_count,
+                        minimum_payload_bytes,
+                        actual_payload_bytes,
+                    }
+                },
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn verify_checkpoint_component_summaries(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        for expected in &self.expected_checkpoint_component_summaries {
+            let manifest = result
+                .checkpoint_manifest_summaries()
+                .iter()
+                .find(|summary| summary.label() == expected.label())
+                .ok_or_else(|| WorkloadError::MissingCheckpointManifestSummary {
+                    label: expected.label().to_string(),
+                })?;
+            let actual = manifest
+                .component_summaries()
+                .iter()
+                .find(|summary| summary.component() == expected.component())
+                .ok_or_else(|| WorkloadError::MissingCheckpointComponentSummary {
+                    label: expected.label().to_string(),
+                    component: expected.component().to_string(),
+                })?;
+
+            verify_checkpoint_component_minimum(expected, actual).map_err(
+                |(
+                    minimum_chunk_count,
+                    actual_chunk_count,
+                    minimum_payload_bytes,
+                    actual_payload_bytes,
+                )| {
+                    WorkloadError::CheckpointComponentSummaryBelowMinimum {
+                        label: expected.label().to_string(),
+                        component: expected.component().to_string(),
+                        minimum_chunk_count,
+                        actual_chunk_count,
+                        minimum_payload_bytes,
+                        actual_payload_bytes,
+                    }
+                },
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn verify_checkpoint_restore_component_summaries(
+        &self,
+        result: &WorkloadResult,
+    ) -> Result<(), WorkloadError> {
+        for expected in &self.expected_checkpoint_restore_component_summaries {
+            let manifest = result
+                .restored_checkpoint_manifest_summaries()
+                .iter()
+                .find(|summary| summary.label() == expected.label())
+                .ok_or_else(|| WorkloadError::MissingCheckpointRestoreManifestSummary {
+                    label: expected.label().to_string(),
+                })?;
+            let actual = manifest
+                .component_summaries()
+                .iter()
+                .find(|summary| summary.component() == expected.component())
+                .ok_or_else(|| WorkloadError::MissingCheckpointRestoreComponentSummary {
+                    label: expected.label().to_string(),
+                    component: expected.component().to_string(),
+                })?;
+
+            verify_checkpoint_component_minimum(expected, actual).map_err(
+                |(
+                    minimum_chunk_count,
+                    actual_chunk_count,
+                    minimum_payload_bytes,
+                    actual_payload_bytes,
+                )| {
+                    WorkloadError::CheckpointRestoreComponentSummaryBelowMinimum {
+                        label: expected.label().to_string(),
+                        component: expected.component().to_string(),
                         minimum_chunk_count,
                         actual_chunk_count,
                         minimum_payload_bytes,
@@ -981,6 +1092,24 @@ fn verify_checkpoint_summary_minimum(
     Err((
         expected.minimum_component_count(),
         actual.component_count(),
+        expected.minimum_chunk_count(),
+        actual.chunk_count(),
+        expected.minimum_payload_bytes(),
+        actual.payload_bytes(),
+    ))
+}
+
+fn verify_checkpoint_component_minimum(
+    expected: &WorkloadExpectedCheckpointComponentSummary,
+    actual: &WorkloadCheckpointComponentSummary,
+) -> Result<(), (usize, usize, usize, usize)> {
+    if actual.chunk_count() >= expected.minimum_chunk_count()
+        && actual.payload_bytes() >= expected.minimum_payload_bytes()
+    {
+        return Ok(());
+    }
+
+    Err((
         expected.minimum_chunk_count(),
         actual.chunk_count(),
         expected.minimum_payload_bytes(),

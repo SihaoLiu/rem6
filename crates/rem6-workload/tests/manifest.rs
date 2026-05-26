@@ -9,8 +9,9 @@ use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
-    WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadCheckpointManifestSummary,
-    WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
+    WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadCheckpointComponentSummary,
+    WorkloadCheckpointManifestSummary, WorkloadError, WorkloadExecutionMode,
+    WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointComponentSummary,
     WorkloadExpectedCheckpointManifestSummary, WorkloadGpuDevice, WorkloadGpuDmaCopy,
     WorkloadGpuKernelLaunch, WorkloadGuestHostCallResponse, WorkloadHostActionSummary,
     WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
@@ -1093,6 +1094,50 @@ fn workload_manifest_identity_is_stable_for_resource_insertion_order() {
 }
 
 #[test]
+fn workload_manifest_identity_changes_with_checkpoint_component_summary_expectations() {
+    let manifest_with = |capture_component: &str, restore_payload_bytes: usize| {
+        WorkloadManifest::builder(id("checkpoint-component-identity"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_host_event(WorkloadHostEvent::new(
+                20,
+                HostEventIntent::Checkpoint {
+                    label: "warm".to_string(),
+                },
+            ))
+            .add_host_event(WorkloadHostEvent::new(
+                40,
+                HostEventIntent::RestoreCheckpoint {
+                    label: "warm".to_string(),
+                },
+            ))
+            .add_expected_checkpoint_component_summary(
+                WorkloadExpectedCheckpointComponentSummary::new("warm", capture_component, 2, 8),
+            )
+            .unwrap()
+            .add_expected_checkpoint_restore_component_summary(
+                WorkloadExpectedCheckpointComponentSummary::new(
+                    "warm",
+                    "memory0",
+                    1,
+                    restore_payload_bytes,
+                ),
+            )
+            .unwrap()
+            .build()
+            .unwrap()
+    };
+
+    let first = manifest_with("cpu0", 16);
+    let different_capture_component = manifest_with("cpu1", 16);
+    let different_restore_payload = manifest_with("cpu0", 32);
+
+    assert_ne!(first.identity(), different_capture_component.identity());
+    assert_ne!(first.identity(), different_restore_payload.identity());
+}
+
+#[test]
 fn workload_manifest_rejects_missing_and_duplicate_resource_metadata() {
     let missing = WorkloadManifest::builder(id("missing-resource"), boot_image())
         .add_required_resource(resource_id("kernel"))
@@ -1713,6 +1758,84 @@ fn workload_replay_plan_validates_checkpoint_manifest_summary_requirements() {
 }
 
 #[test]
+fn workload_replay_plan_validates_checkpoint_component_summary_requirements() {
+    let manifest = WorkloadManifest::builder(id("checkpoint-component-summary-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            80,
+            HostEventIntent::Stop {
+                reason: "done".to_string(),
+            },
+        ))
+        .add_expected_checkpoint_component_summary(WorkloadExpectedCheckpointComponentSummary::new(
+            "warm", "cpu0", 2, 8,
+        ))
+        .unwrap()
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing = WorkloadResult::new(plan.manifest_identity(), 80)
+        .with_stop_reason("done")
+        .with_checkpoint_manifest_summary(
+            WorkloadCheckpointManifestSummary::with_component_summaries(
+                "warm",
+                20,
+                [WorkloadCheckpointComponentSummary::new("memory0", 1, 16)],
+            ),
+        );
+    let error = plan.verify_result(&missing).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::MissingCheckpointComponentSummary {
+            label: "warm".to_string(),
+            component: "cpu0".to_string(),
+        }
+    );
+
+    let undercovered = WorkloadResult::new(plan.manifest_identity(), 80)
+        .with_stop_reason("done")
+        .with_checkpoint_manifest_summary(
+            WorkloadCheckpointManifestSummary::with_component_summaries(
+                "warm",
+                20,
+                [WorkloadCheckpointComponentSummary::new("cpu0", 1, 4)],
+            ),
+        );
+    let error = plan.verify_result(&undercovered).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::CheckpointComponentSummaryBelowMinimum {
+            label: "warm".to_string(),
+            component: "cpu0".to_string(),
+            minimum_chunk_count: 2,
+            actual_chunk_count: 1,
+            minimum_payload_bytes: 8,
+            actual_payload_bytes: 4,
+        }
+    );
+
+    let matched = WorkloadResult::new(plan.manifest_identity(), 80)
+        .with_stop_reason("done")
+        .with_checkpoint_manifest_summary(
+            WorkloadCheckpointManifestSummary::with_component_summaries(
+                "warm",
+                20,
+                [WorkloadCheckpointComponentSummary::new("cpu0", 2, 8)],
+            ),
+        );
+    plan.verify_result(&matched).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_validates_planned_checkpoint_restores() {
     let manifest = WorkloadManifest::builder(id("checkpoint-restore-run"), boot_image())
         .add_resource(kernel_resource())
@@ -1828,6 +1951,85 @@ fn workload_replay_plan_validates_checkpoint_restore_manifest_summary_requiremen
         .with_restored_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
             "warm", 20, 2, 3, 16,
         ));
+    plan.verify_result(&matched).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_validates_checkpoint_restore_component_summary_requirements() {
+    let manifest =
+        WorkloadManifest::builder(id("checkpoint-restore-component-summary-run"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_host_event(WorkloadHostEvent::new(
+                20,
+                HostEventIntent::Checkpoint {
+                    label: "warm".to_string(),
+                },
+            ))
+            .add_host_event(WorkloadHostEvent::new(
+                40,
+                HostEventIntent::RestoreCheckpoint {
+                    label: "warm".to_string(),
+                },
+            ))
+            .add_expected_checkpoint_restore_component_summary(
+                WorkloadExpectedCheckpointComponentSummary::new("warm", "memory0", 1, 16),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_label("warm")
+        .with_restored_checkpoint_manifest_summary(
+            WorkloadCheckpointManifestSummary::with_component_summaries(
+                "warm",
+                20,
+                [WorkloadCheckpointComponentSummary::new("cpu0", 2, 8)],
+            ),
+        );
+    let error = plan.verify_result(&missing).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::MissingCheckpointRestoreComponentSummary {
+            label: "warm".to_string(),
+            component: "memory0".to_string(),
+        }
+    );
+
+    let undercovered = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_label("warm")
+        .with_restored_checkpoint_manifest_summary(
+            WorkloadCheckpointManifestSummary::with_component_summaries(
+                "warm",
+                20,
+                [WorkloadCheckpointComponentSummary::new("memory0", 1, 8)],
+            ),
+        );
+    let error = plan.verify_result(&undercovered).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::CheckpointRestoreComponentSummaryBelowMinimum {
+            label: "warm".to_string(),
+            component: "memory0".to_string(),
+            minimum_chunk_count: 1,
+            actual_chunk_count: 1,
+            minimum_payload_bytes: 16,
+            actual_payload_bytes: 8,
+        }
+    );
+
+    let matched = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_label("warm")
+        .with_restored_checkpoint_manifest_summary(
+            WorkloadCheckpointManifestSummary::with_component_summaries(
+                "warm",
+                20,
+                [WorkloadCheckpointComponentSummary::new("memory0", 1, 16)],
+            ),
+        );
     plan.verify_result(&matched).unwrap();
 }
 

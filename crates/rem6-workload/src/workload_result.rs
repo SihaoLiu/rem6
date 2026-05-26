@@ -7,12 +7,42 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadCheckpointComponentSummary {
+    component: String,
+    chunk_count: usize,
+    payload_bytes: usize,
+}
+
+impl WorkloadCheckpointComponentSummary {
+    pub fn new(component: impl Into<String>, chunk_count: usize, payload_bytes: usize) -> Self {
+        Self {
+            component: component.into(),
+            chunk_count,
+            payload_bytes,
+        }
+    }
+
+    pub fn component(&self) -> &str {
+        &self.component
+    }
+
+    pub const fn chunk_count(&self) -> usize {
+        self.chunk_count
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadCheckpointManifestSummary {
     label: String,
     tick: Tick,
     component_count: usize,
     chunk_count: usize,
     payload_bytes: usize,
+    component_summaries: Vec<WorkloadCheckpointComponentSummary>,
 }
 
 impl WorkloadCheckpointManifestSummary {
@@ -29,6 +59,32 @@ impl WorkloadCheckpointManifestSummary {
             component_count,
             chunk_count,
             payload_bytes,
+            component_summaries: Vec::new(),
+        }
+    }
+
+    pub fn with_component_summaries(
+        label: impl Into<String>,
+        tick: Tick,
+        component_summaries: impl IntoIterator<Item = WorkloadCheckpointComponentSummary>,
+    ) -> Self {
+        let component_summaries = component_summaries.into_iter().collect::<Vec<_>>();
+        let component_count = component_summaries.len();
+        let chunk_count = component_summaries
+            .iter()
+            .map(WorkloadCheckpointComponentSummary::chunk_count)
+            .sum();
+        let payload_bytes = component_summaries
+            .iter()
+            .map(WorkloadCheckpointComponentSummary::payload_bytes)
+            .sum();
+        Self {
+            label: label.into(),
+            tick,
+            component_count,
+            chunk_count,
+            payload_bytes,
+            component_summaries,
         }
     }
 
@@ -50,6 +106,10 @@ impl WorkloadCheckpointManifestSummary {
 
     pub const fn payload_bytes(&self) -> usize {
         self.payload_bytes
+    }
+
+    pub fn component_summaries(&self) -> &[WorkloadCheckpointComponentSummary] {
+        &self.component_summaries
     }
 }
 
@@ -94,6 +154,50 @@ impl WorkloadExpectedCheckpointManifestSummary {
 
     pub(crate) fn sort_key(&self) -> &str {
         &self.label
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadExpectedCheckpointComponentSummary {
+    label: String,
+    component: String,
+    minimum_chunk_count: usize,
+    minimum_payload_bytes: usize,
+}
+
+impl WorkloadExpectedCheckpointComponentSummary {
+    pub fn new(
+        label: impl Into<String>,
+        component: impl Into<String>,
+        minimum_chunk_count: usize,
+        minimum_payload_bytes: usize,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            component: component.into(),
+            minimum_chunk_count,
+            minimum_payload_bytes,
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn component(&self) -> &str {
+        &self.component
+    }
+
+    pub const fn minimum_chunk_count(&self) -> usize {
+        self.minimum_chunk_count
+    }
+
+    pub const fn minimum_payload_bytes(&self) -> usize {
+        self.minimum_payload_bytes
+    }
+
+    pub(crate) fn sort_key(&self) -> (&str, &str) {
+        (&self.label, &self.component)
     }
 }
 

@@ -480,11 +480,27 @@ pub enum WorkloadError {
     DuplicateExpectedCheckpointRestoreManifestSummary {
         label: String,
     },
+    DuplicateExpectedCheckpointComponentSummary {
+        label: String,
+        component: String,
+    },
+    DuplicateExpectedCheckpointRestoreComponentSummary {
+        label: String,
+        component: String,
+    },
     MissingCheckpointManifestSummary {
         label: String,
     },
     MissingCheckpointRestoreManifestSummary {
         label: String,
+    },
+    MissingCheckpointComponentSummary {
+        label: String,
+        component: String,
+    },
+    MissingCheckpointRestoreComponentSummary {
+        label: String,
+        component: String,
     },
     CheckpointManifestSummaryBelowMinimum {
         label: String,
@@ -499,6 +515,22 @@ pub enum WorkloadError {
         label: String,
         minimum_component_count: usize,
         actual_component_count: usize,
+        minimum_chunk_count: usize,
+        actual_chunk_count: usize,
+        minimum_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    },
+    CheckpointComponentSummaryBelowMinimum {
+        label: String,
+        component: String,
+        minimum_chunk_count: usize,
+        actual_chunk_count: usize,
+        minimum_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    },
+    CheckpointRestoreComponentSummaryBelowMinimum {
+        label: String,
+        component: String,
         minimum_chunk_count: usize,
         actual_chunk_count: usize,
         minimum_payload_bytes: usize,
