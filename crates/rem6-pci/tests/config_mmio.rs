@@ -279,6 +279,8 @@ fn pci_config_mmio_device_applies_masks_and_reports_in_aperture_errors() {
     scheduler
         .schedule_parallel_at(cpu, 5, move |context| {
             let command_completed = Arc::clone(&first_completed);
+            let masked_completed = Arc::clone(&first_completed);
+            let invalid_width_completed = Arc::clone(&first_completed);
             first_bus
                 .submit_parallel(
                     context,
@@ -306,6 +308,39 @@ fn pci_config_mmio_device_applies_masks_and_reports_in_aperture_errors() {
                         ByteMask::from_bits(vec![false]).unwrap(),
                     )
                     .unwrap(),
+                    move |completion| invalid_width_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+            first_bus
+                .submit_parallel(
+                    context,
+                    MmioRequest::write(
+                        MmioRequestId::new(16),
+                        aperture
+                            .config_address(function, PciConfigOffset::new(0x0c).unwrap())
+                            .unwrap(),
+                        vec![0xaa, 0x20, 0xbb, 0x40],
+                        ByteMask::from_bits(vec![false, true, false, true]).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| masked_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+            first_bus
+                .submit_parallel(
+                    context,
+                    MmioRequest::write(
+                        MmioRequestId::new(18),
+                        aperture
+                            .config_address(function, PciConfigOffset::new(0x04).unwrap())
+                            .unwrap(),
+                        vec![0x03, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff],
+                        ByteMask::from_bits(vec![
+                            true, true, false, false, false, false, false, false,
+                        ])
+                        .unwrap(),
+                    )
+                    .unwrap(),
                     move |completion| first_completed.lock().unwrap().push(completion),
                 )
                 .unwrap();
@@ -317,6 +352,7 @@ fn pci_config_mmio_device_applies_masks_and_reports_in_aperture_errors() {
     scheduler
         .schedule_parallel_at(cpu, 10, move |context| {
             let command_read_completed = Arc::clone(&second_completed);
+            let header_read_completed = Arc::clone(&second_completed);
             second_bus
                 .submit_parallel(
                     context,
@@ -362,6 +398,20 @@ fn pci_config_mmio_device_applies_masks_and_reports_in_aperture_errors() {
                         AccessSize::new(4).unwrap(),
                     )
                     .unwrap(),
+                    move |completion| header_read_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+            second_bus
+                .submit_parallel(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(17),
+                        aperture
+                            .config_address(function, PciConfigOffset::new(0x0c).unwrap())
+                            .unwrap(),
+                        AccessSize::new(4).unwrap(),
+                    )
+                    .unwrap(),
                     move |completion| second_completed.lock().unwrap().push(completion),
                 )
                 .unwrap();
@@ -373,6 +423,7 @@ fn pci_config_mmio_device_applies_masks_and_reports_in_aperture_errors() {
     let completions = completions.lock().unwrap();
     expect_completed_write(&completions, MmioRequestId::new(11));
     expect_completed_write(&completions, MmioRequestId::new(12));
+    expect_completed_write(&completions, MmioRequestId::new(16));
     assert_eq!(
         completed_data(&completions, MmioRequestId::new(13)),
         vec![0x03, 0x00, 0x00, 0x00]
@@ -381,6 +432,19 @@ fn pci_config_mmio_device_applies_masks_and_reports_in_aperture_errors() {
         completed_data(&completions, MmioRequestId::new(14)),
         vec![5]
     );
+    assert_eq!(
+        completed_data(&completions, MmioRequestId::new(17)),
+        vec![0x00, 0x20, 0x00, 0x40]
+    );
+    let invalid_width = response_for(&completions, MmioRequestId::new(18));
+    assert!(matches!(
+        invalid_width,
+        Err(MmioError::DeviceError {
+            request,
+            message,
+        }) if *request == MmioRequestId::new(18)
+            && message.contains("not 1, 2, or 4 bytes")
+    ));
     let invalid = response_for(&completions, MmioRequestId::new(15));
     assert!(matches!(
         invalid,

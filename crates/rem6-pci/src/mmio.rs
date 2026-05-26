@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
-use rem6_memory::{Address, AddressRange};
+use rem6_memory::{Address, AddressRange, ByteMask};
 use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse};
 
 use crate::{PciError, PciHostBarRange, PciHostBridge};
@@ -153,20 +153,13 @@ fn respond_config_mmio(
             .map(|data| MmioResponse::completed(request.id(), Some(data)))
             .map_err(|error| pci_device_error(request.id(), error)),
         MmioOperation::Write => {
-            let data = merged_write_data(host, request)?;
-            if let Some(data) = data {
-                host.write_config_address(request.range().start(), &data)
-                    .map_err(|error| pci_device_error(request.id(), error))?;
-            }
+            write_masked_config(host, request)?;
             Ok(MmioResponse::completed(request.id(), None))
         }
     }
 }
 
-fn merged_write_data(
-    host: &PciHostBridge,
-    request: &MmioRequest,
-) -> Result<Option<Vec<u8>>, MmioError> {
+fn write_masked_config(host: &mut PciHostBridge, request: &MmioRequest) -> Result<(), MmioError> {
     let payload = request.data().ok_or(MmioError::MissingWriteData {
         request: request.id(),
     })?;
@@ -188,21 +181,68 @@ fn merged_write_data(
         });
     }
     if !mask.bits().iter().any(|bit| *bit) {
-        return Ok(None);
+        return Ok(());
     }
+    crate::access_size_from_len(payload.len())
+        .map_err(|error| pci_device_error(request.id(), error))?;
     if mask.bits().iter().all(|bit| *bit) {
-        return Ok(Some(payload.to_vec()));
+        host.write_config_address(request.range().start(), payload)
+            .map_err(|error| pci_device_error(request.id(), error))?;
+        return Ok(());
     }
 
-    let mut merged = host
-        .read_config_address(request.range().start(), request.size())
-        .map_err(|error| pci_device_error(request.id(), error))?;
-    for (index, byte) in payload.iter().enumerate() {
-        if mask.bits()[index] {
-            merged[index] = *byte;
-        }
+    for chunk in masked_config_write_chunks(mask) {
+        let start = request
+            .range()
+            .start()
+            .get()
+            .checked_add(chunk.start as u64)
+            .map(Address::new)
+            .ok_or(MmioError::AddressOverflow {
+                address: request.range().start(),
+                offset: chunk.start as u64,
+            })?;
+        host.write_config_address(start, &payload[chunk.start..chunk.end])
+            .map_err(|error| pci_device_error(request.id(), error))?;
     }
-    Ok(Some(merged))
+    Ok(())
+}
+
+fn masked_config_write_chunks(mask: &ByteMask) -> Vec<std::ops::Range<usize>> {
+    let mut chunks = Vec::new();
+    let mut index = 0;
+    while index < mask.len() as usize {
+        if !mask.bits()[index] {
+            index += 1;
+            continue;
+        }
+        let mut end = index + 1;
+        while end < mask.len() as usize && mask.bits()[end] {
+            end += 1;
+        }
+        push_config_write_chunks(&mut chunks, index, end);
+        index = end;
+    }
+    chunks
+}
+
+fn push_config_write_chunks(
+    chunks: &mut Vec<std::ops::Range<usize>>,
+    mut start: usize,
+    end: usize,
+) {
+    while start < end {
+        let remaining = end - start;
+        let chunk_len = if remaining >= 4 {
+            4
+        } else if remaining >= 2 {
+            2
+        } else {
+            1
+        };
+        chunks.push(start..start + chunk_len);
+        start += chunk_len;
+    }
 }
 
 fn pci_device_error(request: MmioRequestId, error: PciError) -> MmioError {
