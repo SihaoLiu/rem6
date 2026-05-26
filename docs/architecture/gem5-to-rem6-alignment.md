@@ -411,7 +411,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   device chunk cannot partially restore an earlier live device. Peripheral
   checkpoint-bank tests cover CLINT, UART, interrupt-controller, and timer
   decode-first restore so malformed later device chunks cannot partially
-  restore earlier live platform devices. RISC-V
+  restore earlier live platform devices. System action tests cover staged
+  manifest restore plus cross-bank prevalidation so a later bad subsystem chunk
+  cannot partially restore an earlier CPU or device bank. RISC-V
   cluster tests cover peer reservation invalidation after a completed overlapping store so a later
   `SC.D` fails instead of overwriting the peer's data. RISC-V topology tests
   cover MSI data-cache snoop invalidation before the peer store response reaches

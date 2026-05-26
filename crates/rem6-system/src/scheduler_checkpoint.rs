@@ -195,6 +195,7 @@ impl SchedulerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<SchedulerCheckpointRecord>, SchedulerCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
@@ -208,6 +209,17 @@ impl SchedulerCheckpointBank {
             restored.push(record);
         }
         Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), SchedulerCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+        }
+        Ok(())
     }
 }
 

@@ -147,6 +147,7 @@ impl UartCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<UartCheckpointRecord>, UartCheckpointError> {
+        self.validate_restore_from(registry)?;
         let records = self
             .ports
             .values()
@@ -156,6 +157,16 @@ impl UartCheckpointBank {
             port.device.restore(record.snapshot());
         }
         Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), UartCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
     }
 }
 

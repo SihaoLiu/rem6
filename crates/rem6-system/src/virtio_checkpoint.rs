@@ -195,6 +195,7 @@ impl VirtioSplitQueueCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<VirtioSplitQueueCheckpointRecord>, VirtioSplitQueueCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
@@ -208,6 +209,17 @@ impl VirtioSplitQueueCheckpointBank {
             restored.push(record);
         }
         Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), VirtioSplitQueueCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+        }
+        Ok(())
     }
 }
 

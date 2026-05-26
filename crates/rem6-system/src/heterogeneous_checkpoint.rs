@@ -161,6 +161,7 @@ impl AcceleratorCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<AcceleratorCheckpointRecord>, AcceleratorCheckpointError> {
+        self.validate_restore_from(registry)?;
         let records = self
             .ports
             .values()
@@ -170,6 +171,16 @@ impl AcceleratorCheckpointBank {
             port.engine.restore(record.snapshot());
         }
         Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), AcceleratorCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
     }
 }
 
@@ -331,6 +342,7 @@ impl GpuCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<GpuCheckpointRecord>, GpuCheckpointError> {
+        self.validate_restore_from(registry)?;
         let records = self
             .ports
             .values()
@@ -340,6 +352,16 @@ impl GpuCheckpointBank {
             port.gpu.restore(record.snapshot());
         }
         Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), GpuCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
     }
 }
 

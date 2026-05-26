@@ -167,6 +167,7 @@ impl FabricCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<FabricCheckpointRecord>, FabricCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
@@ -180,6 +181,17 @@ impl FabricCheckpointBank {
             restored.push(record);
         }
         Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), FabricCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_lanes(record.lanes())?;
+        }
+        Ok(())
     }
 }
 

@@ -453,37 +453,34 @@ impl SystemActionExecutor {
         Ok(())
     }
 
-    fn restore_execution_modes_from_checkpoint(
-        &mut self,
+    fn stage_execution_mode_checkpoint_restore(
+        &self,
+        checkpoints: &mut CheckpointRegistry,
         manifest: &CheckpointManifest,
-    ) -> Result<(), SystemError> {
+    ) -> Result<BTreeMap<ExecutionModeTarget, ExecutionMode>, SystemError> {
         let component = execution_mode_checkpoint_component();
         if !manifest_has_execution_mode_checkpoint(manifest) {
-            self.execution_modes.clear();
+            let modes = BTreeMap::new();
             if self.execution_mode_checkpoint_registered {
-                self.checkpoints
+                checkpoints
                     .write_chunk(
                         &component,
                         EXECUTION_MODE_CHECKPOINT_CHUNK,
-                        encode_execution_modes(&self.execution_modes),
+                        encode_execution_modes(&modes),
                     )
                     .map_err(SystemError::Checkpoint)?;
             }
-            return Ok(());
+            return Ok(modes);
         }
 
-        let payload = self
-            .checkpoints
+        let payload = checkpoints
             .chunk(&component, EXECUTION_MODE_CHECKPOINT_CHUNK)
             .ok_or_else(|| ExecutionModeCheckpointError::MissingChunk {
                 component: component.clone(),
                 name: EXECUTION_MODE_CHECKPOINT_CHUNK.to_string(),
             })
             .map_err(SystemError::ExecutionModeCheckpoint)?;
-        let modes = decode_execution_modes(&component, payload)
-            .map_err(SystemError::ExecutionModeCheckpoint)?;
-        self.execution_modes = modes;
-        Ok(())
+        decode_execution_modes(&component, payload).map_err(SystemError::ExecutionModeCheckpoint)
     }
 
     pub fn attach_memory_checkpoint_bank(
@@ -664,10 +661,92 @@ impl SystemActionExecutor {
         manifest: &CheckpointManifest,
     ) -> Result<(), SystemError> {
         self.prepare_execution_mode_checkpoint_restore(manifest)?;
-        self.checkpoints
+        let mut staged_checkpoints = self.checkpoints.clone();
+        staged_checkpoints
             .restore(manifest)
             .map_err(SystemError::Checkpoint)?;
-        self.restore_execution_modes_from_checkpoint(manifest)?;
+        let staged_execution_modes =
+            self.stage_execution_mode_checkpoint_restore(&mut staged_checkpoints, manifest)?;
+        self.validate_checkpoint_banks(&staged_checkpoints)?;
+
+        self.checkpoints = staged_checkpoints;
+        self.execution_modes = staged_execution_modes;
+        self.restore_checkpoint_banks()
+    }
+
+    fn validate_checkpoint_banks(
+        &self,
+        checkpoints: &CheckpointRegistry,
+    ) -> Result<(), SystemError> {
+        if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
+            accelerator_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::AcceleratorCheckpoint)?;
+        }
+        if let Some(msi_bank_checkpoints) = &self.msi_bank_checkpoints {
+            msi_bank_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::MsiBankCheckpoint)?;
+        }
+        if let Some(fabric_checkpoints) = &self.fabric_checkpoints {
+            fabric_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::FabricCheckpoint)?;
+        }
+        if let Some(gpu_checkpoints) = &self.gpu_checkpoints {
+            gpu_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::GpuCheckpoint)?;
+        }
+        if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+            riscv_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::RiscvCheckpoint)?;
+        }
+        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+            scheduler_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+        if let Some(memory_checkpoints) = &self.memory_checkpoints {
+            memory_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::MemoryCheckpoint)?;
+        }
+        if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
+            dram_memory_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::DramMemoryCheckpoint)?;
+        }
+        if let Some(interrupt_controller_checkpoints) = &self.interrupt_controller_checkpoints {
+            interrupt_controller_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::InterruptControllerCheckpoint)?;
+        }
+        if let Some(clint_checkpoints) = &self.clint_checkpoints {
+            clint_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::ClintCheckpoint)?;
+        }
+        if let Some(timer_checkpoints) = &self.timer_checkpoints {
+            timer_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::TimerCheckpoint)?;
+        }
+        if let Some(uart_checkpoints) = &self.uart_checkpoints {
+            uart_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::UartCheckpoint)?;
+        }
+        if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
+            virtio_split_queue_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::VirtioCheckpoint)?;
+        }
+        Ok(())
+    }
+
+    fn restore_checkpoint_banks(&self) -> Result<(), SystemError> {
         if let Some(accelerator_checkpoints) = &self.accelerator_checkpoints {
             accelerator_checkpoints
                 .restore_all_from(&self.checkpoints)

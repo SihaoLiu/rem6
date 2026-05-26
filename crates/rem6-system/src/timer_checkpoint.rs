@@ -179,6 +179,7 @@ impl TimerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<TimerCheckpointRecord>, TimerCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
@@ -192,6 +193,17 @@ impl TimerCheckpointBank {
             records.push(record);
         }
         Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), TimerCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+        }
+        Ok(())
     }
 }
 

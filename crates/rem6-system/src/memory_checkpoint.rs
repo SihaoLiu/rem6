@@ -190,6 +190,7 @@ impl MemoryStoreCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<MemoryStoreCheckpointRecord>, MemoryStoreCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
@@ -203,6 +204,17 @@ impl MemoryStoreCheckpointBank {
             restored.push(record);
         }
         Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), MemoryStoreCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+        }
+        Ok(())
     }
 }
 
@@ -433,6 +445,7 @@ impl DramMemoryCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<DramMemoryCheckpointRecord>, DramMemoryCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
@@ -446,6 +459,17 @@ impl DramMemoryCheckpointBank {
             restored.push(record);
         }
         Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), DramMemoryCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+        }
+        Ok(())
     }
 }
 

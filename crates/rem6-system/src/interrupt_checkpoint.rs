@@ -172,6 +172,7 @@ impl InterruptControllerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<InterruptControllerCheckpointRecord>, InterruptControllerCheckpointError> {
+        self.validate_restore_from(registry)?;
         let records = self
             .ports
             .values()
@@ -184,6 +185,16 @@ impl InterruptControllerCheckpointBank {
                 .restore(record.snapshot());
         }
         Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), InterruptControllerCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
     }
 }
 

@@ -201,6 +201,7 @@ impl RiscvCoreCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<RiscvCoreCheckpointRecord>, RiscvCoreCheckpointError> {
+        self.validate_restore_from(registry)?;
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             decoded.push((port, port.decode_from(registry)?));
@@ -212,6 +213,16 @@ impl RiscvCoreCheckpointBank {
             restored.push(record);
         }
         Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), RiscvCoreCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
     }
 }
 
