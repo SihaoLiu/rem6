@@ -255,6 +255,8 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_scheduler_batch_count: usize,
     gpu_dma_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     gpu_dma_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
+    gpu_dma_scheduler_initial_frontiers: Vec<PartitionFrontier>,
+    gpu_dma_scheduler_final_frontiers: Vec<PartitionFrontier>,
     gpu_dma_wait_for_edge_count: usize,
     gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
@@ -273,6 +275,8 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_scheduler_batch_count: usize,
     accelerator_dma_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     accelerator_dma_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
+    accelerator_dma_scheduler_initial_frontiers: Vec<PartitionFrontier>,
+    accelerator_dma_scheduler_final_frontiers: Vec<PartitionFrontier>,
     accelerator_dma_wait_for_edge_count: usize,
     accelerator_dma_deadlock_diagnostic_count: usize,
 }

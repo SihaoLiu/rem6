@@ -784,24 +784,24 @@ pub enum WorkloadError {
         actual_empty_epoch_count: usize,
     },
     ZeroExpectedParallelFrontier {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         stage: WorkloadParallelFrontierStage,
         partition: u32,
     },
     DuplicateExpectedParallelFrontier {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         stage: WorkloadParallelFrontierStage,
         partition: u32,
     },
     MissingParallelFrontierSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         stage: WorkloadParallelFrontierStage,
         partition: u32,
         minimum_now: Tick,
         minimum_safe_until: Tick,
     },
     ExpectedParallelFrontierBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         stage: WorkloadParallelFrontierStage,
         partition: u32,
         minimum_now: Tick,

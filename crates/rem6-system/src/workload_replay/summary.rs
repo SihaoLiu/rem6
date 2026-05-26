@@ -280,6 +280,14 @@ pub(super) fn parallel_execution_summary(
         .with_gpu_dma_scheduler_batch_timeline(
             activities.gpu_dma.scheduler_batch_timeline.iter().cloned(),
         )
+        .with_gpu_dma_scheduler_frontiers(
+            activities
+                .gpu_dma
+                .scheduler_initial_frontiers
+                .iter()
+                .copied(),
+            activities.gpu_dma.scheduler_final_frontiers.iter().copied(),
+        )
         .with_gpu_dma_diagnostics(
             activities.gpu_dma.wait_for_edge_count,
             activities.gpu_dma.deadlock_diagnostic_count,
@@ -325,6 +333,18 @@ pub(super) fn parallel_execution_summary(
                 .scheduler_batch_timeline
                 .iter()
                 .cloned(),
+        )
+        .with_accelerator_dma_scheduler_frontiers(
+            activities
+                .accelerator_dma
+                .scheduler_initial_frontiers
+                .iter()
+                .copied(),
+            activities
+                .accelerator_dma
+                .scheduler_final_frontiers
+                .iter()
+                .copied(),
         )
         .with_accelerator_dma_diagnostics(
             activities.accelerator_dma.wait_for_edge_count,
@@ -373,8 +393,8 @@ mod tests {
     };
     use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
     use rem6_kernel::{
-        LivelockTransitionKind, PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForGraph,
-        WaitForNode,
+        LivelockTransitionKind, PartitionFrontier, PartitionId, PartitionedScheduler,
+        WaitForEdgeKind, WaitForGraph, WaitForNode,
     };
     use rem6_memory::{
         AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -610,6 +630,62 @@ mod tests {
         assert_eq!(
             summary.full_system_parallel_scheduler_empty_epoch_count(),
             5
+        );
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_dma_scheduler_frontiers() {
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let run = RiscvSystemRun::new(
+            Vec::new(),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 0 },
+        );
+        let gpu_initial = PartitionFrontier::new(PartitionId::new(6), 5, 15, Some(9), 1);
+        let gpu_final = PartitionFrontier::new(PartitionId::new(6), 15, 25, None, 0);
+        let accelerator_initial = PartitionFrontier::new(PartitionId::new(7), 3, 13, Some(11), 2);
+        let accelerator_final = PartitionFrontier::new(PartitionId::new(7), 21, 31, None, 0);
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity {
+            scheduler_initial_frontiers: vec![gpu_initial],
+            scheduler_final_frontiers: vec![gpu_final],
+            ..WorkloadGpuDmaActivity::default()
+        };
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity {
+            scheduler_initial_frontiers: vec![accelerator_initial],
+            scheduler_final_frontiers: vec![accelerator_final],
+            ..WorkloadAcceleratorDmaActivity::default()
+        };
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(
+            summary.gpu_dma_scheduler_initial_frontiers(),
+            &[gpu_initial],
+        );
+        assert_eq!(
+            summary.accelerator_dma_scheduler_final_frontiers(),
+            &[accelerator_final],
+        );
+        assert_eq!(
+            summary.full_system_parallel_scheduler_initial_frontiers(),
+            vec![gpu_initial, accelerator_initial],
         );
     }
 

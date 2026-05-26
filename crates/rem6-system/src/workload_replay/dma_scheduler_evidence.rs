@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_kernel::{ParallelEpochBatchRecord, PartitionId, RecordedConservativeRunSummary, Tick};
+use rem6_kernel::{
+    ParallelEpochBatchRecord, PartitionFrontier, PartitionId, RecordedConservativeRunSummary, Tick,
+};
 use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount,
@@ -15,6 +17,8 @@ pub(super) struct DmaSchedulerEvidence {
     pub(super) batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     pub(super) batch_worker_counts: BTreeMap<usize, usize>,
     pub(super) batch_worker_count_ticks: BTreeMap<usize, Tick>,
+    pub(super) initial_frontiers: Vec<PartitionFrontier>,
+    pub(super) final_frontiers: Vec<PartitionFrontier>,
 }
 
 impl DmaSchedulerEvidence {
@@ -32,6 +36,10 @@ impl DmaSchedulerEvidence {
                 .iter()
                 .map(|batch| dma_scheduler_batch_timeline_record(scope, batch)),
         );
+        self.initial_frontiers
+            .extend(run.initial_frontiers().iter().copied());
+        self.final_frontiers
+            .extend(run.final_frontiers().iter().copied());
         for (worker_count, count) in run.batch_worker_count_summaries() {
             let stored = self.batch_worker_counts.entry(worker_count).or_default();
             *stored = stored.saturating_add(count);
@@ -56,6 +64,21 @@ pub(super) fn dma_scheduler_batch_timeline(
             record.horizon(),
             record.scope(),
             record.partitions().to_vec(),
+        )
+    });
+    records
+}
+
+pub(super) fn dma_scheduler_frontiers(
+    mut records: Vec<PartitionFrontier>,
+) -> Vec<PartitionFrontier> {
+    records.sort_by_key(|frontier| {
+        (
+            frontier.partition(),
+            frontier.now(),
+            frontier.safe_until(),
+            frontier.next_tick(),
+            frontier.pending_events(),
         )
     });
     records

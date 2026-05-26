@@ -1242,6 +1242,20 @@ impl RecordedConservativeRunSummary {
         &self.epochs
     }
 
+    pub fn initial_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.epochs
+            .iter()
+            .flat_map(|epoch| epoch.initial_frontiers().iter().copied())
+            .collect()
+    }
+
+    pub fn final_frontiers(&self) -> Vec<PartitionFrontier> {
+        self.epochs
+            .iter()
+            .flat_map(|epoch| epoch.final_frontiers().iter().copied())
+            .collect()
+    }
+
     pub fn epoch_count(&self) -> usize {
         self.epochs.len()
     }

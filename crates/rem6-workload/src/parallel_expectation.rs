@@ -238,7 +238,7 @@ impl WorkloadResourceActivityScope {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelFrontier {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelSchedulerScope,
     stage: WorkloadParallelFrontierStage,
     partition: PartitionId,
     minimum_now: u64,
@@ -247,12 +247,13 @@ pub struct WorkloadExpectedParallelFrontier {
 
 impl WorkloadExpectedParallelFrontier {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelSchedulerScope>,
         stage: WorkloadParallelFrontierStage,
         partition: PartitionId,
         minimum_now: u64,
         minimum_safe_until: u64,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_now == 0 && minimum_safe_until == 0 {
             return Err(WorkloadError::ZeroExpectedParallelFrontier {
                 scope,
@@ -269,7 +270,7 @@ impl WorkloadExpectedParallelFrontier {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelSchedulerScope {
         self.scope
     }
 
@@ -302,24 +303,23 @@ impl WorkloadExpectedParallelFrontier {
         summary: &WorkloadParallelExecutionSummary,
     ) -> Option<PartitionFrontier> {
         match (self.scope, self.stage) {
-            (
-                WorkloadParallelRemoteFlowScope::Scheduler,
-                WorkloadParallelFrontierStage::Initial,
-            ) => find_frontier(
-                summary
-                    .parallel_scheduler_initial_frontiers()
-                    .iter()
-                    .copied(),
-                self.partition,
-            ),
-            (WorkloadParallelRemoteFlowScope::Scheduler, WorkloadParallelFrontierStage::Final) => {
+            (WorkloadParallelSchedulerScope::Scheduler, WorkloadParallelFrontierStage::Initial) => {
+                find_frontier(
+                    summary
+                        .parallel_scheduler_initial_frontiers()
+                        .iter()
+                        .copied(),
+                    self.partition,
+                )
+            }
+            (WorkloadParallelSchedulerScope::Scheduler, WorkloadParallelFrontierStage::Final) => {
                 find_frontier(
                     summary.parallel_scheduler_final_frontiers().iter().copied(),
                     self.partition,
                 )
             }
             (
-                WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+                WorkloadParallelSchedulerScope::DataCacheScheduler,
                 WorkloadParallelFrontierStage::Initial,
             ) => find_frontier(
                 summary
@@ -329,7 +329,7 @@ impl WorkloadExpectedParallelFrontier {
                 self.partition,
             ),
             (
-                WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+                WorkloadParallelSchedulerScope::DataCacheScheduler,
                 WorkloadParallelFrontierStage::Final,
             ) => find_frontier(
                 summary
@@ -339,13 +339,50 @@ impl WorkloadExpectedParallelFrontier {
                 self.partition,
             ),
             (
-                WorkloadParallelRemoteFlowScope::FullSystem,
+                WorkloadParallelSchedulerScope::GpuDmaScheduler,
+                WorkloadParallelFrontierStage::Initial,
+            ) => find_frontier(
+                summary
+                    .gpu_dma_scheduler_initial_frontiers()
+                    .iter()
+                    .copied(),
+                self.partition,
+            ),
+            (
+                WorkloadParallelSchedulerScope::GpuDmaScheduler,
+                WorkloadParallelFrontierStage::Final,
+            ) => find_frontier(
+                summary.gpu_dma_scheduler_final_frontiers().iter().copied(),
+                self.partition,
+            ),
+            (
+                WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+                WorkloadParallelFrontierStage::Initial,
+            ) => find_frontier(
+                summary
+                    .accelerator_dma_scheduler_initial_frontiers()
+                    .iter()
+                    .copied(),
+                self.partition,
+            ),
+            (
+                WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+                WorkloadParallelFrontierStage::Final,
+            ) => find_frontier(
+                summary
+                    .accelerator_dma_scheduler_final_frontiers()
+                    .iter()
+                    .copied(),
+                self.partition,
+            ),
+            (
+                WorkloadParallelSchedulerScope::FullSystem,
                 WorkloadParallelFrontierStage::Initial,
             ) => find_frontier(
                 summary.full_system_parallel_scheduler_initial_frontiers(),
                 self.partition,
             ),
-            (WorkloadParallelRemoteFlowScope::FullSystem, WorkloadParallelFrontierStage::Final) => {
+            (WorkloadParallelSchedulerScope::FullSystem, WorkloadParallelFrontierStage::Final) => {
                 find_frontier(
                     summary.full_system_parallel_scheduler_final_frontiers(),
                     self.partition,

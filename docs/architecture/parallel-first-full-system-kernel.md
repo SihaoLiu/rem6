@@ -397,17 +397,18 @@ paths should call the parallel APIs and record the parallel run summary. CPU
 cluster and full-system run records must preserve both the initial and final
 frontiers for each recorded parallel epoch, so higher layers can verify how far
 each partition advanced instead of inferring it from aggregate counts.
-Data-cache and coherence run summaries follow the same rule, and workload
-result summaries must retain those frontiers and individual remote-send records
-separately from aggregate worker, batch, and remote-flow counts. Workload result
-summaries also expose aggregate full-system frontier views so verification can
-reason about the combined CPU and
-data-cache/coherence conservative horizon without discarding per-subsystem
-records. Those full-system frontier views merge same-partition CPU and
-data-cache scheduler records conservatively instead of reporting whichever
-subsystem progressed further. Workload result summaries treat non-empty typed
-frontier and partition evidence as parallel work even when worker and batch
-aggregates are not present. Exact batch partition-set histograms also imply
+Data-cache, coherence, and heterogeneous DMA scheduler run summaries follow the
+same rule, and workload result summaries must retain those frontiers and
+individual remote-send records separately from aggregate worker, batch, and
+remote-flow counts. Workload result summaries also expose aggregate full-system
+frontier views so verification can reason about the combined CPU,
+data-cache/coherence, and DMA conservative horizon without discarding
+per-subsystem records. Those full-system frontier views merge same-partition
+CPU, data-cache, GPU DMA, and accelerator DMA scheduler records conservatively
+instead of reporting whichever subsystem progressed further. Workload result
+summaries treat non-empty typed frontier and partition evidence as parallel
+work even when worker and batch aggregates are not present. Exact batch
+partition-set histograms also imply
 active partition counts, exact partition-set batch counts, minimum max-worker
 use, total-worker activity, and multi-worker batch activity for any worker
 threshold not larger than the recorded partition set. Maximum
@@ -502,7 +503,8 @@ replay contracts use multiset matching: an extra duplicate
 remote-send, progress-transition, or batch-timeline record is unexpected even if
 an otherwise identical expected record exists.
 Workload manifests may declare required initial or final frontier minima for
-specific partitions and scopes, turning
+specific CPU scheduler, data-cache scheduler, GPU DMA scheduler, accelerator
+DMA scheduler, or full-system partitions and scopes, turning
 conservative-frontier progress into a replay contract rather than an informal
 trace inspection.
 They may also require individual remote-send records, exact progress-free

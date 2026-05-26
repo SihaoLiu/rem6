@@ -20,7 +20,9 @@ use rem6_dram::{
 };
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
-use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, Tick, WaitForGraph};
+use rem6_kernel::{
+    PartitionFrontier, PartitionId, PartitionedScheduler, SchedulerError, Tick, WaitForGraph,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse, MemoryTargetId, PartitionedMemorySnapshot,
@@ -53,7 +55,7 @@ use self::cache_response::{
 };
 use self::dma_scheduler_evidence::{
     dma_scheduler_batch_timeline, dma_scheduler_batch_worker_count_ticks,
-    dma_scheduler_batch_worker_counts, DmaSchedulerEvidence,
+    dma_scheduler_batch_worker_counts, dma_scheduler_frontiers, DmaSchedulerEvidence,
 };
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{fixed_priority_policy, queue_arbiter};
@@ -90,6 +92,8 @@ struct WorkloadGpuDmaActivity {
     scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
+    scheduler_initial_frontiers: Vec<PartitionFrontier>,
+    scheduler_final_frontiers: Vec<PartitionFrontier>,
     wait_for_edge_count: usize,
     deadlock_diagnostic_count: usize,
 }
@@ -949,6 +953,10 @@ impl RiscvWorkloadReplay {
             scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
                 scheduler_evidence.batch_worker_count_ticks,
             ),
+            scheduler_initial_frontiers: dma_scheduler_frontiers(
+                scheduler_evidence.initial_frontiers,
+            ),
+            scheduler_final_frontiers: dma_scheduler_frontiers(scheduler_evidence.final_frontiers),
             wait_for_edge_count: 0,
             deadlock_diagnostic_count: 0,
         }

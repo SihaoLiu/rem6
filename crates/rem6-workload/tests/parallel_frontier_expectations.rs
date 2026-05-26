@@ -3,8 +3,8 @@ use rem6_kernel::{PartitionFrontier, PartitionId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelFrontier, WorkloadId, WorkloadParallelExecutionSummary,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -43,6 +43,23 @@ fn replay_plan() -> WorkloadReplayPlan {
 
 fn expected_frontier(
     scope: WorkloadParallelRemoteFlowScope,
+    stage: WorkloadParallelFrontierStage,
+    partition: u32,
+    minimum_now: u64,
+    minimum_safe_until: u64,
+) -> WorkloadExpectedParallelFrontier {
+    WorkloadExpectedParallelFrontier::new(
+        scope,
+        stage,
+        PartitionId::new(partition),
+        minimum_now,
+        minimum_safe_until,
+    )
+    .unwrap()
+}
+
+fn expected_scheduler_frontier(
+    scope: WorkloadParallelSchedulerScope,
     stage: WorkloadParallelFrontierStage,
     partition: u32,
     minimum_now: u64,
@@ -198,7 +215,7 @@ fn workload_replay_plan_rejects_missing_or_underadvanced_parallel_frontiers() {
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelFrontierSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             stage: WorkloadParallelFrontierStage::Final,
             partition: 4,
             minimum_now: 21,
@@ -216,7 +233,7 @@ fn workload_replay_plan_rejects_missing_or_underadvanced_parallel_frontiers() {
     assert_eq!(
         plan.verify_result(&underadvanced).unwrap_err(),
         WorkloadError::ExpectedParallelFrontierBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             stage: WorkloadParallelFrontierStage::Final,
             partition: 4,
             minimum_now: 21,
@@ -240,13 +257,92 @@ fn workload_replay_plan_rejects_missing_or_underadvanced_parallel_frontiers() {
     assert_eq!(
         plan.verify_result(&mixed_full_system).unwrap_err(),
         WorkloadError::ExpectedParallelFrontierBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             stage: WorkloadParallelFrontierStage::Final,
             partition: 4,
             minimum_now: 21,
             actual_now: Some(20),
             minimum_safe_until: 29,
             actual_safe_until: Some(28),
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_checks_dma_scheduler_frontiers_directly() {
+    let gpu_initial = PartitionFrontier::new(PartitionId::new(8), 10, 20, Some(14), 1);
+    let gpu_final = PartitionFrontier::new(PartitionId::new(8), 18, 28, None, 0);
+    let accelerator_initial = PartitionFrontier::new(PartitionId::new(9), 30, 40, Some(36), 2);
+    let accelerator_final = PartitionFrontier::new(PartitionId::new(9), 45, 55, None, 0);
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_scheduler_frontier(
+            WorkloadParallelSchedulerScope::GpuDmaScheduler,
+            WorkloadParallelFrontierStage::Initial,
+            8,
+            10,
+            20,
+        ))
+        .unwrap()
+        .add_expected_parallel_frontier(expected_scheduler_frontier(
+            WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+            WorkloadParallelFrontierStage::Final,
+            9,
+            45,
+            55,
+        ))
+        .unwrap()
+        .add_expected_parallel_frontier(expected_scheduler_frontier(
+            WorkloadParallelSchedulerScope::FullSystem,
+            WorkloadParallelFrontierStage::Final,
+            9,
+            45,
+            55,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_frontiers([gpu_initial], [gpu_final])
+        .with_accelerator_dma_scheduler_frontiers([accelerator_initial], [accelerator_final]);
+    assert_eq!(
+        summary.gpu_dma_scheduler_initial_frontiers(),
+        &[gpu_initial]
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_final_frontiers(),
+        &[accelerator_final],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontiers(),
+        vec![gpu_final, accelerator_final],
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+
+    let underadvanced_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_frontiers(
+            [PartitionFrontier::new(
+                PartitionId::new(8),
+                9,
+                19,
+                Some(14),
+                1,
+            )],
+            [gpu_final],
+        )
+        .with_accelerator_dma_scheduler_frontiers([accelerator_initial], [accelerator_final]);
+    let underadvanced = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underadvanced_summary);
+    assert_eq!(
+        plan.verify_result(&underadvanced).unwrap_err(),
+        WorkloadError::ExpectedParallelFrontierBelowMinimum {
+            scope: WorkloadParallelSchedulerScope::GpuDmaScheduler,
+            stage: WorkloadParallelFrontierStage::Initial,
+            partition: 8,
+            minimum_now: 10,
+            actual_now: Some(9),
+            minimum_safe_until: 20,
+            actual_safe_until: Some(19),
         },
     );
 }
@@ -264,7 +360,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_frontiers() {
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedParallelFrontier {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelSchedulerScope::Scheduler,
             stage: WorkloadParallelFrontierStage::Initial,
             partition: 0,
         },
@@ -290,7 +386,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_frontiers() {
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelFrontier {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelSchedulerScope::DataCacheScheduler,
             stage: WorkloadParallelFrontierStage::Final,
             partition: 2,
         },

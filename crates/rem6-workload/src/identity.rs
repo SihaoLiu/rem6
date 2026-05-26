@@ -592,7 +592,7 @@ fn hash_expected_parallel_partition_activity(
 }
 
 fn hash_expected_parallel_frontier(hash: &mut u64, expected: WorkloadExpectedParallelFrontier) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_scheduler_scope(hash, expected.scope());
     hash_parallel_frontier_stage(hash, expected.stage());
     hash_u64(hash, u64::from(expected.partition().index()));
     hash_u64(hash, expected.minimum_now());

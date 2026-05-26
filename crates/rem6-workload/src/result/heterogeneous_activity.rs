@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
-use rem6_kernel::Tick;
+use rem6_kernel::{PartitionFrontier, Tick};
 
 use crate::parallel_batch::{
     collect_parallel_batch_worker_counts, max_parallel_batch_worker_count,
     total_parallel_batch_worker_count, WorkloadParallelBatchWorkerCount,
+};
+use crate::result_collect::{
+    collect_conservative_partition_frontiers, collect_partition_frontiers,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -43,6 +46,16 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_frontiers(
+        mut self,
+        initial_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+        final_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+    ) -> Self {
+        self.gpu_dma_scheduler_initial_frontiers = collect_partition_frontiers(initial_frontiers);
+        self.gpu_dma_scheduler_final_frontiers = collect_partition_frontiers(final_frontiers);
+        self
+    }
+
     pub fn with_accelerator_dma_scheduler_counts(
         mut self,
         epoch_count: usize,
@@ -74,6 +87,18 @@ impl WorkloadParallelExecutionSummary {
             collect_parallel_batch_worker_counts(counts);
         self.accelerator_dma_scheduler_batch_count =
             total_parallel_batch_count(&self.accelerator_dma_scheduler_batch_worker_counts);
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_frontiers(
+        mut self,
+        initial_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+        final_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+    ) -> Self {
+        self.accelerator_dma_scheduler_initial_frontiers =
+            collect_partition_frontiers(initial_frontiers);
+        self.accelerator_dma_scheduler_final_frontiers =
+            collect_partition_frontiers(final_frontiers);
         self
     }
 
@@ -194,6 +219,27 @@ impl WorkloadParallelExecutionSummary {
             &self.gpu_dma_scheduler_batch_worker_count_ticks,
             minimum_worker_count,
         )
+    }
+
+    pub fn gpu_dma_scheduler_initial_frontiers(&self) -> &[PartitionFrontier] {
+        &self.gpu_dma_scheduler_initial_frontiers
+    }
+
+    pub fn gpu_dma_scheduler_final_frontiers(&self) -> &[PartitionFrontier] {
+        &self.gpu_dma_scheduler_final_frontiers
+    }
+
+    pub fn gpu_dma_scheduler_initial_frontier_count(&self) -> usize {
+        self.gpu_dma_scheduler_initial_frontiers.len()
+    }
+
+    pub fn gpu_dma_scheduler_final_frontier_count(&self) -> usize {
+        self.gpu_dma_scheduler_final_frontiers.len()
+    }
+
+    pub fn has_gpu_dma_scheduler_frontiers(&self) -> bool {
+        !self.gpu_dma_scheduler_initial_frontiers.is_empty()
+            || !self.gpu_dma_scheduler_final_frontiers.is_empty()
     }
 
     pub const fn has_gpu_dma_activity(&self) -> bool {
@@ -364,6 +410,27 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn accelerator_dma_scheduler_initial_frontiers(&self) -> &[PartitionFrontier] {
+        &self.accelerator_dma_scheduler_initial_frontiers
+    }
+
+    pub fn accelerator_dma_scheduler_final_frontiers(&self) -> &[PartitionFrontier] {
+        &self.accelerator_dma_scheduler_final_frontiers
+    }
+
+    pub fn accelerator_dma_scheduler_initial_frontier_count(&self) -> usize {
+        self.accelerator_dma_scheduler_initial_frontiers.len()
+    }
+
+    pub fn accelerator_dma_scheduler_final_frontier_count(&self) -> usize {
+        self.accelerator_dma_scheduler_final_frontiers.len()
+    }
+
+    pub fn has_accelerator_dma_scheduler_frontiers(&self) -> bool {
+        !self.accelerator_dma_scheduler_initial_frontiers.is_empty()
+            || !self.accelerator_dma_scheduler_final_frontiers.is_empty()
+    }
+
     pub const fn has_accelerator_dma_activity(&self) -> bool {
         self.accelerator_dma_copy_count != 0
             || self.accelerator_dma_completion_count != 0
@@ -459,6 +526,44 @@ impl WorkloadParallelExecutionSummary {
             .saturating_add(
                 self.accelerator_dma_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count),
             )
+    }
+
+    pub fn dma_scheduler_initial_frontiers(&self) -> Vec<PartitionFrontier> {
+        collect_conservative_partition_frontiers(
+            self.gpu_dma_scheduler_initial_frontiers
+                .iter()
+                .copied()
+                .chain(
+                    self.accelerator_dma_scheduler_initial_frontiers
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn dma_scheduler_final_frontiers(&self) -> Vec<PartitionFrontier> {
+        collect_conservative_partition_frontiers(
+            self.gpu_dma_scheduler_final_frontiers
+                .iter()
+                .copied()
+                .chain(
+                    self.accelerator_dma_scheduler_final_frontiers
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn dma_scheduler_initial_frontier_count(&self) -> usize {
+        self.dma_scheduler_initial_frontiers().len()
+    }
+
+    pub fn dma_scheduler_final_frontier_count(&self) -> usize {
+        self.dma_scheduler_final_frontiers().len()
+    }
+
+    pub fn has_dma_scheduler_frontiers(&self) -> bool {
+        self.has_gpu_dma_scheduler_frontiers() || self.has_accelerator_dma_scheduler_frontiers()
     }
 
     pub const fn dma_wait_for_edge_count(&self) -> usize {
