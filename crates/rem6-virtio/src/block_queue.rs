@@ -7,8 +7,8 @@ use rem6_memory::{
 
 use crate::{
     VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
-    VirtioError, VirtioQueueIndex, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
-    VIRTIO_BLOCK_T_OUT,
+    VirtioError, VirtioPciIsrDevice, VirtioQueueIndex, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID,
+    VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
 };
 
 pub const VIRTIO_SPLIT_DESC_F_NEXT: u16 = 1;
@@ -194,6 +194,18 @@ impl VirtioSplitQueue {
             &writeback.used_element().to_le_bytes(),
         )?;
         guest.write_u16(add_address(self.used_ring, 2)?, writeback.used_index())?;
+        Ok(writeback)
+    }
+
+    pub fn complete_block_request_and_raise_isr(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+        isr: &VirtioPciIsrDevice,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        let writeback = self.complete_block_request(guest, decoded, completion)?;
+        isr.raise_queue_interrupt(completion.tick());
         Ok(writeback)
     }
 

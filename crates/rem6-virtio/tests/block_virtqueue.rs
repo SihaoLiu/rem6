@@ -4,7 +4,8 @@ use rem6_memory::{
 };
 use rem6_virtio::{
     VirtioBlockConfigSpec, VirtioBlockDecodedRequest, VirtioBlockDevice, VirtioBlockMemoryBackend,
-    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioGuestMemory, VirtioQueueIndex,
+    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioGuestMemory, VirtioPciIsrDevice,
+    VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrStatus, VirtioQueueIndex,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
     VirtioSplitUsedRing, VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_FLUSH,
     VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT, VIRTIO_SPLIT_DESC_F_NEXT,
@@ -184,6 +185,72 @@ fn virtio_split_queue_writes_block_completion_to_guest_memory() {
     assert_eq!(
         read_guest(&mut store, 0x1802, 2, 400),
         0xffff_u16.to_le_bytes()
+    );
+}
+
+#[test]
+fn virtio_split_queue_raises_isr_after_guest_completion_writeback() {
+    let mut store = guest_store();
+    write_guest(
+        &mut store,
+        0x1000,
+        &descriptor(0x1200, 16, VIRTIO_SPLIT_DESC_F_NEXT, 1),
+        1,
+    );
+    write_guest(
+        &mut store,
+        0x1010,
+        &descriptor(
+            0x1300,
+            VIRTIO_BLOCK_SECTOR_SIZE as u32,
+            VIRTIO_SPLIT_DESC_F_NEXT | VIRTIO_SPLIT_DESC_F_WRITE,
+            2,
+        ),
+        2,
+    );
+    write_guest(
+        &mut store,
+        0x1020,
+        &descriptor(0x1500, 1, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        3,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 4);
+    write_guest(&mut store, 0x1104, &0_u16.to_le_bytes(), 5);
+    write_guest(&mut store, 0x1200, &header(VIRTIO_BLOCK_T_IN, 0), 6);
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0x44)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let isr = VirtioPciIsrDevice::new();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+        let decoded = split_queue
+            .consume_available_block(&mut guest, queue(2))
+            .unwrap()
+            .unwrap();
+        let completion = device.execute_at(77, decoded.request().clone()).unwrap();
+        split_queue
+            .complete_block_request_and_raise_isr(&mut guest, &decoded, &completion, &isr)
+            .unwrap();
+    }
+
+    assert_eq!(read_guest(&mut store, 0x1300, 512, 100), sector(0x44));
+    assert_eq!(isr.status(), VirtioPciIsrStatus::queue_interrupt());
+    assert_eq!(
+        isr.events(),
+        vec![VirtioPciIsrEvent::new(
+            77,
+            VirtioPciIsrEventKind::QueueInterrupt,
+            VirtioPciIsrStatus::empty(),
+            VirtioPciIsrStatus::queue_interrupt(),
+        )]
     );
 }
 
