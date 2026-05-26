@@ -94,7 +94,7 @@ pub use resource_payload::{WorkloadResolvedResources, WorkloadResourcePayload};
 pub use result::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary,
-    WorkloadWaitForEdgeKindWindow,
+    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 pub use suite::{
     WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchLoadExpectation,

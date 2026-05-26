@@ -37,6 +37,8 @@ mod progress;
 mod remote_endpoints;
 mod wait_for_diagnostics;
 
+pub use wait_for_diagnostics::WorkloadWaitForTargetNodeWindow;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
     Msi,
@@ -266,6 +268,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_wait_for_edge_count: usize,
     data_cache_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     data_cache_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    data_cache_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
@@ -281,6 +284,7 @@ pub struct WorkloadParallelExecutionSummary {
     fabric_wait_for_edge_count: usize,
     fabric_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     fabric_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    fabric_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     fabric_deadlock_diagnostic_count: usize,
     active_dram_target_count: usize,
     active_dram_port_count: usize,
@@ -302,6 +306,7 @@ pub struct WorkloadParallelExecutionSummary {
     dram_wait_for_edge_count: usize,
     dram_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     dram_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    dram_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     dram_deadlock_diagnostic_count: usize,
     merged_resource_deadlock_diagnostic_count: usize,
     merged_full_system_deadlock_diagnostic_count: usize,
@@ -315,6 +320,7 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_compute_wait_for_edge_count: usize,
     gpu_compute_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     gpu_compute_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    gpu_compute_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     gpu_compute_deadlock_diagnostic_count: usize,
     gpu_dma_copy_count: usize,
     gpu_dma_completion_count: usize,
@@ -333,6 +339,7 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_wait_for_edge_count: usize,
     gpu_dma_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     gpu_dma_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    gpu_dma_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
     accelerator_gpu_kernel_command_count: usize,
@@ -347,6 +354,7 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_compute_wait_for_edge_count: usize,
     accelerator_compute_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     accelerator_compute_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    accelerator_compute_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     accelerator_compute_deadlock_diagnostic_count: usize,
     accelerator_dma_copy_count: usize,
     accelerator_dma_completion_count: usize,
@@ -365,6 +373,7 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_wait_for_edge_count: usize,
     accelerator_dma_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     accelerator_dma_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    accelerator_dma_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     accelerator_dma_deadlock_diagnostic_count: usize,
 }
 

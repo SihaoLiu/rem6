@@ -60,7 +60,10 @@ isolated bugs:
   rebuilding ad hoc sets in each subsystem. Target-node observation windows use
   the same kernel semantics for the resources, queues, transactions, or
   components being waited on, so parallel runs can identify shared contention
-  hotspots without scanning raw edges after the run.
+  hotspots without scanning raw edges after the run. Workload results carry
+  those target-node windows across data-cache, fabric, DRAM, compute, DMA, and
+  merged full-system scopes, so replay artifacts can preserve the contended
+  resource identity instead of only recording edge-kind totals.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -386,7 +389,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   observation windows, kernel-owned blocked-node observation windows, and
   kernel-owned target-node observation windows. Full-system tests preserve the
   barrier edge kind in wait-for summaries and expose target-node windows across
-  merged resource and full-system wait-for graphs.
+  merged resource and full-system wait-for graphs. Workload-result tests now
+  preserve scoped target-node wait-for tick windows, and workload replay
+  summary tests carry fabric/data-cache target-node windows into merged
+  full-system artifacts.
   Progress-monitor tests cover typed livelock diagnostics for
   repeated progress-free transitions, transition-kind accounting, snapshots,
   and useful-work reset of active livelock windows. Scheduler progress tests

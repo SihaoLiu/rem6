@@ -1,8 +1,64 @@
 use std::collections::BTreeMap;
 
-use rem6_kernel::WaitForEdgeKind;
+use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 
 use super::{WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow};
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WorkloadWaitForTargetNodeWindow {
+    node: WaitForNode,
+    edge_count: usize,
+    first_tick: u64,
+    last_tick: u64,
+}
+
+impl WorkloadWaitForTargetNodeWindow {
+    pub fn new(node: WaitForNode, edge_count: usize, first_tick: u64, last_tick: u64) -> Self {
+        let stored_first_tick = if first_tick <= last_tick {
+            first_tick
+        } else {
+            last_tick
+        };
+        let stored_last_tick = if first_tick <= last_tick {
+            last_tick
+        } else {
+            first_tick
+        };
+        Self {
+            node,
+            edge_count,
+            first_tick: stored_first_tick,
+            last_tick: stored_last_tick,
+        }
+    }
+
+    pub const fn node(&self) -> &WaitForNode {
+        &self.node
+    }
+
+    pub const fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
+    pub const fn first_tick(&self) -> u64 {
+        self.first_tick
+    }
+
+    pub const fn last_tick(&self) -> u64 {
+        self.last_tick
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.edge_count == 0
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        debug_assert_eq!(self.node, other.node);
+        self.edge_count = self.edge_count.saturating_add(other.edge_count);
+        self.first_tick = self.first_tick.min(other.first_tick);
+        self.last_tick = self.last_tick.max(other.last_tick);
+    }
+}
 
 impl WorkloadParallelExecutionSummary {
     pub fn with_data_cache_wait_for_edge_kind_counts(
@@ -29,6 +85,20 @@ impl WorkloadParallelExecutionSummary {
             self.data_cache_wait_for_edge_count
                 .max(wait_for_edge_kind_window_count_sum(
                     &self.data_cache_wait_for_edge_kind_windows,
+                ));
+        self
+    }
+
+    pub fn with_data_cache_wait_for_target_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.data_cache_wait_for_target_node_windows =
+            collect_wait_for_target_node_windows(windows);
+        self.data_cache_wait_for_edge_count =
+            self.data_cache_wait_for_edge_count
+                .max(wait_for_target_node_window_count_sum(
+                    &self.data_cache_wait_for_target_node_windows,
                 ));
         self
     }
@@ -77,6 +147,27 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_resource_wait_for_target_node_windows(
+        mut self,
+        fabric_windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+        dram_windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.fabric_wait_for_target_node_windows =
+            collect_wait_for_target_node_windows(fabric_windows);
+        self.dram_wait_for_target_node_windows = collect_wait_for_target_node_windows(dram_windows);
+        self.fabric_wait_for_edge_count =
+            self.fabric_wait_for_edge_count
+                .max(wait_for_target_node_window_count_sum(
+                    &self.fabric_wait_for_target_node_windows,
+                ));
+        self.dram_wait_for_edge_count =
+            self.dram_wait_for_edge_count
+                .max(wait_for_target_node_window_count_sum(
+                    &self.dram_wait_for_target_node_windows,
+                ));
+        self
+    }
+
     pub fn with_gpu_compute_wait_for_edge_kind_counts(
         mut self,
         counts: impl IntoIterator<Item = (WaitForEdgeKind, usize)>,
@@ -105,6 +196,20 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_compute_wait_for_target_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.gpu_compute_wait_for_target_node_windows =
+            collect_wait_for_target_node_windows(windows);
+        self.gpu_compute_wait_for_edge_count =
+            self.gpu_compute_wait_for_edge_count
+                .max(wait_for_target_node_window_count_sum(
+                    &self.gpu_compute_wait_for_target_node_windows,
+                ));
+        self
+    }
+
     pub fn with_gpu_dma_wait_for_edge_kind_counts(
         mut self,
         counts: impl IntoIterator<Item = (WaitForEdgeKind, usize)>,
@@ -129,6 +234,19 @@ impl WorkloadParallelExecutionSummary {
             self.gpu_dma_wait_for_edge_count
                 .max(wait_for_edge_kind_window_count_sum(
                     &self.gpu_dma_wait_for_edge_kind_windows,
+                ));
+        self
+    }
+
+    pub fn with_gpu_dma_wait_for_target_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.gpu_dma_wait_for_target_node_windows = collect_wait_for_target_node_windows(windows);
+        self.gpu_dma_wait_for_edge_count =
+            self.gpu_dma_wait_for_edge_count
+                .max(wait_for_target_node_window_count_sum(
+                    &self.gpu_dma_wait_for_target_node_windows,
                 ));
         self
     }
@@ -164,6 +282,20 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_accelerator_compute_wait_for_target_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.accelerator_compute_wait_for_target_node_windows =
+            collect_wait_for_target_node_windows(windows);
+        self.accelerator_compute_wait_for_edge_count = self
+            .accelerator_compute_wait_for_edge_count
+            .max(wait_for_target_node_window_count_sum(
+                &self.accelerator_compute_wait_for_target_node_windows,
+            ));
+        self
+    }
+
     pub fn with_accelerator_dma_wait_for_edge_kind_counts(
         mut self,
         counts: impl IntoIterator<Item = (WaitForEdgeKind, usize)>,
@@ -194,6 +326,20 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_accelerator_dma_wait_for_target_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.accelerator_dma_wait_for_target_node_windows =
+            collect_wait_for_target_node_windows(windows);
+        self.accelerator_dma_wait_for_edge_count =
+            self.accelerator_dma_wait_for_edge_count
+                .max(wait_for_target_node_window_count_sum(
+                    &self.accelerator_dma_wait_for_target_node_windows,
+                ));
+        self
+    }
+
     pub fn data_cache_wait_for_edge_count(&self) -> usize {
         self.data_cache_wait_for_edge_count
             .max(wait_for_edge_kind_count_sum(
@@ -201,6 +347,9 @@ impl WorkloadParallelExecutionSummary {
             ))
             .max(wait_for_edge_kind_window_count_sum(
                 &self.data_cache_wait_for_edge_kind_windows,
+            ))
+            .max(wait_for_target_node_window_count_sum(
+                &self.data_cache_wait_for_target_node_windows,
             ))
     }
 
@@ -227,6 +376,17 @@ impl WorkloadParallelExecutionSummary {
         wait_for_edge_kind_window(&self.data_cache_wait_for_edge_kind_windows, kind)
     }
 
+    pub fn data_cache_wait_for_target_node_windows(&self) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.data_cache_wait_for_target_node_windows
+    }
+
+    pub fn data_cache_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.data_cache_wait_for_target_node_windows, node)
+    }
+
     pub fn fabric_wait_for_edge_count(&self) -> usize {
         self.fabric_wait_for_edge_count
             .max(wait_for_edge_kind_count_sum(
@@ -234,6 +394,9 @@ impl WorkloadParallelExecutionSummary {
             ))
             .max(wait_for_edge_kind_window_count_sum(
                 &self.fabric_wait_for_edge_kind_windows,
+            ))
+            .max(wait_for_target_node_window_count_sum(
+                &self.fabric_wait_for_target_node_windows,
             ))
     }
 
@@ -260,6 +423,17 @@ impl WorkloadParallelExecutionSummary {
         wait_for_edge_kind_window(&self.fabric_wait_for_edge_kind_windows, kind)
     }
 
+    pub fn fabric_wait_for_target_node_windows(&self) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.fabric_wait_for_target_node_windows
+    }
+
+    pub fn fabric_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.fabric_wait_for_target_node_windows, node)
+    }
+
     pub fn dram_wait_for_edge_count(&self) -> usize {
         self.dram_wait_for_edge_count
             .max(wait_for_edge_kind_count_sum(
@@ -267,6 +441,9 @@ impl WorkloadParallelExecutionSummary {
             ))
             .max(wait_for_edge_kind_window_count_sum(
                 &self.dram_wait_for_edge_kind_windows,
+            ))
+            .max(wait_for_target_node_window_count_sum(
+                &self.dram_wait_for_target_node_windows,
             ))
     }
 
@@ -291,6 +468,17 @@ impl WorkloadParallelExecutionSummary {
         kind: WaitForEdgeKind,
     ) -> Option<WorkloadWaitForEdgeKindWindow> {
         wait_for_edge_kind_window(&self.dram_wait_for_edge_kind_windows, kind)
+    }
+
+    pub fn dram_wait_for_target_node_windows(&self) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.dram_wait_for_target_node_windows
+    }
+
+    pub fn dram_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.dram_wait_for_target_node_windows, node)
     }
 
     pub fn resource_wait_for_edge_count(&self) -> usize {
@@ -322,6 +510,22 @@ impl WorkloadParallelExecutionSummary {
         kind: WaitForEdgeKind,
     ) -> Option<WorkloadWaitForEdgeKindWindow> {
         wait_for_edge_kind_window(&self.resource_wait_for_edge_kind_windows(), kind)
+    }
+
+    pub fn resource_wait_for_target_node_windows(&self) -> Vec<WorkloadWaitForTargetNodeWindow> {
+        merge_wait_for_target_node_windows(
+            self.fabric_wait_for_target_node_windows
+                .iter()
+                .cloned()
+                .chain(self.dram_wait_for_target_node_windows.iter().cloned()),
+        )
+    }
+
+    pub fn resource_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.resource_wait_for_target_node_windows(), node)
     }
 
     pub fn resource_activity_count(&self) -> usize {
@@ -373,6 +577,114 @@ impl WorkloadParallelExecutionSummary {
         kind: WaitForEdgeKind,
     ) -> Option<WorkloadWaitForEdgeKindWindow> {
         wait_for_edge_kind_window(&self.full_system_wait_for_edge_kind_windows(), kind)
+    }
+
+    pub fn gpu_compute_wait_for_target_node_windows(&self) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.gpu_compute_wait_for_target_node_windows
+    }
+
+    pub fn gpu_compute_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.gpu_compute_wait_for_target_node_windows, node)
+    }
+
+    pub fn gpu_dma_wait_for_target_node_windows(&self) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.gpu_dma_wait_for_target_node_windows
+    }
+
+    pub fn gpu_dma_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.gpu_dma_wait_for_target_node_windows, node)
+    }
+
+    pub fn accelerator_compute_wait_for_target_node_windows(
+        &self,
+    ) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.accelerator_compute_wait_for_target_node_windows
+    }
+
+    pub fn accelerator_compute_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.accelerator_compute_wait_for_target_node_windows, node)
+    }
+
+    pub fn accelerator_dma_wait_for_target_node_windows(
+        &self,
+    ) -> &[WorkloadWaitForTargetNodeWindow] {
+        &self.accelerator_dma_wait_for_target_node_windows
+    }
+
+    pub fn accelerator_dma_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.accelerator_dma_wait_for_target_node_windows, node)
+    }
+
+    pub fn compute_wait_for_target_node_windows(&self) -> Vec<WorkloadWaitForTargetNodeWindow> {
+        merge_wait_for_target_node_windows(
+            self.gpu_compute_wait_for_target_node_windows
+                .iter()
+                .cloned()
+                .chain(
+                    self.accelerator_compute_wait_for_target_node_windows
+                        .iter()
+                        .cloned(),
+                ),
+        )
+    }
+
+    pub fn compute_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.compute_wait_for_target_node_windows(), node)
+    }
+
+    pub fn dma_wait_for_target_node_windows(&self) -> Vec<WorkloadWaitForTargetNodeWindow> {
+        merge_wait_for_target_node_windows(
+            self.gpu_dma_wait_for_target_node_windows
+                .iter()
+                .cloned()
+                .chain(
+                    self.accelerator_dma_wait_for_target_node_windows
+                        .iter()
+                        .cloned(),
+                ),
+        )
+    }
+
+    pub fn dma_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.dma_wait_for_target_node_windows(), node)
+    }
+
+    pub fn full_system_wait_for_target_node_windows(&self) -> Vec<WorkloadWaitForTargetNodeWindow> {
+        let resource_windows = self.resource_wait_for_target_node_windows();
+        let compute_windows = self.compute_wait_for_target_node_windows();
+        let dma_windows = self.dma_wait_for_target_node_windows();
+        merge_wait_for_target_node_windows(
+            resource_windows
+                .into_iter()
+                .chain(self.data_cache_wait_for_target_node_windows.iter().cloned())
+                .chain(compute_windows)
+                .chain(dma_windows),
+        )
+    }
+
+    pub fn full_system_wait_for_target_node_window(
+        &self,
+        node: &WaitForNode,
+    ) -> Option<WorkloadWaitForTargetNodeWindow> {
+        wait_for_target_node_window(&self.full_system_wait_for_target_node_windows(), node)
     }
 }
 
@@ -460,4 +772,42 @@ pub(super) fn wait_for_edge_kind_counts_from_windows(
             .iter()
             .map(|window| (window.kind(), window.edge_count())),
     )
+}
+
+pub(super) fn collect_wait_for_target_node_windows(
+    windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+) -> Vec<WorkloadWaitForTargetNodeWindow> {
+    let mut by_node = BTreeMap::new();
+    for window in windows {
+        if window.is_empty() {
+            continue;
+        }
+        by_node
+            .entry(window.node().clone())
+            .and_modify(|stored: &mut WorkloadWaitForTargetNodeWindow| stored.merge(window.clone()))
+            .or_insert(window);
+    }
+    by_node.into_values().collect()
+}
+
+pub(super) fn merge_wait_for_target_node_windows(
+    windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+) -> Vec<WorkloadWaitForTargetNodeWindow> {
+    collect_wait_for_target_node_windows(windows)
+}
+
+pub(super) fn wait_for_target_node_window(
+    windows: &[WorkloadWaitForTargetNodeWindow],
+    node: &WaitForNode,
+) -> Option<WorkloadWaitForTargetNodeWindow> {
+    windows.iter().find(|window| window.node() == node).cloned()
+}
+
+pub(super) fn wait_for_target_node_window_count_sum(
+    windows: &[WorkloadWaitForTargetNodeWindow],
+) -> usize {
+    windows
+        .iter()
+        .map(WorkloadWaitForTargetNodeWindow::edge_count)
+        .sum()
 }

@@ -40,7 +40,7 @@ use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount, WorkloadReplayPlan, WorkloadResolvedResources,
     WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadTopology, WorkloadWaitForEdgeKindWindow,
+    WorkloadTopology, WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 
 mod cache_response;
@@ -68,7 +68,8 @@ use crate::workload_replay_heterogeneous::{
     accelerator_wait_for_markers, build_accelerator_devices, build_gpu_devices, gpu_snapshots,
     gpu_wait_for_graph_since, gpu_wait_for_markers, merge_wait_for_graph,
     schedule_accelerator_commands, schedule_gpu_kernel_launches, wait_for_edge_kind_windows,
-    WorkloadAcceleratorActivity, WorkloadGpuActivity, WorkloadGpuRuntime,
+    wait_for_target_node_windows, WorkloadAcceleratorActivity, WorkloadGpuActivity,
+    WorkloadGpuRuntime,
 };
 use crate::workload_replay_host::schedule_planned_host_events;
 use crate::{
@@ -101,6 +102,7 @@ struct WorkloadGpuDmaActivity {
     wait_for_edge_count: usize,
     wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     deadlock_diagnostic_count: usize,
 }
 
@@ -109,6 +111,7 @@ impl WorkloadGpuDmaActivity {
         self.wait_for_edge_count = wait_for.edge_count();
         self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
         self.wait_for_edge_kind_windows = wait_for_edge_kind_windows(&wait_for);
+        self.wait_for_target_node_windows = wait_for_target_node_windows(&wait_for);
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
@@ -971,6 +974,7 @@ impl RiscvWorkloadReplay {
             wait_for_edge_count: 0,
             wait_for_edge_kind_counts: BTreeMap::new(),
             wait_for_edge_kind_windows: Vec::new(),
+            wait_for_target_node_windows: Vec::new(),
             deadlock_diagnostic_count: 0,
         }
         .with_wait_for_graph(wait_for))

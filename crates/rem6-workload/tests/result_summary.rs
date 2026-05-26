@@ -13,7 +13,7 @@ use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
     WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadResult, WorkloadWaitForEdgeKindWindow,
+    WorkloadResult, WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -44,6 +44,10 @@ fn kernel_resource() -> WorkloadResource {
 
 fn wait_subject(value: &str) -> WaitForNode {
     WaitForNode::component(value).unwrap()
+}
+
+fn wait_resource(value: &str) -> WaitForNode {
+    WaitForNode::resource(value).unwrap()
 }
 
 fn progress_transition(
@@ -1230,6 +1234,98 @@ fn workload_result_preserves_wait_for_edge_kind_tick_windows() {
             WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Credit, 13, 10, 22),
             WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::HostAction, 7, 6, 18),
             WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Barrier, 3, 3, 13),
+        ],
+    );
+}
+
+#[test]
+fn workload_result_preserves_wait_for_target_node_tick_windows() {
+    let cache_mshr = wait_resource("cache.mshr");
+    let fabric_credit = wait_resource("fabric.credit");
+    let dram_bank = wait_resource("dram.bank");
+    let gpu_queue = wait_resource("gpu.queue");
+    let accelerator_mailbox = wait_resource("accelerator.mailbox");
+    let gpu_dma_packet = wait_resource("gpu.dma.packet");
+    let accelerator_dma_credit = wait_resource("accelerator.dma.credit");
+    let summary =
+        WorkloadParallelExecutionSummary::default()
+            .with_data_cache_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+                cache_mshr.clone(),
+                2,
+                4,
+                9,
+            )])
+            .with_resource_wait_for_target_node_windows(
+                [WorkloadWaitForTargetNodeWindow::new(
+                    fabric_credit.clone(),
+                    3,
+                    5,
+                    11,
+                )],
+                [WorkloadWaitForTargetNodeWindow::new(
+                    dram_bank.clone(),
+                    2,
+                    3,
+                    13,
+                )],
+            )
+            .with_gpu_compute_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+                gpu_queue.clone(),
+                5,
+                2,
+                14,
+            )])
+            .with_accelerator_compute_wait_for_target_node_windows([
+                WorkloadWaitForTargetNodeWindow::new(accelerator_mailbox.clone(), 7, 6, 18),
+            ])
+            .with_gpu_dma_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+                gpu_dma_packet.clone(),
+                11,
+                8,
+                21,
+            )])
+            .with_accelerator_dma_wait_for_target_node_windows([
+                WorkloadWaitForTargetNodeWindow::new(accelerator_dma_credit.clone(), 13, 10, 22),
+            ]);
+
+    assert_eq!(
+        summary.data_cache_wait_for_target_node_window(&cache_mshr),
+        Some(WorkloadWaitForTargetNodeWindow::new(
+            cache_mshr.clone(),
+            2,
+            4,
+            9,
+        )),
+    );
+    assert_eq!(
+        summary.resource_wait_for_target_node_window(&dram_bank),
+        Some(WorkloadWaitForTargetNodeWindow::new(
+            dram_bank.clone(),
+            2,
+            3,
+            13,
+        )),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_target_node_window(&accelerator_dma_credit),
+        Some(WorkloadWaitForTargetNodeWindow::new(
+            accelerator_dma_credit.clone(),
+            13,
+            10,
+            22,
+        )),
+    );
+    assert_eq!(summary.full_system_wait_for_edge_count(), 43);
+    assert_eq!(
+        summary.full_system_wait_for_target_node_windows(),
+        vec![
+            WorkloadWaitForTargetNodeWindow::new(accelerator_dma_credit, 13, 10, 22),
+            WorkloadWaitForTargetNodeWindow::new(accelerator_mailbox, 7, 6, 18),
+            WorkloadWaitForTargetNodeWindow::new(cache_mshr, 2, 4, 9),
+            WorkloadWaitForTargetNodeWindow::new(dram_bank, 2, 3, 13),
+            WorkloadWaitForTargetNodeWindow::new(fabric_credit, 3, 5, 11),
+            WorkloadWaitForTargetNodeWindow::new(gpu_dma_packet, 11, 8, 21),
+            WorkloadWaitForTargetNodeWindow::new(gpu_queue, 5, 2, 14),
         ],
     );
 }
