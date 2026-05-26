@@ -97,6 +97,15 @@ impl RiscvCoreCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, RiscvCoreCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_record(&record);
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<RiscvCoreCheckpointRecord, RiscvCoreCheckpointError> {
         let pc = decode_pc(
             &self.component,
             registry.chunk(&self.component, PC_CHUNK).ok_or_else(|| {
@@ -116,16 +125,18 @@ impl RiscvCoreCheckpointPort {
                 })?,
         )?;
 
-        self.core.redirect_pc(pc);
-        for (register, value) in &registers {
-            self.core.write_register(*register, *value);
-        }
-
         Ok(RiscvCoreCheckpointRecord::new(
             self.component.clone(),
             pc,
             registers,
         ))
+    }
+
+    fn restore_record(&self, record: &RiscvCoreCheckpointRecord) {
+        self.core.redirect_pc(record.pc());
+        for (register, value) in record.registers() {
+            self.core.write_register(*register, *value);
+        }
     }
 
     fn capture_record(&self) -> RiscvCoreCheckpointRecord {
@@ -190,10 +201,17 @@ impl RiscvCoreCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<RiscvCoreCheckpointRecord>, RiscvCoreCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            decoded.push((port, port.decode_from(registry)?));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_record(&record);
+            restored.push(record);
+        }
+        Ok(restored)
     }
 }
 

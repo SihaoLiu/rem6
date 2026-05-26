@@ -162,3 +162,47 @@ fn riscv_core_checkpoint_bank_captures_and_restores_cores_in_component_order() {
     assert_eq!(core1.pc(), Address::new(0x9040));
     assert_eq!(core1.read_register(reg(2)), 0x2222);
 }
+
+#[test]
+fn riscv_core_checkpoint_bank_rejects_truncated_payload_without_partial_restore() {
+    let core0 = riscv_core_with(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    let core1 = riscv_core_with(CpuId::new(1), PartitionId::new(1), AgentId::new(8), 0x9000);
+    core0.redirect_pc(Address::new(0x8040));
+    core0.write_register(reg(1), 0x1111);
+    core1.redirect_pc(Address::new(0x9040));
+    core1.write_register(reg(2), 0x2222);
+    let component0 = CheckpointComponentId::new("cpu0").unwrap();
+    let component1 = CheckpointComponentId::new("cpu1").unwrap();
+    let bank = RiscvCoreCheckpointBank::new([
+        RiscvCoreCheckpointPort::new(component0.clone(), core0.clone()),
+        RiscvCoreCheckpointPort::new(component1.clone(), core1.clone()),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component1, "xregs", vec![0xaa, 0xbb, 0xcc])
+        .unwrap();
+    core0.redirect_pc(Address::new(0xa000));
+    core0.write_register(reg(1), 0xa111);
+    core1.redirect_pc(Address::new(0xb000));
+    core1.write_register(reg(2), 0xb222);
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        rem6_system::RiscvCoreCheckpointError::InvalidChunkSize {
+            component: component1,
+            name: "xregs".to_string(),
+            expected: 32 * 8,
+            actual: 3,
+        }
+    );
+    assert_eq!(core0.pc(), Address::new(0xa000));
+    assert_eq!(core0.read_register(reg(1)), 0xa111);
+    assert_eq!(core1.pc(), Address::new(0xb000));
+    assert_eq!(core1.read_register(reg(2)), 0xb222);
+}
