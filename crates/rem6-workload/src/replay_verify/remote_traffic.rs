@@ -323,7 +323,10 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
         for flow in flows {
             let Some(send_observation) = send_observations.get(&(flow.source(), flow.target()))
             else {
-                continue;
+                return Err(remote_traffic_missing_sends_mismatch(
+                    expected.scope(),
+                    flow,
+                ));
             };
             if !remote_traffic_observation_matches(flow, *send_observation) {
                 return Err(remote_traffic_consistency_mismatch(
@@ -450,6 +453,29 @@ fn remote_traffic_observation_matches(
         None => true,
     };
     timing_matches && delay_matches
+}
+
+fn remote_traffic_missing_sends_mismatch(
+    scope: WorkloadParallelRemoteFlowScope,
+    flow: ParallelRemoteFlowRecord,
+) -> WorkloadError {
+    WorkloadError::ParallelRemoteTrafficConsistencyMismatch(Box::new(
+        WorkloadParallelRemoteTrafficConsistencyMismatch {
+            scope,
+            source: flow.source().index(),
+            target: flow.target().index(),
+            flow_send_count: flow.send_count(),
+            send_record_count: 0,
+            flow_first_tick: flow.first_tick(),
+            send_first_tick: None,
+            flow_last_tick: flow.last_tick(),
+            send_last_tick: None,
+            flow_minimum_delay: flow.minimum_delay(),
+            send_minimum_delay: None,
+            flow_maximum_delay: flow.maximum_delay(),
+            send_maximum_delay: None,
+        },
+    ))
 }
 
 fn remote_traffic_consistency_mismatch(

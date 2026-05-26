@@ -363,6 +363,10 @@ Implementation evidence on 2026-05-26:
   contradictory same-scope windows at manifest and replay plan insertion. A
   declared minimum remote delay cannot exceed the declared maximum remote delay,
   so impossible timing contracts fail before result replay.
+- Workload parallel remote-traffic consistency expectations now reject explicit
+  aggregate remote-flow evidence without matching exact remote-send evidence.
+  This keeps aggregate flow contracts tied to replayable per-send timing
+  records instead of accepting summary-only remote traffic.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

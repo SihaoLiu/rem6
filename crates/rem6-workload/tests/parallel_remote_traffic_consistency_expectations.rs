@@ -212,6 +212,40 @@ fn workload_replay_plan_rejects_missing_parallel_remote_traffic_summary() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_parallel_remote_traffic_without_exact_sends() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_traffic_consistency(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+        ))
+        .unwrap();
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 1, 11, 11),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        traffic_mismatch(WorkloadParallelRemoteTrafficConsistencyMismatch {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            flow_send_count: 1,
+            send_record_count: 0,
+            flow_first_tick: 11,
+            send_first_tick: None,
+            flow_last_tick: 11,
+            send_last_tick: None,
+            flow_minimum_delay: None,
+            send_minimum_delay: None,
+            flow_maximum_delay: None,
+            send_maximum_delay: None,
+        }),
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_parallel_remote_traffic_count_mismatch() {
     let plan = replay_plan()
         .add_expected_parallel_remote_traffic_consistency(expected(
