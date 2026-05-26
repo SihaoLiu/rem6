@@ -11,6 +11,7 @@ mod interrupt;
 mod mmio;
 mod msi;
 mod msix;
+mod pcie;
 mod pm;
 
 use bar::{bar_index_for_offset, host_address_space, PciBarState};
@@ -30,6 +31,9 @@ pub use interrupt::{
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};
 pub use msix::{PciMsixCapabilitySpec, PciMsixPort, PciMsixRoute};
+pub use pcie::{
+    PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec, PciExpressLinkCapabilitySpec,
+};
 pub use pm::PciPowerManagementCapabilitySpec;
 
 pub(crate) const PCI_CONFIG_SPACE_SIZE: usize = 256;
@@ -255,6 +259,7 @@ pub struct PciEndpointConfig {
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
     capabilities: PciEndpointCapabilityList,
     pm: Option<pm::PciPowerManagementCapabilityState>,
+    pcie: Option<pcie::PciExpressCapabilityState>,
     msi: Option<msi::PciMsiCapabilityState>,
     msix: Option<msix::PciMsixCapabilityState>,
 }
@@ -282,6 +287,7 @@ impl PciEndpointConfig {
             bars: std::array::from_fn(|_| None),
             capabilities: PciEndpointCapabilityList::new(),
             pm: None,
+            pcie: None,
             msi: None,
             msix: None,
         }
@@ -384,6 +390,21 @@ impl PciEndpointConfig {
         Ok(())
     }
 
+    pub fn install_pcie_capability(
+        &mut self,
+        spec: PciExpressCapabilitySpec,
+    ) -> Result<(), PciError> {
+        if self.pcie.is_some() {
+            return Err(PciError::DuplicatePciExpressCapability);
+        }
+        self.register_capability_region(spec.offset(), spec.size())?;
+        let state = pcie::PciExpressCapabilityState::new(spec);
+        state.install_into(&mut self.config);
+        self.pcie = Some(state);
+        self.rebuild_capability_list();
+        Ok(())
+    }
+
     pub fn read_config(
         &self,
         offset: PciConfigOffset,
@@ -405,6 +426,11 @@ impl PciEndpointConfig {
         if let Some(pm) = self.pm.as_mut() {
             if pm.contains(offset, size) {
                 return pm.write_config(offset, data, &mut self.config);
+            }
+        }
+        if let Some(pcie) = self.pcie.as_mut() {
+            if pcie.contains(offset, size) {
+                return pcie.write_config(offset, data, &mut self.config);
             }
         }
         if let Some(msi) = self.msi.as_mut() {
@@ -485,6 +511,7 @@ impl PciEndpointConfig {
             bars: self.bars.clone(),
             capabilities: self.capabilities.clone(),
             pm: self.pm.clone(),
+            pcie: self.pcie.clone(),
             msi: self.msi.clone(),
             msix: self.msix.clone(),
         }
@@ -541,11 +568,23 @@ impl PciEndpointConfig {
         {
             return Err(PciError::SnapshotPowerManagementCapabilityMismatch);
         }
+        if self
+            .pcie
+            .as_ref()
+            .map(pcie::PciExpressCapabilityState::spec)
+            != snapshot
+                .pcie
+                .as_ref()
+                .map(pcie::PciExpressCapabilityState::spec)
+        {
+            return Err(PciError::SnapshotPciExpressCapabilityMismatch);
+        }
 
         self.config = snapshot.config;
         self.bars = snapshot.bars.clone();
         self.capabilities = snapshot.capabilities.clone();
         self.pm = snapshot.pm.clone();
+        self.pcie = snapshot.pcie.clone();
         self.msi = snapshot.msi.clone();
         self.msix = snapshot.msix.clone();
         Ok(())
@@ -631,6 +670,7 @@ pub struct PciEndpointConfigSnapshot {
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
     capabilities: PciEndpointCapabilityList,
     pm: Option<pm::PciPowerManagementCapabilityState>,
+    pcie: Option<pcie::PciExpressCapabilityState>,
     msi: Option<msi::PciMsiCapabilityState>,
     msix: Option<msix::PciMsixCapabilityState>,
 }
@@ -1070,6 +1110,20 @@ pub enum PciError {
         offset: PciConfigOffset,
         size: AccessSize,
     },
+    InvalidPciExpressCapabilityOffset {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    DuplicatePciExpressCapability,
+    SnapshotPciExpressCapabilityMismatch,
+    ReadOnlyPciExpressCapabilityWrite {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    UnalignedPciExpressCapabilityWrite {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
     InvalidBridgeBusRange {
         primary: u8,
         secondary: u8,
@@ -1336,6 +1390,30 @@ impl fmt::Display for PciError {
             Self::UnalignedPowerManagementCapabilityWrite { offset, size } => write!(
                 f,
                 "PCI power-management capability write at {:#x} for {} bytes targets an unsupported field width",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::InvalidPciExpressCapabilityOffset { offset, size } => write!(
+                f,
+                "PCI Express capability at {:#x} for {} bytes does not fit the writable capability area",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::DuplicatePciExpressCapability => {
+                write!(f, "PCI Express capability is already installed")
+            }
+            Self::SnapshotPciExpressCapabilityMismatch => {
+                write!(f, "PCI snapshot PCI Express capability does not match this endpoint")
+            }
+            Self::ReadOnlyPciExpressCapabilityWrite { offset, size } => write!(
+                f,
+                "PCI Express capability write at {:#x} for {} bytes targets read-only state",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::UnalignedPciExpressCapabilityWrite { offset, size } => write!(
+                f,
+                "PCI Express capability write at {:#x} for {} bytes targets an unsupported field width",
                 offset.get(),
                 size.bytes()
             ),

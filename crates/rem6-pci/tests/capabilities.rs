@@ -1,6 +1,7 @@
 use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciClassCode, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciError,
+    PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec, PciExpressLinkCapabilitySpec,
     PciFunctionAddress, PciMsiCapabilitySpec, PciMsixCapabilitySpec,
     PciPowerManagementCapabilitySpec,
 };
@@ -32,6 +33,16 @@ fn msix(offset: u16) -> PciMsixCapabilitySpec {
 fn pm(offset: u16) -> PciPowerManagementCapabilitySpec {
     PciPowerManagementCapabilitySpec::new(PciConfigOffset::new(offset).unwrap(), 0x0003, 0x0000)
         .unwrap()
+}
+
+fn pcie(offset: u16) -> PciExpressCapabilitySpec {
+    PciExpressCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        0x0002,
+        PciExpressDeviceCapabilitySpec::new(0x0000_1234, 0x0011, 0x0022),
+        PciExpressLinkCapabilitySpec::new(0x0100_0001, 0x0003, 0x2001),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -144,6 +155,102 @@ fn pci_endpoint_power_management_capability_links_writes_and_snapshots_pmcsr() {
         Err(PciError::ReadOnlyPowerManagementCapabilityWrite {
             offset: PciConfigOffset::new(0x46).unwrap(),
             size: AccessSize::new(2).unwrap(),
+        })
+    );
+}
+
+#[test]
+fn pci_endpoint_pcie_capability_links_writes_and_snapshots_control_status() {
+    let mut endpoint = storage_endpoint();
+
+    endpoint.install_pm_capability(pm(0x44)).unwrap();
+    endpoint.install_pcie_capability(pcie(0x80)).unwrap();
+    endpoint.install_msi_capability(msi(0xc0)).unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x44).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x01, 0x80, 0x03, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x80).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x10, 0xc0, 0x02, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x84).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x34, 0x12, 0x00, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x88).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x11, 0x00, 0x22, 0x00])
+    );
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x88).unwrap(),
+            &0x000f_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x8a).unwrap(),
+            &0x0040_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x90).unwrap(),
+            &0x0001_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x92).unwrap(),
+            &0x1001_u16.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x88).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x88).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x0f, 0x00, 0x40, 0x00])
+    );
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x90).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x01, 0x00, 0x01, 0x10])
+    );
+    assert_eq!(
+        endpoint.write_config(
+            PciConfigOffset::new(0x84).unwrap(),
+            &0x0000_0000_u32.to_le_bytes(),
+        ),
+        Err(PciError::ReadOnlyPciExpressCapabilityWrite {
+            offset: PciConfigOffset::new(0x84).unwrap(),
+            size: AccessSize::new(4).unwrap(),
         })
     );
 }
