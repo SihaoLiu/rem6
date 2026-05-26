@@ -827,6 +827,81 @@ fn virtio_split_queue_posts_parallel_msix_after_completion_writeback() {
 }
 
 #[test]
+fn virtio_split_queue_records_masked_parallel_msix_as_pending_without_losing_writeback() {
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let source = InterruptSourceId::new(96);
+    let (controller, mut endpoint, port) = msix_port(cpu, 4, 1, InterruptLineId::new(54));
+    endpoint
+        .write_msix_region(Address::new(0x11c), &1_u32.to_le_bytes())
+        .unwrap();
+    let store = Arc::new(Mutex::new(guest_store()));
+    {
+        let mut store = store.lock().unwrap();
+        write_guest_read_queue(&mut store, 0, 61);
+    }
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0xaa)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let isr = VirtioPciIsrDevice::new();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    let event_store = Arc::clone(&store);
+    let event_isr = isr.clone();
+    let event_port = port.clone();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 91, move |context| {
+            let mut store = event_store.lock().unwrap();
+            let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+            let decoded = split_queue
+                .consume_available_block(&mut guest, queue(2))
+                .unwrap()
+                .unwrap();
+            let completion = device
+                .execute_parallel(context, decoded.request().clone())
+                .unwrap();
+            let outcome = split_queue
+                .complete_block_request_and_post_msix_parallel(
+                    context,
+                    &mut guest,
+                    &decoded,
+                    &completion,
+                    VirtioBlockMsixCompletionTarget::new(
+                        &event_isr,
+                        &mut endpoint,
+                        &event_port,
+                        source,
+                    ),
+                )
+                .unwrap();
+            assert_eq!(outcome.writeback().used_index(), 1);
+            assert!(outcome.interrupt_delivery().is_none());
+            assert_eq!(
+                endpoint
+                    .read_msix_region(Address::new(0x180), AccessSize::new(8).unwrap())
+                    .unwrap(),
+                0b10_u64.to_le_bytes().to_vec()
+            );
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        read_guest(&mut store.lock().unwrap(), 0x1300, 512, 700),
+        sector(0xaa)
+    );
+    assert_eq!(isr.status(), VirtioPciIsrStatus::queue_interrupt());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
 fn virtio_split_queue_raises_isr_after_guest_completion_writeback() {
     let mut store = guest_store();
     write_guest(

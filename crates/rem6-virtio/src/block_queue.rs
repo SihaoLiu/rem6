@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_interrupt::InterruptSourceId;
-use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
+use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     PartitionedMemoryStore,
@@ -117,15 +117,45 @@ impl<'a> VirtioBlockMsixCompletionTarget<'a> {
     pub fn send(
         &mut self,
         context: &mut SchedulerContext<'_>,
-    ) -> Result<Option<rem6_kernel::PartitionEventId>, rem6_pci::PciError> {
+    ) -> Result<Option<PartitionEventId>, rem6_pci::PciError> {
         self.port.send(self.endpoint, context, self.source)
     }
 
     pub fn send_parallel(
         &mut self,
         context: &mut ParallelSchedulerContext<'_>,
-    ) -> Result<Option<rem6_kernel::PartitionEventId>, rem6_pci::PciError> {
+    ) -> Result<Option<PartitionEventId>, rem6_pci::PciError> {
         self.port.send_parallel(self.endpoint, context, self.source)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioBlockInterruptCompletion {
+    writeback: VirtioBlockQueueCompletionWrite,
+    interrupt_delivery: Option<PartitionEventId>,
+}
+
+impl VirtioBlockInterruptCompletion {
+    pub const fn new(
+        writeback: VirtioBlockQueueCompletionWrite,
+        interrupt_delivery: Option<PartitionEventId>,
+    ) -> Self {
+        Self {
+            writeback,
+            interrupt_delivery,
+        }
+    }
+
+    pub const fn writeback(&self) -> &VirtioBlockQueueCompletionWrite {
+        &self.writeback
+    }
+
+    pub const fn interrupt_delivery(&self) -> Option<PartitionEventId> {
+        self.interrupt_delivery
+    }
+
+    pub fn into_writeback(self) -> VirtioBlockQueueCompletionWrite {
+        self.writeback
     }
 }
 
@@ -330,14 +360,17 @@ impl VirtioSplitQueue {
         decoded: &VirtioBlockDecodedRequest,
         completion: &VirtioBlockCompletion,
         target: VirtioBlockIntxCompletionTarget<'_>,
-    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+    ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
         let writeback =
             self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
-        target
+        let delivery = target
             .port()
             .post(context, target.source())
             .map_err(virtio_pci_error)?;
-        Ok(writeback)
+        Ok(VirtioBlockInterruptCompletion::new(
+            writeback,
+            Some(delivery),
+        ))
     }
 
     pub fn complete_block_request_and_post_intx_parallel(
@@ -347,14 +380,17 @@ impl VirtioSplitQueue {
         decoded: &VirtioBlockDecodedRequest,
         completion: &VirtioBlockCompletion,
         target: VirtioBlockIntxCompletionTarget<'_>,
-    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+    ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
         let writeback =
             self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
-        target
+        let delivery = target
             .port()
             .post_parallel(context, target.source())
             .map_err(virtio_pci_error)?;
-        Ok(writeback)
+        Ok(VirtioBlockInterruptCompletion::new(
+            writeback,
+            Some(delivery),
+        ))
     }
 
     pub fn complete_block_request_and_post_msi(
@@ -364,14 +400,14 @@ impl VirtioSplitQueue {
         decoded: &VirtioBlockDecodedRequest,
         completion: &VirtioBlockCompletion,
         target: VirtioBlockMsiCompletionTarget<'_>,
-    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+    ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
         let writeback =
             self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
-        target
+        let delivery = target
             .port()
             .send(target.endpoint(), context, target.source())
             .map_err(virtio_pci_error)?;
-        Ok(writeback)
+        Ok(VirtioBlockInterruptCompletion::new(writeback, delivery))
     }
 
     pub fn complete_block_request_and_post_msi_parallel(
@@ -381,14 +417,14 @@ impl VirtioSplitQueue {
         decoded: &VirtioBlockDecodedRequest,
         completion: &VirtioBlockCompletion,
         target: VirtioBlockMsiCompletionTarget<'_>,
-    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+    ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
         let writeback =
             self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
-        target
+        let delivery = target
             .port()
             .send_parallel(target.endpoint(), context, target.source())
             .map_err(virtio_pci_error)?;
-        Ok(writeback)
+        Ok(VirtioBlockInterruptCompletion::new(writeback, delivery))
     }
 
     pub fn complete_block_request_and_post_msix(
@@ -398,11 +434,11 @@ impl VirtioSplitQueue {
         decoded: &VirtioBlockDecodedRequest,
         completion: &VirtioBlockCompletion,
         mut target: VirtioBlockMsixCompletionTarget<'_>,
-    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+    ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
         let writeback =
             self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
-        target.send(context).map_err(virtio_pci_error)?;
-        Ok(writeback)
+        let delivery = target.send(context).map_err(virtio_pci_error)?;
+        Ok(VirtioBlockInterruptCompletion::new(writeback, delivery))
     }
 
     pub fn complete_block_request_and_post_msix_parallel(
@@ -412,11 +448,11 @@ impl VirtioSplitQueue {
         decoded: &VirtioBlockDecodedRequest,
         completion: &VirtioBlockCompletion,
         mut target: VirtioBlockMsixCompletionTarget<'_>,
-    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+    ) -> Result<VirtioBlockInterruptCompletion, VirtioError> {
         let writeback =
             self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
-        target.send_parallel(context).map_err(virtio_pci_error)?;
-        Ok(writeback)
+        let delivery = target.send_parallel(context).map_err(virtio_pci_error)?;
+        Ok(VirtioBlockInterruptCompletion::new(writeback, delivery))
     }
 
     fn write_descriptor(
