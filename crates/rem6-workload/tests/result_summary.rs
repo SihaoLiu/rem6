@@ -1227,6 +1227,33 @@ fn workload_result_preserves_wait_for_edge_kind_tick_windows() {
 }
 
 #[test]
+fn workload_result_merges_wait_for_edge_kind_counts_with_tick_windows() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_counts([
+            (WaitForEdgeKind::Queue, 3),
+            (WaitForEdgeKind::Barrier, 1),
+        ])
+        .with_data_cache_wait_for_edge_kind_windows([
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Protocol, 2, 4, 9),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Barrier, 4, 7, 11),
+        ]);
+
+    assert_eq!(
+        summary.data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+        3,
+    );
+    assert_eq!(
+        summary.data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+        2,
+    );
+    assert_eq!(
+        summary.data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Barrier),
+        4,
+    );
+    assert_eq!(summary.data_cache_wait_for_edge_count(), 9);
+}
+
+#[test]
 fn workload_result_preserves_wait_for_target_node_tick_windows() {
     let cache_mshr = wait_resource("cache.mshr");
     let fabric_credit = wait_resource("fabric.credit");

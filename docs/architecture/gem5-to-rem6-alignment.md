@@ -402,6 +402,11 @@ Implementation evidence on 2026-05-26:
   applying diagnostic expectations. Aggregate clean or dirty diagnostic checks
   therefore cannot hide stronger typed blocking evidence behind a smaller total
   counter.
+- Workload wait-for result ingestion now merges exact edge-kind window evidence
+  into existing edge-kind aggregate maps without dropping unrelated kinds and
+  without weakening same-kind aggregate counts. Adding exact tick-window
+  evidence therefore preserves earlier typed wait-for totals instead of
+  replacing them with a narrower diagnostic view.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

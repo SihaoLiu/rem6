@@ -262,12 +262,14 @@ impl WorkloadParallelExecutionSummary {
         windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
     ) -> Self {
         self.data_cache_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(windows);
-        self.data_cache_wait_for_edge_kind_counts =
-            wait_for_edge_kind_counts_from_windows(&self.data_cache_wait_for_edge_kind_windows);
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.data_cache_wait_for_edge_kind_counts,
+            &self.data_cache_wait_for_edge_kind_windows,
+        );
         self.data_cache_wait_for_edge_count =
             self.data_cache_wait_for_edge_count
-                .max(wait_for_edge_kind_window_count_sum(
-                    &self.data_cache_wait_for_edge_kind_windows,
+                .max(wait_for_edge_kind_count_sum(
+                    &self.data_cache_wait_for_edge_kind_counts,
                 ));
         self
     }
@@ -327,19 +329,23 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.fabric_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(fabric_windows);
         self.dram_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(dram_windows);
-        self.fabric_wait_for_edge_kind_counts =
-            wait_for_edge_kind_counts_from_windows(&self.fabric_wait_for_edge_kind_windows);
-        self.dram_wait_for_edge_kind_counts =
-            wait_for_edge_kind_counts_from_windows(&self.dram_wait_for_edge_kind_windows);
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.fabric_wait_for_edge_kind_counts,
+            &self.fabric_wait_for_edge_kind_windows,
+        );
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.dram_wait_for_edge_kind_counts,
+            &self.dram_wait_for_edge_kind_windows,
+        );
         self.fabric_wait_for_edge_count =
             self.fabric_wait_for_edge_count
-                .max(wait_for_edge_kind_window_count_sum(
-                    &self.fabric_wait_for_edge_kind_windows,
+                .max(wait_for_edge_kind_count_sum(
+                    &self.fabric_wait_for_edge_kind_counts,
                 ));
         self.dram_wait_for_edge_count =
             self.dram_wait_for_edge_count
-                .max(wait_for_edge_kind_window_count_sum(
-                    &self.dram_wait_for_edge_kind_windows,
+                .max(wait_for_edge_kind_count_sum(
+                    &self.dram_wait_for_edge_kind_counts,
                 ));
         self
     }
@@ -405,12 +411,14 @@ impl WorkloadParallelExecutionSummary {
         windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
     ) -> Self {
         self.gpu_compute_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(windows);
-        self.gpu_compute_wait_for_edge_kind_counts =
-            wait_for_edge_kind_counts_from_windows(&self.gpu_compute_wait_for_edge_kind_windows);
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.gpu_compute_wait_for_edge_kind_counts,
+            &self.gpu_compute_wait_for_edge_kind_windows,
+        );
         self.gpu_compute_wait_for_edge_count =
             self.gpu_compute_wait_for_edge_count
-                .max(wait_for_edge_kind_window_count_sum(
-                    &self.gpu_compute_wait_for_edge_kind_windows,
+                .max(wait_for_edge_kind_count_sum(
+                    &self.gpu_compute_wait_for_edge_kind_counts,
                 ));
         self
     }
@@ -461,12 +469,14 @@ impl WorkloadParallelExecutionSummary {
         windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
     ) -> Self {
         self.gpu_dma_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(windows);
-        self.gpu_dma_wait_for_edge_kind_counts =
-            wait_for_edge_kind_counts_from_windows(&self.gpu_dma_wait_for_edge_kind_windows);
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.gpu_dma_wait_for_edge_kind_counts,
+            &self.gpu_dma_wait_for_edge_kind_windows,
+        );
         self.gpu_dma_wait_for_edge_count =
             self.gpu_dma_wait_for_edge_count
-                .max(wait_for_edge_kind_window_count_sum(
-                    &self.gpu_dma_wait_for_edge_kind_windows,
+                .max(wait_for_edge_kind_count_sum(
+                    &self.gpu_dma_wait_for_edge_kind_counts,
                 ));
         self
     }
@@ -517,13 +527,14 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.accelerator_compute_wait_for_edge_kind_windows =
             collect_wait_for_edge_kind_windows(windows);
-        self.accelerator_compute_wait_for_edge_kind_counts = wait_for_edge_kind_counts_from_windows(
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.accelerator_compute_wait_for_edge_kind_counts,
             &self.accelerator_compute_wait_for_edge_kind_windows,
         );
         self.accelerator_compute_wait_for_edge_count = self
             .accelerator_compute_wait_for_edge_count
-            .max(wait_for_edge_kind_window_count_sum(
-                &self.accelerator_compute_wait_for_edge_kind_windows,
+            .max(wait_for_edge_kind_count_sum(
+                &self.accelerator_compute_wait_for_edge_kind_counts,
             ));
         self
     }
@@ -575,13 +586,14 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.accelerator_dma_wait_for_edge_kind_windows =
             collect_wait_for_edge_kind_windows(windows);
-        self.accelerator_dma_wait_for_edge_kind_counts = wait_for_edge_kind_counts_from_windows(
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.accelerator_dma_wait_for_edge_kind_counts,
             &self.accelerator_dma_wait_for_edge_kind_windows,
         );
         self.accelerator_dma_wait_for_edge_count =
             self.accelerator_dma_wait_for_edge_count
-                .max(wait_for_edge_kind_window_count_sum(
-                    &self.accelerator_dma_wait_for_edge_kind_windows,
+                .max(wait_for_edge_kind_count_sum(
+                    &self.accelerator_dma_wait_for_edge_kind_counts,
                 ));
         self
     }
@@ -1254,14 +1266,16 @@ pub(super) fn wait_for_edge_kind_window_count_sum(
         .sum()
 }
 
-pub(super) fn wait_for_edge_kind_counts_from_windows(
+fn merge_wait_for_edge_kind_counts_from_windows(
+    counts: &mut BTreeMap<WaitForEdgeKind, usize>,
     windows: &[WorkloadWaitForEdgeKindWindow],
-) -> BTreeMap<WaitForEdgeKind, usize> {
-    collect_wait_for_edge_kind_counts(
-        windows
-            .iter()
-            .map(|window| (window.kind(), window.edge_count())),
-    )
+) {
+    for window in windows {
+        counts
+            .entry(window.kind())
+            .and_modify(|count| *count = (*count).max(window.edge_count()))
+            .or_insert(window.edge_count());
+    }
 }
 
 pub(super) fn collect_wait_for_blocked_node_windows(
