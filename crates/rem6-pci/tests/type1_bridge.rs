@@ -249,6 +249,91 @@ fn pci_type1_bridge_bars_map_on_primary_bus_when_command_bits_enable_space() {
 }
 
 #[test]
+fn pci_type1_bridge_snapshot_restore_preserves_config_and_bar_state() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function).with_type1_header(PciType1HeaderFields::new(
+        0x8000_0001,
+        7,
+        PciInterruptPin::IntB,
+        0x0040,
+    ));
+    bridge
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x10).unwrap(),
+            &0x0040_0000_u32.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0002_u16.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(PciConfigOffset::new(0x18).unwrap(), &[0, 2, 3, 0x20])
+        .unwrap();
+
+    let snapshot = bridge.snapshot();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x10).unwrap(),
+            &0x0080_0000_u32.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0000_u16.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(PciConfigOffset::new(0x18).unwrap(), &[0, 1, 1, 0])
+        .unwrap();
+
+    bridge.restore(&snapshot).unwrap();
+
+    assert_eq!(bridge.bus_range(), PciBridgeBusRange::new(0, 2, 3).unwrap());
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x10).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x00, 0x00, 0x40, 0x00])
+    );
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x38).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x01, 0x00, 0x00, 0x80])
+    );
+    assert_eq!(
+        bridge.active_bar_ranges(),
+        vec![rem6_pci::PciBarRange::new(
+            PciBarIndex::new(0).unwrap(),
+            PciBarKind::Memory32 {
+                prefetchable: false,
+            },
+            Address::new(0x0040_0000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap()]
+    );
+}
+
+#[test]
 fn pci_host_routes_subordinate_config_only_through_declared_bridge_bus_numbers() {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 4).unwrap();
     let mut host = PciHostBridge::new(aperture);

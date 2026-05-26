@@ -19,7 +19,9 @@ pub use bar::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciHostAddressBases, PciHostAddressSpace,
     PciHostBarRange,
 };
-pub use bridge::{PciBridgeBusRange, PciBridgeConfig, PciType1HeaderFields};
+pub use bridge::{
+    PciBridgeBusRange, PciBridgeConfig, PciBridgeConfigSnapshot, PciType1HeaderFields,
+};
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
     PciLegacyInterruptRoute,

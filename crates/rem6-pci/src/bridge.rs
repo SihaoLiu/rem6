@@ -316,6 +316,49 @@ impl PciBridgeConfig {
             .collect()
     }
 
+    pub fn snapshot(&self) -> PciBridgeConfigSnapshot {
+        PciBridgeConfigSnapshot {
+            function: self.function,
+            identity: self.identity,
+            class: self.class,
+            config: self.config,
+            bars: self.bars.clone(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &PciBridgeConfigSnapshot) -> Result<(), PciError> {
+        if self.function != snapshot.function {
+            return Err(PciError::SnapshotFunctionMismatch {
+                expected: self.function,
+                actual: snapshot.function,
+            });
+        }
+        if self.identity != snapshot.identity {
+            return Err(PciError::SnapshotIdentityMismatch {
+                expected: self.identity,
+                actual: snapshot.identity,
+            });
+        }
+        if self.class != snapshot.class {
+            return Err(PciError::SnapshotClassMismatch {
+                expected: self.class,
+                actual: snapshot.class,
+            });
+        }
+        for (index, (current, restored)) in self.bars.iter().zip(snapshot.bars.iter()).enumerate() {
+            if current.as_ref().map(PciBarState::shape) != restored.as_ref().map(PciBarState::shape)
+            {
+                return Err(PciError::SnapshotBarMismatch {
+                    index: PciBarIndex::new(index as u8).expect("snapshot bridge BAR index"),
+                });
+            }
+        }
+
+        self.config = snapshot.config;
+        self.bars = snapshot.bars.clone();
+        Ok(())
+    }
+
     fn write_bus_block(&mut self, data: &[u8]) -> Result<(), PciError> {
         let range = PciBridgeBusRange::new(data[0], data[1], data[2])?;
         self.config[PCI_TYPE1_PRIMARY_BUS_OFFSET] = range.primary();
@@ -448,6 +491,29 @@ impl PciBridgeConfig {
 
     fn read_u32(&self, offset: usize) -> u32 {
         u32::from_le_bytes(self.config[offset..offset + 4].try_into().unwrap())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciBridgeConfigSnapshot {
+    function: PciFunctionAddress,
+    identity: PciDeviceIdentity,
+    class: PciClassCode,
+    config: [u8; PCI_CONFIG_SPACE_SIZE],
+    bars: [Option<PciBarState>; PCI_TYPE1_BAR_COUNT],
+}
+
+impl PciBridgeConfigSnapshot {
+    pub const fn function(&self) -> PciFunctionAddress {
+        self.function
+    }
+
+    pub const fn identity(&self) -> PciDeviceIdentity {
+        self.identity
+    }
+
+    pub const fn class(&self) -> PciClassCode {
+        self.class
     }
 }
 
