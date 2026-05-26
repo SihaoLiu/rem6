@@ -42,7 +42,10 @@ pub(crate) fn parallel_partition_worker_count(
 ) -> usize {
     activities
         .iter()
-        .map(|(_, activity)| activity.worker_count())
+        .filter_map(|(_, activity)| {
+            let worker_count = activity.worker_count();
+            (worker_count >= 2).then_some(worker_count)
+        })
         .sum()
 }
 

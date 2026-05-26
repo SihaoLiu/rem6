@@ -259,6 +259,39 @@ fn workload_replay_plan_ignores_single_worker_batch_histogram_worker_activity_ev
 }
 
 #[test]
+fn workload_replay_plan_ignores_single_worker_partition_activity_worker_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([
+            (PartitionId::new(0), ParallelPartitionActivity::new(1, 1, 2)),
+            (PartitionId::new(1), ParallelPartitionActivity::new(1, 1, 2)),
+        ])
+        .with_data_cache_parallel_scheduler_partition_activities([
+            (PartitionId::new(2), ParallelPartitionActivity::new(1, 1, 2)),
+            (PartitionId::new(3), ParallelPartitionActivity::new(1, 1, 2)),
+        ]);
+
+    assert_eq!(summary.total_parallel_scheduler_workers(), 0);
+    assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 0);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelWorkerActivityBelowMinimum {
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
+            minimum_total_workers: 2,
+            actual_total_workers: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_checks_dma_scheduler_total_workers_directly() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("parallel-worker-activity-dma-direct"),
