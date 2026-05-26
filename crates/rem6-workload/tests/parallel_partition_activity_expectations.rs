@@ -1,5 +1,7 @@
 use rem6_boot::BootImage;
-use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, PartitionId};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId,
+};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionActivity, WorkloadId,
@@ -321,6 +323,85 @@ fn workload_replay_plan_derives_partition_remote_activity_from_flows() {
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_remote_flow_partition_activity_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            0,
+            0,
+            1,
+            0,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::with_delay_bounds(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                1,
+                11,
+                11,
+                9,
+                3,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficFlowDelayBounds {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            minimum_delay: 9,
+            maximum_delay: 3,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_remote_send_partition_activity_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            0,
+            0,
+            0,
+            1,
+            0,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                13,
+                5,
+                0,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            source_tick: 13,
+            delivery_tick: 5,
+            order: 0,
+        },
+    );
 }
 
 #[test]

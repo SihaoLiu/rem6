@@ -385,6 +385,10 @@ Implementation evidence on 2026-05-26:
   structural checks before matching or deriving observations, so malformed
   sends or aggregate flows fail as invalid replay evidence rather than as
   ordinary unexpected traffic.
+- Workload partition-use and partition-activity contracts now reuse the same
+  actual remote evidence checks before deriving active partition sets or
+  per-partition remote send/receive counts, preventing malformed remote records
+  from satisfying parallelism expectations through secondary summaries.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

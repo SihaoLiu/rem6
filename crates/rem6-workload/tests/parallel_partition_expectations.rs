@@ -370,6 +370,97 @@ fn workload_replay_plan_derives_active_partitions_from_remote_sends() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_invalid_remote_send_partition_use_evidence() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-partitions-invalid-remote-send"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(2),
+                PartitionId::new(2),
+                5,
+                13,
+                1,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+            source_tick: 5,
+            delivery_tick: 13,
+            order: 1,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_remote_flow_partition_use_evidence() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-partitions-invalid-remote-flow"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+        ))
+        .unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 1, 13, 5),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficFlowTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 0,
+            target: 1,
+            send_count: 1,
+            first_tick: 13,
+            last_tick: 5,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_derives_active_partitions_from_batch_partition_sets() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("parallel-partitions-from-batch-partition-sets"),

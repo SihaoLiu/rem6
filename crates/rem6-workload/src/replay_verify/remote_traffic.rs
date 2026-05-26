@@ -5,9 +5,9 @@ use rem6_kernel::{ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionI
 use super::{first_unmatched_actual, PARALLEL_REMOTE_FLOW_SCOPES};
 use crate::{
     WorkloadError, WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelRemoteTrafficConsistencyMismatch,
-    WorkloadReplayPlan, WorkloadResult,
+    WorkloadExpectedParallelRemoteSend, WorkloadParallelBatchPartitionScope,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope,
+    WorkloadParallelRemoteTrafficConsistencyMismatch, WorkloadReplayPlan, WorkloadResult,
 };
 
 pub(crate) fn verify_expected_parallel_remote_sends(
@@ -386,6 +386,35 @@ fn validate_remote_send_scope_evidence(
         validate_remote_traffic_send_evidence(scope, send)?;
     }
     Ok(())
+}
+
+pub(crate) fn validate_remote_partition_scope_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelBatchPartitionScope,
+) -> Result<(), WorkloadError> {
+    validate_remote_flow_scope_evidence(summary, remote_scope_for_partition_scope(scope))
+}
+
+fn remote_scope_for_partition_scope(
+    scope: WorkloadParallelBatchPartitionScope,
+) -> WorkloadParallelRemoteFlowScope {
+    match scope {
+        WorkloadParallelBatchPartitionScope::Scheduler => {
+            WorkloadParallelRemoteFlowScope::Scheduler
+        }
+        WorkloadParallelBatchPartitionScope::DataCacheScheduler => {
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler
+        }
+        WorkloadParallelBatchPartitionScope::GpuDmaScheduler => {
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler
+        }
+        WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler
+        }
+        WorkloadParallelBatchPartitionScope::FullSystem => {
+            WorkloadParallelRemoteFlowScope::FullSystem
+        }
+    }
 }
 
 fn validate_remote_flow_scope_evidence(

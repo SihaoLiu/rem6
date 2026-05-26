@@ -14,10 +14,10 @@ use crate::{
 mod remote_traffic;
 
 pub(crate) use remote_traffic::{
-    verify_expected_parallel_remote_delay_ceilings, verify_expected_parallel_remote_delay_floors,
-    verify_expected_parallel_remote_endpoints, verify_expected_parallel_remote_flow_timings,
-    verify_expected_parallel_remote_flows, verify_expected_parallel_remote_sends,
-    verify_expected_parallel_remote_traffic_consistency,
+    validate_remote_partition_scope_evidence, verify_expected_parallel_remote_delay_ceilings,
+    verify_expected_parallel_remote_delay_floors, verify_expected_parallel_remote_endpoints,
+    verify_expected_parallel_remote_flow_timings, verify_expected_parallel_remote_flows,
+    verify_expected_parallel_remote_sends, verify_expected_parallel_remote_traffic_consistency,
 };
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 5] = [
