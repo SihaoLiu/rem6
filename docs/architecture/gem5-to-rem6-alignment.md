@@ -215,7 +215,9 @@ Implementation evidence on 2026-05-26:
   tables for block requests while preserving the main queue head as the request
   id and used-ring id. The indirect table is still typed guest memory, not a
   host-side descriptor shortcut, so descriptor data, writeback targets, and
-  used-ring completion evidence remain replayable.
+  used-ring completion evidence remain replayable. Invalid main indirect
+  descriptors that advertise device writeback are rejected before queue
+  consumption, keeping guest ownership and device ownership explicit.
 
 ## Audit Method
 
@@ -642,7 +644,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   read, write, flush, and get-id decoding into typed requests, status
   descriptor tracking, writable data-byte accounting, loop rejection, short
   header rejection, missing status rejection, wrong readable/writable
-  direction rejection, get-id output shape validation, block completion
+  direction rejection, invalid writable indirect-table descriptor rejection,
+  get-id output shape validation, block completion
   scatter-data writeback records, status-byte writeback records, used-ring slot
   selection, wrapping used indices, little-endian used elements, and split
   available-ring walking from typed guest memory into decoded block requests,

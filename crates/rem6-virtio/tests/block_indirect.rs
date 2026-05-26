@@ -3,10 +3,10 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_virtio::{
-    VirtioBlockConfigSpec, VirtioBlockDevice, VirtioBlockMemoryBackend, VirtioGuestMemory,
-    VirtioQueueIndex, VirtioSplitQueue, VirtioSplitUsedElement, VIRTIO_BLOCK_SECTOR_SIZE,
-    VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_IN, VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT,
-    VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioBlockConfigSpec, VirtioBlockDevice, VirtioBlockMemoryBackend, VirtioError,
+    VirtioGuestMemory, VirtioQueueIndex, VirtioSplitQueue, VirtioSplitUsedElement,
+    VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_IN, VIRTIO_SPLIT_DESC_F_INDIRECT,
+    VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -186,4 +186,70 @@ fn virtio_split_queue_consumes_indirect_block_read_chain_from_guest_memory() {
         VirtioSplitUsedElement::new(3, 529).to_le_bytes()
     );
     assert_eq!(read_guest(&mut store, 0x1802, 2, 400), 1_u16.to_le_bytes());
+}
+
+#[test]
+fn virtio_split_queue_rejects_writable_indirect_table_descriptor() {
+    let mut store = guest_store();
+    write_guest(
+        &mut store,
+        0x1030,
+        &descriptor(
+            0x1600,
+            48,
+            VIRTIO_SPLIT_DESC_F_INDIRECT | VIRTIO_SPLIT_DESC_F_WRITE,
+            0,
+        ),
+        1,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 2);
+    write_guest(&mut store, 0x1104, &3_u16.to_le_bytes(), 3);
+    write_guest(
+        &mut store,
+        0x1600,
+        &descriptor(0x1200, 16, VIRTIO_SPLIT_DESC_F_NEXT, 1),
+        4,
+    );
+    write_guest(
+        &mut store,
+        0x1610,
+        &descriptor(
+            0x1300,
+            VIRTIO_BLOCK_SECTOR_SIZE as u32,
+            VIRTIO_SPLIT_DESC_F_NEXT | VIRTIO_SPLIT_DESC_F_WRITE,
+            2,
+        ),
+        5,
+    );
+    write_guest(
+        &mut store,
+        0x1620,
+        &descriptor(0x1500, 1, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        6,
+    );
+    write_guest(&mut store, 0x1200, &header(VIRTIO_BLOCK_T_IN, 0), 7);
+
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    let error = {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+        split_queue
+            .consume_available_block(&mut guest, queue(2))
+            .expect_err("writable indirect table descriptor must be rejected")
+    };
+
+    match error {
+        VirtioError::PciTransportRuntimeConfig { message } => {
+            assert!(message.contains("indirect descriptor"));
+            assert!(message.contains("cannot be writable"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+    assert_eq!(split_queue.last_available_index(), 0);
 }

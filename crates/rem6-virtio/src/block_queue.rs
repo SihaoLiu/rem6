@@ -563,6 +563,13 @@ impl VirtioSplitQueue {
                 )?,
             )?;
             if raw.is_indirect() {
+                if raw.is_writable() {
+                    return Err(VirtioError::PciTransportRuntimeConfig {
+                        message: format!(
+                            "VirtIO split indirect descriptor {index} cannot be writable"
+                        ),
+                    });
+                }
                 if !descriptors.is_empty() || raw.has_next() {
                     return Err(VirtioError::PciTransportRuntimeConfig {
                         message: format!(
