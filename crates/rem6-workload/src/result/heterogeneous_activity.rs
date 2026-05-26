@@ -25,6 +25,14 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub const fn with_gpu_dma_scheduler_empty_epoch_count(
+        mut self,
+        empty_epoch_count: usize,
+    ) -> Self {
+        self.gpu_dma_scheduler_empty_epoch_count = empty_epoch_count;
+        self
+    }
+
     pub fn with_gpu_dma_scheduler_batch_worker_counts(
         mut self,
         counts: impl IntoIterator<Item = WorkloadParallelBatchWorkerCount>,
@@ -47,6 +55,14 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_scheduler_batch_count = batch_count;
         self.accelerator_dma_scheduler_batch_worker_count_ticks =
             collect_batch_worker_count_ticks(batch_worker_count_ticks);
+        self
+    }
+
+    pub const fn with_accelerator_dma_scheduler_empty_epoch_count(
+        mut self,
+        empty_epoch_count: usize,
+    ) -> Self {
+        self.accelerator_dma_scheduler_empty_epoch_count = empty_epoch_count;
         self
     }
 
@@ -109,6 +125,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn gpu_dma_scheduler_epoch_count(&self) -> usize {
         self.gpu_dma_scheduler_epoch_count
+    }
+
+    pub const fn gpu_dma_scheduler_empty_epoch_count(&self) -> usize {
+        self.gpu_dma_scheduler_empty_epoch_count
     }
 
     pub const fn gpu_dma_scheduler_dispatch_count(&self) -> usize {
@@ -258,6 +278,10 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_scheduler_epoch_count
     }
 
+    pub const fn accelerator_dma_scheduler_empty_epoch_count(&self) -> usize {
+        self.accelerator_dma_scheduler_empty_epoch_count
+    }
+
     pub const fn accelerator_dma_scheduler_dispatch_count(&self) -> usize {
         self.accelerator_dma_scheduler_dispatch_count
     }
@@ -361,6 +385,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn dma_scheduler_epoch_count(&self) -> usize {
         self.gpu_dma_scheduler_epoch_count + self.accelerator_dma_scheduler_epoch_count
+    }
+
+    pub const fn dma_scheduler_empty_epoch_count(&self) -> usize {
+        self.gpu_dma_scheduler_empty_epoch_count + self.accelerator_dma_scheduler_empty_epoch_count
     }
 
     pub const fn dma_scheduler_dispatch_count(&self) -> usize {

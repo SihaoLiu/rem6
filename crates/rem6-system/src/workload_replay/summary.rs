@@ -269,6 +269,7 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .copied(),
         )
+        .with_gpu_dma_scheduler_empty_epoch_count(activities.gpu_dma.scheduler_empty_epoch_count)
         .with_gpu_dma_scheduler_batch_worker_counts(
             activities
                 .gpu_dma
@@ -307,6 +308,9 @@ pub(super) fn parallel_execution_summary(
                 .scheduler_batch_worker_count_ticks
                 .iter()
                 .copied(),
+        )
+        .with_accelerator_dma_scheduler_empty_epoch_count(
+            activities.accelerator_dma.scheduler_empty_epoch_count,
         )
         .with_accelerator_dma_scheduler_batch_worker_counts(
             activities
@@ -561,6 +565,51 @@ mod tests {
         assert_eq!(
             summary.dram_qos_requestor_byte_count(QosRequestorId::new(7)),
             16,
+        );
+    }
+
+    #[test]
+    fn parallel_execution_summary_copies_dma_scheduler_empty_epochs() {
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let run = RiscvSystemRun::new(
+            Vec::new(),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 0 },
+        );
+        let gpu = WorkloadGpuActivity::default();
+        let gpu_dma = WorkloadGpuDmaActivity {
+            scheduler_empty_epoch_count: 2,
+            ..WorkloadGpuDmaActivity::default()
+        };
+        let accelerator = WorkloadAcceleratorActivity::default();
+        let accelerator_dma = WorkloadAcceleratorDmaActivity {
+            scheduler_empty_epoch_count: 3,
+            ..WorkloadAcceleratorDmaActivity::default()
+        };
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(summary.gpu_dma_scheduler_empty_epoch_count(), 2);
+        assert_eq!(summary.accelerator_dma_scheduler_empty_epoch_count(), 3);
+        assert_eq!(summary.dma_scheduler_empty_epoch_count(), 5);
+        assert_eq!(
+            summary.full_system_parallel_scheduler_empty_epoch_count(),
+            5
         );
     }
 

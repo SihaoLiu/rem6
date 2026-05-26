@@ -760,7 +760,7 @@ pub enum WorkloadError {
         scope: WorkloadParallelSchedulerScope,
     },
     DuplicateExpectedParallelSchedulerIdleBound {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
     },
     MissingParallelSchedulerProgressSummary {
         scope: WorkloadParallelSchedulerScope,
@@ -768,7 +768,7 @@ pub enum WorkloadError {
         minimum_dispatch_count: usize,
     },
     MissingParallelSchedulerIdleSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         maximum_empty_epoch_count: usize,
     },
     ExpectedParallelSchedulerProgressBelowMinimum {
@@ -779,7 +779,7 @@ pub enum WorkloadError {
         actual_dispatch_count: usize,
     },
     ExpectedParallelSchedulerIdleAboveMaximum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelSchedulerScope,
         maximum_empty_epoch_count: usize,
         actual_empty_epoch_count: usize,
     },

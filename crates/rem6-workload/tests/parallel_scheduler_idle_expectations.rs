@@ -2,8 +2,9 @@ use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelSchedulerIdleBound, WorkloadId,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope,
+    WorkloadParallelSchedulerScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -43,6 +44,13 @@ fn replay_plan() -> WorkloadReplayPlan {
 
 fn idle_bound(
     scope: WorkloadParallelRemoteFlowScope,
+    maximum_empty_epoch_count: usize,
+) -> WorkloadExpectedParallelSchedulerIdleBound {
+    WorkloadExpectedParallelSchedulerIdleBound::new(scope, maximum_empty_epoch_count)
+}
+
+fn direct_idle_bound(
+    scope: WorkloadParallelSchedulerScope,
     maximum_empty_epoch_count: usize,
 ) -> WorkloadExpectedParallelSchedulerIdleBound {
     WorkloadExpectedParallelSchedulerIdleBound::new(scope, maximum_empty_epoch_count)
@@ -154,7 +162,7 @@ fn workload_replay_plan_rejects_missing_or_overidle_parallel_scheduler() {
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelSchedulerIdleSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             maximum_empty_epoch_count: 2,
         },
     );
@@ -168,9 +176,50 @@ fn workload_replay_plan_rejects_missing_or_overidle_parallel_scheduler() {
     assert_eq!(
         plan.verify_result(&overidle).unwrap_err(),
         WorkloadError::ExpectedParallelSchedulerIdleAboveMaximum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelSchedulerScope::FullSystem,
             maximum_empty_epoch_count: 2,
             actual_empty_epoch_count: 3,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_checks_dma_scheduler_idle_bounds_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_idle_bound(direct_idle_bound(
+            WorkloadParallelSchedulerScope::GpuDmaScheduler,
+            1,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_idle_bound(direct_idle_bound(
+            WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+            0,
+        ))
+        .unwrap();
+
+    let accepted_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_empty_epoch_count(1)
+        .with_accelerator_dma_scheduler_empty_epoch_count(0);
+    assert_eq!(accepted_summary.gpu_dma_scheduler_empty_epoch_count(), 1);
+    assert_eq!(
+        accepted_summary.accelerator_dma_scheduler_empty_epoch_count(),
+        0
+    );
+    let accepted = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(accepted_summary);
+    plan.verify_result(&accepted).unwrap();
+
+    let overidle_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_empty_epoch_count(2)
+        .with_accelerator_dma_scheduler_empty_epoch_count(0);
+    let overidle = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(overidle_summary);
+    assert_eq!(
+        plan.verify_result(&overidle).unwrap_err(),
+        WorkloadError::ExpectedParallelSchedulerIdleAboveMaximum {
+            scope: WorkloadParallelSchedulerScope::GpuDmaScheduler,
+            maximum_empty_epoch_count: 1,
+            actual_empty_epoch_count: 2,
         },
     );
 }
@@ -191,7 +240,7 @@ fn workload_replay_plan_rejects_duplicate_parallel_scheduler_idle_bounds() {
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelSchedulerIdleBound {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelSchedulerScope::DataCacheScheduler,
         },
     );
 }

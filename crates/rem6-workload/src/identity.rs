@@ -474,7 +474,7 @@ fn hash_expected_parallel_scheduler_idle_bound(
     hash: &mut u64,
     expected: WorkloadExpectedParallelSchedulerIdleBound,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_scheduler_scope(hash, expected.scope());
     hash_u64(hash, expected.maximum_empty_epoch_count() as u64);
 }
 

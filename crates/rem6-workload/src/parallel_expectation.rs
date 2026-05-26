@@ -1463,22 +1463,23 @@ impl WorkloadExpectedParallelSchedulerProgress {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelSchedulerIdleBound {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelSchedulerScope,
     maximum_empty_epoch_count: usize,
 }
 
 impl WorkloadExpectedParallelSchedulerIdleBound {
-    pub const fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+    pub fn new(
+        scope: impl Into<WorkloadParallelSchedulerScope>,
         maximum_empty_epoch_count: usize,
     ) -> Self {
+        let scope = scope.into();
         Self {
             scope,
             maximum_empty_epoch_count,
         }
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelSchedulerScope {
         self.scope
     }
 
@@ -1495,11 +1496,17 @@ impl WorkloadExpectedParallelSchedulerIdleBound {
         summary: &WorkloadParallelExecutionSummary,
     ) -> usize {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => summary.scheduler_empty_epoch_count(),
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+            WorkloadParallelSchedulerScope::Scheduler => summary.scheduler_empty_epoch_count(),
+            WorkloadParallelSchedulerScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_empty_epoch_count()
             }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
+            WorkloadParallelSchedulerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_empty_epoch_count()
+            }
+            WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_empty_epoch_count()
+            }
+            WorkloadParallelSchedulerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_empty_epoch_count()
             }
         }

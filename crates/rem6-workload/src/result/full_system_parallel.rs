@@ -33,7 +33,9 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub const fn full_system_parallel_scheduler_empty_epoch_count(&self) -> usize {
-        self.scheduler_empty_epoch_count + self.data_cache_parallel_scheduler_empty_epoch_count
+        self.scheduler_empty_epoch_count
+            + self.data_cache_parallel_scheduler_empty_epoch_count
+            + self.dma_scheduler_empty_epoch_count()
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {

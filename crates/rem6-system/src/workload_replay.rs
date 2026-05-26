@@ -84,6 +84,7 @@ struct WorkloadGpuDmaActivity {
     completion_count: usize,
     active_device_count: usize,
     scheduler_epoch_count: usize,
+    scheduler_empty_epoch_count: usize,
     scheduler_dispatch_count: usize,
     scheduler_batch_count: usize,
     scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
@@ -936,6 +937,7 @@ impl RiscvWorkloadReplay {
             completion_count,
             active_device_count,
             scheduler_epoch_count: scheduler_evidence.epoch_count,
+            scheduler_empty_epoch_count: scheduler_evidence.empty_epoch_count,
             scheduler_dispatch_count: scheduler_evidence.dispatch_count,
             scheduler_batch_count: scheduler_evidence.batch_count,
             scheduler_batch_timeline: dma_scheduler_batch_timeline(

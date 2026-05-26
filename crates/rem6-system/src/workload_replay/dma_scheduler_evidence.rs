@@ -9,6 +9,7 @@ use rem6_workload::{
 #[derive(Debug, Default)]
 pub(super) struct DmaSchedulerEvidence {
     pub(super) epoch_count: usize,
+    pub(super) empty_epoch_count: usize,
     pub(super) dispatch_count: usize,
     pub(super) batch_count: usize,
     pub(super) batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
@@ -23,6 +24,7 @@ impl DmaSchedulerEvidence {
         run: &RecordedConservativeRunSummary,
     ) {
         self.epoch_count += run.epoch_count();
+        self.empty_epoch_count += run.empty_epoch_count();
         self.dispatch_count += run.dispatch_count();
         self.batch_count += run.batch_count();
         self.batch_timeline.extend(

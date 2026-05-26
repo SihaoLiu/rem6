@@ -488,8 +488,8 @@ contracts, sustained minimum-worker tick-streak contracts, minimum batch
 worker-tick contracts under a declared minimum worker count, and batch timeline
 records. Batch timeline records additionally support direct GPU DMA scheduler
 and accelerator DMA scheduler scopes, and scheduler-progress plus batch-worker
-contracts, worker-use contracts, and total-worker activity contracts can use
-the same direct DMA scheduler scopes. Exact batch partition-set and
+contracts, scheduler-idle bounds, worker-use contracts, and total-worker
+activity contracts can use the same direct DMA scheduler scopes. Exact batch partition-set and
 same-partition-set streak contracts also support direct GPU DMA scheduler and
 accelerator DMA scheduler scopes, while full-system partition contracts include
 the DMA timeline-derived sets and streaks. Replay verification rejects

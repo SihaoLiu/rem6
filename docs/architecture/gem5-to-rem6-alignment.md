@@ -498,7 +498,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   from the strongest available aggregate counts, batch-histogram, exact
   partition-set, or per-partition evidence, direct GPU and accelerator DMA
   scheduler epoch and dispatch progress, direct GPU and accelerator DMA
-  scheduler max-worker and total-worker activity contracts, maximum scheduler idle epochs,
+  scheduler max-worker, total-worker activity, and idle-bound contracts,
+  maximum scheduler idle epochs,
   minimum max-worker use derived from the strongest available aggregate,
   worker-count, exact partition-set, or streak evidence, minimum total-worker activity
   derived from the strongest available aggregate, worker-count, exact
@@ -612,7 +613,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   validation and identity hashing, GPU and accelerator command plus DMA endpoint
   validation, manifest-owned parallel remote-flow count, remote-flow timing,
   CPU/cache/full-system scheduler progress, direct GPU and accelerator DMA
-  scheduler progress, scheduler idle bounds, max-worker use, total-worker
+  scheduler progress, direct GPU and accelerator DMA scheduler idle bounds,
+  scheduler idle bounds, max-worker use, total-worker
   activity, CPU/cache/full-system active-partition, direct GPU and accelerator
   DMA active-partition, CPU/cache/full-system per-partition activity, direct
   GPU and accelerator DMA per-partition activity, data-cache run attribution
