@@ -7,9 +7,9 @@ use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionUse, WorkloadId,
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchPartitionSet,
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -643,6 +643,49 @@ fn workload_replay_plan_verifies_direct_dma_active_partitions_from_batch_timelin
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_parallel_partition_use() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [PartitionId::new(0), PartitionId::new(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                9,
+                5,
+                [PartitionId::new(0), PartitionId::new(1)],
+                2,
+            ),
+        ]);
+
+    assert_eq!(summary.active_scheduler_partition_count(), 2);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 9,
+            horizon: 5,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
 }
 
 #[test]

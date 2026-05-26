@@ -1105,7 +1105,7 @@ pub(crate) fn verify_expected_parallel_batch_partition_sets(
     Ok(())
 }
 
-fn validate_partition_scope_batch_timeline_evidence(
+pub(crate) fn validate_partition_scope_batch_timeline_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelBatchPartitionScope,
 ) -> Result<(), WorkloadError> {

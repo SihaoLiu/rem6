@@ -380,6 +380,10 @@ Implementation evidence on 2026-05-26:
 - Workload parallel max-worker and total-worker replay now validate scoped raw
   batch timeline records before deriving upper-level worker evidence from
   batch histograms or timelines.
+- Workload active-partition and per-partition activity replay now validate
+  scoped raw batch timeline records before deriving partition evidence from
+  batch windows, so valid partition evidence cannot hide malformed timeline
+  records in the same scope.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,
