@@ -217,13 +217,10 @@ fn workload_result_records_parallel_execution_summary() {
     );
     assert_eq!(
         summary.parallel_scheduler_remote_flows(),
-        &[ParallelRemoteFlowRecord::new(
-            PartitionId::new(0),
-            PartitionId::new(2),
-            5,
-            3,
-            17,
-        )],
+        &[
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 3, 3, 17),
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(2), 2, 5, 11),
+        ],
     );
     assert_eq!(
         summary.parallel_scheduler_remote_flow_count(PartitionId::new(0), PartitionId::new(2)),
@@ -333,13 +330,10 @@ fn workload_result_records_parallel_execution_summary() {
     );
     assert_eq!(
         summary.data_cache_parallel_scheduler_remote_flows(),
-        &[ParallelRemoteFlowRecord::new(
-            PartitionId::new(4),
-            PartitionId::new(5),
-            8,
-            13,
-            29,
-        )],
+        &[
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 1, 13, 29),
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 7, 19, 23),
+        ],
     );
     assert_eq!(
         summary.data_cache_parallel_scheduler_remote_flow_count(

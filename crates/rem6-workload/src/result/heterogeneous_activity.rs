@@ -10,10 +10,10 @@ use crate::parallel_batch::{
     total_parallel_batch_worker_count, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
-    collect_conservative_partition_frontiers, collect_parallel_remote_flow_evidence,
-    collect_parallel_remote_flows, collect_parallel_remote_sends, collect_partition_frontiers,
-    is_parallel_remote_send_evidence, parallel_remote_flow_evidence_count,
-    parallel_remote_send_count,
+    collect_conservative_partition_frontiers, collect_parallel_remote_flow_aggregates,
+    collect_parallel_remote_flow_evidence, collect_parallel_remote_flows,
+    collect_parallel_remote_sends, collect_partition_frontiers, is_parallel_remote_send_evidence,
+    parallel_remote_flow_evidence_count, parallel_remote_send_count,
 };
 
 use super::{
@@ -921,7 +921,7 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn dma_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
-        collect_parallel_remote_flows(
+        collect_parallel_remote_flow_aggregates(
             self.gpu_dma_scheduler_remote_flow_evidence()
                 .into_iter()
                 .chain(self.accelerator_dma_scheduler_remote_flow_evidence()),

@@ -413,6 +413,11 @@ Implementation evidence on 2026-05-26:
   record de-duplication. Duplicate raw remote-send records remain visible to
   replay validation, but cannot inflate derived remote-flow counts,
   remote-send counts, endpoint summaries, or per-partition remote activity.
+- Workload result summaries preserve explicit remote-flow records as raw
+  actual evidence instead of merging same-route records at ingestion. Derived
+  remote-flow evidence still aggregates valid same-route records, while replay
+  validation can reject a malformed aggregate record even when another record
+  on the same route is valid.
 - Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
   remote-delay verifier paths now apply the same actual remote evidence
   structural checks before matching or deriving observations, so malformed

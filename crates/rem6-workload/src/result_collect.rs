@@ -31,6 +31,17 @@ pub(crate) fn collect_priority_summaries(
 pub(crate) fn collect_parallel_remote_flows(
     flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
 ) -> Vec<ParallelRemoteFlowRecord> {
+    let mut flows = flows
+        .into_iter()
+        .filter(|flow| flow.send_count() != 0)
+        .collect::<Vec<_>>();
+    flows.sort_by_key(parallel_remote_flow_sort_key);
+    flows
+}
+
+pub(crate) fn collect_parallel_remote_flow_aggregates(
+    flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+) -> Vec<ParallelRemoteFlowRecord> {
     let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
     for flow in flows {
         if flow.send_count() == 0 {
@@ -42,6 +53,26 @@ pub(crate) fn collect_parallel_remote_flows(
             .or_insert(flow);
     }
     by_route.into_values().collect()
+}
+
+fn parallel_remote_flow_sort_key(
+    flow: &ParallelRemoteFlowRecord,
+) -> (
+    PartitionId,
+    PartitionId,
+    Tick,
+    Tick,
+    usize,
+    Option<(Tick, Tick)>,
+) {
+    (
+        flow.source(),
+        flow.target(),
+        flow.first_tick(),
+        flow.last_tick(),
+        flow.send_count(),
+        flow.delay_bounds(),
+    )
 }
 
 pub(crate) fn is_parallel_remote_flow_evidence(flow: ParallelRemoteFlowRecord) -> bool {
