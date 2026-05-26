@@ -11,6 +11,7 @@ use rem6_mmio::{
 
 mod device_config;
 mod isr;
+mod shared_memory;
 
 pub use device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
@@ -19,6 +20,10 @@ pub use device_config::{
 pub use isr::{
     VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
     VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,
+};
+pub use shared_memory::{
+    VirtioPciBarIndex, VirtioPciSharedMemoryCap64Fields, VirtioPciSharedMemoryId,
+    VirtioPciSharedMemoryRegion, VirtioPciSharedMemoryRegionSpec, VirtioPciSharedMemoryRegistry,
 };
 
 pub const VIRTIO_PCI_COMMON_CONFIG_SIZE: u64 = 0x40;
@@ -1193,6 +1198,37 @@ pub enum VirtioError {
     ReadOnlyDeviceConfigWrite {
         offset: u64,
     },
+    ZeroSharedMemoryRegion {
+        id: u8,
+    },
+    DuplicateSharedMemoryBar {
+        bar: u8,
+    },
+    MissingSharedMemoryBar {
+        id: u8,
+        bar: u8,
+    },
+    SharedMemoryRegionAddressOverflow {
+        id: u8,
+        bar: u8,
+        offset: u64,
+        length: u64,
+    },
+    SharedMemoryRegionOutOfBar {
+        id: u8,
+        bar: u8,
+        offset: u64,
+        length: u64,
+        bar_length: u64,
+    },
+    DuplicateSharedMemoryId {
+        id: u8,
+    },
+    OverlappingSharedMemoryRegion {
+        first: u8,
+        second: u8,
+        bar: u8,
+    },
 }
 
 impl fmt::Display for VirtioError {
@@ -1266,6 +1302,42 @@ impl fmt::Display for VirtioError {
             Self::ReadOnlyDeviceConfigWrite { offset } => {
                 write!(formatter, "VirtIO device config byte {offset} is read-only")
             }
+            Self::ZeroSharedMemoryRegion { id } => {
+                write!(formatter, "VirtIO shared memory region id {id} has zero length")
+            }
+            Self::DuplicateSharedMemoryBar { bar } => {
+                write!(formatter, "VirtIO shared memory BAR {bar} is declared more than once")
+            }
+            Self::MissingSharedMemoryBar { id, bar } => write!(
+                formatter,
+                "VirtIO shared memory region id {id} references undeclared BAR {bar}"
+            ),
+            Self::SharedMemoryRegionAddressOverflow {
+                id,
+                bar,
+                offset,
+                length,
+            } => write!(
+                formatter,
+                "VirtIO shared memory region id {id} in BAR {bar} offset {offset:#x} overflows with length {length:#x}"
+            ),
+            Self::SharedMemoryRegionOutOfBar {
+                id,
+                bar,
+                offset,
+                length,
+                bar_length,
+            } => write!(
+                formatter,
+                "VirtIO shared memory region id {id} offset {offset:#x} length {length:#x} must be contained within BAR {bar} length {bar_length:#x}"
+            ),
+            Self::DuplicateSharedMemoryId { id } => {
+                write!(formatter, "VirtIO shared memory region id {id} is declared more than once")
+            }
+            Self::OverlappingSharedMemoryRegion { first, second, bar } => write!(
+                formatter,
+                "VirtIO shared memory region id {second} overlaps id {first} in BAR {bar}"
+            ),
         }
     }
 }
