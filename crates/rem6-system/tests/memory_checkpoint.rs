@@ -10,8 +10,8 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 use rem6_system::{
-    DramMemoryCheckpointPort, DramMemoryCheckpointRecord, MemoryStoreCheckpointBank,
-    MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
+    DramMemoryCheckpointBank, DramMemoryCheckpointPort, DramMemoryCheckpointRecord,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
 };
 
 fn layout() -> CacheLineLayout {
@@ -316,6 +316,64 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
     assert!(row_hit.dram_access().row_hit());
     assert_eq!(row_hit.dram_access().command_cycle(), 10);
     assert_eq!(row_hit.ready_cycle(), 15);
+}
+
+#[test]
+fn dram_memory_checkpoint_bank_rejects_truncated_payload_without_partial_restore() {
+    let (controller0, low0, _high0) = dram_memory_controller();
+    let (controller1, low1, _high1) = dram_memory_controller();
+    let controller0 = Arc::new(Mutex::new(controller0));
+    let controller1 = Arc::new(Mutex::new(controller1));
+    let component0 = CheckpointComponentId::new("dram0").unwrap();
+    let component1 = CheckpointComponentId::new("dram1").unwrap();
+    let bank = DramMemoryCheckpointBank::new([
+        DramMemoryCheckpointPort::new(component0.clone(), Arc::clone(&controller0)),
+        DramMemoryCheckpointPort::new(component1.clone(), Arc::clone(&controller1)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component1, "dram", vec![1, 0, 0])
+        .unwrap();
+    {
+        let mut controller = controller0.lock().unwrap();
+        controller
+            .accept(8, &write(0x1000, &[0xaa, 0xbb, 0xcc, 0xdd], 40))
+            .unwrap();
+    }
+    {
+        let mut controller = controller1.lock().unwrap();
+        controller
+            .accept(8, &write(0x1000, &[0x55, 0x66, 0x77, 0x88], 41))
+            .unwrap();
+    }
+    let before0 = controller0.lock().unwrap().snapshot();
+    let before1 = controller1.lock().unwrap().snapshot();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(error.component(), &component1);
+    assert_eq!(controller0.lock().unwrap().snapshot(), before0);
+    assert_eq!(controller1.lock().unwrap().snapshot(), before1);
+    assert_eq!(
+        &controller0
+            .lock()
+            .unwrap()
+            .line_data(low0, Address::new(0x1000))
+            .unwrap()[..4],
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+    assert_eq!(
+        &controller1
+            .lock()
+            .unwrap()
+            .line_data(low1, Address::new(0x1000))
+            .unwrap()[..4],
+        &[0x55, 0x66, 0x77, 0x88]
+    );
 }
 
 #[test]
