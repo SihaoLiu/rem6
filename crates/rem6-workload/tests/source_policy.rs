@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
+const MAX_ERROR_DISPLAY_ROOT_LINES: usize = 1300;
 const MAX_REPLAY_VERIFY_ROOT_LINES: usize = 1300;
 const MAX_RESULT_ROOT_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
@@ -25,6 +26,17 @@ fn workload_result_root_stays_within_module_budget() {
     assert!(
         lines <= MAX_RESULT_ROOT_LINES,
         "src/result.rs should delegate focused result facets, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn workload_error_display_root_stays_within_module_budget() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/error/display.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_ERROR_DISPLAY_ROOT_LINES,
+        "src/error/display.rs should delegate focused display groups, but it has {lines} lines"
     );
 }
 

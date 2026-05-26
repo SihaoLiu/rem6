@@ -1,12 +1,17 @@
 use std::fmt;
 
 use crate::error_support::{
-    format_partition_indexes, format_remote_delay_error, format_remote_endpoint_error,
-    format_remote_traffic_error,
+    format_remote_delay_error, format_remote_endpoint_error, format_remote_traffic_error,
 };
 
 use super::fabric_display::format_fabric_activity_error;
 use super::WorkloadError;
+
+mod parallel_batch;
+mod parallel_frontier;
+
+use self::parallel_batch::format_parallel_batch_error;
+use self::parallel_frontier::format_parallel_frontier_error;
 
 impl fmt::Display for WorkloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -947,534 +952,68 @@ impl fmt::Display for WorkloadError {
                 "expected {} scheduler idle bound to allow at most {maximum_empty_epoch_count} empty epochs, got {actual_empty_epoch_count}",
                 scope.as_str()
             ),
-            Self::ZeroExpectedParallelFrontier {
-                scope,
-                stage,
-                partition,
-            } => write!(
-                formatter,
-                "expected {} {} frontier for partition {partition} must require positive time",
-                scope.as_str(),
-                stage.as_str()
-            ),
-            Self::DuplicateExpectedParallelFrontier {
-                scope,
-                stage,
-                partition,
-            } => write!(
-                formatter,
-                "expected {} {} frontier for partition {partition} is already declared",
-                scope.as_str(),
-                stage.as_str()
-            ),
-            Self::MissingParallelFrontierSummary {
-                scope,
-                stage,
-                partition,
-                minimum_now,
-                minimum_safe_until,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} {} frontier on partition {partition} with now at least {minimum_now} and safe-until at least {minimum_safe_until}",
-                scope.as_str(),
-                stage.as_str()
-            ),
-            Self::ExpectedParallelFrontierBelowMinimum {
-                scope,
-                stage,
-                partition,
-                minimum_now,
-                actual_now,
-                minimum_safe_until,
-                actual_safe_until,
-            } => {
-                let actual_now = actual_now
-                    .map(|tick| tick.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                let actual_safe_until = actual_safe_until
-                    .map(|tick| tick.to_string())
-                    .unwrap_or_else(|| "none".to_string());
-                write!(
-                    formatter,
-                    "expected {} {} frontier on partition {partition} to reach now {minimum_now} and safe-until {minimum_safe_until}, got now {actual_now} and safe-until {actual_safe_until}",
-                    scope.as_str(),
-                    stage.as_str()
-                )
+            Self::ZeroExpectedParallelFrontier { .. }
+            | Self::DuplicateExpectedParallelFrontier { .. }
+            | Self::MissingParallelFrontierSummary { .. }
+            | Self::ExpectedParallelFrontierBelowMinimum { .. } => {
+                format_parallel_frontier_error(self, formatter)
             }
-            Self::InvalidExpectedParallelBatchWorkerCount {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch activity must require at least 2 workers, got {minimum_worker_count}",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelBatchCount {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch activity with at least {minimum_worker_count} workers must require a positive batch count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelBatchActivity {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch activity with at least {minimum_worker_count} workers is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelBatchActivitySummary {
-                scope,
-                minimum_worker_count,
-                minimum_batch_count,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch activity with at least {minimum_batch_count} batches at {minimum_worker_count} workers",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelBatchActivityBelowMinimum {
-                scope,
-                minimum_worker_count,
-                minimum_batch_count,
-                actual_batch_count,
-            } => write!(
-                formatter,
-                "expected {} batch activity to reach at least {minimum_batch_count} batches at {minimum_worker_count} workers, got {actual_batch_count}",
-                scope.as_str()
-            ),
-            Self::ParallelBatchWorkerCountBelowMinimum {
-                scope,
-                worker_count,
-                minimum_batch_count,
-                actual_batch_count,
-            } => write!(
-                formatter,
-                "{} batch worker-count bucket {worker_count} has {actual_batch_count} batches, below {minimum_batch_count}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelBatchWorkerBucket {
-                scope,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count bucket must require at least 2 workers, got {worker_count}",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelBatchWorkerBucket {
-                scope,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count bucket {worker_count} must require a positive batch count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelBatchWorkerBucket {
-                scope,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count bucket {worker_count} is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelBatchWorkerBucketSummary {
-                scope,
-                worker_count,
-                minimum_batch_count,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch worker-count bucket {worker_count} with at least {minimum_batch_count} batches",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelBatchWorkerBucketBelowMinimum {
-                scope,
-                worker_count,
-                minimum_batch_count,
-                actual_batch_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count bucket {worker_count} to reach at least {minimum_batch_count} batches, got {actual_batch_count}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelBatchWorkerTickBucket {
-                scope,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick bucket must require at least 2 workers, got {worker_count}",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelBatchWorkerTickBucket {
-                scope,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick bucket {worker_count} must require positive ticks",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelBatchWorkerTickBucket {
-                scope,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick bucket {worker_count} is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelBatchWorkerTickBucketSummary {
-                scope,
-                worker_count,
-                minimum_ticks,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch worker-count tick bucket {worker_count} with at least {minimum_ticks} ticks",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelBatchWorkerTickBucketBelowMinimum {
-                scope,
-                worker_count,
-                minimum_ticks,
-                actual_ticks,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick bucket {worker_count} to reach at least {minimum_ticks} ticks, got {actual_ticks}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelBatchWorkerTickActivity {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick activity must require at least 2 workers, got {minimum_worker_count}",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelBatchWorkerTickActivity {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick activity at {minimum_worker_count} workers must require positive ticks",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelBatchWorkerTickActivity {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick activity at {minimum_worker_count} workers is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelBatchWorkerTickActivitySummary {
-                scope,
-                minimum_worker_count,
-                minimum_ticks,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch worker-count tick activity with at least {minimum_ticks} ticks at {minimum_worker_count} workers",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelBatchWorkerTickActivityBelowMinimum {
-                scope,
-                minimum_worker_count,
-                minimum_ticks,
-                actual_ticks,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick activity to reach at least {minimum_ticks} ticks at {minimum_worker_count} workers, got {actual_ticks}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelBatchWorkerTickStreak {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick streak must require at least 2 workers, got {minimum_worker_count}",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelBatchWorkerTickStreak {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick streak at {minimum_worker_count} workers must require positive consecutive ticks",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelBatchWorkerTickStreak {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick streak at {minimum_worker_count} workers is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelBatchWorkerTickStreakSummary {
-                scope,
-                minimum_worker_count,
-                minimum_consecutive_ticks,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch worker-count tick streak with at least {minimum_consecutive_ticks} consecutive ticks at {minimum_worker_count} workers",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelBatchWorkerTickStreakBelowMinimum {
-                scope,
-                minimum_worker_count,
-                minimum_consecutive_ticks,
-                actual_consecutive_ticks,
-            } => write!(
-                formatter,
-                "expected {} batch worker-count tick streak to reach at least {minimum_consecutive_ticks} consecutive ticks at {minimum_worker_count} workers, got {actual_consecutive_ticks}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelBatchWorkerTicks {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-ticks must require at least 2 workers for thresholded contracts, got {minimum_worker_count}",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelBatchWorkerTicks {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-ticks with minimum worker count {minimum_worker_count} must require positive worker-ticks",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelBatchWorkerTicks {
-                scope,
-                minimum_worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch worker-ticks with minimum worker count {minimum_worker_count} is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelBatchWorkerTicksSummary {
-                scope,
-                minimum_worker_count,
-                minimum_worker_ticks,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch worker-ticks with at least {minimum_worker_ticks} worker-ticks and minimum worker count {minimum_worker_count}",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelBatchWorkerTicksBelowMinimum {
-                scope,
-                minimum_worker_count,
-                minimum_worker_ticks,
-                actual_worker_ticks,
-            } => write!(
-                formatter,
-                "expected {} batch worker-ticks to reach at least {minimum_worker_ticks} with minimum worker count {minimum_worker_count}, got {actual_worker_ticks}",
-                scope.as_str()
-            ),
-            Self::InvalidExpectedParallelBatchPartitionSet { scope, partitions } => write!(
-                formatter,
-                "expected {} batch partition set {} must include at least 2 partitions",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::ZeroExpectedParallelBatchPartitionSetCount { scope, partitions } => write!(
-                formatter,
-                "expected {} batch partition set {} must require a positive batch count",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::DuplicateExpectedParallelBatchPartitionSet { scope, partitions } => write!(
-                formatter,
-                "expected {} batch partition set {} is already declared",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::MissingParallelBatchPartitionSetSummary {
-                scope,
-                partitions,
-                minimum_batch_count,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch partition set {} with at least {minimum_batch_count} batches",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::ExpectedParallelBatchPartitionSetBelowMinimum {
-                scope,
-                partitions,
-                minimum_batch_count,
-                actual_batch_count,
-            } => write!(
-                formatter,
-                "expected {} batch partition set {} to reach at least {minimum_batch_count} batches, got {actual_batch_count}",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::InvalidExpectedParallelBatchPartitionStreak { scope, partitions } => write!(
-                formatter,
-                "expected {} batch partition streak {} must include at least 2 partitions",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::ZeroExpectedParallelBatchPartitionStreakCount { scope, partitions } => write!(
-                formatter,
-                "expected {} batch partition streak {} must require a positive consecutive batch count",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::DuplicateExpectedParallelBatchPartitionStreak { scope, partitions } => write!(
-                formatter,
-                "expected {} batch partition streak {} is already declared",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::MissingParallelBatchPartitionStreakSummary {
-                scope,
-                partitions,
-                minimum_consecutive_batch_count,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch partition streak {} with at least {minimum_consecutive_batch_count} consecutive batches",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::ExpectedParallelBatchPartitionStreakBelowMinimum {
-                scope,
-                partitions,
-                minimum_consecutive_batch_count,
-                actual_consecutive_batch_count,
-            } => write!(
-                formatter,
-                "expected {} batch partition streak {} to reach at least {minimum_consecutive_batch_count} consecutive batches, got {actual_consecutive_batch_count}",
-                scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::InvalidExpectedParallelBatchTimelineRecord {
-                scope,
-                batch_scope,
-                start_tick,
-                horizon,
-                partitions,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} must have positive workers and a nonempty partition set, got {worker_count} workers",
-                scope.as_str(),
-                batch_scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::DuplicateExpectedParallelBatchTimelineRecord {
-                scope,
-                batch_scope,
-                start_tick,
-                horizon,
-                partitions,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} with {worker_count} workers is already declared",
-                scope.as_str(),
-                batch_scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::MissingParallelBatchTimelineSummary {
-                scope,
-                batch_scope,
-                start_tick,
-                horizon,
-                partitions,
-                worker_count,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} with {worker_count} workers",
-                scope.as_str(),
-                batch_scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::ExpectedParallelBatchTimelineRecordMissing {
-                scope,
-                batch_scope,
-                start_tick,
-                horizon,
-                partitions,
-                worker_count,
-            } => write!(
-                formatter,
-                "expected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} with {worker_count} workers is missing",
-                scope.as_str(),
-                batch_scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::UnexpectedParallelBatchTimelineRecord {
-                scope,
-                batch_scope,
-                start_tick,
-                horizon,
-                partitions,
-                worker_count,
-            } => write!(
-                formatter,
-                "unexpected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} with {worker_count} workers",
-                scope.as_str(),
-                batch_scope.as_str(),
-                format_partition_indexes(partitions)
-            ),
-            Self::ZeroExpectedParallelPartitionCount { scope } => write!(
-                formatter,
-                "expected {} partition use must require a positive active partition count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelPartitionUse { scope } => write!(
-                formatter,
-                "expected {} partition use is already declared",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelPartitionActivity { scope, partition } => write!(
-                formatter,
-                "expected {} partition {partition} activity must require at least one positive activity count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelPartitionActivity { scope, partition } => write!(
-                formatter,
-                "expected {} partition {partition} activity is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelPartitionSummary {
-                scope,
-                minimum_active_partitions,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} partition use with at least {minimum_active_partitions} active partitions",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelPartitionCountBelowMinimum {
-                scope,
-                minimum_active_partitions,
-                actual_active_partitions,
-            } => write!(
-                formatter,
-                "expected {} partition use to reach at least {minimum_active_partitions} active partitions, got {actual_active_partitions}",
-                scope.as_str()
-            ),
-            Self::MissingParallelPartitionActivitySummary { scope, partition } => write!(
-                formatter,
-                "missing parallel summary for expected {} partition {partition} activity",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelPartitionActivityBelowMinimum {
-                scope,
-                partition,
-                minimum_worker_count,
-                actual_worker_count,
-                minimum_dispatch_count,
-                actual_dispatch_count,
-                minimum_remote_send_count,
-                actual_remote_send_count,
-                minimum_remote_receive_count,
-                actual_remote_receive_count,
-            } => write!(
-                formatter,
-                "expected {} partition {partition} activity to reach workers {minimum_worker_count}, dispatches {minimum_dispatch_count}, remote sends {minimum_remote_send_count}, and remote receives {minimum_remote_receive_count}; got workers {actual_worker_count}, dispatches {actual_dispatch_count}, remote sends {actual_remote_send_count}, and remote receives {actual_remote_receive_count}",
-                scope.as_str()
-            ),
+            Self::InvalidExpectedParallelBatchWorkerCount { .. }
+            | Self::ZeroExpectedParallelBatchCount { .. }
+            | Self::DuplicateExpectedParallelBatchActivity { .. }
+            | Self::MissingParallelBatchActivitySummary { .. }
+            | Self::ExpectedParallelBatchActivityBelowMinimum { .. }
+            | Self::ParallelBatchWorkerCountBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchWorkerBucket { .. }
+            | Self::ZeroExpectedParallelBatchWorkerBucket { .. }
+            | Self::DuplicateExpectedParallelBatchWorkerBucket { .. }
+            | Self::MissingParallelBatchWorkerBucketSummary { .. }
+            | Self::ExpectedParallelBatchWorkerBucketBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchWorkerTickBucket { .. }
+            | Self::ZeroExpectedParallelBatchWorkerTickBucket { .. }
+            | Self::DuplicateExpectedParallelBatchWorkerTickBucket { .. }
+            | Self::MissingParallelBatchWorkerTickBucketSummary { .. }
+            | Self::ExpectedParallelBatchWorkerTickBucketBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchWorkerTickActivity { .. }
+            | Self::ZeroExpectedParallelBatchWorkerTickActivity { .. }
+            | Self::DuplicateExpectedParallelBatchWorkerTickActivity { .. }
+            | Self::MissingParallelBatchWorkerTickActivitySummary { .. }
+            | Self::ExpectedParallelBatchWorkerTickActivityBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchWorkerTickStreak { .. }
+            | Self::ZeroExpectedParallelBatchWorkerTickStreak { .. }
+            | Self::DuplicateExpectedParallelBatchWorkerTickStreak { .. }
+            | Self::MissingParallelBatchWorkerTickStreakSummary { .. }
+            | Self::ExpectedParallelBatchWorkerTickStreakBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchWorkerTicks { .. }
+            | Self::ZeroExpectedParallelBatchWorkerTicks { .. }
+            | Self::DuplicateExpectedParallelBatchWorkerTicks { .. }
+            | Self::MissingParallelBatchWorkerTicksSummary { .. }
+            | Self::ExpectedParallelBatchWorkerTicksBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchPartitionSet { .. }
+            | Self::ZeroExpectedParallelBatchPartitionSetCount { .. }
+            | Self::DuplicateExpectedParallelBatchPartitionSet { .. }
+            | Self::MissingParallelBatchPartitionSetSummary { .. }
+            | Self::ExpectedParallelBatchPartitionSetBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchPartitionStreak { .. }
+            | Self::ZeroExpectedParallelBatchPartitionStreakCount { .. }
+            | Self::DuplicateExpectedParallelBatchPartitionStreak { .. }
+            | Self::MissingParallelBatchPartitionStreakSummary { .. }
+            | Self::ExpectedParallelBatchPartitionStreakBelowMinimum { .. }
+            | Self::InvalidExpectedParallelBatchTimelineRecord { .. }
+            | Self::DuplicateExpectedParallelBatchTimelineRecord { .. }
+            | Self::MissingParallelBatchTimelineSummary { .. }
+            | Self::ExpectedParallelBatchTimelineRecordMissing { .. }
+            | Self::UnexpectedParallelBatchTimelineRecord { .. }
+            | Self::ZeroExpectedParallelPartitionCount { .. }
+            | Self::DuplicateExpectedParallelPartitionUse { .. }
+            | Self::ZeroExpectedParallelPartitionActivity { .. }
+            | Self::DuplicateExpectedParallelPartitionActivity { .. }
+            | Self::MissingParallelPartitionSummary { .. }
+            | Self::ExpectedParallelPartitionCountBelowMinimum { .. }
+            | Self::MissingParallelPartitionActivitySummary { .. }
+            | Self::ExpectedParallelPartitionActivityBelowMinimum { .. } => {
+                format_parallel_batch_error(self, formatter)
+            }
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(
                 formatter,
                 "expected {} clean parallel diagnostics is already declared",
