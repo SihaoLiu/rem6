@@ -2,7 +2,7 @@ use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{
     write_u16_at, write_u32_at, PciBarKind, PciClassCode, PciConfigOffset, PciDeviceIdentity,
-    PciError, PciFunctionAddress, PciHostAddressSpace, PCI_CONFIG_SPACE_SIZE,
+    PciError, PciFunctionAddress, PciHostAddressSpace, PciInterruptPin, PCI_CONFIG_SPACE_SIZE,
     PCI_TYPE1_HEADER_TYPE,
 };
 
@@ -28,10 +28,13 @@ const PCI_TYPE1_PREFETCH_BASE_UPPER_OFFSET: usize = 0x28;
 const PCI_TYPE1_PREFETCH_LIMIT_UPPER_OFFSET: usize = 0x2c;
 const PCI_TYPE1_IO_BASE_UPPER_OFFSET: usize = 0x30;
 const PCI_TYPE1_IO_LIMIT_UPPER_OFFSET: usize = 0x32;
+const PCI_TYPE1_EXPANSION_ROM_OFFSET: usize = 0x38;
 const PCI_INTERRUPT_LINE_OFFSET: usize = 0x3c;
+const PCI_INTERRUPT_PIN_OFFSET: usize = 0x3d;
 const PCI_TYPE1_BRIDGE_CONTROL_OFFSET: usize = 0x3e;
 const PCI_BRIDGE_MEMORY_GRANULARITY: u64 = 0x0010_0000;
 const PCI_BRIDGE_IO_GRANULARITY: u64 = 0x1000;
+const PCI_TYPE1_EXPANSION_ROM_SIZE_PROBE: u32 = 0xffff_fffe;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciBridgeBusRange {
@@ -70,6 +73,46 @@ impl PciBridgeBusRange {
 
     const fn contains(self, bus: u8) -> bool {
         self.secondary <= bus && bus <= self.subordinate
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PciType1HeaderFields {
+    expansion_rom: u32,
+    interrupt_line: u8,
+    interrupt_pin: PciInterruptPin,
+    bridge_control: u16,
+}
+
+impl PciType1HeaderFields {
+    pub const fn new(
+        expansion_rom: u32,
+        interrupt_line: u8,
+        interrupt_pin: PciInterruptPin,
+        bridge_control: u16,
+    ) -> Self {
+        Self {
+            expansion_rom,
+            interrupt_line,
+            interrupt_pin,
+            bridge_control,
+        }
+    }
+
+    pub const fn expansion_rom(self) -> u32 {
+        self.expansion_rom
+    }
+
+    pub const fn interrupt_line(self) -> u8 {
+        self.interrupt_line
+    }
+
+    pub const fn interrupt_pin(self) -> PciInterruptPin {
+        self.interrupt_pin
+    }
+
+    pub const fn bridge_control(self) -> u16 {
+        self.bridge_control
     }
 }
 
@@ -118,6 +161,22 @@ impl PciBridgeConfig {
 
     pub const fn class(&self) -> PciClassCode {
         self.class
+    }
+
+    pub fn with_type1_header(mut self, fields: PciType1HeaderFields) -> Self {
+        write_u32_at(
+            &mut self.config,
+            PCI_TYPE1_EXPANSION_ROM_OFFSET,
+            fields.expansion_rom(),
+        );
+        self.config[PCI_INTERRUPT_LINE_OFFSET] = fields.interrupt_line();
+        self.config[PCI_INTERRUPT_PIN_OFFSET] = fields.interrupt_pin().config_value();
+        write_u16_at(
+            &mut self.config,
+            PCI_TYPE1_BRIDGE_CONTROL_OFFSET,
+            fields.bridge_control(),
+        );
+        self
     }
 
     pub fn bus_range(&self) -> PciBridgeBusRange {
@@ -181,6 +240,16 @@ impl PciBridgeConfig {
             (PCI_TYPE1_PREFETCH_BASE_UPPER_OFFSET, 4)
             | (PCI_TYPE1_PREFETCH_LIMIT_UPPER_OFFSET, 4) => {
                 self.config[span.start..span.end].copy_from_slice(data);
+                Ok(())
+            }
+            (PCI_TYPE1_EXPANSION_ROM_OFFSET, 4) => {
+                let value = u32::from_le_bytes(data.try_into().unwrap());
+                let value = if value == PCI_TYPE1_EXPANSION_ROM_SIZE_PROBE {
+                    u32::MAX
+                } else {
+                    value
+                };
+                write_u32_at(&mut self.config, PCI_TYPE1_EXPANSION_ROM_OFFSET, value);
                 Ok(())
             }
             (PCI_INTERRUPT_LINE_OFFSET, 1) => {

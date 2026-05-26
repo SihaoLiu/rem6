@@ -2,7 +2,8 @@ use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciBridgeBusRange, PciBridgeConfig, PciClassCode,
     PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciFunctionAddress,
-    PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge,
+    PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge, PciInterruptPin,
+    PciType1HeaderFields,
 };
 
 fn bridge_config(function: PciFunctionAddress) -> PciBridgeConfig {
@@ -118,6 +119,77 @@ fn pci_type1_bridge_config_exposes_header_bus_numbers_and_windows() {
         rem6_memory::AddressRange::new(Address::new(0x0030_0000), AccessSize::new(0x2000).unwrap())
             .unwrap(),
     ));
+}
+
+#[test]
+fn pci_type1_bridge_header_exposes_interrupt_rom_and_control_fields() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function).with_type1_header(PciType1HeaderFields::new(
+        0x8000_0001,
+        7,
+        PciInterruptPin::IntB,
+        0x0040,
+    ));
+
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x38).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x01, 0x00, 0x00, 0x80])
+    );
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x3c).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![7, 2, 0x40, 0x00])
+    );
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x38).unwrap(),
+            &0x9000_0001_u32.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x38).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0x01, 0x00, 0x00, 0x90])
+    );
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x38).unwrap(),
+            &0xffff_fffe_u32.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x38).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![0xff, 0xff, 0xff, 0xff])
+    );
+
+    bridge
+        .write_config(PciConfigOffset::new(0x3c).unwrap(), &[9])
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x3e).unwrap(),
+            &0x0080_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x3c).unwrap(),
+            AccessSize::new(4).unwrap()
+        ),
+        Ok(vec![9, 2, 0x80, 0x00])
+    );
 }
 
 #[test]
