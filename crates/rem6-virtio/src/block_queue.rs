@@ -555,7 +555,24 @@ impl VirtioSplitQueue {
             if !visited.insert(index) {
                 return Err(VirtioError::VirtioDescriptorLoop { index });
             }
-            let descriptor = self.load_descriptor(guest, index)?;
+            let raw = self.load_descriptor_raw(
+                guest,
+                add_address(
+                    self.descriptor_table,
+                    u64::from(index) * VIRTIO_SPLIT_DESCRIPTOR_SIZE,
+                )?,
+            )?;
+            if raw.is_indirect() {
+                if !descriptors.is_empty() || raw.has_next() {
+                    return Err(VirtioError::PciTransportRuntimeConfig {
+                        message: format!(
+                            "VirtIO split descriptor {index} cannot combine indirect and direct chaining"
+                        ),
+                    });
+                }
+                return self.load_indirect_descriptor_chain(guest, head, raw);
+            }
+            let descriptor = self.load_direct_descriptor(guest, index, raw)?;
             let next = descriptor.next();
             descriptors.push(descriptor);
             let Some(next) = next else {
@@ -566,40 +583,96 @@ impl VirtioSplitQueue {
         VirtioSplitDescriptorChain::new(head, descriptors)
     }
 
-    fn load_descriptor(
+    fn load_indirect_descriptor_chain(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        head: u16,
+        raw: RawVirtioSplitDescriptor,
+    ) -> Result<VirtioSplitDescriptorChain, VirtioError> {
+        if raw.length == 0 || !raw.length.is_multiple_of(VIRTIO_SPLIT_DESCRIPTOR_SIZE_U32) {
+            return Err(VirtioError::PciTransportRuntimeConfig {
+                message: format!(
+                    "VirtIO indirect descriptor table length {} is not a nonzero multiple of {VIRTIO_SPLIT_DESCRIPTOR_SIZE}",
+                    raw.length
+                ),
+            });
+        }
+
+        let descriptor_count = raw.length / VIRTIO_SPLIT_DESCRIPTOR_SIZE_U32;
+        if descriptor_count > u32::from(u16::MAX) {
+            return Err(VirtioError::PciTransportRuntimeConfig {
+                message: format!(
+                    "VirtIO indirect descriptor table has {descriptor_count} descriptors"
+                ),
+            });
+        }
+        let descriptor_count = descriptor_count as u16;
+        let mut descriptors = Vec::new();
+        let mut visited = BTreeSet::new();
+        let mut index = 0_u16;
+        loop {
+            if index >= descriptor_count {
+                return Err(VirtioError::MissingVirtioDescriptor { index });
+            }
+            if !visited.insert(index) {
+                return Err(VirtioError::VirtioDescriptorLoop { index });
+            }
+            let descriptor_address =
+                add_address(raw.address, u64::from(index) * VIRTIO_SPLIT_DESCRIPTOR_SIZE)?;
+            let descriptor_raw = self.load_descriptor_raw(guest, descriptor_address)?;
+            if descriptor_raw.is_indirect() {
+                return Err(VirtioError::PciTransportRuntimeConfig {
+                    message: format!(
+                        "VirtIO indirect descriptor {index} cannot reference another indirect table"
+                    ),
+                });
+            }
+            let descriptor = self.load_direct_descriptor(guest, index, descriptor_raw)?;
+            let next = descriptor.next();
+            descriptors.push(descriptor);
+            let Some(next) = next else {
+                break;
+            };
+            index = next;
+        }
+        VirtioSplitDescriptorChain::from_ordered(head, descriptors)
+    }
+
+    fn load_descriptor_raw(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        descriptor_address: Address,
+    ) -> Result<RawVirtioSplitDescriptor, VirtioError> {
+        let bytes = guest.read_exact(descriptor_address, VIRTIO_SPLIT_DESCRIPTOR_SIZE)?;
+        Ok(RawVirtioSplitDescriptor {
+            address: Address::new(u64::from_le_bytes(bytes[0..8].try_into().unwrap())),
+            length: u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+            flags: u16::from_le_bytes(bytes[12..14].try_into().unwrap()),
+            next: u16::from_le_bytes(bytes[14..16].try_into().unwrap()),
+        })
+    }
+
+    fn load_direct_descriptor(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
         index: u16,
+        raw: RawVirtioSplitDescriptor,
     ) -> Result<VirtioSplitDescriptor, VirtioError> {
-        let descriptor_address = add_address(
-            self.descriptor_table,
-            u64::from(index) * VIRTIO_SPLIT_DESCRIPTOR_SIZE,
-        )?;
-        let bytes = guest.read_exact(descriptor_address, VIRTIO_SPLIT_DESCRIPTOR_SIZE)?;
-        let address = Address::new(u64::from_le_bytes(bytes[0..8].try_into().unwrap()));
-        let length = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-        let flags = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
-        let next = u16::from_le_bytes(bytes[14..16].try_into().unwrap());
-        if flags & VIRTIO_SPLIT_DESC_F_INDIRECT != 0 {
-            return Err(VirtioError::PciTransportRuntimeConfig {
-                message: format!("VirtIO split descriptor {index} uses unsupported indirect flag"),
-            });
-        }
-        let next = (flags & VIRTIO_SPLIT_DESC_F_NEXT != 0).then_some(next);
-        if flags & VIRTIO_SPLIT_DESC_F_WRITE != 0 {
+        let next = raw.has_next().then_some(raw.next);
+        if raw.is_writable() {
             return Ok(VirtioSplitDescriptor {
                 index,
-                address: Some(address),
+                address: Some(raw.address),
                 bytes: Vec::new(),
-                length,
+                length: raw.length,
                 writable: true,
                 next,
             });
         }
-        let data = guest.read_exact(address, u64::from(length))?;
+        let data = guest.read_exact(raw.address, u64::from(raw.length))?;
         Ok(VirtioSplitDescriptor {
             index,
-            address: Some(address),
+            address: Some(raw.address),
             length: data.len() as u32,
             bytes: data,
             writable: false,
@@ -609,6 +682,29 @@ impl VirtioSplitQueue {
 }
 
 const VIRTIO_SPLIT_DESCRIPTOR_SIZE: u64 = 16;
+const VIRTIO_SPLIT_DESCRIPTOR_SIZE_U32: u32 = VIRTIO_SPLIT_DESCRIPTOR_SIZE as u32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RawVirtioSplitDescriptor {
+    address: Address,
+    length: u32,
+    flags: u16,
+    next: u16,
+}
+
+impl RawVirtioSplitDescriptor {
+    const fn has_next(self) -> bool {
+        self.flags & VIRTIO_SPLIT_DESC_F_NEXT != 0
+    }
+
+    const fn is_writable(self) -> bool {
+        self.flags & VIRTIO_SPLIT_DESC_F_WRITE != 0
+    }
+
+    const fn is_indirect(self) -> bool {
+        self.flags & VIRTIO_SPLIT_DESC_F_INDIRECT != 0
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VirtioSplitDescriptor {
@@ -719,6 +815,17 @@ impl VirtioSplitDescriptorChain {
             head,
             descriptors: ordered,
         })
+    }
+
+    fn from_ordered(
+        head: u16,
+        descriptors: impl IntoIterator<Item = VirtioSplitDescriptor>,
+    ) -> Result<Self, VirtioError> {
+        let descriptors = descriptors.into_iter().collect::<Vec<_>>();
+        if descriptors.is_empty() {
+            return Err(VirtioError::MissingVirtioDescriptor { index: 0 });
+        }
+        Ok(Self { head, descriptors })
     }
 
     pub const fn head(&self) -> u16 {
