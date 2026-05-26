@@ -222,7 +222,8 @@ Implementation evidence on 2026-05-26:
   host-side descriptor shortcut, so descriptor data, writeback targets, and
   used-ring completion evidence remain replayable. The main descriptor's
   write-only flag is ignored for indirect-table lookup, matching the VirtIO
-  device requirement while still rejecting invalid direct/indirect chaining.
+  device requirement, and direct descriptor prefixes followed by a terminal
+  indirect table expand into one ordered block request.
 
 ## Audit Method
 
@@ -649,8 +650,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   read, write, flush, and get-id decoding into typed requests, status
   descriptor tracking, writable data-byte accounting, loop rejection, short
   header rejection, missing status rejection, wrong readable/writable
-  direction rejection, indirect-table write-only flag ignore behavior, get-id
-  output shape validation, block completion
+  direction rejection, indirect-table write-only flag ignore behavior, direct
+  prefix plus terminal indirect-table consumption, get-id output shape
+  validation, block completion
   scatter-data writeback records, status-byte writeback records, used-ring slot
   selection, wrapping used indices, little-endian used elements, and split
   available-ring walking from typed guest memory into decoded block requests,

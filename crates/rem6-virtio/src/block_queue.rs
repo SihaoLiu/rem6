@@ -579,14 +579,15 @@ impl VirtioSplitQueue {
                 )?,
             )?;
             if raw.is_indirect() {
-                if !descriptors.is_empty() || raw.has_next() {
+                if raw.has_next() {
                     return Err(VirtioError::PciTransportRuntimeConfig {
                         message: format!(
-                            "VirtIO split descriptor {index} cannot combine indirect and direct chaining"
+                            "VirtIO split descriptor {index} cannot combine indirect and next chaining"
                         ),
                     });
                 }
-                return self.load_indirect_descriptor_chain(guest, head, raw);
+                descriptors.extend(self.load_indirect_descriptors(guest, raw)?);
+                return VirtioSplitDescriptorChain::from_ordered(head, descriptors);
             }
             let descriptor = self.load_direct_descriptor(guest, index, raw)?;
             let next = descriptor.next();
@@ -599,12 +600,11 @@ impl VirtioSplitQueue {
         VirtioSplitDescriptorChain::new(head, descriptors)
     }
 
-    fn load_indirect_descriptor_chain(
+    fn load_indirect_descriptors(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
-        head: u16,
         raw: RawVirtioSplitDescriptor,
-    ) -> Result<VirtioSplitDescriptorChain, VirtioError> {
+    ) -> Result<Vec<VirtioSplitDescriptor>, VirtioError> {
         if raw.length == 0 || !raw.length.is_multiple_of(VIRTIO_SPLIT_DESCRIPTOR_SIZE_U32) {
             return Err(VirtioError::PciTransportRuntimeConfig {
                 message: format!(
@@ -651,7 +651,7 @@ impl VirtioSplitQueue {
             };
             index = next;
         }
-        VirtioSplitDescriptorChain::from_ordered(head, descriptors)
+        Ok(descriptors)
     }
 
     fn load_descriptor_raw(

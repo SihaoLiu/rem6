@@ -271,3 +271,83 @@ fn virtio_split_queue_ignores_writable_flag_on_indirect_table_descriptor() {
         VirtioSplitUsedElement::new(3, 529).to_le_bytes()
     );
 }
+
+#[test]
+fn virtio_split_queue_consumes_direct_prefix_followed_by_indirect_table() {
+    let mut store = guest_store();
+    write_guest(
+        &mut store,
+        0x1020,
+        &descriptor(0x1200, 16, VIRTIO_SPLIT_DESC_F_NEXT, 3),
+        1,
+    );
+    write_guest(
+        &mut store,
+        0x1030,
+        &descriptor(0x1600, 32, VIRTIO_SPLIT_DESC_F_INDIRECT, 0),
+        2,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 3);
+    write_guest(&mut store, 0x1104, &2_u16.to_le_bytes(), 4);
+    write_guest(
+        &mut store,
+        0x1600,
+        &descriptor(
+            0x1300,
+            VIRTIO_BLOCK_SECTOR_SIZE as u32,
+            VIRTIO_SPLIT_DESC_F_NEXT | VIRTIO_SPLIT_DESC_F_WRITE,
+            1,
+        ),
+        5,
+    );
+    write_guest(
+        &mut store,
+        0x1610,
+        &descriptor(0x1500, 1, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        6,
+    );
+    write_guest(&mut store, 0x1200, &header(VIRTIO_BLOCK_T_IN, 0), 7);
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0x3c)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+        let decoded = split_queue
+            .consume_available_block(&mut guest, queue(2))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded.request().id().get(), 2);
+        assert_eq!(decoded.writable_data_bytes(), VIRTIO_BLOCK_SECTOR_SIZE);
+        assert_eq!(decoded.used_length(), 529);
+
+        let completion = device.execute_at(66, decoded.request().clone()).unwrap();
+        let writeback = split_queue
+            .complete_block_request(&mut guest, &decoded, &completion)
+            .unwrap();
+
+        assert_eq!(
+            writeback.used_element(),
+            VirtioSplitUsedElement::new(2, 529)
+        );
+    }
+
+    assert_eq!(split_queue.last_available_index(), 1);
+    assert_eq!(read_guest(&mut store, 0x1300, 512, 100), sector(0x3c));
+    assert_eq!(
+        read_guest(&mut store, 0x1500, 1, 200),
+        vec![VIRTIO_BLOCK_S_OK]
+    );
+    assert_eq!(
+        read_guest(&mut store, 0x1804, 8, 300),
+        VirtioSplitUsedElement::new(2, 529).to_le_bytes()
+    );
+}
