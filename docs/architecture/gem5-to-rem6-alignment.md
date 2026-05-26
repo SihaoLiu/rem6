@@ -372,6 +372,10 @@ Implementation evidence on 2026-05-26:
   remote-flow set. Exact sends can still provide stronger derived evidence when
   aggregate records are absent, but a present aggregate must be complete for its
   scope.
+- Workload parallel remote-traffic consistency now rejects invalid actual
+  remote-send evidence as well as invalid manifest declarations. A replayed
+  remote send must cross partitions and must not deliver before its source tick,
+  preventing local or inverted records from masquerading as parallel traffic.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

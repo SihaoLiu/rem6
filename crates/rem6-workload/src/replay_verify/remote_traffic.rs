@@ -319,6 +319,9 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
     for expected in expected_consistency {
         let flows = explicit_parallel_remote_flows_for_scope(summary, expected.scope());
         let sends = actual_parallel_remote_sends_for_scope(summary, expected.scope());
+        for send in &sends {
+            validate_remote_traffic_send_evidence(expected.scope(), *send)?;
+        }
         let send_observations = remote_send_observations(&sends);
         for flow in &flows {
             let flow_record = *flow;
@@ -353,6 +356,33 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_remote_traffic_send_evidence(
+    scope: WorkloadParallelRemoteFlowScope,
+    send: ParallelRemoteSendRecord,
+) -> Result<(), WorkloadError> {
+    if send.source() == send.target() {
+        return Err(WorkloadError::InvalidParallelRemoteTrafficSendEndpoints {
+            scope,
+            source: send.source().index(),
+            target: send.target().index(),
+            source_tick: send.source_tick(),
+            delivery_tick: send.delivery_tick(),
+            order: send.order(),
+        });
+    }
+    if send.delivery_tick() < send.source_tick() {
+        return Err(WorkloadError::InvalidParallelRemoteTrafficSendTiming {
+            scope,
+            source: send.source().index(),
+            target: send.target().index(),
+            source_tick: send.source_tick(),
+            delivery_tick: send.delivery_tick(),
+            order: send.order(),
+        });
     }
     Ok(())
 }

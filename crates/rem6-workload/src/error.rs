@@ -742,6 +742,22 @@ pub enum WorkloadError {
     MissingParallelRemoteTrafficConsistencySummary {
         scope: WorkloadParallelRemoteFlowScope,
     },
+    InvalidParallelRemoteTrafficSendEndpoints {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
+    InvalidParallelRemoteTrafficSendTiming {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
     MissingParallelRemoteTrafficAggregateFlow {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,

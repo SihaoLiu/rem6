@@ -330,6 +330,30 @@ pub(crate) fn format_remote_delay_error(
             "missing parallel summary for expected {} remote traffic consistency",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelRemoteTrafficSendEndpoints {
+            scope,
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            order,
+        } => write!(
+            formatter,
+            "{} remote traffic send evidence {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} must cross partitions",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelRemoteTrafficSendTiming {
+            scope,
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            order,
+        } => write!(
+            formatter,
+            "{} remote traffic send evidence {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} must not deliver before the source tick",
+            scope.as_str()
+        ),
         WorkloadError::MissingParallelRemoteTrafficAggregateFlow {
             scope,
             source,

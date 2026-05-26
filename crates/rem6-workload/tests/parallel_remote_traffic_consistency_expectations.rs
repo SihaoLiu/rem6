@@ -269,6 +269,72 @@ fn workload_replay_plan_accepts_parallel_remote_traffic_from_exact_sends_without
 }
 
 #[test]
+fn workload_replay_plan_rejects_local_parallel_remote_send_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_traffic_consistency(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+        ))
+        .unwrap();
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(2),
+                PartitionId::new(2),
+                5,
+                13,
+                0,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendEndpoints {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 2,
+            source_tick: 5,
+            delivery_tick: 13,
+            order: 0,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_inverted_parallel_remote_send_evidence_timing() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_traffic_consistency(expected(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+        ))
+        .unwrap();
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(2),
+                PartitionId::new(3),
+                13,
+                5,
+                0,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteTrafficSendTiming {
+            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            source: 2,
+            target: 3,
+            source_tick: 13,
+            delivery_tick: 5,
+            order: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_parallel_remote_traffic_missing_aggregate_route() {
     let plan = replay_plan()
         .add_expected_parallel_remote_traffic_consistency(expected(
