@@ -429,8 +429,8 @@ fn workload_replay_plan_derives_partition_activity_from_batch_partition_sets() {
         .add_expected_parallel_partition_activity(expected_activity(
             WorkloadParallelRemoteFlowScope::DataCacheScheduler,
             3,
-            6,
-            6,
+            2,
+            2,
             0,
             0,
         ))
@@ -438,8 +438,8 @@ fn workload_replay_plan_derives_partition_activity_from_batch_partition_sets() {
         .add_expected_parallel_partition_activity(expected_activity(
             WorkloadParallelRemoteFlowScope::FullSystem,
             3,
-            9,
-            9,
+            5,
+            5,
             0,
             0,
         ))
@@ -468,11 +468,11 @@ fn workload_replay_plan_derives_partition_activity_from_batch_partition_sets() {
     );
     assert_eq!(
         summary.data_cache_parallel_scheduler_partition_activity(PartitionId::new(3)),
-        Some(ParallelPartitionActivity::with_remote_counts(6, 6, 0, 0, 0)),
+        Some(ParallelPartitionActivity::with_remote_counts(2, 2, 0, 0, 0)),
     );
     assert_eq!(
         summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(3)),
-        Some(ParallelPartitionActivity::with_remote_counts(9, 9, 0, 0, 0)),
+        Some(ParallelPartitionActivity::with_remote_counts(5, 5, 0, 0, 0)),
     );
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);

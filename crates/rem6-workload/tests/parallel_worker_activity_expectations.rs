@@ -235,6 +235,30 @@ fn workload_replay_plan_derives_total_workers_from_batch_histograms() {
 }
 
 #[test]
+fn workload_replay_plan_ignores_single_worker_batch_histogram_worker_activity_evidence() {
+    let plan = replay_plan()
+        .add_expected_parallel_worker_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_worker_counts([WorkloadParallelBatchWorkerCount::new(1, 2)]);
+
+    assert_eq!(summary.total_parallel_scheduler_workers(), 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelWorkerActivityBelowMinimum {
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
+            minimum_total_workers: 2,
+            actual_total_workers: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_checks_dma_scheduler_total_workers_directly() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("parallel-worker-activity-dma-direct"),

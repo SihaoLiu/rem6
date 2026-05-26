@@ -198,10 +198,7 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.total_parallel_scheduler_workers(), 15);
     assert_eq!(
         summary.parallel_scheduler_batch_worker_counts(),
-        &[
-            WorkloadParallelBatchWorkerCount::new(1, 2),
-            WorkloadParallelBatchWorkerCount::new(2, 3),
-        ],
+        &[WorkloadParallelBatchWorkerCount::new(2, 3)],
     );
     assert_eq!(summary.parallel_scheduler_batch_count_at_or_above(2), 5);
     assert_eq!(
@@ -553,7 +550,6 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_counts(),
         vec![
-            WorkloadParallelBatchWorkerCount::new(1, 2),
             WorkloadParallelBatchWorkerCount::new(2, 7),
             WorkloadParallelBatchWorkerCount::new(3, 9),
         ],

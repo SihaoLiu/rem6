@@ -114,6 +114,10 @@ impl WorkloadParallelBatchWorkerCount {
     pub const fn is_empty(&self) -> bool {
         self.worker_count == 0 || self.batch_count == 0
     }
+
+    pub const fn is_parallel_evidence(&self) -> bool {
+        self.worker_count >= 2 && self.batch_count != 0
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,6 +144,10 @@ impl WorkloadParallelBatchPartitionSet {
 
     pub fn is_empty(&self) -> bool {
         self.partitions.is_empty() || self.batch_count == 0
+    }
+
+    pub fn is_parallel_evidence(&self) -> bool {
+        self.partitions.len() >= 2 && self.batch_count != 0
     }
 }
 
@@ -171,6 +179,10 @@ impl WorkloadParallelBatchPartitionStreak {
     pub fn is_empty(&self) -> bool {
         self.partitions.is_empty() || self.consecutive_batch_count == 0
     }
+
+    pub fn is_parallel_evidence(&self) -> bool {
+        self.partitions.len() >= 2 && self.consecutive_batch_count != 0
+    }
 }
 
 pub(crate) fn normalize_partition_set(
@@ -188,7 +200,7 @@ pub(crate) fn collect_parallel_batch_worker_counts(
 ) -> Vec<WorkloadParallelBatchWorkerCount> {
     let mut by_worker_count = BTreeMap::<usize, usize>::new();
     for count in counts {
-        if count.is_empty() {
+        if !count.is_parallel_evidence() {
             continue;
         }
         *by_worker_count.entry(count.worker_count()).or_default() += count.batch_count();
@@ -371,7 +383,7 @@ pub(crate) fn collect_parallel_batch_partition_sets(
 ) -> Vec<WorkloadParallelBatchPartitionSet> {
     let mut by_partitions = BTreeMap::<Vec<PartitionId>, usize>::new();
     for set in sets {
-        if set.is_empty() {
+        if !set.is_parallel_evidence() {
             continue;
         }
         *by_partitions.entry(set.partitions().to_vec()).or_default() += set.batch_count();
@@ -389,7 +401,7 @@ pub(crate) fn collect_parallel_batch_partition_streaks(
 ) -> Vec<WorkloadParallelBatchPartitionStreak> {
     let mut by_partitions = BTreeMap::<Vec<PartitionId>, usize>::new();
     for streak in streaks {
-        if streak.is_empty() {
+        if !streak.is_parallel_evidence() {
             continue;
         }
         by_partitions
@@ -413,7 +425,7 @@ pub(crate) fn collect_parallel_batch_partition_streaks_from_sequence(
     let mut streaks = Vec::new();
     let mut current: Option<(Vec<PartitionId>, usize)> = None;
     for set in sets {
-        if set.is_empty() {
+        if !set.is_parallel_evidence() {
             if let Some((partitions, consecutive_batch_count)) = current.take() {
                 streaks.push(WorkloadParallelBatchPartitionStreak::new(
                     partitions,

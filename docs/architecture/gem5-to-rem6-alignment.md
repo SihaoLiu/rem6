@@ -357,6 +357,11 @@ Implementation evidence on 2026-05-26:
   partitions feed derived batch worker, tick, partition-set, streak, and
   partition-activity evidence. Serial or single-partition records no longer
   satisfy parallelism contracts through secondary summaries.
+- Workload direct batch summaries now apply the same evidence boundary: worker
+  histograms require at least two workers, and partition sets or streaks require
+  at least two partitions before they can feed derived worker, batch,
+  active-partition, or partition-activity contracts. Direct serial summaries no
+  longer satisfy natural-parallelism contracts through aggregate counters.
 - Workload parallel remote-flow and remote-flow timing expectations now reject
   same-partition endpoints. A manifest-declared remote-flow contract must cross
   partition boundaries before replay accepts it as remote parallel evidence.
