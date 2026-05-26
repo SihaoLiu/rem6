@@ -422,6 +422,10 @@ Implementation evidence on 2026-05-26:
   aggregate records before same-route full-system merging. Malformed scheduler,
   data-cache, GPU DMA, or accelerator DMA aggregate records cannot be hidden by
   another valid contribution on the same full-system route.
+- Workload full-system remote-traffic consistency validation reuses that raw
+  subsystem aggregate scan before comparing aggregate flow records with exact
+  remote sends, so a consistency contract cannot pass by merging away a
+  malformed subsystem flow record.
 - Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
   remote-delay verifier paths now apply the same actual remote evidence
   structural checks before matching or deriving observations, so malformed

@@ -331,6 +331,7 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
     };
 
     for expected in expected_consistency {
+        validate_raw_explicit_remote_flow_scope_evidence(summary, expected.scope())?;
         let flows = explicit_parallel_remote_flows_for_scope(summary, expected.scope());
         let sends = actual_parallel_remote_sends_for_scope(summary, expected.scope());
         for flow in &flows {
@@ -422,12 +423,20 @@ fn validate_remote_flow_scope_evidence(
     scope: WorkloadParallelRemoteFlowScope,
 ) -> Result<(), WorkloadError> {
     validate_remote_send_scope_evidence(summary, scope)?;
-    let explicit_flows = raw_explicit_parallel_remote_flows_for_scope(summary, scope);
-    for flow in explicit_flows {
-        validate_remote_traffic_flow_evidence(scope, flow)?;
-    }
+    validate_raw_explicit_remote_flow_scope_evidence(summary, scope)?;
     let flows = actual_parallel_remote_flows_for_scope(summary, scope);
     for flow in flows {
+        validate_remote_traffic_flow_evidence(scope, flow)?;
+    }
+    Ok(())
+}
+
+fn validate_raw_explicit_remote_flow_scope_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Result<(), WorkloadError> {
+    let explicit_flows = raw_explicit_parallel_remote_flows_for_scope(summary, scope);
+    for flow in explicit_flows {
         validate_remote_traffic_flow_evidence(scope, flow)?;
     }
     Ok(())
