@@ -6,7 +6,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     PartitionedMemoryStore,
 };
-use rem6_pci::PciLegacyInterruptPort;
+use rem6_pci::{PciEndpointConfig, PciLegacyInterruptPort, PciMsiPort};
 
 use crate::{
     VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
@@ -39,6 +39,46 @@ impl<'a> VirtioBlockIntxCompletionTarget<'a> {
     }
 
     pub const fn port(self) -> &'a PciLegacyInterruptPort {
+        self.port
+    }
+
+    pub const fn source(self) -> InterruptSourceId {
+        self.source
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct VirtioBlockMsiCompletionTarget<'a> {
+    isr: &'a VirtioPciIsrDevice,
+    endpoint: &'a PciEndpointConfig,
+    port: &'a PciMsiPort,
+    source: InterruptSourceId,
+}
+
+impl<'a> VirtioBlockMsiCompletionTarget<'a> {
+    pub const fn new(
+        isr: &'a VirtioPciIsrDevice,
+        endpoint: &'a PciEndpointConfig,
+        port: &'a PciMsiPort,
+        source: InterruptSourceId,
+    ) -> Self {
+        Self {
+            isr,
+            endpoint,
+            port,
+            source,
+        }
+    }
+
+    pub const fn isr(self) -> &'a VirtioPciIsrDevice {
+        self.isr
+    }
+
+    pub const fn endpoint(self) -> &'a PciEndpointConfig {
+        self.endpoint
+    }
+
+    pub const fn port(self) -> &'a PciMsiPort {
         self.port
     }
 
@@ -271,6 +311,40 @@ impl VirtioSplitQueue {
         target
             .port()
             .post_parallel(context, target.source())
+            .map_err(virtio_pci_error)?;
+        Ok(writeback)
+    }
+
+    pub fn complete_block_request_and_post_msi(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+        target: VirtioBlockMsiCompletionTarget<'_>,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        let writeback =
+            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        target
+            .port()
+            .send(target.endpoint(), context, target.source())
+            .map_err(virtio_pci_error)?;
+        Ok(writeback)
+    }
+
+    pub fn complete_block_request_and_post_msi_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+        target: VirtioBlockMsiCompletionTarget<'_>,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        let writeback =
+            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        target
+            .port()
+            .send_parallel(target.endpoint(), context, target.source())
             .map_err(virtio_pci_error)?;
         Ok(writeback)
     }
