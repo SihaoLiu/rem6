@@ -413,21 +413,6 @@ impl SystemActionExecutor {
             .unwrap_or_else(GuestHostCallResponse::unhandled)
     }
 
-    fn ensure_execution_mode_checkpoint_component(
-        &mut self,
-    ) -> Result<CheckpointComponentId, SystemError> {
-        let component = execution_mode_checkpoint_component();
-        if !self.execution_mode_checkpoint_registered {
-            match self.checkpoints.register(component.clone()) {
-                Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {
-                    self.execution_mode_checkpoint_registered = true;
-                }
-                Err(error) => return Err(SystemError::Checkpoint(error)),
-            }
-        }
-        Ok(component)
-    }
-
     fn capture_execution_modes_into(
         &self,
         checkpoints: &mut CheckpointRegistry,
@@ -451,21 +436,11 @@ impl SystemActionExecutor {
             .map(|()| true)
     }
 
-    fn prepare_execution_mode_checkpoint_restore(
-        &mut self,
-        manifest: &CheckpointManifest,
-    ) -> Result<(), SystemError> {
-        if manifest_has_execution_mode_checkpoint(manifest) {
-            self.ensure_execution_mode_checkpoint_component()?;
-        }
-        Ok(())
-    }
-
     fn stage_execution_mode_checkpoint_restore(
         &self,
         checkpoints: &mut CheckpointRegistry,
         manifest: &CheckpointManifest,
-    ) -> Result<BTreeMap<ExecutionModeTarget, ExecutionMode>, SystemError> {
+    ) -> Result<(BTreeMap<ExecutionModeTarget, ExecutionMode>, bool), SystemError> {
         let component = execution_mode_checkpoint_component();
         if !manifest_has_execution_mode_checkpoint(manifest) {
             let modes = BTreeMap::new();
@@ -478,7 +453,12 @@ impl SystemActionExecutor {
                     )
                     .map_err(SystemError::Checkpoint)?;
             }
-            return Ok(modes);
+            return Ok((modes, self.execution_mode_checkpoint_registered));
+        }
+
+        match checkpoints.register(component.clone()) {
+            Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
+            Err(error) => return Err(SystemError::Checkpoint(error)),
         }
 
         let payload = checkpoints
@@ -488,7 +468,9 @@ impl SystemActionExecutor {
                 name: EXECUTION_MODE_CHECKPOINT_CHUNK.to_string(),
             })
             .map_err(SystemError::ExecutionModeCheckpoint)?;
-        decode_execution_modes(&component, payload).map_err(SystemError::ExecutionModeCheckpoint)
+        decode_execution_modes(&component, payload)
+            .map(|modes| (modes, true))
+            .map_err(SystemError::ExecutionModeCheckpoint)
     }
 
     pub fn attach_memory_checkpoint_bank(
@@ -668,17 +650,24 @@ impl SystemActionExecutor {
         &mut self,
         manifest: &CheckpointManifest,
     ) -> Result<(), SystemError> {
-        self.prepare_execution_mode_checkpoint_restore(manifest)?;
         let mut staged_checkpoints = self.checkpoints.clone();
+        if manifest_has_execution_mode_checkpoint(manifest) {
+            let component = execution_mode_checkpoint_component();
+            match staged_checkpoints.register(component) {
+                Ok(()) | Err(CheckpointError::DuplicateComponent { .. }) => {}
+                Err(error) => return Err(SystemError::Checkpoint(error)),
+            }
+        }
         staged_checkpoints
             .restore(manifest)
             .map_err(SystemError::Checkpoint)?;
-        let staged_execution_modes =
+        let (staged_execution_modes, staged_execution_mode_checkpoint_registered) =
             self.stage_execution_mode_checkpoint_restore(&mut staged_checkpoints, manifest)?;
         self.validate_checkpoint_banks(&staged_checkpoints)?;
 
         self.checkpoints = staged_checkpoints;
         self.execution_modes = staged_execution_modes;
+        self.execution_mode_checkpoint_registered = staged_execution_mode_checkpoint_registered;
         self.restore_checkpoint_banks()
     }
 

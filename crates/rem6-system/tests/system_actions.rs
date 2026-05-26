@@ -21,9 +21,9 @@ use rem6_stats::{
 };
 use rem6_system::{
     ClintCheckpointBank, ClintCheckpointPort, DramMemoryCheckpointBank, DramMemoryCheckpointPort,
-    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventDelivery, GuestEventId,
-    GuestEventKind, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
-    InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
+    ExecutionMode, ExecutionModeCheckpointError, ExecutionModeTarget, GuestEvent,
+    GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord,
+    HostEventPolicy, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome, SystemError,
     SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
@@ -1611,6 +1611,62 @@ fn execution_mode_switches_are_checkpointed_and_restored() {
         executor.execution_mode(&target),
         Some(ExecutionMode::Functional)
     );
+}
+
+#[test]
+fn failed_execution_mode_restore_does_not_register_checkpoint_component() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(14);
+    let component = CheckpointComponentId::new("host.execution_modes").unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    let bad_manifest = CheckpointManifest::new(
+        "bad-mode-restore",
+        22,
+        vec![CheckpointState::new(
+            component.clone(),
+            vec![CheckpointChunk::new("modes", vec![1, 0, 0])],
+        )],
+    );
+
+    let error = executor
+        .apply(&HostActionRecord::new(
+            24,
+            guest,
+            host,
+            GuestEventId::new(24),
+            source,
+            HostAction::RestoreCheckpoint {
+                manifest: bad_manifest,
+            },
+        ))
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SystemError::ExecutionModeCheckpoint(ExecutionModeCheckpointError::InvalidChunk {
+            component,
+            name: "modes".to_string(),
+        })
+    );
+
+    let checkpoint = executor
+        .apply(&HostActionRecord::new(
+            26,
+            guest,
+            host,
+            GuestEventId::new(25),
+            source,
+            HostAction::Checkpoint {
+                label: "after-bad-mode-restore".to_string(),
+            },
+        ))
+        .unwrap();
+    let manifest = match checkpoint {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(execution_mode_checkpoint_payload(&manifest).is_none());
 }
 
 #[test]
