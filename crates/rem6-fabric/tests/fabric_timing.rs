@@ -412,6 +412,49 @@ fn fabric_pipelines_multi_hop_paths_by_link_occupancy() {
 }
 
 #[test]
+fn fabric_records_transfer_hop_activity_for_multihop_paths() {
+    let mut fabric = FabricModel::new();
+    let activity_start = fabric.mark_activity();
+    let route = path([
+        FabricPathHop::new(link("cpu_to_router"), 2, 8).unwrap(),
+        FabricPathHop::new(link("router_to_mem"), 3, 4)
+            .unwrap()
+            .with_virtual_network(VirtualNetworkId::new(3)),
+    ]);
+
+    fabric.transmit(5, packet(7, 16, 1), route).unwrap();
+
+    let activities = fabric.hop_activities();
+    assert_eq!(activities.len(), 2);
+    assert_eq!(activities[0].packet(), FabricPacketId::new(7));
+    assert_eq!(activities[0].hop_index(), 0);
+    assert_eq!(activities[0].link(), &link("cpu_to_router"));
+    assert_eq!(activities[0].virtual_network(), VirtualNetworkId::new(1));
+    assert_eq!(activities[0].bytes(), 16);
+    assert_eq!(activities[0].ready_tick(), 5);
+    assert_eq!(activities[0].start_tick(), 5);
+    assert_eq!(activities[0].occupied_ticks(), 2);
+    assert_eq!(activities[0].depart_tick(), 7);
+    assert_eq!(activities[0].arrival_tick(), 9);
+    assert_eq!(activities[0].queue_delay_ticks(), 0);
+    assert_eq!(activities[1].packet(), FabricPacketId::new(7));
+    assert_eq!(activities[1].hop_index(), 1);
+    assert_eq!(activities[1].link(), &link("router_to_mem"));
+    assert_eq!(activities[1].virtual_network(), VirtualNetworkId::new(3));
+    assert_eq!(activities[1].bytes(), 16);
+    assert_eq!(activities[1].ready_tick(), 9);
+    assert_eq!(activities[1].start_tick(), 9);
+    assert_eq!(activities[1].occupied_ticks(), 4);
+    assert_eq!(activities[1].depart_tick(), 13);
+    assert_eq!(activities[1].arrival_tick(), 16);
+    assert_eq!(activities[1].queue_delay_ticks(), 0);
+    assert_eq!(fabric.hop_activities_since(activity_start), activities);
+
+    fabric.clear_activity();
+    assert!(fabric.hop_activities().is_empty());
+}
+
+#[test]
 fn fabric_path_hops_can_override_packet_virtual_network() {
     let mut fabric = FabricModel::new();
     let route = path([

@@ -300,6 +300,67 @@ impl FabricTransfer {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricHopActivity {
+    packet: FabricPacketId,
+    hop_index: usize,
+    link: FabricLinkId,
+    virtual_network: VirtualNetworkId,
+    bytes: u64,
+    ready_tick: Tick,
+    start_tick: Tick,
+    occupied_ticks: Tick,
+    queue_delay_ticks: Tick,
+    depart_tick: Tick,
+    arrival_tick: Tick,
+}
+
+impl FabricHopActivity {
+    pub const fn packet(&self) -> FabricPacketId {
+        self.packet
+    }
+
+    pub const fn hop_index(&self) -> usize {
+        self.hop_index
+    }
+
+    pub fn link(&self) -> &FabricLinkId {
+        &self.link
+    }
+
+    pub const fn virtual_network(&self) -> VirtualNetworkId {
+        self.virtual_network
+    }
+
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub const fn ready_tick(&self) -> Tick {
+        self.ready_tick
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn occupied_ticks(&self) -> Tick {
+        self.occupied_ticks
+    }
+
+    pub const fn queue_delay_ticks(&self) -> Tick {
+        self.queue_delay_ticks
+    }
+
+    pub const fn depart_tick(&self) -> Tick {
+        self.depart_tick
+    }
+
+    pub const fn arrival_tick(&self) -> Tick {
+        self.arrival_tick
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FabricActivityMarker {
     offset: usize,
@@ -379,34 +440,46 @@ impl FabricLaneSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FabricLaneActivityRecord {
+    packet: FabricPacketId,
+    hop_index: usize,
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
     bytes: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
-    first_tick: Tick,
-    last_tick: Tick,
+    ready_tick: Tick,
+    start_tick: Tick,
+    depart_tick: Tick,
+    arrival_tick: Tick,
 }
 
 impl FabricLaneActivityRecord {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        packet: FabricPacketId,
+        hop_index: usize,
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
         bytes: u64,
         occupied_ticks: Tick,
         queue_delay_ticks: Tick,
-        first_tick: Tick,
-        last_tick: Tick,
+        ready_tick: Tick,
+        start_tick: Tick,
+        depart_tick: Tick,
+        arrival_tick: Tick,
     ) -> Self {
         Self {
+            packet,
+            hop_index,
             link,
             virtual_network,
             bytes,
             occupied_ticks,
             queue_delay_ticks,
-            first_tick,
-            last_tick,
+            ready_tick,
+            start_tick,
+            depart_tick,
+            arrival_tick,
         }
     }
 
@@ -423,9 +496,25 @@ impl FabricLaneActivityRecord {
             self.occupied_ticks,
             self.queue_delay_ticks,
             self.queue_delay_ticks,
-            self.first_tick,
-            self.last_tick,
+            self.ready_tick,
+            self.arrival_tick,
         )
+    }
+
+    fn hop_activity(&self) -> FabricHopActivity {
+        FabricHopActivity {
+            packet: self.packet,
+            hop_index: self.hop_index,
+            link: self.link.clone(),
+            virtual_network: self.virtual_network,
+            bytes: self.bytes,
+            ready_tick: self.ready_tick,
+            start_tick: self.start_tick,
+            occupied_ticks: self.occupied_ticks,
+            queue_delay_ticks: self.queue_delay_ticks,
+            depart_tick: self.depart_tick,
+            arrival_tick: self.arrival_tick,
+        }
     }
 }
 
@@ -695,6 +784,17 @@ impl FabricModel {
         collect_lane_activities(records)
     }
 
+    pub fn hop_activities(&self) -> Vec<FabricHopActivity> {
+        collect_hop_activities(&self.activity_log)
+    }
+
+    pub fn hop_activities_since(&self, marker: FabricActivityMarker) -> Vec<FabricHopActivity> {
+        let Some(records) = self.activity_log.get(marker.offset..) else {
+            return Vec::new();
+        };
+        collect_hop_activities(records)
+    }
+
     pub fn link_activities(&self) -> Vec<FabricLinkActivity> {
         FabricLinkActivity::from_lanes(self.lane_activities().iter())
     }
@@ -803,7 +903,7 @@ impl FabricModel {
         let mut arrival_tick = injection_tick;
         let mut timings = Vec::with_capacity(path.hops().len());
 
-        for hop in path.hops() {
+        for (hop_index, hop) in path.hops().iter().enumerate() {
             let ready_tick = arrival_tick;
             let virtual_network = hop.virtual_network().unwrap_or(packet.virtual_network());
             let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
@@ -841,12 +941,16 @@ impl FabricModel {
                 arrival_tick: reservation.arrival_tick,
             });
             self.activity_log.push(FabricLaneActivityRecord::new(
+                packet.id(),
+                hop_index,
                 hop.link().clone(),
                 virtual_network,
                 packet.bytes(),
                 serialization_ticks,
                 queue_delay_ticks,
                 ready_tick,
+                reservation.start_tick,
+                reservation.depart_tick,
                 reservation.arrival_tick,
             ));
             arrival_tick = reservation.arrival_tick;
@@ -870,6 +974,13 @@ fn collect_lane_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricLa
             .or_insert_with(|| record.activity());
     }
     activities.into_values().collect()
+}
+
+fn collect_hop_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricHopActivity> {
+    records
+        .iter()
+        .map(FabricLaneActivityRecord::hop_activity)
+        .collect()
 }
 
 fn serialization_ticks(bytes: u64, bandwidth_bytes_per_tick: u64) -> Tick {
