@@ -404,6 +404,11 @@ Implementation evidence on 2026-05-26:
   activity, and work flags. Local records therefore remain auditable invalid
   actual evidence without satisfying natural parallelism through secondary
   summaries.
+- Workload result summaries apply the same derived-evidence boundary to
+  malformed remote timing. Inverted remote sends, inverted aggregate flow
+  windows, and inverted aggregate delay bounds remain visible as raw actual
+  records for replay validation, but cannot feed remote evidence, endpoint,
+  active-partition, activity, or work summaries.
 - Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
   remote-delay verifier paths now apply the same actual remote evidence
   structural checks before matching or deriving observations, so malformed

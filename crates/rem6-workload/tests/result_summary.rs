@@ -1422,6 +1422,49 @@ fn workload_result_ignores_local_remote_traffic_as_parallel_evidence() {
 }
 
 #[test]
+fn workload_result_ignores_malformed_remote_traffic_as_parallel_evidence() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 2, 9, 3),
+            ParallelRemoteFlowRecord::with_delay_bounds(
+                PartitionId::new(4),
+                PartitionId::new(5),
+                1,
+                7,
+                7,
+                8,
+                2,
+            ),
+        ])
+        .with_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(2),
+            PartitionId::new(3),
+            11,
+            5,
+            0,
+        )]);
+
+    assert_eq!(summary.parallel_scheduler_remote_flows().len(), 2);
+    assert_eq!(summary.parallel_scheduler_remote_sends().len(), 1);
+    assert!(summary.parallel_scheduler_remote_flow_evidence().is_empty());
+    assert_eq!(
+        summary.parallel_scheduler_remote_send_count(PartitionId::new(2), PartitionId::new(3)),
+        0,
+    );
+    assert!(summary
+        .parallel_scheduler_remote_source_partitions()
+        .is_empty());
+    assert!(summary
+        .parallel_scheduler_remote_target_partitions()
+        .is_empty());
+    assert_eq!(summary.active_scheduler_partition_count(), 0);
+    assert!(!summary.has_parallel_scheduler_remote_flows());
+    assert!(!summary.has_parallel_scheduler_remote_sends());
+    assert!(!summary.has_parallel_scheduler_work());
+    assert!(!summary.has_full_system_parallel_scheduler_work());
+}
+
+#[test]
 fn workload_result_reports_accelerator_command_kind_counts() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_accelerator_compute_counts(4, 9, 3, 1)

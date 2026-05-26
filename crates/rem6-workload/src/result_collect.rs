@@ -45,11 +45,16 @@ pub(crate) fn collect_parallel_remote_flows(
 }
 
 pub(crate) fn is_parallel_remote_flow_evidence(flow: ParallelRemoteFlowRecord) -> bool {
-    flow.send_count() != 0 && flow.source() != flow.target()
+    flow.send_count() != 0
+        && flow.source() != flow.target()
+        && flow.first_tick() <= flow.last_tick()
+        && flow
+            .delay_bounds()
+            .is_none_or(|(minimum_delay, maximum_delay)| minimum_delay <= maximum_delay)
 }
 
 pub(crate) fn is_parallel_remote_send_evidence(send: ParallelRemoteSendRecord) -> bool {
-    send.source() != send.target()
+    send.source() != send.target() && send.source_tick() <= send.delivery_tick()
 }
 
 pub(crate) fn collect_parallel_remote_flow_evidence(
