@@ -7,7 +7,9 @@ use rem6_workload::{
 };
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
-use crate::workload_replay_heterogeneous::{WorkloadAcceleratorActivity, WorkloadGpuActivity};
+use crate::workload_replay_heterogeneous::{
+    wait_for_edge_kind_windows_from_edges, WorkloadAcceleratorActivity, WorkloadGpuActivity,
+};
 use crate::{
     RiscvDataCacheProtocol, RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
     RiscvSystemRun,
@@ -195,6 +197,9 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_deadlock_diagnostic_count(),
         )
         .with_data_cache_wait_for_edge_kind_counts(run.data_cache_wait_for_edge_kind_counts())
+        .with_data_cache_wait_for_edge_kind_windows(wait_for_edge_kind_windows_from_edges(
+            run.data_cache_wait_for_edges(),
+        ))
         .with_fabric_activity(
             fabric.active_lane_count(),
             fabric.transfer_count(),
@@ -247,6 +252,10 @@ pub(super) fn parallel_execution_summary(
             run.fabric_wait_for_edge_kind_counts(),
             run.dram_wait_for_edge_kind_counts(),
         )
+        .with_resource_wait_for_edge_kind_windows(
+            wait_for_edge_kind_windows_from_edges(run.fabric_wait_for_edges()),
+            wait_for_edge_kind_windows_from_edges(run.dram_wait_for_edges()),
+        )
         .with_merged_resource_deadlock_diagnostics(run.resource_deadlock_diagnostic_count())
         .with_merged_full_system_deadlock_diagnostics(run.full_system_deadlock_diagnostic_count())
         .with_gpu_compute_counts(
@@ -261,6 +270,9 @@ pub(super) fn parallel_execution_summary(
         )
         .with_gpu_compute_wait_for_edge_kind_counts(
             activities.gpu.wait_for_edge_kind_counts.clone(),
+        )
+        .with_gpu_compute_wait_for_edge_kind_windows(
+            activities.gpu.wait_for_edge_kind_windows.iter().copied(),
         )
         .with_gpu_dma_counts(
             activities.gpu_dma.copy_count,
@@ -309,6 +321,13 @@ pub(super) fn parallel_execution_summary(
         .with_gpu_dma_wait_for_edge_kind_counts(
             activities.gpu_dma.wait_for_edge_kind_counts.clone(),
         )
+        .with_gpu_dma_wait_for_edge_kind_windows(
+            activities
+                .gpu_dma
+                .wait_for_edge_kind_windows
+                .iter()
+                .copied(),
+        )
         .with_accelerator_compute_counts(
             activities.accelerator.command_count,
             activities.accelerator.trace_event_count,
@@ -331,6 +350,13 @@ pub(super) fn parallel_execution_summary(
         )
         .with_accelerator_compute_wait_for_edge_kind_counts(
             activities.accelerator.wait_for_edge_kind_counts.clone(),
+        )
+        .with_accelerator_compute_wait_for_edge_kind_windows(
+            activities
+                .accelerator
+                .wait_for_edge_kind_windows
+                .iter()
+                .copied(),
         )
         .with_accelerator_dma_counts(
             activities.accelerator_dma.copy_count,
@@ -397,6 +423,13 @@ pub(super) fn parallel_execution_summary(
         .with_accelerator_dma_wait_for_edge_kind_counts(
             activities.accelerator_dma.wait_for_edge_kind_counts.clone(),
         )
+        .with_accelerator_dma_wait_for_edge_kind_windows(
+            activities
+                .accelerator_dma
+                .wait_for_edge_kind_windows
+                .iter()
+                .copied(),
+        )
 }
 
 fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
@@ -450,7 +483,7 @@ mod tests {
     };
     use rem6_workload::{
         WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
-        WorkloadParallelBatchTimelineRecord,
+        WorkloadParallelBatchTimelineRecord, WorkloadWaitForEdgeKindWindow,
     };
 
     use super::*;
@@ -1312,6 +1345,42 @@ mod tests {
             summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
             1,
         );
+        assert_eq!(
+            summary.fabric_wait_for_edge_kind_window(WaitForEdgeKind::Queue),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Queue,
+                1,
+                5,
+                5,
+            )),
+        );
+        assert_eq!(
+            summary.data_cache_wait_for_edge_kind_window(WaitForEdgeKind::Protocol),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Protocol,
+                1,
+                7,
+                7,
+            )),
+        );
+        assert_eq!(
+            summary.full_system_wait_for_edge_kind_window(WaitForEdgeKind::Queue),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Queue,
+                1,
+                5,
+                5,
+            )),
+        );
+        assert_eq!(
+            summary.full_system_wait_for_edge_kind_window(WaitForEdgeKind::Protocol),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Protocol,
+                1,
+                7,
+                7,
+            )),
+        );
         assert_eq!(summary.full_system_deadlock_diagnostic_count(), 1);
         assert!(summary.has_full_system_diagnostics());
     }
@@ -1325,6 +1394,14 @@ mod tests {
                 resource_wait_node("gpu.compute.slot.0"),
                 WaitForEdgeKind::Resource,
                 3,
+            )
+            .unwrap();
+        gpu_wait_for
+            .record_wait(
+                transaction_wait_node("gpu.workgroup.0"),
+                resource_wait_node("gpu.compute.slot.0"),
+                WaitForEdgeKind::Resource,
+                8,
             )
             .unwrap();
         let mut accelerator_wait_for = WaitForGraph::new();
@@ -1364,6 +1441,12 @@ mod tests {
         let accelerator_dma = WorkloadAcceleratorDmaActivity {
             wait_for_edge_count: 1,
             wait_for_edge_kind_counts: [(WaitForEdgeKind::Credit, 1)].into(),
+            wait_for_edge_kind_windows: vec![WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Credit,
+                1,
+                11,
+                11,
+            )],
             ..WorkloadAcceleratorDmaActivity::default()
         };
 
@@ -1394,6 +1477,33 @@ mod tests {
         assert_eq!(
             summary.dma_wait_for_edge_count_by_kind(WaitForEdgeKind::Credit),
             1,
+        );
+        assert_eq!(
+            summary.gpu_compute_wait_for_edge_kind_window(WaitForEdgeKind::Resource),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Resource,
+                1,
+                3,
+                8,
+            )),
+        );
+        assert_eq!(
+            summary.accelerator_compute_wait_for_edge_kind_window(WaitForEdgeKind::HostAction),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::HostAction,
+                1,
+                5,
+                5,
+            )),
+        );
+        assert_eq!(
+            summary.dma_wait_for_edge_kind_window(WaitForEdgeKind::Credit),
+            Some(WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Credit,
+                1,
+                11,
+                11,
+            )),
         );
         assert_eq!(summary.full_system_wait_for_edge_count(), 4);
     }

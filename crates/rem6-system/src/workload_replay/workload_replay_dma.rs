@@ -13,7 +13,7 @@ use rem6_transport::{MemoryRouteId, MemoryTrace, MemoryTransport};
 use rem6_workload::{
     WorkloadAcceleratorDmaCopy, WorkloadError, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount, WorkloadRouteId,
-    WorkloadTopology,
+    WorkloadTopology, WorkloadWaitForEdgeKindWindow,
 };
 
 use super::{
@@ -26,7 +26,8 @@ use super::{
     RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
 };
 use crate::workload_replay_heterogeneous::{
-    accelerator_snapshots, merge_wait_for_graph, WorkloadAcceleratorRuntime,
+    accelerator_snapshots, merge_wait_for_graph, wait_for_edge_kind_windows,
+    WorkloadAcceleratorRuntime,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -47,6 +48,7 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     pub(super) wait_for_edge_count: usize,
     pub(super) wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    pub(super) wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     pub(super) deadlock_diagnostic_count: usize,
 }
 
@@ -54,6 +56,7 @@ impl WorkloadAcceleratorDmaActivity {
     fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
         self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
+        self.wait_for_edge_kind_windows = wait_for_edge_kind_windows(&wait_for);
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
@@ -191,6 +194,7 @@ pub(super) fn run_accelerator_dma_copies(
         scheduler_remote_sends: dma_scheduler_remote_sends(scheduler_evidence.remote_sends),
         wait_for_edge_count: 0,
         wait_for_edge_kind_counts: BTreeMap::new(),
+        wait_for_edge_kind_windows: Vec::new(),
         deadlock_diagnostic_count: 0,
     }
     .with_wait_for_graph(wait_for))

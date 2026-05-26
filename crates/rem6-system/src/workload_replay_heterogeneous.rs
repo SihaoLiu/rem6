@@ -9,10 +9,11 @@ use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuKernelId, GpuKernelLaunch,
     GpuWaitForMarker,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForGraph};
+use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdge, WaitForEdgeKind, WaitForGraph};
 use rem6_workload::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadError, WorkloadGpuDevice, WorkloadMemoryRoute, WorkloadTopology,
+    WorkloadWaitForEdgeKindWindow,
 };
 
 use crate::workload_replay::RiscvWorkloadReplayError;
@@ -42,6 +43,7 @@ pub(crate) struct WorkloadGpuActivity {
     pub(crate) active_device_count: usize,
     pub(crate) wait_for_edge_count: usize,
     pub(crate) wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    pub(crate) wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     pub(crate) deadlock_diagnostic_count: usize,
 }
 
@@ -78,6 +80,7 @@ impl WorkloadGpuActivity {
     pub(crate) fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
         self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
+        self.wait_for_edge_kind_windows = wait_for_edge_kind_windows(&wait_for);
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
@@ -118,6 +121,7 @@ pub(crate) struct WorkloadAcceleratorActivity {
     pub(crate) active_device_count: usize,
     pub(crate) wait_for_edge_count: usize,
     pub(crate) wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    pub(crate) wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     pub(crate) deadlock_diagnostic_count: usize,
 }
 
@@ -171,9 +175,43 @@ impl WorkloadAcceleratorActivity {
     pub(crate) fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
         self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
+        self.wait_for_edge_kind_windows = wait_for_edge_kind_windows(&wait_for);
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
+}
+
+pub(crate) fn wait_for_edge_kind_windows(
+    wait_for: &WaitForGraph,
+) -> Vec<WorkloadWaitForEdgeKindWindow> {
+    wait_for_edge_kind_windows_from_edges(wait_for.edges())
+}
+
+pub(crate) fn wait_for_edge_kind_windows_from_edges(
+    edges: impl IntoIterator<Item = WaitForEdge>,
+) -> Vec<WorkloadWaitForEdgeKindWindow> {
+    let mut by_kind = BTreeMap::new();
+    for edge in edges {
+        let window = WorkloadWaitForEdgeKindWindow::new(
+            edge.kind(),
+            1,
+            edge.first_observed_tick(),
+            edge.last_observed_tick(),
+        );
+        by_kind
+            .entry(edge.kind())
+            .and_modify(|stored: &mut WorkloadWaitForEdgeKindWindow| {
+                let edge_count = stored.edge_count().saturating_add(1);
+                *stored = WorkloadWaitForEdgeKindWindow::new(
+                    stored.kind(),
+                    edge_count,
+                    stored.first_tick().min(window.first_tick()),
+                    stored.last_tick().max(window.last_tick()),
+                );
+            })
+            .or_insert(window);
+    }
+    by_kind.into_values().collect()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

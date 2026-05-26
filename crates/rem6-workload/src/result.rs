@@ -149,6 +149,67 @@ impl WorkloadDramQosRequestorSummary {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WorkloadWaitForEdgeKindWindow {
+    kind: WaitForEdgeKind,
+    edge_count: usize,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl WorkloadWaitForEdgeKindWindow {
+    pub const fn new(
+        kind: WaitForEdgeKind,
+        edge_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Self {
+        let stored_first_tick = if first_tick <= last_tick {
+            first_tick
+        } else {
+            last_tick
+        };
+        let stored_last_tick = if first_tick <= last_tick {
+            last_tick
+        } else {
+            first_tick
+        };
+        Self {
+            kind,
+            edge_count,
+            first_tick: stored_first_tick,
+            last_tick: stored_last_tick,
+        }
+    }
+
+    pub const fn kind(&self) -> WaitForEdgeKind {
+        self.kind
+    }
+
+    pub const fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
+    pub const fn first_tick(&self) -> Tick {
+        self.first_tick
+    }
+
+    pub const fn last_tick(&self) -> Tick {
+        self.last_tick
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.edge_count == 0
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        debug_assert_eq!(self.kind, other.kind);
+        self.edge_count = self.edge_count.saturating_add(other.edge_count);
+        self.first_tick = self.first_tick.min(other.first_tick);
+        self.last_tick = self.last_tick.max(other.last_tick);
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorkloadParallelExecutionSummary {
     scheduler_epoch_count: usize,
@@ -204,6 +265,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
     data_cache_wait_for_edge_count: usize,
     data_cache_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    data_cache_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
@@ -218,6 +280,7 @@ pub struct WorkloadParallelExecutionSummary {
     contended_fabric_lane_count: usize,
     fabric_wait_for_edge_count: usize,
     fabric_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    fabric_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     fabric_deadlock_diagnostic_count: usize,
     active_dram_target_count: usize,
     active_dram_port_count: usize,
@@ -238,6 +301,7 @@ pub struct WorkloadParallelExecutionSummary {
     dram_qos_requestor_summaries: Vec<WorkloadDramQosRequestorSummary>,
     dram_wait_for_edge_count: usize,
     dram_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    dram_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     dram_deadlock_diagnostic_count: usize,
     merged_resource_deadlock_diagnostic_count: usize,
     merged_full_system_deadlock_diagnostic_count: usize,
@@ -250,6 +314,7 @@ pub struct WorkloadParallelExecutionSummary {
     active_gpu_device_count: usize,
     gpu_compute_wait_for_edge_count: usize,
     gpu_compute_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    gpu_compute_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     gpu_compute_deadlock_diagnostic_count: usize,
     gpu_dma_copy_count: usize,
     gpu_dma_completion_count: usize,
@@ -267,6 +332,7 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     gpu_dma_wait_for_edge_count: usize,
     gpu_dma_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    gpu_dma_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
     accelerator_gpu_kernel_command_count: usize,
@@ -280,6 +346,7 @@ pub struct WorkloadParallelExecutionSummary {
     active_accelerator_device_count: usize,
     accelerator_compute_wait_for_edge_count: usize,
     accelerator_compute_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    accelerator_compute_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     accelerator_compute_deadlock_diagnostic_count: usize,
     accelerator_dma_copy_count: usize,
     accelerator_dma_completion_count: usize,
@@ -297,6 +364,7 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     accelerator_dma_wait_for_edge_count: usize,
     accelerator_dma_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
+    accelerator_dma_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     accelerator_dma_deadlock_diagnostic_count: usize,
 }
 

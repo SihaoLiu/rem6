@@ -13,7 +13,7 @@ use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary,
     WorkloadParallelRemoteFlowScope, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadResult,
+    WorkloadResult, WorkloadWaitForEdgeKindWindow,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1136,6 +1136,101 @@ fn workload_result_preserves_wait_for_edge_kind_counts() {
             .full_system_wait_for_edge_kind_counts()
             .get(&WaitForEdgeKind::Barrier),
         Some(&3),
+    );
+}
+
+#[test]
+fn workload_result_preserves_wait_for_edge_kind_tick_windows() {
+    let summary =
+        WorkloadParallelExecutionSummary::default()
+            .with_data_cache_wait_for_edge_kind_windows([
+                WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Protocol, 2, 4, 9),
+                WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Barrier, 1, 7, 7),
+            ])
+            .with_resource_wait_for_edge_kind_windows(
+                [WorkloadWaitForEdgeKindWindow::new(
+                    WaitForEdgeKind::Queue,
+                    3,
+                    5,
+                    11,
+                )],
+                [WorkloadWaitForEdgeKindWindow::new(
+                    WaitForEdgeKind::Barrier,
+                    2,
+                    3,
+                    13,
+                )],
+            )
+            .with_gpu_compute_wait_for_edge_kind_windows([WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Resource,
+                5,
+                2,
+                14,
+            )])
+            .with_accelerator_compute_wait_for_edge_kind_windows([
+                WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::HostAction, 7, 6, 18),
+            ])
+            .with_gpu_dma_wait_for_edge_kind_windows([WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Message,
+                11,
+                8,
+                21,
+            )])
+            .with_accelerator_dma_wait_for_edge_kind_windows([WorkloadWaitForEdgeKindWindow::new(
+                WaitForEdgeKind::Credit,
+                13,
+                10,
+                22,
+            )]);
+
+    assert_eq!(
+        summary.data_cache_wait_for_edge_kind_window(WaitForEdgeKind::Protocol),
+        Some(WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Protocol,
+            2,
+            4,
+            9,
+        )),
+    );
+    assert_eq!(
+        summary.resource_wait_for_edge_kind_window(WaitForEdgeKind::Barrier),
+        Some(WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Barrier,
+            2,
+            3,
+            13,
+        )),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_kind_window(WaitForEdgeKind::Barrier),
+        Some(WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Barrier,
+            3,
+            3,
+            13,
+        )),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_kind_window(WaitForEdgeKind::Credit),
+        Some(WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Credit,
+            13,
+            10,
+            22,
+        )),
+    );
+    assert_eq!(summary.full_system_wait_for_edge_count(), 44);
+    assert_eq!(
+        summary.full_system_wait_for_edge_kind_windows(),
+        vec![
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Resource, 5, 2, 14),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Message, 11, 8, 21),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Protocol, 2, 4, 9),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Queue, 3, 5, 11),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Credit, 13, 10, 22),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::HostAction, 7, 6, 18),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Barrier, 3, 3, 13),
+        ],
     );
 }
 

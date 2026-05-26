@@ -130,10 +130,11 @@ isolated bugs:
   resource use, and subsystem-local plus merged
   full-system wait-for/deadlock/livelock cleanliness are observable and
   verifiable without replaying callbacks. Workload result summaries preserve
-  wait-for edge-kind counts across data-cache, fabric, DRAM, GPU and
-  accelerator compute, GPU and accelerator DMA, resource, compute, DMA, and
-  full-system scopes, so barrier, queue, protocol, credit, message, resource,
-  and host-action waits do not collapse into an aggregate dirty count.
+  wait-for edge-kind counts and first/last tick windows across data-cache,
+  fabric, DRAM, GPU and accelerator compute, GPU and accelerator DMA,
+  resource, compute, DMA, and full-system scopes, so barrier, queue, protocol,
+  credit, message, resource, and host-action waits do not collapse into an
+  aggregate dirty count or lose when each kind was observed.
   Workload result summaries also treat
   remote-flow-derived active partitions and recorded frontiers as parallel work
   evidence, so sparse typed traces do not disappear behind empty worker or batch
@@ -528,8 +529,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   counts, deterministic dimension lists, per-dimension record slices, counts, tick windows, and compact summaries by kind, partition, and subject, system-run and workload-level declared-threshold livelock diagnostic records, subject queries, subject summaries, kind summaries with exact kind tick windows, kind-filtered subject and record queries, diagnostic tick windows, and counts, merged resource and
   full-system deadlock diagnostic counts, batch counts derived from the
   strongest available aggregate, worker-count, exact partition-set, or streak evidence,
-  subsystem and full-system wait-for edge-kind counts carried from system,
-  compute, and DMA wait-for graphs into workload summaries,
+  subsystem and full-system wait-for edge-kind counts plus first/last kind
+  tick windows carried from system, compute, and DMA wait-for graphs into
+  workload summaries,
   exact worker-count bucket counts derived from the strongest available
   worker-count, exact partition-set, or streak evidence, duration-weighted
   worker-count tick bucket counts derived from exact batch timeline evidence,

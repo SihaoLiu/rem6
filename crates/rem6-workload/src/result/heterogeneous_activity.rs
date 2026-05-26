@@ -17,9 +17,11 @@ use crate::result_collect::{
 
 use super::{
     wait_for_diagnostics::{
-        merge_wait_for_edge_kind_counts, wait_for_edge_kind_count, wait_for_edge_kind_count_sum,
+        merge_wait_for_edge_kind_counts, merge_wait_for_edge_kind_windows,
+        wait_for_edge_kind_count, wait_for_edge_kind_count_sum, wait_for_edge_kind_window,
+        wait_for_edge_kind_window_count_sum,
     },
-    WorkloadParallelExecutionSummary,
+    WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow,
 };
 
 impl WorkloadParallelExecutionSummary {
@@ -171,6 +173,9 @@ impl WorkloadParallelExecutionSummary {
             .max(wait_for_edge_kind_count_sum(
                 &self.gpu_compute_wait_for_edge_kind_counts,
             ))
+            .max(wait_for_edge_kind_window_count_sum(
+                &self.gpu_compute_wait_for_edge_kind_windows,
+            ))
     }
 
     pub fn gpu_compute_wait_for_edge_kind_counts(&self) -> &BTreeMap<WaitForEdgeKind, usize> {
@@ -178,7 +183,22 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn gpu_compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
-        wait_for_edge_kind_count(&self.gpu_compute_wait_for_edge_kind_counts, kind)
+        wait_for_edge_kind_count(&self.gpu_compute_wait_for_edge_kind_counts, kind).max(
+            wait_for_edge_kind_window(&self.gpu_compute_wait_for_edge_kind_windows, kind)
+                .map(|window| window.edge_count())
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn gpu_compute_wait_for_edge_kind_windows(&self) -> &[WorkloadWaitForEdgeKindWindow] {
+        &self.gpu_compute_wait_for_edge_kind_windows
+    }
+
+    pub fn gpu_compute_wait_for_edge_kind_window(
+        &self,
+        kind: WaitForEdgeKind,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        wait_for_edge_kind_window(&self.gpu_compute_wait_for_edge_kind_windows, kind)
     }
 
     pub const fn gpu_compute_deadlock_diagnostic_count(&self) -> usize {
@@ -351,6 +371,9 @@ impl WorkloadParallelExecutionSummary {
             .max(wait_for_edge_kind_count_sum(
                 &self.gpu_dma_wait_for_edge_kind_counts,
             ))
+            .max(wait_for_edge_kind_window_count_sum(
+                &self.gpu_dma_wait_for_edge_kind_windows,
+            ))
     }
 
     pub fn gpu_dma_wait_for_edge_kind_counts(&self) -> &BTreeMap<WaitForEdgeKind, usize> {
@@ -358,7 +381,22 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn gpu_dma_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
-        wait_for_edge_kind_count(&self.gpu_dma_wait_for_edge_kind_counts, kind)
+        wait_for_edge_kind_count(&self.gpu_dma_wait_for_edge_kind_counts, kind).max(
+            wait_for_edge_kind_window(&self.gpu_dma_wait_for_edge_kind_windows, kind)
+                .map(|window| window.edge_count())
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn gpu_dma_wait_for_edge_kind_windows(&self) -> &[WorkloadWaitForEdgeKindWindow] {
+        &self.gpu_dma_wait_for_edge_kind_windows
+    }
+
+    pub fn gpu_dma_wait_for_edge_kind_window(
+        &self,
+        kind: WaitForEdgeKind,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        wait_for_edge_kind_window(&self.gpu_dma_wait_for_edge_kind_windows, kind)
     }
 
     pub const fn gpu_dma_deadlock_diagnostic_count(&self) -> usize {
@@ -431,6 +469,9 @@ impl WorkloadParallelExecutionSummary {
             .max(wait_for_edge_kind_count_sum(
                 &self.accelerator_compute_wait_for_edge_kind_counts,
             ))
+            .max(wait_for_edge_kind_window_count_sum(
+                &self.accelerator_compute_wait_for_edge_kind_windows,
+            ))
     }
 
     pub fn accelerator_compute_wait_for_edge_kind_counts(
@@ -440,7 +481,24 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn accelerator_compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
-        wait_for_edge_kind_count(&self.accelerator_compute_wait_for_edge_kind_counts, kind)
+        wait_for_edge_kind_count(&self.accelerator_compute_wait_for_edge_kind_counts, kind).max(
+            wait_for_edge_kind_window(&self.accelerator_compute_wait_for_edge_kind_windows, kind)
+                .map(|window| window.edge_count())
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn accelerator_compute_wait_for_edge_kind_windows(
+        &self,
+    ) -> &[WorkloadWaitForEdgeKindWindow] {
+        &self.accelerator_compute_wait_for_edge_kind_windows
+    }
+
+    pub fn accelerator_compute_wait_for_edge_kind_window(
+        &self,
+        kind: WaitForEdgeKind,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        wait_for_edge_kind_window(&self.accelerator_compute_wait_for_edge_kind_windows, kind)
     }
 
     pub const fn accelerator_compute_deadlock_diagnostic_count(&self) -> usize {
@@ -466,6 +524,26 @@ impl WorkloadParallelExecutionSummary {
     pub fn compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
         self.gpu_compute_wait_for_edge_count_by_kind(kind)
             + self.accelerator_compute_wait_for_edge_count_by_kind(kind)
+    }
+
+    pub fn compute_wait_for_edge_kind_windows(&self) -> Vec<WorkloadWaitForEdgeKindWindow> {
+        merge_wait_for_edge_kind_windows(
+            self.gpu_compute_wait_for_edge_kind_windows
+                .iter()
+                .copied()
+                .chain(
+                    self.accelerator_compute_wait_for_edge_kind_windows
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn compute_wait_for_edge_kind_window(
+        &self,
+        kind: WaitForEdgeKind,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        wait_for_edge_kind_window(&self.compute_wait_for_edge_kind_windows(), kind)
     }
 
     pub const fn compute_deadlock_diagnostic_count(&self) -> usize {
@@ -657,6 +735,9 @@ impl WorkloadParallelExecutionSummary {
             .max(wait_for_edge_kind_count_sum(
                 &self.accelerator_dma_wait_for_edge_kind_counts,
             ))
+            .max(wait_for_edge_kind_window_count_sum(
+                &self.accelerator_dma_wait_for_edge_kind_windows,
+            ))
     }
 
     pub fn accelerator_dma_wait_for_edge_kind_counts(&self) -> &BTreeMap<WaitForEdgeKind, usize> {
@@ -664,7 +745,22 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn accelerator_dma_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
-        wait_for_edge_kind_count(&self.accelerator_dma_wait_for_edge_kind_counts, kind)
+        wait_for_edge_kind_count(&self.accelerator_dma_wait_for_edge_kind_counts, kind).max(
+            wait_for_edge_kind_window(&self.accelerator_dma_wait_for_edge_kind_windows, kind)
+                .map(|window| window.edge_count())
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn accelerator_dma_wait_for_edge_kind_windows(&self) -> &[WorkloadWaitForEdgeKindWindow] {
+        &self.accelerator_dma_wait_for_edge_kind_windows
+    }
+
+    pub fn accelerator_dma_wait_for_edge_kind_window(
+        &self,
+        kind: WaitForEdgeKind,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        wait_for_edge_kind_window(&self.accelerator_dma_wait_for_edge_kind_windows, kind)
     }
 
     pub const fn accelerator_dma_deadlock_diagnostic_count(&self) -> usize {
@@ -854,6 +950,26 @@ impl WorkloadParallelExecutionSummary {
     pub fn dma_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
         self.gpu_dma_wait_for_edge_count_by_kind(kind)
             + self.accelerator_dma_wait_for_edge_count_by_kind(kind)
+    }
+
+    pub fn dma_wait_for_edge_kind_windows(&self) -> Vec<WorkloadWaitForEdgeKindWindow> {
+        merge_wait_for_edge_kind_windows(
+            self.gpu_dma_wait_for_edge_kind_windows
+                .iter()
+                .copied()
+                .chain(
+                    self.accelerator_dma_wait_for_edge_kind_windows
+                        .iter()
+                        .copied(),
+                ),
+        )
+    }
+
+    pub fn dma_wait_for_edge_kind_window(
+        &self,
+        kind: WaitForEdgeKind,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        wait_for_edge_kind_window(&self.dma_wait_for_edge_kind_windows(), kind)
     }
 
     pub const fn dma_deadlock_diagnostic_count(&self) -> usize {
