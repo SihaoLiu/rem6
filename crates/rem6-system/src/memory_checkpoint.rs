@@ -88,6 +88,15 @@ impl MemoryStoreCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<MemoryStoreCheckpointRecord, MemoryStoreCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<MemoryStoreCheckpointRecord, MemoryStoreCheckpointError> {
         let payload = registry
             .chunk(&self.component, STORE_CHUNK)
             .ok_or_else(|| MemoryStoreCheckpointError::MissingChunk {
@@ -95,18 +104,36 @@ impl MemoryStoreCheckpointPort {
                 name: STORE_CHUNK.to_string(),
             })?;
         let snapshot = decode_store(&self.component, payload)?;
-        self.store
-            .lock()
-            .expect("partitioned memory lock")
-            .restore(&snapshot)
-            .map_err(|error| MemoryStoreCheckpointError::Memory {
-                component: self.component.clone(),
-                error,
-            })?;
         Ok(MemoryStoreCheckpointRecord::new(
             self.component.clone(),
             snapshot,
         ))
+    }
+
+    fn validate_snapshot(
+        &self,
+        snapshot: &PartitionedMemorySnapshot,
+    ) -> Result<(), MemoryStoreCheckpointError> {
+        PartitionedMemoryStore::from_snapshot(snapshot)
+            .map(|_| ())
+            .map_err(|error| MemoryStoreCheckpointError::Memory {
+                component: self.component.clone(),
+                error,
+            })
+    }
+
+    fn restore_snapshot(
+        &self,
+        snapshot: &PartitionedMemorySnapshot,
+    ) -> Result<(), MemoryStoreCheckpointError> {
+        self.store
+            .lock()
+            .expect("partitioned memory lock")
+            .restore(snapshot)
+            .map_err(|error| MemoryStoreCheckpointError::Memory {
+                component: self.component.clone(),
+                error,
+            })
     }
 }
 
@@ -163,10 +190,19 @@ impl MemoryStoreCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<MemoryStoreCheckpointRecord>, MemoryStoreCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            restored.push(record);
+        }
+        Ok(restored)
     }
 }
 

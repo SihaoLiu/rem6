@@ -10,8 +10,8 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 use rem6_system::{
-    DramMemoryCheckpointPort, DramMemoryCheckpointRecord, MemoryStoreCheckpointPort,
-    MemoryStoreCheckpointRecord,
+    DramMemoryCheckpointPort, DramMemoryCheckpointRecord, MemoryStoreCheckpointBank,
+    MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
 };
 
 fn layout() -> CacheLineLayout {
@@ -195,6 +195,46 @@ fn memory_store_checkpoint_rejects_truncated_payload_without_mutating_store() {
         line_data(0xaa)
     );
     assert_ne!(store.lock().unwrap().snapshot(), original);
+}
+
+#[test]
+fn memory_store_checkpoint_bank_rejects_truncated_payload_without_partial_restore() {
+    let (store0, low0, _high0) = memory_store();
+    let (store1, low1, _high1) = memory_store();
+    let store0 = Arc::new(Mutex::new(store0));
+    let store1 = Arc::new(Mutex::new(store1));
+    let component0 = CheckpointComponentId::new("memory0").unwrap();
+    let component1 = CheckpointComponentId::new("memory1").unwrap();
+    let bank = MemoryStoreCheckpointBank::new([
+        MemoryStoreCheckpointPort::new(component0.clone(), Arc::clone(&store0)),
+        MemoryStoreCheckpointPort::new(component1.clone(), Arc::clone(&store1)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component1, "store", vec![1, 0, 0])
+        .unwrap();
+    store0
+        .lock()
+        .unwrap()
+        .insert_line(low0, Address::new(0x1000), line_data(0xaa))
+        .unwrap();
+    store1
+        .lock()
+        .unwrap()
+        .insert_line(low1, Address::new(0x1000), line_data(0xbb))
+        .unwrap();
+    let before0 = store0.lock().unwrap().snapshot();
+    let before1 = store1.lock().unwrap().snapshot();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(error.component(), &component1);
+    assert_eq!(store0.lock().unwrap().snapshot(), before0);
+    assert_eq!(store1.lock().unwrap().snapshot(), before1);
 }
 
 #[test]

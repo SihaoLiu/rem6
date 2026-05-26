@@ -399,7 +399,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   and explicit before/after read-write ordering, and RISC-V frontend tests cover
   aq/rl ordering propagation into parallel transport atomic requests. Memory and
   cache-controller tests cover atomic responses that capture old bytes before
-  masked writes. RISC-V
+  masked writes, and memory checkpoint-bank tests cover prevalidated
+  multi-store restore so truncated payloads cannot partially mutate live
+  memory state. RISC-V
   cluster tests cover peer reservation invalidation after a completed overlapping store so a later
   `SC.D` fails instead of overwriting the peer's data. RISC-V topology tests
   cover MSI data-cache snoop invalidation before the peer store response reaches
