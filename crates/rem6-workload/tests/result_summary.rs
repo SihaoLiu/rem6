@@ -1780,6 +1780,42 @@ fn workload_result_partition_sets_use_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_partition_activity_uses_full_system_streak_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([(
+            cpu,
+            ParallelPartitionActivity::new(1, 1, 0),
+        )])
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 4),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cpu),
+        Some(ParallelPartitionActivity::with_remote_counts(4, 4, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cache),
+        Some(ParallelPartitionActivity::with_remote_counts(4, 4, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activities(),
+        vec![
+            (
+                cpu,
+                ParallelPartitionActivity::with_remote_counts(4, 4, 0, 0, 0),
+            ),
+            (
+                cache,
+                ParallelPartitionActivity::with_remote_counts(4, 4, 0, 0, 0),
+            ),
+        ],
+    );
+}
+
+#[test]
 fn workload_result_reports_remote_endpoint_partitions() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_remote_flows([

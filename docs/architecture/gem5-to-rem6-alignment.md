@@ -449,6 +449,10 @@ Implementation evidence on 2026-05-26:
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same
   full-system partition coverage that replay contracts use for set minima.
+- Workload full-system per-partition activity reporting now treats explicit
+  full-system partition streaks as worker and dispatch evidence for every
+  partition in the streak. Per-partition reporting therefore cannot drop
+  merged full-system batch evidence after active-partition summaries accept it.
 - Workload direct per-partition activity now normalizes dispatch counts without
   worker evidence to zero while preserving remote send and receive evidence.
   A replay artifact can still prove cross-partition communication, but it

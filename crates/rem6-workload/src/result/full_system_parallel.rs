@@ -279,16 +279,39 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_partition_activities(
         &self,
     ) -> Vec<(PartitionId, ParallelPartitionActivity)> {
-        collect_parallel_partition_activities(
+        let mut partitions = BTreeSet::new();
+        partitions.extend(
             self.parallel_scheduler_partition_activities
                 .iter()
-                .copied()
-                .chain(
-                    self.data_cache_parallel_scheduler_partition_activities
-                        .iter()
-                        .copied(),
-                ),
-        )
+                .map(|(partition, _)| *partition),
+        );
+        partitions.extend(
+            self.data_cache_parallel_scheduler_partition_activities
+                .iter()
+                .map(|(partition, _)| *partition),
+        );
+        for set in self.full_system_parallel_scheduler_batch_partition_sets() {
+            partitions.extend(set.partitions().iter().copied());
+        }
+        for streak in self.full_system_parallel_scheduler_batch_partition_streaks() {
+            partitions.extend(streak.partitions().iter().copied());
+        }
+        for flow in self.full_system_parallel_scheduler_remote_flows() {
+            if is_parallel_remote_flow_evidence(flow) {
+                partitions.insert(flow.source());
+                partitions.insert(flow.target());
+            }
+        }
+        for send in self.full_system_parallel_scheduler_remote_sends() {
+            if is_parallel_remote_send_evidence(send) {
+                partitions.insert(send.source());
+                partitions.insert(send.target());
+            }
+        }
+        collect_parallel_partition_activities(partitions.into_iter().filter_map(|partition| {
+            self.full_system_parallel_scheduler_partition_activity(partition)
+                .map(|activity| (partition, activity))
+        }))
     }
 
     pub fn full_system_parallel_scheduler_partition_activity(
@@ -307,13 +330,18 @@ impl WorkloadParallelExecutionSummary {
             &self.dma_scheduler_remote_sends(),
             partition,
         );
-        merge_parallel_partition_activity_options(
+        let scoped_activity = merge_parallel_partition_activity_options(
             merge_parallel_partition_activity_options(
                 self.parallel_scheduler_partition_activity(partition),
                 self.data_cache_parallel_scheduler_partition_activity(partition),
             ),
             merge_parallel_partition_activity_evidence_options(dma_activity, dma_remote_activity),
-        )
+        );
+        let full_system_activity = parallel_batch_streak_activity_for_partition(
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+            partition,
+        );
+        merge_parallel_partition_activity_evidence_options(scoped_activity, full_system_activity)
     }
 
     pub fn full_system_parallel_scheduler_remote_flow_count(
