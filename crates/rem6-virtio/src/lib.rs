@@ -9,12 +9,35 @@ use rem6_mmio::{
     MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse,
 };
 
+mod block;
 mod device_config;
 mod isr;
 mod pci_capability;
 mod shared_memory;
 mod transport;
 
+pub use block::{
+    VirtioBlockCacheMode, VirtioBlockConfigSpec, VirtioBlockDiscardLimits, VirtioBlockGeometry,
+    VirtioBlockSecureEraseLimits, VirtioBlockTopology, VirtioBlockWriteZeroesLimits,
+    VIRTIO_BLOCK_CONFIG_ALIGNMENT_OFFSET_OFFSET, VIRTIO_BLOCK_CONFIG_BLK_SIZE_OFFSET,
+    VIRTIO_BLOCK_CONFIG_CAPACITY_OFFSET, VIRTIO_BLOCK_CONFIG_CYLINDERS_OFFSET,
+    VIRTIO_BLOCK_CONFIG_DISCARD_ALIGNMENT_OFFSET, VIRTIO_BLOCK_CONFIG_HEADS_OFFSET,
+    VIRTIO_BLOCK_CONFIG_MAX_DISCARD_SECTORS_OFFSET, VIRTIO_BLOCK_CONFIG_MAX_DISCARD_SEG_OFFSET,
+    VIRTIO_BLOCK_CONFIG_MAX_SECURE_ERASE_SECTORS_OFFSET,
+    VIRTIO_BLOCK_CONFIG_MAX_SECURE_ERASE_SEG_OFFSET,
+    VIRTIO_BLOCK_CONFIG_MAX_WRITE_ZEROES_SECTORS_OFFSET,
+    VIRTIO_BLOCK_CONFIG_MAX_WRITE_ZEROES_SEG_OFFSET, VIRTIO_BLOCK_CONFIG_MIN_IO_SIZE_OFFSET,
+    VIRTIO_BLOCK_CONFIG_NUM_QUEUES_OFFSET, VIRTIO_BLOCK_CONFIG_OPT_IO_SIZE_OFFSET,
+    VIRTIO_BLOCK_CONFIG_PHYSICAL_BLOCK_EXP_OFFSET, VIRTIO_BLOCK_CONFIG_SECTORS_OFFSET,
+    VIRTIO_BLOCK_CONFIG_SECURE_ERASE_ALIGNMENT_OFFSET, VIRTIO_BLOCK_CONFIG_SEG_MAX_OFFSET,
+    VIRTIO_BLOCK_CONFIG_SIZE, VIRTIO_BLOCK_CONFIG_SIZE_MAX_OFFSET,
+    VIRTIO_BLOCK_CONFIG_UNUSED0_OFFSET, VIRTIO_BLOCK_CONFIG_UNUSED1_OFFSET,
+    VIRTIO_BLOCK_CONFIG_WRITEBACK_OFFSET, VIRTIO_BLOCK_CONFIG_WRITE_ZEROES_MAY_UNMAP_OFFSET,
+    VIRTIO_BLOCK_DEVICE_ID, VIRTIO_BLOCK_F_BLK_SIZE, VIRTIO_BLOCK_F_CONFIG_WCE,
+    VIRTIO_BLOCK_F_DISCARD, VIRTIO_BLOCK_F_FLUSH, VIRTIO_BLOCK_F_GEOMETRY, VIRTIO_BLOCK_F_MQ,
+    VIRTIO_BLOCK_F_RO, VIRTIO_BLOCK_F_SECURE_ERASE, VIRTIO_BLOCK_F_SEG_MAX,
+    VIRTIO_BLOCK_F_SIZE_MAX, VIRTIO_BLOCK_F_TOPOLOGY, VIRTIO_BLOCK_F_WRITE_ZEROES,
+};
 pub use device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
     VirtioPciDeviceConfigSpec,
@@ -1210,6 +1233,45 @@ pub enum VirtioError {
     ReadOnlyDeviceConfigWrite {
         offset: u64,
     },
+    InvalidBlockCapacity,
+    InvalidBlockSizeMax {
+        size_max: u32,
+    },
+    InvalidBlockSegMax {
+        seg_max: u32,
+    },
+    InvalidBlockSize {
+        block_size: u32,
+    },
+    InvalidBlockQueueCount {
+        queues: u16,
+    },
+    BlockWritebackRequiresFlush,
+    InvalidBlockGeometry {
+        cylinders: u16,
+        heads: u8,
+        sectors: u8,
+    },
+    InvalidBlockTopology {
+        physical_block_exp: u8,
+        alignment_offset: u8,
+        min_io_size: u16,
+        opt_io_size: u32,
+    },
+    InvalidBlockDiscardLimits {
+        max_sectors: u32,
+        max_segments: u32,
+        sector_alignment: u32,
+    },
+    InvalidBlockWriteZeroesLimits {
+        max_sectors: u32,
+        max_segments: u32,
+    },
+    InvalidBlockSecureEraseLimits {
+        max_sectors: u32,
+        max_segments: u32,
+        sector_alignment: u32,
+    },
     ZeroPciCapabilityRegion {
         cfg_type: u8,
     },
@@ -1391,6 +1453,69 @@ impl fmt::Display for VirtioError {
             Self::ReadOnlyDeviceConfigWrite { offset } => {
                 write!(formatter, "VirtIO device config byte {offset} is read-only")
             }
+            Self::InvalidBlockCapacity => {
+                write!(formatter, "VirtIO block capacity must be nonzero")
+            }
+            Self::InvalidBlockSizeMax { size_max } => write!(
+                formatter,
+                "VirtIO block size_max {size_max} must be nonzero when offered"
+            ),
+            Self::InvalidBlockSegMax { seg_max } => write!(
+                formatter,
+                "VirtIO block seg_max {seg_max} must be nonzero when offered"
+            ),
+            Self::InvalidBlockSize { block_size } => write!(
+                formatter,
+                "VirtIO block size {block_size} must be a power of two at least 512 bytes"
+            ),
+            Self::InvalidBlockQueueCount { queues } => write!(
+                formatter,
+                "VirtIO block queue count {queues} must be nonzero when multiqueue is offered"
+            ),
+            Self::BlockWritebackRequiresFlush => write!(
+                formatter,
+                "VirtIO block writeback configuration requires the flush feature"
+            ),
+            Self::InvalidBlockGeometry {
+                cylinders,
+                heads,
+                sectors,
+            } => write!(
+                formatter,
+                "VirtIO block geometry is invalid: cylinders {cylinders}, heads {heads}, sectors {sectors}"
+            ),
+            Self::InvalidBlockTopology {
+                physical_block_exp,
+                alignment_offset,
+                min_io_size,
+                opt_io_size,
+            } => write!(
+                formatter,
+                "VirtIO block topology is invalid: physical_block_exp {physical_block_exp}, alignment_offset {alignment_offset}, min_io_size {min_io_size}, opt_io_size {opt_io_size}"
+            ),
+            Self::InvalidBlockDiscardLimits {
+                max_sectors,
+                max_segments,
+                sector_alignment,
+            } => write!(
+                formatter,
+                "VirtIO block discard limits are invalid: max_sectors {max_sectors}, max_segments {max_segments}, sector_alignment {sector_alignment}"
+            ),
+            Self::InvalidBlockWriteZeroesLimits {
+                max_sectors,
+                max_segments,
+            } => write!(
+                formatter,
+                "VirtIO block write zeroes limits are invalid: max_sectors {max_sectors}, max_segments {max_segments}"
+            ),
+            Self::InvalidBlockSecureEraseLimits {
+                max_sectors,
+                max_segments,
+                sector_alignment,
+            } => write!(
+                formatter,
+                "VirtIO block secure erase limits are invalid: max_sectors {max_sectors}, max_segments {max_segments}, sector_alignment {sector_alignment}"
+            ),
             Self::ZeroPciCapabilityRegion { cfg_type } => {
                 write!(formatter, "VirtIO PCI capability type {cfg_type} has zero length")
             }
