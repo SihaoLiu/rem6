@@ -185,6 +185,8 @@ fn workload_replay_plan_rejects_missing_or_underactive_fabric_virtual_network_ac
             minimum_active_lane_count: 2,
             minimum_queue_delay_ticks: 6,
             minimum_contended_lane_count: 1,
+            required_first_tick: None,
+            required_last_tick: None,
         },
     );
 
@@ -198,6 +200,8 @@ fn workload_replay_plan_rejects_missing_or_underactive_fabric_virtual_network_ac
             minimum_active_lane_count: 2,
             minimum_queue_delay_ticks: 6,
             minimum_contended_lane_count: 1,
+            required_first_tick: None,
+            required_last_tick: None,
         },
     );
 
@@ -219,6 +223,81 @@ fn workload_replay_plan_rejects_missing_or_underactive_fabric_virtual_network_ac
             actual_queue_delay_ticks: 5,
             minimum_contended_lane_count: 1,
             actual_contended_lane_count: 0,
+            required_first_tick: None,
+            actual_first_tick: 0,
+            required_last_tick: None,
+            actual_last_tick: 8,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_fabric_virtual_network_activity_outside_required_window() {
+    let expected = expected_virtual_network_activity(1, 4, 2, 6, 1)
+        .with_required_tick_window(4, 16)
+        .unwrap();
+    assert_eq!(expected.required_tick_window(), Some((4, 16)));
+    assert_eq!(expected.required_first_tick(), Some(4));
+    assert_eq!(expected.required_last_tick(), Some(16));
+    let plan = replay_plan()
+        .add_expected_fabric_virtual_network_activity(expected)
+        .unwrap();
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 9, 5, 1, 4, 16,
+        )]);
+    let satisfied = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied).unwrap();
+
+    let late_start_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 9, 5, 1, 5, 18,
+        )]);
+    let late_start = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(late_start_summary);
+    assert_eq!(
+        plan.verify_result(&late_start).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityBelowMinimum {
+            virtual_network: vn(1),
+            minimum_transfer_count: 4,
+            actual_transfer_count: 5,
+            minimum_active_lane_count: 2,
+            actual_active_lane_count: 2,
+            minimum_queue_delay_ticks: 6,
+            actual_queue_delay_ticks: 9,
+            minimum_contended_lane_count: 1,
+            actual_contended_lane_count: 1,
+            required_first_tick: Some(4),
+            actual_first_tick: 5,
+            required_last_tick: Some(16),
+            actual_last_tick: 18,
+        },
+    );
+
+    let early_end_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 9, 5, 1, 3, 15,
+        )]);
+    let early_end = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(early_end_summary);
+    assert_eq!(
+        plan.verify_result(&early_end).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityBelowMinimum {
+            virtual_network: vn(1),
+            minimum_transfer_count: 4,
+            actual_transfer_count: 5,
+            minimum_active_lane_count: 2,
+            actual_active_lane_count: 2,
+            minimum_queue_delay_ticks: 6,
+            actual_queue_delay_ticks: 9,
+            minimum_contended_lane_count: 1,
+            actual_contended_lane_count: 1,
+            required_first_tick: Some(4),
+            actual_first_tick: 3,
+            required_last_tick: Some(16),
+            actual_last_tick: 15,
         },
     );
 }
@@ -327,12 +406,72 @@ fn workload_manifest_identity_changes_with_fabric_virtual_network_queue_budget()
 }
 
 #[test]
+fn workload_manifest_identity_changes_with_fabric_virtual_network_activity_window() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-window"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(expected_virtual_network_activity(1, 4, 2, 6, 1))
+    .unwrap()
+    .build()
+    .unwrap();
+    let windowed = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-window"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_required_tick_window(4, 16)
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    let shifted = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-window"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_required_tick_window(5, 16)
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), windowed.identity());
+    assert_ne!(windowed.identity(), shifted.identity());
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_fabric_virtual_network_activity() {
     let zero = WorkloadExpectedFabricVirtualNetworkActivity::new(vn(1), 0, 0, 0, 0).unwrap_err();
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedFabricVirtualNetworkActivity {
             virtual_network: vn(1),
+        },
+    );
+
+    let invalid_window = expected_virtual_network_activity(1, 1, 1, 0, 0)
+        .with_required_tick_window(9, 7)
+        .unwrap_err();
+    assert_eq!(
+        invalid_window,
+        WorkloadError::InvalidExpectedFabricVirtualNetworkActivityWindow {
+            virtual_network: vn(1),
+            first_tick: 9,
+            last_tick: 7,
         },
     );
 

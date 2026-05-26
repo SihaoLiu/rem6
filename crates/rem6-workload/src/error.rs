@@ -1263,6 +1263,11 @@ pub enum WorkloadError {
     DuplicateExpectedFabricVirtualNetworkActivity {
         virtual_network: VirtualNetworkId,
     },
+    InvalidExpectedFabricVirtualNetworkActivityWindow {
+        virtual_network: VirtualNetworkId,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
     InvalidExpectedFabricVirtualNetworkActivityQueueDelayBudget {
         virtual_network: VirtualNetworkId,
         maximum_queue_delay_ticks: Tick,
@@ -1274,6 +1279,8 @@ pub enum WorkloadError {
         minimum_active_lane_count: usize,
         minimum_queue_delay_ticks: Tick,
         minimum_contended_lane_count: usize,
+        required_first_tick: Option<Tick>,
+        required_last_tick: Option<Tick>,
     },
     ExpectedFabricVirtualNetworkActivityBelowMinimum {
         virtual_network: VirtualNetworkId,
@@ -1285,6 +1292,10 @@ pub enum WorkloadError {
         actual_queue_delay_ticks: Tick,
         minimum_contended_lane_count: usize,
         actual_contended_lane_count: usize,
+        required_first_tick: Option<Tick>,
+        actual_first_tick: Tick,
+        required_last_tick: Option<Tick>,
+        actual_last_tick: Tick,
     },
     ExpectedFabricVirtualNetworkActivityAboveMaximum {
         virtual_network: VirtualNetworkId,

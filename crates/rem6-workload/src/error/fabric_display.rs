@@ -192,6 +192,15 @@ pub(super) fn format_fabric_activity_error(
                 virtual_network.get()
             )
         }
+        WorkloadError::InvalidExpectedFabricVirtualNetworkActivityWindow {
+            virtual_network,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity window first tick {first_tick} is after last tick {last_tick}",
+            virtual_network.get()
+        ),
         WorkloadError::InvalidExpectedFabricVirtualNetworkActivityQueueDelayBudget {
             virtual_network,
             maximum_queue_delay_ticks,
@@ -207,10 +216,14 @@ pub(super) fn format_fabric_activity_error(
             minimum_active_lane_count,
             minimum_queue_delay_ticks,
             minimum_contended_lane_count,
+            required_first_tick,
+            required_last_tick,
         } => write!(
             formatter,
-            "missing parallel summary for expected fabric virtual network {} activity with at least {minimum_transfer_count} transfers, {minimum_active_lane_count} active lanes, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_lane_count} contended lanes",
-            virtual_network.get()
+            "missing parallel summary for expected fabric virtual network {} activity with at least {minimum_transfer_count} transfers, {minimum_active_lane_count} active lanes, {minimum_queue_delay_ticks} queue delay ticks, {minimum_contended_lane_count} contended lanes, first tick {}, and last tick {}",
+            virtual_network.get(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
         ),
         WorkloadError::ExpectedFabricVirtualNetworkActivityBelowMinimum {
             virtual_network,
@@ -222,10 +235,16 @@ pub(super) fn format_fabric_activity_error(
             actual_queue_delay_ticks,
             minimum_contended_lane_count,
             actual_contended_lane_count,
+            required_first_tick,
+            actual_first_tick,
+            required_last_tick,
+            actual_last_tick,
         } => write!(
             formatter,
-            "expected fabric virtual network {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_lane_count} active lanes, {minimum_queue_delay_ticks} queue delay ticks, and {minimum_contended_lane_count} contended lanes, got {actual_transfer_count} transfers, {actual_active_lane_count} active lanes, {actual_queue_delay_ticks} queue delay ticks, and {actual_contended_lane_count} contended lanes",
-            virtual_network.get()
+            "expected fabric virtual network {} activity to reach at least {minimum_transfer_count} transfers, {minimum_active_lane_count} active lanes, {minimum_queue_delay_ticks} queue delay ticks, {minimum_contended_lane_count} contended lanes, first tick {}, and last tick {}, got {actual_transfer_count} transfers, {actual_active_lane_count} active lanes, {actual_queue_delay_ticks} queue delay ticks, {actual_contended_lane_count} contended lanes, first tick {actual_first_tick}, and last tick {actual_last_tick}",
+            virtual_network.get(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
         ),
         WorkloadError::ExpectedFabricVirtualNetworkActivityAboveMaximum {
             virtual_network,

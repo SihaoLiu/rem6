@@ -12,6 +12,8 @@ pub struct WorkloadExpectedFabricVirtualNetworkActivity {
     minimum_contended_lane_count: usize,
     maximum_queue_delay_ticks: Option<Tick>,
     maximum_max_queue_delay_ticks: Option<Tick>,
+    required_first_tick: Option<Tick>,
+    required_last_tick: Option<Tick>,
 }
 
 impl WorkloadExpectedFabricVirtualNetworkActivity {
@@ -39,6 +41,8 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
             minimum_contended_lane_count,
             maximum_queue_delay_ticks: None,
             maximum_max_queue_delay_ticks: None,
+            required_first_tick: None,
+            required_last_tick: None,
         })
     }
 
@@ -58,6 +62,25 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
         }
         self.maximum_queue_delay_ticks = Some(maximum_queue_delay_ticks);
         self.maximum_max_queue_delay_ticks = Some(maximum_max_queue_delay_ticks);
+        Ok(self)
+    }
+
+    pub fn with_required_tick_window(
+        mut self,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if first_tick > last_tick {
+            return Err(
+                WorkloadError::InvalidExpectedFabricVirtualNetworkActivityWindow {
+                    virtual_network: self.virtual_network,
+                    first_tick,
+                    last_tick,
+                },
+            );
+        }
+        self.required_first_tick = Some(first_tick);
+        self.required_last_tick = Some(last_tick);
         Ok(self)
     }
 
@@ -101,6 +124,21 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
         self.maximum_max_queue_delay_ticks
     }
 
+    pub const fn required_tick_window(self) -> Option<(Tick, Tick)> {
+        match (self.required_first_tick, self.required_last_tick) {
+            (Some(first_tick), Some(last_tick)) => Some((first_tick, last_tick)),
+            _ => None,
+        }
+    }
+
+    pub const fn required_first_tick(self) -> Option<Tick> {
+        self.required_first_tick
+    }
+
+    pub const fn required_last_tick(self) -> Option<Tick> {
+        self.required_last_tick
+    }
+
     pub(crate) const fn sort_key(self) -> u16 {
         self.virtual_network.get()
     }
@@ -110,6 +148,12 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
             || activity.active_lane_count() < self.minimum_active_lane_count
             || activity.queue_delay_ticks() < self.minimum_queue_delay_ticks
             || activity.contended_lane_count() < self.minimum_contended_lane_count
+            || self
+                .required_first_tick
+                .is_some_and(|required| activity.first_tick() > required)
+            || self
+                .required_last_tick
+                .is_some_and(|required| activity.last_tick() < required)
     }
 
     pub(crate) fn above_maximum(self, activity: &FabricVirtualNetworkActivity) -> bool {
