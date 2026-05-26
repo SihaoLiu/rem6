@@ -422,7 +422,7 @@ fn validate_remote_flow_scope_evidence(
     scope: WorkloadParallelRemoteFlowScope,
 ) -> Result<(), WorkloadError> {
     validate_remote_send_scope_evidence(summary, scope)?;
-    let explicit_flows = explicit_parallel_remote_flows_for_scope(summary, scope);
+    let explicit_flows = raw_explicit_parallel_remote_flows_for_scope(summary, scope);
     for flow in explicit_flows {
         validate_remote_traffic_flow_evidence(scope, flow)?;
     }
@@ -534,6 +534,44 @@ fn explicit_parallel_remote_flows_for_scope(
                         .copied(),
                 ),
         ),
+    }
+}
+
+fn raw_explicit_parallel_remote_flows_for_scope(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelRemoteFlowScope,
+) -> Vec<ParallelRemoteFlowRecord> {
+    match scope {
+        WorkloadParallelRemoteFlowScope::Scheduler => {
+            summary.parallel_scheduler_remote_flows().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            .data_cache_parallel_scheduler_remote_flows()
+            .to_vec(),
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+            summary.gpu_dma_scheduler_remote_flows().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+            summary.accelerator_dma_scheduler_remote_flows().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::FullSystem => summary
+            .parallel_scheduler_remote_flows()
+            .iter()
+            .copied()
+            .chain(
+                summary
+                    .data_cache_parallel_scheduler_remote_flows()
+                    .iter()
+                    .copied(),
+            )
+            .chain(summary.gpu_dma_scheduler_remote_flows().iter().copied())
+            .chain(
+                summary
+                    .accelerator_dma_scheduler_remote_flows()
+                    .iter()
+                    .copied(),
+            )
+            .collect(),
     }
 }
 

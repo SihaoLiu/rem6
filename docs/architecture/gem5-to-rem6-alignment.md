@@ -418,6 +418,10 @@ Implementation evidence on 2026-05-26:
   remote-flow evidence still aggregates valid same-route records, while replay
   validation can reject a malformed aggregate record even when another record
   on the same route is valid.
+- Workload full-system remote-flow validation now scans subsystem raw
+  aggregate records before same-route full-system merging. Malformed scheduler,
+  data-cache, GPU DMA, or accelerator DMA aggregate records cannot be hidden by
+  another valid contribution on the same full-system route.
 - Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
   remote-delay verifier paths now apply the same actual remote evidence
   structural checks before matching or deriving observations, so malformed
