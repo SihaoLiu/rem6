@@ -7,6 +7,7 @@ use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 mod interrupt;
 mod mmio;
 mod msi;
+mod msix;
 
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
@@ -14,6 +15,7 @@ pub use interrupt::{
 };
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};
+pub use msix::{PciMsixCapabilitySpec, PciMsixPort, PciMsixRoute};
 
 pub(crate) const PCI_CONFIG_SPACE_SIZE: usize = 256;
 const PCI_VENDOR_ID_OFFSET: usize = 0x00;
@@ -406,6 +408,7 @@ pub struct PciEndpointConfig {
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
     msi: Option<msi::PciMsiCapabilityState>,
+    msix: Option<msix::PciMsixCapabilityState>,
 }
 
 impl PciEndpointConfig {
@@ -430,6 +433,7 @@ impl PciEndpointConfig {
             config,
             bars: std::array::from_fn(|_| None),
             msi: None,
+            msix: None,
         }
     }
 
@@ -510,6 +514,11 @@ impl PciEndpointConfig {
                 return msi.write_config(offset, data, &mut self.config);
             }
         }
+        if let Some(msix) = self.msix.as_mut() {
+            if msix.contains(offset, size) {
+                return msix.write_config(offset, data, &mut self.config);
+            }
+        }
 
         match offset.as_usize() {
             PCI_COMMAND_OFFSET if data.len() == 2 => {
@@ -566,6 +575,7 @@ impl PciEndpointConfig {
             config: self.config,
             bars: self.bars.clone(),
             msi: self.msi.clone(),
+            msix: self.msix.clone(),
         }
     }
 
@@ -601,10 +611,19 @@ impl PciEndpointConfig {
         {
             return Err(PciError::SnapshotMsiCapabilityMismatch);
         }
+        if self.msix.as_ref().map(msix::PciMsixCapabilityState::spec)
+            != snapshot
+                .msix
+                .as_ref()
+                .map(msix::PciMsixCapabilityState::spec)
+        {
+            return Err(PciError::SnapshotMsixCapabilityMismatch);
+        }
 
         self.config = snapshot.config;
         self.bars = snapshot.bars.clone();
         self.msi = snapshot.msi.clone();
+        self.msix = snapshot.msix.clone();
         Ok(())
     }
 
@@ -675,6 +694,7 @@ pub struct PciEndpointConfigSnapshot {
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
     msi: Option<msi::PciMsiCapabilityState>,
+    msix: Option<msix::PciMsixCapabilityState>,
 }
 
 impl PciEndpointConfigSnapshot {
@@ -1209,6 +1229,46 @@ pub enum PciError {
         expected: PciMsiMessage,
         actual: PciMsiMessage,
     },
+    SnapshotMsixCapabilityMismatch,
+    InvalidMsixCapabilityOffset {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    InvalidMsixVectorCount {
+        count: u16,
+    },
+    OverlappingMsixRegions {
+        table_bar: PciBarIndex,
+        pba_bar: PciBarIndex,
+    },
+    DuplicateMsixCapability,
+    MissingMsixCapability {
+        function: PciFunctionAddress,
+    },
+    InvalidMsixVector {
+        vector: u16,
+        vector_count: u16,
+    },
+    MsixRegionAccessOutsideTable {
+        address: Address,
+        size: AccessSize,
+    },
+    ReadOnlyMsixPbaWrite {
+        address: Address,
+        size: AccessSize,
+    },
+    UnalignedMsixRegionAccess {
+        address: Address,
+        size: AccessSize,
+    },
+    MsixEndpointMismatch {
+        expected: PciFunctionAddress,
+        actual: PciFunctionAddress,
+    },
+    MsixMessageMismatch {
+        expected: PciMsiMessage,
+        actual: PciMsiMessage,
+    },
     Interrupt(rem6_interrupt::InterruptError),
     Memory(MemoryError),
 }
@@ -1414,6 +1474,69 @@ impl fmt::Display for PciError {
             Self::MsiMessageMismatch { expected, actual } => write!(
                 f,
                 "PCI MSI message mismatch: expected {:?}, got {:?}",
+                expected, actual
+            ),
+            Self::SnapshotMsixCapabilityMismatch => {
+                write!(
+                    f,
+                    "PCI snapshot MSI-X capability does not match this endpoint"
+                )
+            }
+            Self::InvalidMsixCapabilityOffset { offset, size } => write!(
+                f,
+                "PCI MSI-X capability at {:#x} for {} bytes does not fit the writable capability area",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::InvalidMsixVectorCount { count } => {
+                write!(f, "PCI MSI-X vector count {count} is outside 1..=2048")
+            }
+            Self::OverlappingMsixRegions { table_bar, pba_bar } => write!(
+                f,
+                "PCI MSI-X table BAR {} overlaps PBA BAR {}",
+                table_bar.get(),
+                pba_bar.get()
+            ),
+            Self::DuplicateMsixCapability => {
+                write!(f, "PCI MSI-X capability is already installed")
+            }
+            Self::MissingMsixCapability { function } => {
+                write!(f, "PCI function {:?} has no MSI-X capability", function)
+            }
+            Self::InvalidMsixVector {
+                vector,
+                vector_count,
+            } => write!(
+                f,
+                "PCI MSI-X vector {} is outside configured vector count {}",
+                vector, vector_count
+            ),
+            Self::MsixRegionAccessOutsideTable { address, size } => write!(
+                f,
+                "PCI MSI-X region access at {:#x} for {} bytes is outside table and PBA ranges",
+                address.get(),
+                size.bytes()
+            ),
+            Self::ReadOnlyMsixPbaWrite { address, size } => write!(
+                f,
+                "PCI MSI-X PBA write at {:#x} for {} bytes targets read-only state",
+                address.get(),
+                size.bytes()
+            ),
+            Self::UnalignedMsixRegionAccess { address, size } => write!(
+                f,
+                "PCI MSI-X region access at {:#x} for {} bytes has an unsupported alignment or size",
+                address.get(),
+                size.bytes()
+            ),
+            Self::MsixEndpointMismatch { expected, actual } => write!(
+                f,
+                "PCI MSI-X endpoint mismatch: expected {:?}, got {:?}",
+                expected, actual
+            ),
+            Self::MsixMessageMismatch { expected, actual } => write!(
+                f,
+                "PCI MSI-X message mismatch: expected {:?}, got {:?}",
                 expected, actual
             ),
             Self::Interrupt(error) => write!(f, "{error}"),
