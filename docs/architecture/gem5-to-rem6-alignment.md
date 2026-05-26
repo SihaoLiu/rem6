@@ -396,6 +396,12 @@ Implementation evidence on 2026-05-26:
   window, or target-node window expectations. Exact diagnostic windows can no
   longer be used to satisfy replay while a weaker same-kind summary hides the
   stronger evidence.
+- Workload wait-for diagnostic replay also rejects same-scope summaries whose
+  total wait-for edge count falls below the strongest typed edge-kind,
+  edge-kind window, blocked-node window, or target-node window evidence before
+  applying diagnostic expectations. Aggregate clean or dirty diagnostic checks
+  therefore cannot hide stronger typed blocking evidence behind a smaller total
+  counter.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

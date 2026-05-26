@@ -628,6 +628,41 @@ fn workload_replay_plan_rejects_inconsistent_wait_for_diagnostic_summary() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inconsistent_wait_for_edge_count_summary() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("inconsistent-wait-edge-count-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_count(expected_wait_kind(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        WaitForEdgeKind::Barrier,
+        2,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let inconsistent_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_counts([(WaitForEdgeKind::Barrier, 2)])
+        .with_data_cache_diagnostics(1, 0);
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(inconsistent_summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelWaitForEdgeCountSummary {
+            scope: WorkloadParallelDiagnosticScope::DataCache,
+            wait_for_edge_count: 1,
+            evidence_edge_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_verifies_parallel_wait_for_edge_kind_windows() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("verify-wait-kind-window-diagnostics"),

@@ -1568,6 +1568,11 @@ pub enum WorkloadError {
         minimum_edge_count: usize,
         actual_edge_count: usize,
     },
+    InvalidParallelWaitForEdgeCountSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        wait_for_edge_count: usize,
+        evidence_edge_count: usize,
+    },
     InvalidParallelWaitForEdgeKindWindowSummary {
         scope: WorkloadParallelDiagnosticScope,
         kind: WaitForEdgeKind,

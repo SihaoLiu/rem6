@@ -128,6 +128,14 @@ impl WorkloadParallelExecutionSummary {
                 self.validate_resource_diagnostic_summary()
             }
             WorkloadParallelDiagnosticScope::DataCache => {
+                validate_wait_for_edge_count_summary(
+                    scope,
+                    self.data_cache_wait_for_edge_count,
+                    &self.data_cache_wait_for_edge_kind_counts,
+                    &self.data_cache_wait_for_edge_kind_windows,
+                    &self.data_cache_wait_for_blocked_node_windows,
+                    &self.data_cache_wait_for_target_node_windows,
+                )?;
                 validate_wait_for_edge_kind_window_summary(
                     scope,
                     &self.data_cache_wait_for_edge_kind_counts,
@@ -135,10 +143,26 @@ impl WorkloadParallelExecutionSummary {
                 )
             }
             WorkloadParallelDiagnosticScope::Compute => {
+                validate_wait_for_edge_count_summary(
+                    scope,
+                    self.gpu_compute_wait_for_edge_count,
+                    &self.gpu_compute_wait_for_edge_kind_counts,
+                    &self.gpu_compute_wait_for_edge_kind_windows,
+                    &self.gpu_compute_wait_for_blocked_node_windows,
+                    &self.gpu_compute_wait_for_target_node_windows,
+                )?;
                 validate_wait_for_edge_kind_window_summary(
                     scope,
                     &self.gpu_compute_wait_for_edge_kind_counts,
                     &self.gpu_compute_wait_for_edge_kind_windows,
+                )?;
+                validate_wait_for_edge_count_summary(
+                    scope,
+                    self.accelerator_compute_wait_for_edge_count,
+                    &self.accelerator_compute_wait_for_edge_kind_counts,
+                    &self.accelerator_compute_wait_for_edge_kind_windows,
+                    &self.accelerator_compute_wait_for_blocked_node_windows,
+                    &self.accelerator_compute_wait_for_target_node_windows,
                 )?;
                 validate_wait_for_edge_kind_window_summary(
                     scope,
@@ -147,10 +171,26 @@ impl WorkloadParallelExecutionSummary {
                 )
             }
             WorkloadParallelDiagnosticScope::Dma => {
+                validate_wait_for_edge_count_summary(
+                    scope,
+                    self.gpu_dma_wait_for_edge_count,
+                    &self.gpu_dma_wait_for_edge_kind_counts,
+                    &self.gpu_dma_wait_for_edge_kind_windows,
+                    &self.gpu_dma_wait_for_blocked_node_windows,
+                    &self.gpu_dma_wait_for_target_node_windows,
+                )?;
                 validate_wait_for_edge_kind_window_summary(
                     scope,
                     &self.gpu_dma_wait_for_edge_kind_counts,
                     &self.gpu_dma_wait_for_edge_kind_windows,
+                )?;
+                validate_wait_for_edge_count_summary(
+                    scope,
+                    self.accelerator_dma_wait_for_edge_count,
+                    &self.accelerator_dma_wait_for_edge_kind_counts,
+                    &self.accelerator_dma_wait_for_edge_kind_windows,
+                    &self.accelerator_dma_wait_for_blocked_node_windows,
+                    &self.accelerator_dma_wait_for_target_node_windows,
                 )?;
                 validate_wait_for_edge_kind_window_summary(
                     scope,
@@ -176,10 +216,26 @@ impl WorkloadParallelExecutionSummary {
     }
 
     fn validate_resource_diagnostic_summary(&self) -> Result<(), WorkloadError> {
+        validate_wait_for_edge_count_summary(
+            WorkloadParallelDiagnosticScope::Resource,
+            self.fabric_wait_for_edge_count,
+            &self.fabric_wait_for_edge_kind_counts,
+            &self.fabric_wait_for_edge_kind_windows,
+            &self.fabric_wait_for_blocked_node_windows,
+            &self.fabric_wait_for_target_node_windows,
+        )?;
         validate_wait_for_edge_kind_window_summary(
             WorkloadParallelDiagnosticScope::Resource,
             &self.fabric_wait_for_edge_kind_counts,
             &self.fabric_wait_for_edge_kind_windows,
+        )?;
+        validate_wait_for_edge_count_summary(
+            WorkloadParallelDiagnosticScope::Resource,
+            self.dram_wait_for_edge_count,
+            &self.dram_wait_for_edge_kind_counts,
+            &self.dram_wait_for_edge_kind_windows,
+            &self.dram_wait_for_blocked_node_windows,
+            &self.dram_wait_for_target_node_windows,
         )?;
         validate_wait_for_edge_kind_window_summary(
             WorkloadParallelDiagnosticScope::Resource,
@@ -1093,6 +1149,28 @@ pub(super) fn collect_wait_for_edge_kind_counts(
         *stored = stored.saturating_add(count);
     }
     by_kind
+}
+
+fn validate_wait_for_edge_count_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    wait_for_edge_count: usize,
+    edge_kind_counts: &BTreeMap<WaitForEdgeKind, usize>,
+    edge_kind_windows: &[WorkloadWaitForEdgeKindWindow],
+    blocked_node_windows: &[WorkloadWaitForBlockedNodeWindow],
+    target_node_windows: &[WorkloadWaitForTargetNodeWindow],
+) -> Result<(), WorkloadError> {
+    let evidence_edge_count = wait_for_edge_kind_count_sum(edge_kind_counts)
+        .max(wait_for_edge_kind_window_count_sum(edge_kind_windows))
+        .max(wait_for_blocked_node_window_count_sum(blocked_node_windows))
+        .max(wait_for_target_node_window_count_sum(target_node_windows));
+    if wait_for_edge_count < evidence_edge_count {
+        return Err(WorkloadError::InvalidParallelWaitForEdgeCountSummary {
+            scope,
+            wait_for_edge_count,
+            evidence_edge_count,
+        });
+    }
+    Ok(())
 }
 
 fn validate_wait_for_edge_kind_window_summary(

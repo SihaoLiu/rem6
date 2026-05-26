@@ -1,0 +1,127 @@
+use std::fmt;
+
+use super::super::WorkloadError;
+
+pub(super) fn format_diagnostic_error(
+    error: &WorkloadError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    match error {
+        WorkloadError::MissingParallelDiagnosticSummary { scope } => write!(
+            formatter,
+            "missing parallel summary for expected clean {} diagnostics",
+            scope.as_str()
+        ),
+        WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
+            scope,
+            wait_for_edge_count,
+            deadlock_diagnostic_count,
+            livelock_diagnostic_count,
+            livelock_subjects,
+        } => {
+            write!(
+                formatter,
+                "expected clean {} diagnostics, got {wait_for_edge_count} wait-for edges, {deadlock_diagnostic_count} deadlock diagnostics, and {livelock_diagnostic_count} livelock diagnostics",
+                scope.as_str()
+            )?;
+            if !livelock_subjects.is_empty() {
+                write!(
+                    formatter,
+                    " for livelock subjects {}",
+                    livelock_subjects.join(", ")
+                )?;
+            }
+            Ok(())
+        }
+        WorkloadError::ExpectedParallelWaitForEdgeKindCountBelowMinimum {
+            scope,
+            kind,
+            minimum_edge_count,
+            actual_edge_count,
+        } => write!(
+            formatter,
+            "expected {} wait-for edge kind {kind:?} to reach at least {minimum_edge_count} edges, got {actual_edge_count}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelWaitForEdgeCountSummary {
+            scope,
+            wait_for_edge_count,
+            evidence_edge_count,
+        } => write!(
+            formatter,
+            "invalid {} wait-for summary: total edge count {wait_for_edge_count} is below typed evidence count {evidence_edge_count}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelWaitForEdgeKindWindowSummary {
+            scope,
+            kind,
+            edge_kind_count,
+            window_edge_count,
+        } => write!(
+            formatter,
+            "invalid {} wait-for edge kind {kind:?} summary: kind count {edge_kind_count} is below exact window count {window_edge_count}",
+            scope.as_str()
+        ),
+        WorkloadError::ExpectedParallelWaitForEdgeKindWindowMismatch {
+            scope,
+            kind,
+            expected_edge_count,
+            actual_edge_count,
+            expected_first_tick,
+            actual_first_tick,
+            expected_last_tick,
+            actual_last_tick,
+        } => write!(
+            formatter,
+            "expected {} wait-for edge kind {kind:?} window to have {expected_edge_count} edges from tick {expected_first_tick} to {expected_last_tick}, got {actual_edge_count} edges from tick {} to {}",
+            scope.as_str(),
+            actual_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            actual_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
+        WorkloadError::ExpectedParallelWaitForBlockedNodeWindowMismatch {
+            scope,
+            node,
+            expected_edge_count,
+            actual_edge_count,
+            expected_first_tick,
+            actual_first_tick,
+            expected_last_tick,
+            actual_last_tick,
+        } => write!(
+            formatter,
+            "expected {} wait-for blocked node {node} window to have {expected_edge_count} edges from tick {expected_first_tick} to {expected_last_tick}, got {actual_edge_count} edges from tick {} to {}",
+            scope.as_str(),
+            actual_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            actual_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
+        WorkloadError::ExpectedParallelWaitForTargetNodeWindowMismatch {
+            scope,
+            node,
+            expected_edge_count,
+            actual_edge_count,
+            expected_first_tick,
+            actual_first_tick,
+            expected_last_tick,
+            actual_last_tick,
+        } => write!(
+            formatter,
+            "expected {} wait-for target node {node} window to have {expected_edge_count} edges from tick {expected_first_tick} to {expected_last_tick}, got {actual_edge_count} edges from tick {} to {}",
+            scope.as_str(),
+            actual_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            actual_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
+        _ => unreachable!("unsupported diagnostic error"),
+    }
+}
