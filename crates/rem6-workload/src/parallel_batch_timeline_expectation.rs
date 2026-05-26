@@ -71,7 +71,7 @@ impl WorkloadExpectedParallelBatchTimelineRecord {
     ) -> Result<Self, WorkloadError> {
         let scope = scope.into();
         let partitions = collect_partition_set(partitions);
-        if partitions.len() < 2 || worker_count < 2 || horizon < start_tick {
+        if partitions.len() < 2 || worker_count < 2 || horizon <= start_tick {
             return Err(WorkloadError::InvalidExpectedParallelBatchTimelineRecord {
                 scope,
                 batch_scope,

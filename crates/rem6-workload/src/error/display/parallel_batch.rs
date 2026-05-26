@@ -364,7 +364,7 @@ pub(super) fn format_parallel_batch_error(
             worker_count,
         } => write!(
             formatter,
-            "expected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} must have at least 2 workers and at least 2 partitions, got {worker_count} workers",
+            "expected {} batch timeline record from {} at {start_tick} to horizon {horizon} for partitions {} must have positive duration, at least 2 workers, and at least 2 partitions, got {worker_count} workers",
             scope.as_str(),
             batch_scope.as_str(),
             format_partition_indexes(partitions)

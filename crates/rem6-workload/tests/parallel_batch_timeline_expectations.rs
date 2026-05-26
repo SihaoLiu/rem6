@@ -487,6 +487,26 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_rec
         },
     );
 
+    let zero_duration = WorkloadExpectedParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchTimelineScope::Scheduler,
+        WorkloadParallelBatchScope::Scheduler,
+        4,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    assert_eq!(
+        zero_duration.unwrap_err(),
+        WorkloadError::InvalidExpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 4,
+            horizon: 4,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
+
     let expected = expected_timeline(
         WorkloadParallelBatchTimelineScope::Scheduler,
         WorkloadParallelBatchScope::Scheduler,

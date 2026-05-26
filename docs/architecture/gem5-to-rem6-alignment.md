@@ -348,6 +348,10 @@ Implementation evidence on 2026-05-26:
   one-partition records. Exact timeline contracts must prove at least two
   workers spanning at least two scheduler partitions before replay accepts them
   as parallel evidence.
+- Workload parallel batch timeline records now also require positive duration
+  before they can feed exact timeline contracts or derived batch-count,
+  worker-count, partition-set, and partition-activity evidence. Zero-length or
+  inverted windows no longer masquerade as natural parallel execution.
 - Workload parallel remote-flow and remote-flow timing expectations now reject
   same-partition endpoints. A manifest-declared remote-flow contract must cross
   partition boundaries before replay accepts it as remote parallel evidence.

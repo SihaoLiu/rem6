@@ -81,7 +81,7 @@ impl WorkloadParallelBatchTimelineRecord {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.worker_count == 0 || self.partitions.is_empty()
+        self.worker_count == 0 || self.partitions.is_empty() || self.horizon <= self.start_tick
     }
 }
 
