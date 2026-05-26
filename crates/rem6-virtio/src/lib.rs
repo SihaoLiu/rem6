@@ -10,6 +10,7 @@ use rem6_mmio::{
 };
 
 mod block;
+mod block_queue;
 mod device_config;
 mod isr;
 mod pci_capability;
@@ -43,6 +44,10 @@ pub use block::{
     VIRTIO_BLOCK_T_DISCARD, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID,
     VIRTIO_BLOCK_T_GET_LIFETIME, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
     VIRTIO_BLOCK_T_SECURE_ERASE, VIRTIO_BLOCK_T_WRITE_ZEROES,
+};
+pub use block_queue::{
+    VirtioBlockDecodedRequest, VirtioSplitDescriptor, VirtioSplitDescriptorChain,
+    VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 pub use device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
@@ -1276,6 +1281,38 @@ pub enum VirtioError {
     InvalidBlockDeviceId {
         bytes: usize,
     },
+    DuplicateVirtioDescriptor {
+        index: u16,
+    },
+    MissingVirtioDescriptor {
+        index: u16,
+    },
+    VirtioDescriptorLoop {
+        index: u16,
+    },
+    ShortVirtioBlockHeader {
+        bytes: u64,
+    },
+    MissingVirtioBlockStatusDescriptor,
+    InvalidVirtioBlockStatusDescriptor {
+        index: u16,
+        length: u32,
+        writable: bool,
+    },
+    InvalidVirtioBlockReadableDescriptor {
+        raw_type: u32,
+        index: u16,
+    },
+    InvalidVirtioBlockWritableDescriptor {
+        raw_type: u32,
+        index: u16,
+    },
+    InvalidVirtioBlockDeviceIdOutput {
+        bytes: u64,
+    },
+    VirtioBlockPayloadLengthOverflow {
+        raw_type: u32,
+    },
     InvalidBlockGeometry {
         cylinders: u16,
         heads: u8,
@@ -1535,6 +1572,50 @@ impl fmt::Display for VirtioError {
             Self::InvalidBlockDeviceId { bytes } => write!(
                 formatter,
                 "VirtIO block device id has {bytes} bytes but at most 20 bytes are allowed"
+            ),
+            Self::DuplicateVirtioDescriptor { index } => write!(
+                formatter,
+                "VirtIO split descriptor {index} is declared more than once"
+            ),
+            Self::MissingVirtioDescriptor { index } => write!(
+                formatter,
+                "VirtIO split descriptor chain references missing descriptor {index}"
+            ),
+            Self::VirtioDescriptorLoop { index } => write!(
+                formatter,
+                "VirtIO split descriptor chain contains a loop at descriptor {index}"
+            ),
+            Self::ShortVirtioBlockHeader { bytes } => write!(
+                formatter,
+                "VirtIO block descriptor chain header has {bytes} bytes but requires 16 bytes"
+            ),
+            Self::MissingVirtioBlockStatusDescriptor => write!(
+                formatter,
+                "VirtIO block descriptor chain is missing a writable status descriptor"
+            ),
+            Self::InvalidVirtioBlockStatusDescriptor {
+                index,
+                length,
+                writable,
+            } => write!(
+                formatter,
+                "VirtIO block status descriptor {index} must be writable and at least 1 byte, got length {length} writable {writable}"
+            ),
+            Self::InvalidVirtioBlockReadableDescriptor { raw_type, index } => write!(
+                formatter,
+                "VirtIO block request type {raw_type} descriptor {index} must be device-readable"
+            ),
+            Self::InvalidVirtioBlockWritableDescriptor { raw_type, index } => write!(
+                formatter,
+                "VirtIO block request type {raw_type} descriptor {index} must be device-writable"
+            ),
+            Self::InvalidVirtioBlockDeviceIdOutput { bytes } => write!(
+                formatter,
+                "VirtIO block get-id output has {bytes} writable bytes but device id requires 20 bytes"
+            ),
+            Self::VirtioBlockPayloadLengthOverflow { raw_type } => write!(
+                formatter,
+                "VirtIO block request type {raw_type} descriptor payload length overflows"
             ),
             Self::InvalidBlockGeometry {
                 cylinders,
