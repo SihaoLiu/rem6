@@ -376,6 +376,10 @@ Implementation evidence on 2026-05-26:
   remote-send evidence as well as invalid manifest declarations. A replayed
   remote send must cross partitions and must not deliver before its source tick,
   preventing local or inverted records from masquerading as parallel traffic.
+- Workload parallel remote-traffic consistency now rejects invalid actual
+  aggregate remote-flow evidence too. A replayed aggregate remote flow must
+  cross partitions, must have an ordered first/last tick window, and must not
+  report inverted delay bounds.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes

@@ -354,6 +354,41 @@ pub(crate) fn format_remote_delay_error(
             "{} remote traffic send evidence {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} must not deliver before the source tick",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelRemoteTrafficFlowEndpoints {
+            scope,
+            source,
+            target,
+            send_count,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "{} remote traffic flow evidence {source}->{target} with {send_count} sends from tick {first_tick} to {last_tick} must cross partitions",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelRemoteTrafficFlowTiming {
+            scope,
+            source,
+            target,
+            send_count,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "{} remote traffic flow evidence {source}->{target} with {send_count} sends first tick {first_tick} must not exceed last tick {last_tick}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelRemoteTrafficFlowDelayBounds {
+            scope,
+            source,
+            target,
+            minimum_delay,
+            maximum_delay,
+        } => write!(
+            formatter,
+            "{} remote traffic flow evidence {source}->{target} minimum delay {minimum_delay} must not exceed maximum delay {maximum_delay}",
+            scope.as_str()
+        ),
         WorkloadError::MissingParallelRemoteTrafficAggregateFlow {
             scope,
             source,

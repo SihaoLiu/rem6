@@ -319,6 +319,9 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
     for expected in expected_consistency {
         let flows = explicit_parallel_remote_flows_for_scope(summary, expected.scope());
         let sends = actual_parallel_remote_sends_for_scope(summary, expected.scope());
+        for flow in &flows {
+            validate_remote_traffic_flow_evidence(expected.scope(), *flow)?;
+        }
         for send in &sends {
             validate_remote_traffic_send_evidence(expected.scope(), *send)?;
         }
@@ -355,6 +358,44 @@ pub(crate) fn verify_expected_parallel_remote_traffic_consistency(
                     ));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_remote_traffic_flow_evidence(
+    scope: WorkloadParallelRemoteFlowScope,
+    flow: ParallelRemoteFlowRecord,
+) -> Result<(), WorkloadError> {
+    if flow.source() == flow.target() {
+        return Err(WorkloadError::InvalidParallelRemoteTrafficFlowEndpoints {
+            scope,
+            source: flow.source().index(),
+            target: flow.target().index(),
+            send_count: flow.send_count(),
+            first_tick: flow.first_tick(),
+            last_tick: flow.last_tick(),
+        });
+    }
+    if flow.first_tick() > flow.last_tick() {
+        return Err(WorkloadError::InvalidParallelRemoteTrafficFlowTiming {
+            scope,
+            source: flow.source().index(),
+            target: flow.target().index(),
+            send_count: flow.send_count(),
+            first_tick: flow.first_tick(),
+            last_tick: flow.last_tick(),
+        });
+    }
+    if let Some((minimum_delay, maximum_delay)) = flow.delay_bounds() {
+        if minimum_delay > maximum_delay {
+            return Err(WorkloadError::InvalidParallelRemoteTrafficFlowDelayBounds {
+                scope,
+                source: flow.source().index(),
+                target: flow.target().index(),
+                minimum_delay,
+                maximum_delay,
+            });
         }
     }
     Ok(())
