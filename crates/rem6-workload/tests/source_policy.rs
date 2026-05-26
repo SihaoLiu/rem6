@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_REPLAY_VERIFY_ROOT_LINES: usize = 1300;
+const MAX_RESULT_ROOT_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -13,6 +14,17 @@ fn workload_lib_rs_remains_a_facade() {
     assert!(
         lines <= MAX_FACADE_LINES,
         "src/lib.rs should remain a facade, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn workload_result_root_stays_within_module_budget() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/result.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_RESULT_ROOT_LINES,
+        "src/result.rs should delegate focused result facets, but it has {lines} lines"
     );
 }
 
