@@ -13,6 +13,7 @@ mod device_config;
 mod isr;
 mod pci_capability;
 mod shared_memory;
+mod transport;
 
 pub use device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
@@ -30,6 +31,10 @@ pub use shared_memory::{
     VirtioPciSharedMemoryCap64Fields, VirtioPciSharedMemoryCapabilities,
     VirtioPciSharedMemoryCapabilityEntry, VirtioPciSharedMemoryId, VirtioPciSharedMemoryRegion,
     VirtioPciSharedMemoryRegionSpec, VirtioPciSharedMemoryRegistry,
+};
+pub use transport::{
+    VirtioPciModernTransportSpec, VirtioPciNotifyRegion, VirtioPciTransportBarSpec,
+    VirtioPciTransportEndpointSpec, VirtioPciTransportRegion,
 };
 
 pub const VIRTIO_PCI_COMMON_CONFIG_SIZE: u64 = 0x40;
@@ -1249,6 +1254,47 @@ pub enum VirtioError {
         second: u8,
         bar: u8,
     },
+    DuplicatePciTransportBar {
+        bar: u8,
+    },
+    MissingPciTransportBar {
+        cfg_type: u8,
+        bar: u8,
+    },
+    PciTransportRegionAddressOverflow {
+        cfg_type: u8,
+        bar: u8,
+        offset: u64,
+        length: u64,
+    },
+    PciTransportRegionOutOfBar {
+        cfg_type: u8,
+        bar: u8,
+        offset: u64,
+        length: u64,
+        bar_length: u64,
+    },
+    PciTransportRegionOffsetTooLarge {
+        cfg_type: u8,
+        bar: u8,
+        offset: u64,
+    },
+    OverlappingPciTransportRegion {
+        first_cfg_type: u8,
+        second_cfg_type: u8,
+        bar: u8,
+    },
+    PciEndpointConfig {
+        message: String,
+    },
+}
+
+impl VirtioError {
+    fn pci_endpoint(error: rem6_pci::PciError) -> Self {
+        Self::PciEndpointConfig {
+            message: error.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for VirtioError {
@@ -1373,6 +1419,51 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO shared memory region id {second} overlaps id {first} in BAR {bar}"
             ),
+            Self::DuplicatePciTransportBar { bar } => {
+                write!(formatter, "VirtIO PCI transport BAR {bar} is declared more than once")
+            }
+            Self::MissingPciTransportBar { cfg_type, bar } => write!(
+                formatter,
+                "VirtIO PCI capability type {cfg_type} references undeclared BAR {bar}"
+            ),
+            Self::PciTransportRegionAddressOverflow {
+                cfg_type,
+                bar,
+                offset,
+                length,
+            } => write!(
+                formatter,
+                "VirtIO PCI capability type {cfg_type} in BAR {bar} offset {offset:#x} overflows with length {length:#x}"
+            ),
+            Self::PciTransportRegionOutOfBar {
+                cfg_type,
+                bar,
+                offset,
+                length,
+                bar_length,
+            } => write!(
+                formatter,
+                "VirtIO PCI capability type {cfg_type} offset {offset:#x} length {length:#x} must be contained within BAR {bar} length {bar_length:#x}"
+            ),
+            Self::PciTransportRegionOffsetTooLarge {
+                cfg_type,
+                bar,
+                offset,
+            } => write!(
+                formatter,
+                "VirtIO PCI capability type {cfg_type} in BAR {bar} offset {offset:#x} does not fit the 32-bit PCI capability field"
+            ),
+            Self::OverlappingPciTransportRegion {
+                first_cfg_type,
+                second_cfg_type,
+                bar,
+            } => write!(
+                formatter,
+                "VirtIO PCI capability type {second_cfg_type} overlaps type {first_cfg_type} in BAR {bar}"
+            ),
+            Self::PciEndpointConfig { message } => {
+                write!(formatter, "VirtIO PCI endpoint configuration failed: {message}")
+            }
         }
     }
 }
