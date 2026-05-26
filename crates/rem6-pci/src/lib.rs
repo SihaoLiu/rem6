@@ -6,23 +6,28 @@ use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
 mod interrupt;
 mod mmio;
+mod msi;
 
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
     PciLegacyInterruptRoute,
 };
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
+pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};
 
-const PCI_CONFIG_SPACE_SIZE: usize = 256;
+pub(crate) const PCI_CONFIG_SPACE_SIZE: usize = 256;
 const PCI_VENDOR_ID_OFFSET: usize = 0x00;
 const PCI_DEVICE_ID_OFFSET: usize = 0x02;
 const PCI_COMMAND_OFFSET: usize = 0x04;
+pub(crate) const PCI_STATUS_OFFSET: usize = 0x06;
 const PCI_CLASS_REVISION_OFFSET: usize = 0x08;
 const PCI_HEADER_TYPE_OFFSET: usize = 0x0e;
 const PCI_BAR0_OFFSET: usize = 0x10;
+pub(crate) const PCI_CAPABILITY_PTR_OFFSET: usize = 0x34;
 const PCI_INTERRUPT_LINE_OFFSET: usize = 0x3c;
 const PCI_INTERRUPT_PIN_OFFSET: usize = 0x3d;
 const PCI_TYPE0_HEADER_TYPE: u8 = 0x00;
+pub(crate) const PCI_STATUS_CAPABILITY_LIST: u8 = 0x10;
 const PCI_COMMAND_IO_SPACE: u16 = 0x0001;
 const PCI_COMMAND_MEMORY_SPACE: u16 = 0x0002;
 const PCI_BAR_COUNT: usize = 6;
@@ -136,7 +141,7 @@ impl PciConfigOffset {
         self.0
     }
 
-    const fn as_usize(self) -> usize {
+    pub(crate) const fn as_usize(self) -> usize {
         self.0 as usize
     }
 }
@@ -400,6 +405,7 @@ pub struct PciEndpointConfig {
     class: PciClassCode,
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
+    msi: Option<msi::PciMsiCapabilityState>,
 }
 
 impl PciEndpointConfig {
@@ -423,6 +429,7 @@ impl PciEndpointConfig {
             class,
             config,
             bars: std::array::from_fn(|_| None),
+            msi: None,
         }
     }
 
@@ -470,6 +477,16 @@ impl PciEndpointConfig {
         Ok(())
     }
 
+    pub fn install_msi_capability(&mut self, spec: PciMsiCapabilitySpec) -> Result<(), PciError> {
+        if self.msi.is_some() {
+            return Err(PciError::DuplicateMsiCapability);
+        }
+        let state = msi::PciMsiCapabilityState::new(spec);
+        state.install_into(&mut self.config);
+        self.msi = Some(state);
+        Ok(())
+    }
+
     pub fn read_config(
         &self,
         offset: PciConfigOffset,
@@ -487,6 +504,11 @@ impl PciEndpointConfig {
                 return Err(PciError::UnalignedBarAccess { offset, size });
             }
             return self.write_bar(index, u32::from_le_bytes(data.try_into().unwrap()));
+        }
+        if let Some(msi) = self.msi.as_mut() {
+            if msi.contains(offset, size) {
+                return msi.write_config(offset, data, &mut self.config);
+            }
         }
 
         match offset.as_usize() {
@@ -529,6 +551,13 @@ impl PciEndpointConfig {
             .collect()
     }
 
+    pub fn msi_message(&self, vector: u8) -> Result<Option<PciMsiMessage>, PciError> {
+        let state = self.msi.as_ref().ok_or(PciError::MissingMsiCapability {
+            function: self.function,
+        })?;
+        state.message(self.function, vector)
+    }
+
     pub fn snapshot(&self) -> PciEndpointConfigSnapshot {
         PciEndpointConfigSnapshot {
             function: self.function,
@@ -536,6 +565,7 @@ impl PciEndpointConfig {
             class: self.class,
             config: self.config,
             bars: self.bars.clone(),
+            msi: self.msi.clone(),
         }
     }
 
@@ -566,9 +596,15 @@ impl PciEndpointConfig {
                 });
             }
         }
+        if self.msi.as_ref().map(msi::PciMsiCapabilityState::spec)
+            != snapshot.msi.as_ref().map(msi::PciMsiCapabilityState::spec)
+        {
+            return Err(PciError::SnapshotMsiCapabilityMismatch);
+        }
 
         self.config = snapshot.config;
         self.bars = snapshot.bars.clone();
+        self.msi = snapshot.msi.clone();
         Ok(())
     }
 
@@ -638,6 +674,7 @@ pub struct PciEndpointConfigSnapshot {
     class: PciClassCode,
     config: [u8; PCI_CONFIG_SPACE_SIZE],
     bars: [Option<PciBarState>; PCI_BAR_COUNT],
+    msi: Option<msi::PciMsiCapabilityState>,
 }
 
 impl PciEndpointConfigSnapshot {
@@ -1140,6 +1177,38 @@ pub enum PciError {
     SnapshotBarMismatch {
         index: PciBarIndex,
     },
+    SnapshotMsiCapabilityMismatch,
+    InvalidMsiCapabilityOffset {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    InvalidMsiVectorCount {
+        count: u8,
+    },
+    DuplicateMsiCapability,
+    MissingMsiCapability {
+        function: PciFunctionAddress,
+    },
+    InvalidMsiVector {
+        vector: u8,
+        vector_count: u8,
+    },
+    ReadOnlyMsiCapabilityWrite {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    UnalignedMsiCapabilityWrite {
+        offset: PciConfigOffset,
+        size: AccessSize,
+    },
+    MsiEndpointMismatch {
+        expected: PciFunctionAddress,
+        actual: PciFunctionAddress,
+    },
+    MsiMessageMismatch {
+        expected: PciMsiMessage,
+        actual: PciMsiMessage,
+    },
     Interrupt(rem6_interrupt::InterruptError),
     Memory(MemoryError),
 }
@@ -1301,6 +1370,52 @@ impl fmt::Display for PciError {
                     index.get()
                 )
             }
+            Self::SnapshotMsiCapabilityMismatch => {
+                write!(f, "PCI snapshot MSI capability does not match this endpoint")
+            }
+            Self::InvalidMsiCapabilityOffset { offset, size } => write!(
+                f,
+                "PCI MSI capability at {:#x} for {} bytes does not fit the writable capability area",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::InvalidMsiVectorCount { count } => {
+                write!(f, "PCI MSI vector count {count} is not a power of two in 1..=32")
+            }
+            Self::DuplicateMsiCapability => write!(f, "PCI MSI capability is already installed"),
+            Self::MissingMsiCapability { function } => {
+                write!(f, "PCI function {:?} has no MSI capability", function)
+            }
+            Self::InvalidMsiVector {
+                vector,
+                vector_count,
+            } => write!(
+                f,
+                "PCI MSI vector {} is outside configured vector count {}",
+                vector, vector_count
+            ),
+            Self::ReadOnlyMsiCapabilityWrite { offset, size } => write!(
+                f,
+                "PCI MSI capability write at {:#x} for {} bytes targets read-only state",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::UnalignedMsiCapabilityWrite { offset, size } => write!(
+                f,
+                "PCI MSI capability write at {:#x} for {} bytes targets an unsupported field width",
+                offset.get(),
+                size.bytes()
+            ),
+            Self::MsiEndpointMismatch { expected, actual } => write!(
+                f,
+                "PCI MSI endpoint mismatch: expected {:?}, got {:?}",
+                expected, actual
+            ),
+            Self::MsiMessageMismatch { expected, actual } => write!(
+                f,
+                "PCI MSI message mismatch: expected {:?}, got {:?}",
+                expected, actual
+            ),
             Self::Interrupt(error) => write!(f, "{error}"),
             Self::Memory(error) => write!(f, "{error}"),
         }
@@ -1386,10 +1501,10 @@ fn checked_base_plus_offset(base: Address, offset: Address) -> Result<Address, P
         .ok_or(PciError::HostAddressOverflow { base, offset })
 }
 
-fn write_u16_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u16) {
+pub(crate) fn write_u16_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u16) {
     config[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
-fn write_u32_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u32) {
+pub(crate) fn write_u32_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u32) {
     config[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
