@@ -147,6 +147,16 @@ fn workload_manifest_records_clean_parallel_diagnostic_expectations() {
 }
 
 #[test]
+fn workload_result_reports_merged_full_system_deadlocks_as_diagnostics() {
+    let summary =
+        WorkloadParallelExecutionSummary::default().with_merged_full_system_deadlock_diagnostics(3);
+
+    assert_eq!(summary.merged_full_system_deadlock_diagnostic_count(), 3);
+    assert_eq!(summary.full_system_deadlock_diagnostic_count(), 3);
+    assert!(summary.has_full_system_diagnostics());
+}
+
+#[test]
 fn workload_manifest_records_parallel_wait_for_edge_kind_expectations() {
     let resource_queue = expected_wait_kind(
         WorkloadParallelDiagnosticScope::Resource,

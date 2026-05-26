@@ -432,6 +432,10 @@ Implementation evidence on 2026-05-26:
   full-system deadlock counts that are weaker than resource and data-cache
   scoped evidence. Full-system clean-diagnostic replay therefore cannot hide
   dirty resource or data-cache deadlocks behind a smaller merged counter.
+- Workload full-system diagnostic presence checks now treat explicit merged
+  full-system deadlock counts as diagnostic evidence even when lower scopes are
+  otherwise clean. Full-system replay and reporting APIs therefore cannot lose
+  a dirty merged deadlock summary at the presence-check boundary.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

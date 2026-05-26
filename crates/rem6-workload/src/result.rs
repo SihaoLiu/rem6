@@ -1242,6 +1242,7 @@ impl WorkloadParallelExecutionSummary {
             || self.has_data_cache_diagnostics()
             || self.has_compute_diagnostics()
             || self.has_dma_diagnostics()
+            || self.merged_full_system_deadlock_diagnostic_count != 0
             || self.full_system_livelock_diagnostic_count() != 0
     }
 }
