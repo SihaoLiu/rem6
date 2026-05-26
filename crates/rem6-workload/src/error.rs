@@ -1089,6 +1089,20 @@ pub enum WorkloadError {
         scope: WorkloadParallelDiagnosticScope,
         kind: WaitForEdgeKind,
     },
+    ZeroExpectedParallelWaitForEdgeKindWindow {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+    },
+    InvalidExpectedParallelWaitForEdgeKindWindow {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
+    DuplicateExpectedParallelWaitForEdgeKindWindow {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+    },
     ZeroExpectedLivelockTransitionThreshold {
         scope: WorkloadParallelDiagnosticScope,
     },
@@ -1125,5 +1139,15 @@ pub enum WorkloadError {
         kind: WaitForEdgeKind,
         minimum_edge_count: usize,
         actual_edge_count: usize,
+    },
+    ExpectedParallelWaitForEdgeKindWindowMismatch {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        expected_edge_count: usize,
+        actual_edge_count: usize,
+        expected_first_tick: Tick,
+        actual_first_tick: Option<Tick>,
+        expected_last_tick: Tick,
+        actual_last_tick: Option<Tick>,
     },
 }

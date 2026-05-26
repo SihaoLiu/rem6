@@ -2,13 +2,13 @@ use std::collections::BTreeSet;
 
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId, WaitForEdgeKind,
+    PartitionFrontier, PartitionId, Tick, WaitForEdgeKind,
 };
 
 use crate::{
     result_collect::collect_conservative_partition_frontiers, WorkloadDataCacheProtocol,
     WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelExecutionSummary,
+    WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -522,6 +522,93 @@ impl WorkloadExpectedParallelWaitForEdgeKindCount {
             }
             WorkloadParallelDiagnosticScope::FullSystem => {
                 summary.full_system_wait_for_edge_count_by_kind(self.kind)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelWaitForEdgeKindWindow {
+    scope: WorkloadParallelDiagnosticScope,
+    kind: WaitForEdgeKind,
+    edge_count: usize,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl WorkloadExpectedParallelWaitForEdgeKindWindow {
+    pub fn new(
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        edge_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    ) -> Result<Self, WorkloadError> {
+        if edge_count == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelWaitForEdgeKindWindow { scope, kind });
+        }
+        if first_tick > last_tick {
+            return Err(
+                WorkloadError::InvalidExpectedParallelWaitForEdgeKindWindow {
+                    scope,
+                    kind,
+                    first_tick,
+                    last_tick,
+                },
+            );
+        }
+        Ok(Self {
+            scope,
+            kind,
+            edge_count,
+            first_tick,
+            last_tick,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelDiagnosticScope {
+        self.scope
+    }
+
+    pub const fn kind(self) -> WaitForEdgeKind {
+        self.kind
+    }
+
+    pub const fn edge_count(self) -> usize {
+        self.edge_count
+    }
+
+    pub const fn first_tick(self) -> Tick {
+        self.first_tick
+    }
+
+    pub const fn last_tick(self) -> Tick {
+        self.last_tick
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, WaitForEdgeKind) {
+        (self.scope.sort_rank(), self.kind)
+    }
+
+    pub(crate) fn actual_window(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<WorkloadWaitForEdgeKindWindow> {
+        match self.scope {
+            WorkloadParallelDiagnosticScope::Resource => {
+                summary.resource_wait_for_edge_kind_window(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::DataCache => {
+                summary.data_cache_wait_for_edge_kind_window(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::Compute => {
+                summary.compute_wait_for_edge_kind_window(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::Dma => {
+                summary.dma_wait_for_edge_kind_window(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::FullSystem => {
+                summary.full_system_wait_for_edge_kind_window(self.kind)
             }
         }
     }

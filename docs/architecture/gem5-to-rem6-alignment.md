@@ -134,7 +134,9 @@ isolated bugs:
   fabric, DRAM, GPU and accelerator compute, GPU and accelerator DMA,
   resource, compute, DMA, and full-system scopes, so barrier, queue, protocol,
   credit, message, resource, and host-action waits do not collapse into an
-  aggregate dirty count or lose when each kind was observed.
+  aggregate dirty count or lose when each kind was observed. Manifests can also
+  declare exact scoped wait-for edge-kind windows, binding edge count and
+  first/last tick evidence into replay verification and manifest identity.
   Workload result summaries also treat
   remote-flow-derived active partitions and recorded frontiers as parallel work
   evidence, so sparse typed traces do not disappear behind empty worker or batch
@@ -576,7 +578,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   expectations, data-cache run-accounting consistency, data-cache protocol
   run-count expectations, minimum fabric/DRAM/resource activity expectations,
   clean parallel diagnostic expectations including livelock counts, scoped
-  wait-for edge-kind count expectations, and
+  wait-for edge-kind count expectations, scoped wait-for edge-kind window
+  expectations, and
   manifest identity changes for those expected communication contracts.
   Workload replay QoS tests cover same-tick DRAM
   batching while a data-cache is present, including operation filtering so
@@ -786,7 +789,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   DMA active-partition, CPU/cache/full-system per-partition activity, direct
   GPU and accelerator DMA per-partition activity, data-cache run attribution
   contracts, data-cache run-accounting consistency contracts, data-cache
-  protocol run-count verification contracts, resource activity contracts, and
+  protocol run-count verification contracts, resource activity contracts,
+  scoped wait-for edge-kind window contracts, and
   clean diagnostic verification contracts, result metadata with
   manifest identity plus start/final ticks, execution mode switches, host
   action summaries, checkpoint restore labels, and statistics snapshots.
