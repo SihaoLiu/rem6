@@ -4,8 +4,13 @@ use std::fmt;
 
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
+mod interrupt;
 mod mmio;
 
+pub use interrupt::{
+    PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
+    PciLegacyInterruptRoute,
+};
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 
 const PCI_CONFIG_SPACE_SIZE: usize = 256;
@@ -951,6 +956,14 @@ pub enum PciError {
         requested_function: PciFunctionAddress,
         requested_bar: PciBarIndex,
     },
+    ZeroLegacyInterruptLines,
+    MissingLegacyInterruptPin {
+        function: PciFunctionAddress,
+    },
+    LegacyInterruptLineOverflow {
+        base: rem6_interrupt::InterruptLineId,
+        index: u64,
+    },
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -988,6 +1001,7 @@ pub enum PciError {
     SnapshotBarMismatch {
         index: PciBarIndex,
     },
+    Interrupt(rem6_interrupt::InterruptError),
     Memory(MemoryError),
 }
 
@@ -1076,6 +1090,18 @@ impl fmt::Display for PciError {
                 existing_function,
                 existing_bar.get()
             ),
+            Self::ZeroLegacyInterruptLines => {
+                write!(f, "PCI legacy interrupt line count must be positive")
+            }
+            Self::MissingLegacyInterruptPin { function } => {
+                write!(f, "PCI function {:?} has no legacy interrupt pin", function)
+            }
+            Self::LegacyInterruptLineOverflow { base, index } => write!(
+                f,
+                "PCI legacy interrupt line base {} plus index {} overflows",
+                base.get(),
+                index
+            ),
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,
                 "PCI config write at {:#x} for {} bytes targets read-only state",
@@ -1126,6 +1152,7 @@ impl fmt::Display for PciError {
                     index.get()
                 )
             }
+            Self::Interrupt(error) => write!(f, "{error}"),
             Self::Memory(error) => write!(f, "{error}"),
         }
     }
@@ -1134,6 +1161,7 @@ impl fmt::Display for PciError {
 impl Error for PciError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Interrupt(error) => Some(error),
             Self::Memory(error) => Some(error),
             _ => None,
         }
@@ -1143,6 +1171,12 @@ impl Error for PciError {
 impl From<MemoryError> for PciError {
     fn from(value: MemoryError) -> Self {
         Self::Memory(value)
+    }
+}
+
+impl From<rem6_interrupt::InterruptError> for PciError {
+    fn from(value: rem6_interrupt::InterruptError) -> Self {
+        Self::Interrupt(value)
     }
 }
 
