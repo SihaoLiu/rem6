@@ -1167,6 +1167,12 @@ pub enum WorkloadError {
         first_tick: Tick,
         last_tick: Tick,
     },
+    InvalidExpectedFabricLaneActivityQueueDelayBudget {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        maximum_queue_delay_ticks: Tick,
+        maximum_max_queue_delay_ticks: Tick,
+    },
     MissingFabricLaneActivitySummary {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
@@ -1195,6 +1201,14 @@ pub enum WorkloadError {
         actual_first_tick: Tick,
         required_last_tick: Option<Tick>,
         actual_last_tick: Tick,
+    },
+    ExpectedFabricLaneActivityAboveMaximum {
+        link: FabricLinkId,
+        virtual_network: VirtualNetworkId,
+        maximum_queue_delay_ticks: Tick,
+        actual_queue_delay_ticks: Tick,
+        maximum_max_queue_delay_ticks: Tick,
+        actual_max_queue_delay_ticks: Tick,
     },
     ZeroExpectedFabricLinkActivity {
         link: FabricLinkId,

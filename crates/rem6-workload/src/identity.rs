@@ -753,6 +753,8 @@ fn hash_expected_fabric_lane_activity(
     hash_u64(hash, expected.minimum_occupied_ticks());
     hash_u64(hash, expected.minimum_queue_delay_ticks());
     hash_u64(hash, expected.minimum_max_queue_delay_ticks());
+    hash_optional_tick(hash, expected.maximum_queue_delay_ticks());
+    hash_optional_tick(hash, expected.maximum_max_queue_delay_ticks());
     hash_optional_tick(hash, expected.required_first_tick());
     hash_optional_tick(hash, expected.required_last_tick());
 }

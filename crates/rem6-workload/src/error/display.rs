@@ -1588,8 +1588,10 @@ impl fmt::Display for WorkloadError {
             Self::ZeroExpectedFabricLaneActivity { .. }
             | Self::DuplicateExpectedFabricLaneActivity { .. }
             | Self::InvalidExpectedFabricLaneActivityWindow { .. }
+            | Self::InvalidExpectedFabricLaneActivityQueueDelayBudget { .. }
             | Self::MissingFabricLaneActivitySummary { .. }
             | Self::ExpectedFabricLaneActivityBelowMinimum { .. }
+            | Self::ExpectedFabricLaneActivityAboveMaximum { .. }
             | Self::ZeroExpectedFabricLinkActivity { .. }
             | Self::DuplicateExpectedFabricLinkActivity { .. }
             | Self::MissingFabricLinkActivitySummary { .. }

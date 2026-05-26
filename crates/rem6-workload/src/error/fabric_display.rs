@@ -38,6 +38,17 @@ pub(super) fn format_fabric_activity_error(
             link.as_str(),
             virtual_network.get()
         ),
+        WorkloadError::InvalidExpectedFabricLaneActivityQueueDelayBudget {
+            link,
+            virtual_network,
+            maximum_queue_delay_ticks,
+            maximum_max_queue_delay_ticks,
+        } => write!(
+            formatter,
+            "expected fabric lane {} virtual network {} activity queue-delay budget peak {maximum_max_queue_delay_ticks} is above total {maximum_queue_delay_ticks}",
+            link.as_str(),
+            virtual_network.get()
+        ),
         WorkloadError::MissingFabricLaneActivitySummary {
             link,
             virtual_network,
@@ -80,6 +91,19 @@ pub(super) fn format_fabric_activity_error(
             virtual_network.get(),
             format_optional_tick(required_first_tick),
             format_optional_tick(required_last_tick)
+        ),
+        WorkloadError::ExpectedFabricLaneActivityAboveMaximum {
+            link,
+            virtual_network,
+            maximum_queue_delay_ticks,
+            actual_queue_delay_ticks,
+            maximum_max_queue_delay_ticks,
+            actual_max_queue_delay_ticks,
+        } => write!(
+            formatter,
+            "expected fabric lane {} virtual network {} activity to stay within {maximum_queue_delay_ticks} queue delay ticks and {maximum_max_queue_delay_ticks} maximum queue delay ticks, got {actual_queue_delay_ticks} queue delay ticks and {actual_max_queue_delay_ticks} maximum queue delay ticks",
+            link.as_str(),
+            virtual_network.get()
         ),
         WorkloadError::ZeroExpectedFabricLinkActivity { link } => write!(
             formatter,
