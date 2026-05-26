@@ -1,6 +1,6 @@
 use rem6_checkpoint::{
-    CheckpointChunk, CheckpointComponentId, CheckpointError, CheckpointManifest,
-    CheckpointRegistry, CheckpointState,
+    CheckpointChunk, CheckpointComponentId, CheckpointComponentSummary, CheckpointError,
+    CheckpointManifest, CheckpointRegistry, CheckpointState,
 };
 
 #[test]
@@ -38,6 +38,42 @@ fn checkpoint_registry_captures_components_in_deterministic_order() {
                 ),
             ],
         )
+    );
+}
+
+#[test]
+fn checkpoint_manifest_reports_component_chunk_and_payload_totals() {
+    let cpu = CheckpointComponentId::new("cpu0").unwrap();
+    let memory = CheckpointComponentId::new("memory0").unwrap();
+    let manifest = CheckpointManifest::new(
+        "audit",
+        44,
+        vec![
+            CheckpointState::new(
+                cpu.clone(),
+                vec![
+                    CheckpointChunk::new("pc", vec![0x10, 0x00]),
+                    CheckpointChunk::new("regs", vec![0x01, 0x02, 0x03]),
+                ],
+            ),
+            CheckpointState::new(
+                memory.clone(),
+                vec![CheckpointChunk::new("lines", vec![0xaa, 0xbb, 0xcc, 0xdd])],
+            ),
+        ],
+    );
+
+    let summary = manifest.summary();
+
+    assert_eq!(summary.component_count(), 2);
+    assert_eq!(summary.chunk_count(), 3);
+    assert_eq!(summary.payload_bytes(), 9);
+    assert_eq!(
+        summary.component_summaries(),
+        &[
+            CheckpointComponentSummary::new(cpu, 2, 5),
+            CheckpointComponentSummary::new(memory, 1, 4),
+        ]
     );
 }
 

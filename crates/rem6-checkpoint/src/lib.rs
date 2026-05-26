@@ -65,6 +65,80 @@ impl CheckpointState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointComponentSummary {
+    component: CheckpointComponentId,
+    chunk_count: usize,
+    payload_bytes: usize,
+}
+
+impl CheckpointComponentSummary {
+    pub const fn new(
+        component: CheckpointComponentId,
+        chunk_count: usize,
+        payload_bytes: usize,
+    ) -> Self {
+        Self {
+            component,
+            chunk_count,
+            payload_bytes,
+        }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub const fn chunk_count(&self) -> usize {
+        self.chunk_count
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointManifestSummary {
+    component_summaries: Vec<CheckpointComponentSummary>,
+    chunk_count: usize,
+    payload_bytes: usize,
+}
+
+impl CheckpointManifestSummary {
+    pub fn new(component_summaries: Vec<CheckpointComponentSummary>) -> Self {
+        let chunk_count = component_summaries
+            .iter()
+            .map(CheckpointComponentSummary::chunk_count)
+            .sum();
+        let payload_bytes = component_summaries
+            .iter()
+            .map(CheckpointComponentSummary::payload_bytes)
+            .sum();
+        Self {
+            component_summaries,
+            chunk_count,
+            payload_bytes,
+        }
+    }
+
+    pub fn component_summaries(&self) -> &[CheckpointComponentSummary] {
+        &self.component_summaries
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.component_summaries.len()
+    }
+
+    pub const fn chunk_count(&self) -> usize {
+        self.chunk_count
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointManifest {
     label: String,
     tick: Tick,
@@ -90,6 +164,25 @@ impl CheckpointManifest {
 
     pub fn states(&self) -> &[CheckpointState] {
         &self.states
+    }
+
+    pub fn summary(&self) -> CheckpointManifestSummary {
+        CheckpointManifestSummary::new(
+            self.states
+                .iter()
+                .map(|state| {
+                    CheckpointComponentSummary::new(
+                        state.component().clone(),
+                        state.chunks().len(),
+                        state
+                            .chunks()
+                            .iter()
+                            .map(|chunk| chunk.payload().len())
+                            .sum(),
+                    )
+                })
+                .collect(),
+        )
     }
 }
 
