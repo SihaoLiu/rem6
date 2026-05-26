@@ -4,6 +4,10 @@ use std::fmt;
 
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
+mod mmio;
+
+pub use mmio::PciConfigMmioDevice;
+
 const PCI_CONFIG_SPACE_SIZE: usize = 256;
 const PCI_VENDOR_ID_OFFSET: usize = 0x00;
 const PCI_DEVICE_ID_OFFSET: usize = 0x02;
