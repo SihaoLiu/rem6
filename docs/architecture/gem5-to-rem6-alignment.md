@@ -44,9 +44,10 @@ isolated bugs:
   overlapped CPU and cache work instead of inferring it from aggregate
   counters. Direct DMA scheduler worker-count, duration-weighted tick,
   sustained tick-streak, thresholded worker-tick, exact partition-set, and
-  same-partition-set streak contracts use the same dedicated manifest scopes,
-  and merged full-system partition checks include the DMA timeline-derived
-  sets, streaks, and per-partition worker and dispatch activity.
+  same-partition-set streak contracts use the same dedicated manifest scopes.
+  Direct GPU and accelerator DMA per-partition activity contracts now use the
+  DMA timeline-derived sets and streaks, and merged full-system partition
+  checks include the same per-partition worker and dispatch activity.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -503,7 +504,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   counts derived from aggregate, exact partition-set, streak, activity,
   remote-send, or remote-flow evidence, remote-flow timing derived from exact
   remote-send records when aggregate flow records are absent or weaker, per-partition
-  activity minima backed by explicit activity, exact batch partition-set histograms, remote-send records, or remote-flow records with same-scope
+  activity minima backed by explicit activity, exact batch partition-set
+  histograms, same-partition-set streaks, dedicated GPU or accelerator DMA
+  timeline scopes, remote-send records, or remote-flow records with same-scope
   activity projections merged as lower-bound evidence, data-cache run attribution
   expectations, data-cache run-accounting consistency, data-cache protocol
   run-count expectations, minimum fabric/DRAM/resource activity expectations,
@@ -603,7 +606,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   validation and identity hashing, GPU and accelerator command plus DMA endpoint
   validation, manifest-owned parallel remote-flow count, remote-flow timing,
   scheduler progress, scheduler idle bounds, max-worker use, total-worker
-  activity, active-partition, per-partition activity, data-cache run
+  activity, active-partition, CPU/cache/full-system per-partition activity,
+  direct GPU and accelerator DMA per-partition activity, data-cache run
   attribution contracts, data-cache run-accounting consistency contracts,
   data-cache protocol run-count verification contracts, resource activity
   contracts, and clean diagnostic verification contracts, result metadata with

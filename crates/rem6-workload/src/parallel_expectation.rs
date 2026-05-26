@@ -8,7 +8,7 @@ use rem6_kernel::{
 
 use crate::{
     result_collect::collect_conservative_partition_frontiers, WorkloadDataCacheProtocol,
-    WorkloadError, WorkloadParallelExecutionSummary,
+    WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelExecutionSummary,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1504,7 +1504,7 @@ impl WorkloadExpectedParallelBatchActivity {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelPartitionActivity {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchPartitionScope,
     partition: PartitionId,
     minimum_worker_count: usize,
     minimum_dispatch_count: usize,
@@ -1514,13 +1514,14 @@ pub struct WorkloadExpectedParallelPartitionActivity {
 
 impl WorkloadExpectedParallelPartitionActivity {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchPartitionScope>,
         partition: PartitionId,
         minimum_worker_count: usize,
         minimum_dispatch_count: usize,
         minimum_remote_send_count: usize,
         minimum_remote_receive_count: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_worker_count == 0
             && minimum_dispatch_count == 0
             && minimum_remote_send_count == 0
@@ -1541,7 +1542,7 @@ impl WorkloadExpectedParallelPartitionActivity {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchPartitionScope {
         self.scope
     }
 
@@ -1574,13 +1575,19 @@ impl WorkloadExpectedParallelPartitionActivity {
         summary: &WorkloadParallelExecutionSummary,
     ) -> Option<ParallelPartitionActivity> {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchPartitionScope::Scheduler => {
                 summary.parallel_scheduler_partition_activity(self.partition)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+            WorkloadParallelBatchPartitionScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_partition_activity(self.partition)
             }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
+            WorkloadParallelBatchPartitionScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_partition_activity(self.partition)
+            }
+            WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_partition_activity(self.partition)
+            }
+            WorkloadParallelBatchPartitionScope::FullSystem => {
                 summary.full_system_parallel_scheduler_partition_activity(self.partition)
             }
         }

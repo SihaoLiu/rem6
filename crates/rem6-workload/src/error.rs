@@ -1046,11 +1046,11 @@ pub enum WorkloadError {
         scope: WorkloadParallelRemoteFlowScope,
     },
     ZeroExpectedParallelPartitionActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partition: u32,
     },
     DuplicateExpectedParallelPartitionActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partition: u32,
     },
     MissingParallelPartitionSummary {
@@ -1063,11 +1063,11 @@ pub enum WorkloadError {
         actual_active_partitions: usize,
     },
     MissingParallelPartitionActivitySummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partition: u32,
     },
     ExpectedParallelPartitionActivityBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchPartitionScope,
         partition: u32,
         minimum_worker_count: usize,
         actual_worker_count: usize,

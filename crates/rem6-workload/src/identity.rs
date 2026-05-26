@@ -579,7 +579,7 @@ fn hash_expected_parallel_partition_activity(
     hash: &mut u64,
     expected: WorkloadExpectedParallelPartitionActivity,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_partition_scope(hash, expected.scope());
     hash_u64(hash, u64::from(expected.partition().index()));
     hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_dispatch_count() as u64);

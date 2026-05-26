@@ -5,15 +5,19 @@ use crate::parallel_batch::{
     collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_timeline,
     collect_parallel_batch_worker_count_tick_summaries,
     collect_parallel_batch_worker_counts_from_timeline, parallel_batch_count_for_partition_set,
-    parallel_batch_longest_tick_streak_at_or_above, parallel_batch_streak_count_for_partition_set,
-    parallel_batch_ticks_at_or_above, parallel_batch_ticks_for_worker_count,
-    parallel_batch_worker_ticks, parallel_batch_worker_ticks_at_or_above,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    parallel_batch_longest_tick_streak_at_or_above,
+    parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
+    parallel_batch_streak_count_for_partition_set, parallel_batch_ticks_at_or_above,
+    parallel_batch_ticks_for_worker_count, parallel_batch_worker_ticks,
+    parallel_batch_worker_ticks_at_or_above, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineRecord,
 };
-use rem6_kernel::{PartitionId, Tick};
+use rem6_kernel::{ParallelPartitionActivity, PartitionId, Tick};
 
 use super::WorkloadParallelExecutionSummary;
+
+use crate::result_partition_activity::merge_parallel_partition_activity_evidence_options;
 
 impl WorkloadParallelExecutionSummary {
     pub fn with_parallel_scheduler_batch_timeline(
@@ -159,6 +163,30 @@ impl WorkloadParallelExecutionSummary {
         let accelerator_streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
         crate::parallel_batch::collect_parallel_batch_partition_streaks(
             gpu_streaks.into_iter().chain(accelerator_streaks),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        let sets = self.gpu_dma_scheduler_batch_partition_sets();
+        let streaks = self.gpu_dma_scheduler_batch_partition_streaks();
+        merge_parallel_partition_activity_evidence_options(
+            parallel_batch_partition_activity_for_partition(&sets, partition),
+            parallel_batch_streak_activity_for_partition(&streaks, partition),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        let sets = self.accelerator_dma_scheduler_batch_partition_sets();
+        let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        merge_parallel_partition_activity_evidence_options(
+            parallel_batch_partition_activity_for_partition(&sets, partition),
+            parallel_batch_streak_activity_for_partition(&streaks, partition),
         )
     }
 
