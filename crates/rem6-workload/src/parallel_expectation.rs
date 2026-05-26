@@ -1084,6 +1084,12 @@ impl WorkloadExpectedParallelWorkerUse {
         if minimum_max_workers == 0 {
             return Err(WorkloadError::ZeroExpectedParallelWorkerCount { scope });
         }
+        if minimum_max_workers < 2 {
+            return Err(WorkloadError::InvalidExpectedParallelWorkerCount {
+                scope,
+                minimum_max_workers,
+            });
+        }
         Ok(Self {
             scope,
             minimum_max_workers,

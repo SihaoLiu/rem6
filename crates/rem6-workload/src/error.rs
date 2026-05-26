@@ -767,6 +767,10 @@ pub enum WorkloadError {
     ZeroExpectedParallelWorkerCount {
         scope: WorkloadParallelBatchWorkerScope,
     },
+    InvalidExpectedParallelWorkerCount {
+        scope: WorkloadParallelBatchWorkerScope,
+        minimum_max_workers: usize,
+    },
     DuplicateExpectedParallelWorkerUse {
         scope: WorkloadParallelBatchWorkerScope,
     },

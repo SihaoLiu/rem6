@@ -10,10 +10,12 @@ use super::WorkloadError;
 mod checkpoint;
 mod parallel_batch;
 mod parallel_frontier;
+mod parallel_worker;
 
 use self::checkpoint::format_checkpoint_error;
 use self::parallel_batch::format_parallel_batch_error;
 use self::parallel_frontier::format_parallel_frontier_error;
+use self::parallel_worker::format_parallel_worker_error;
 
 impl fmt::Display for WorkloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -821,60 +823,17 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedParallelRemoteFlowDelayBoundsMismatch { .. } => {
                 format_remote_delay_error(self, formatter)
             }
-            Self::ZeroExpectedParallelWorkerCount { scope } => write!(
-                formatter,
-                "expected {} worker use must require a positive maximum worker count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelWorkerUse { scope } => write!(
-                formatter,
-                "expected {} worker use is already declared",
-                scope.as_str()
-            ),
-            Self::ZeroExpectedParallelWorkerActivity { scope } => write!(
-                formatter,
-                "expected {} worker activity must require a positive total worker count",
-                scope.as_str()
-            ),
-            Self::DuplicateExpectedParallelWorkerActivity { scope } => write!(
-                formatter,
-                "expected {} worker activity is already declared",
-                scope.as_str()
-            ),
-            Self::MissingParallelWorkerSummary {
-                scope,
-                minimum_max_workers,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} worker use with at least {minimum_max_workers} workers",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelWorkerCountBelowMinimum {
-                scope,
-                minimum_max_workers,
-                actual_max_workers,
-            } => write!(
-                formatter,
-                "expected {} worker use to reach at least {minimum_max_workers} workers, got {actual_max_workers}",
-                scope.as_str()
-            ),
-            Self::MissingParallelWorkerActivitySummary {
-                scope,
-                minimum_total_workers,
-            } => write!(
-                formatter,
-                "missing parallel summary for expected {} worker activity with at least {minimum_total_workers} total workers",
-                scope.as_str()
-            ),
-            Self::ExpectedParallelWorkerActivityBelowMinimum {
-                scope,
-                minimum_total_workers,
-                actual_total_workers,
-            } => write!(
-                formatter,
-                "expected {} worker activity to reach at least {minimum_total_workers} total workers, got {actual_total_workers}",
-                scope.as_str()
-            ),
+            Self::ZeroExpectedParallelWorkerCount { .. }
+            | Self::InvalidExpectedParallelWorkerCount { .. }
+            | Self::DuplicateExpectedParallelWorkerUse { .. }
+            | Self::ZeroExpectedParallelWorkerActivity { .. }
+            | Self::DuplicateExpectedParallelWorkerActivity { .. }
+            | Self::MissingParallelWorkerSummary { .. }
+            | Self::ExpectedParallelWorkerCountBelowMinimum { .. }
+            | Self::MissingParallelWorkerActivitySummary { .. }
+            | Self::ExpectedParallelWorkerActivityBelowMinimum { .. } => {
+                format_parallel_worker_error(self, formatter)
+            }
             Self::ZeroExpectedDataCacheProtocolRunCount { protocol } => write!(
                 formatter,
                 "expected {} data-cache protocol run count must be positive",

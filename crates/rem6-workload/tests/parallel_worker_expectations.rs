@@ -392,6 +392,16 @@ fn workload_replay_plan_rejects_invalid_parallel_worker_expectations() {
             scope: WorkloadParallelBatchWorkerScope::FullSystem,
         },
     );
+    let serial =
+        WorkloadExpectedParallelWorkerUse::new(WorkloadParallelRemoteFlowScope::Scheduler, 1)
+            .unwrap_err();
+    assert_eq!(
+        serial,
+        WorkloadError::InvalidExpectedParallelWorkerCount {
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
+            minimum_max_workers: 1,
+        },
+    );
 
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("parallel-workers-duplicate"), boot_image())

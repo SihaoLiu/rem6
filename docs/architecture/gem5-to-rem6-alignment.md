@@ -328,6 +328,10 @@ Implementation evidence on 2026-05-26:
   These records are disk-image-only, checked with typed errors, hashed into the
   manifest identity, and owned by a dedicated resource module rather than the
   manifest facade.
+- Workload parallel worker-use expectations now reject one-worker thresholds as
+  invalid. A manifest contract that claims parallel worker use must require at
+  least two workers, so serial execution cannot satisfy the natural parallelism
+  proof by construction.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes
@@ -916,7 +920,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   direct GPU and accelerator DMA scheduler frontier minima,
   full-system remote-flow and remote-send contracts backed by GPU and
   accelerator DMA scheduler traffic,
-  scheduler idle bounds, max-worker use, total-worker
+  scheduler idle bounds, at-least-two-worker max-worker use, total-worker
   activity, batch activity, CPU/cache/full-system active-partition, direct GPU and accelerator
   DMA active-partition, CPU/cache/full-system per-partition activity, direct
   GPU and accelerator DMA per-partition activity, data-cache run attribution
