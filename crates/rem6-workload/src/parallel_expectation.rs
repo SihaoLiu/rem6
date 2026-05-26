@@ -1483,6 +1483,12 @@ impl WorkloadExpectedParallelPartitionUse {
         if minimum_active_partitions == 0 {
             return Err(WorkloadError::ZeroExpectedParallelPartitionCount { scope });
         }
+        if minimum_active_partitions < 2 {
+            return Err(WorkloadError::InvalidExpectedParallelPartitionCount {
+                scope,
+                minimum_active_partitions,
+            });
+        }
         Ok(Self {
             scope,
             minimum_active_partitions,

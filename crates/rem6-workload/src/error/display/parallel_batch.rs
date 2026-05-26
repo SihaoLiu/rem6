@@ -430,6 +430,14 @@ pub(super) fn format_parallel_batch_error(
             "expected {} partition use must require a positive active partition count",
             scope.as_str()
         ),
+        WorkloadError::InvalidExpectedParallelPartitionCount {
+            scope,
+            minimum_active_partitions,
+        } => write!(
+            formatter,
+            "expected {} partition use must require at least 2 active partitions, got {minimum_active_partitions}",
+            scope.as_str()
+        ),
         WorkloadError::DuplicateExpectedParallelPartitionUse { scope } => write!(
             formatter,
             "expected {} partition use is already declared",

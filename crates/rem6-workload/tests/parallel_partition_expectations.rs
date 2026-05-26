@@ -499,6 +499,16 @@ fn workload_replay_plan_rejects_invalid_parallel_partition_expectations() {
             scope: WorkloadParallelBatchPartitionScope::FullSystem,
         },
     );
+    let serial =
+        WorkloadExpectedParallelPartitionUse::new(WorkloadParallelRemoteFlowScope::Scheduler, 1)
+            .unwrap_err();
+    assert_eq!(
+        serial,
+        WorkloadError::InvalidExpectedParallelPartitionCount {
+            scope: WorkloadParallelBatchPartitionScope::Scheduler,
+            minimum_active_partitions: 1,
+        },
+    );
 
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("parallel-partitions-duplicate"), boot_image())

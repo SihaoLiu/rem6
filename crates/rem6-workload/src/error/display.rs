@@ -1007,6 +1007,7 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedParallelBatchTimelineRecordMissing { .. }
             | Self::UnexpectedParallelBatchTimelineRecord { .. }
             | Self::ZeroExpectedParallelPartitionCount { .. }
+            | Self::InvalidExpectedParallelPartitionCount { .. }
             | Self::DuplicateExpectedParallelPartitionUse { .. }
             | Self::ZeroExpectedParallelPartitionActivity { .. }
             | Self::DuplicateExpectedParallelPartitionActivity { .. }

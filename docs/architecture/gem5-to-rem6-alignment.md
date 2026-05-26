@@ -335,6 +335,9 @@ Implementation evidence on 2026-05-26:
 - Workload parallel worker-activity expectations now apply the same
   at-least-two-worker rule to total worker activity, so positive but serial
   activity cannot satisfy a manifest-declared parallel activity contract.
+- Workload parallel partition-use expectations now reject one-partition
+  thresholds, so a declared active-partition contract must prove at least two
+  independently active scheduler partitions.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes
@@ -924,7 +927,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   full-system remote-flow and remote-send contracts backed by GPU and
   accelerator DMA scheduler traffic,
   scheduler idle bounds, at-least-two-worker max-worker use, at-least-two-worker total-worker
-  activity, batch activity, CPU/cache/full-system active-partition, direct GPU and accelerator
+  activity, batch activity, at-least-two-partition CPU/cache/full-system active-partition, direct GPU and accelerator
   DMA active-partition, CPU/cache/full-system per-partition activity, direct
   GPU and accelerator DMA per-partition activity, data-cache run attribution
   contracts, data-cache run-accounting consistency contracts, data-cache

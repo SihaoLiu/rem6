@@ -1128,6 +1128,10 @@ pub enum WorkloadError {
     ZeroExpectedParallelPartitionCount {
         scope: WorkloadParallelBatchPartitionScope,
     },
+    InvalidExpectedParallelPartitionCount {
+        scope: WorkloadParallelBatchPartitionScope,
+        minimum_active_partitions: usize,
+    },
     DuplicateExpectedParallelPartitionUse {
         scope: WorkloadParallelBatchPartitionScope,
     },
