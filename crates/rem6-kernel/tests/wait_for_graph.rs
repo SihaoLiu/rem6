@@ -1,6 +1,6 @@
 use rem6_kernel::{
-    PartitionId, WaitForEdgeKind, WaitForEdgeKindWindow, WaitForGraph, WaitForGraphError,
-    WaitForNode,
+    PartitionId, WaitForBlockedNodeWindow, WaitForEdgeKind, WaitForEdgeKindWindow, WaitForGraph,
+    WaitForGraphError, WaitForNode,
 };
 
 fn component(name: &str) -> WaitForNode {
@@ -284,6 +284,58 @@ fn wait_for_graph_summarizes_edge_kind_observation_windows() {
 
     assert_eq!(snapshot.edge_kind_windows(), expected);
     assert_eq!(graph.edge_kind_windows(), expected);
+}
+
+#[test]
+fn wait_for_graph_summarizes_blocked_node_observation_windows() {
+    let first_core = WaitForNode::partition(PartitionId::new(0));
+    let second_core = WaitForNode::partition(PartitionId::new(1));
+    let queue = resource("l1d0.mshr");
+    let memory = component("mem0");
+    let credit = resource("noc.credit.0");
+    let mut graph = WaitForGraph::new();
+
+    graph
+        .record_wait(
+            first_core.clone(),
+            queue.clone(),
+            WaitForEdgeKind::Queue,
+            10,
+        )
+        .unwrap();
+    graph
+        .record_wait(
+            first_core.clone(),
+            queue.clone(),
+            WaitForEdgeKind::Queue,
+            18,
+        )
+        .unwrap();
+    graph
+        .record_wait(
+            first_core.clone(),
+            memory.clone(),
+            WaitForEdgeKind::Resource,
+            14,
+        )
+        .unwrap();
+    graph
+        .record_wait(
+            second_core.clone(),
+            credit.clone(),
+            WaitForEdgeKind::Credit,
+            12,
+        )
+        .unwrap();
+
+    let expected = vec![
+        WaitForBlockedNodeWindow::new(first_core, 2, 10, 18),
+        WaitForBlockedNodeWindow::new(second_core, 1, 12, 12),
+    ];
+    let snapshot = graph.snapshot();
+
+    assert_eq!(snapshot.blocked_node_windows(), expected);
+    assert_eq!(graph.blocked_node_windows(), expected);
 }
 
 #[test]

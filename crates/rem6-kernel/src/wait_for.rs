@@ -135,6 +135,79 @@ impl WaitForEdgeKindWindow {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WaitForBlockedNodeWindow {
+    node: WaitForNode,
+    edge_count: usize,
+    first_tick: Tick,
+    last_tick: Tick,
+}
+
+impl WaitForBlockedNodeWindow {
+    pub fn new(node: WaitForNode, edge_count: usize, first_tick: Tick, last_tick: Tick) -> Self {
+        let stored_first_tick = if first_tick <= last_tick {
+            first_tick
+        } else {
+            last_tick
+        };
+        let stored_last_tick = if first_tick <= last_tick {
+            last_tick
+        } else {
+            first_tick
+        };
+        Self {
+            node,
+            edge_count,
+            first_tick: stored_first_tick,
+            last_tick: stored_last_tick,
+        }
+    }
+
+    pub fn from_edges(edges: impl IntoIterator<Item = WaitForEdge>) -> Vec<Self> {
+        let mut by_node = BTreeMap::new();
+        for edge in edges {
+            let window = Self::new(
+                edge.source().clone(),
+                1,
+                edge.first_observed_tick(),
+                edge.last_observed_tick(),
+            );
+            by_node
+                .entry(edge.source().clone())
+                .and_modify(|stored: &mut Self| stored.merge(window.clone()))
+                .or_insert(window);
+        }
+        by_node.into_values().collect()
+    }
+
+    pub const fn node(&self) -> &WaitForNode {
+        &self.node
+    }
+
+    pub const fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
+    pub const fn first_tick(&self) -> Tick {
+        self.first_tick
+    }
+
+    pub const fn last_tick(&self) -> Tick {
+        self.last_tick
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.edge_count == 0
+    }
+
+    fn merge(&mut self, other: Self) {
+        debug_assert_eq!(self.node, other.node);
+        self.edge_count = self.edge_count.saturating_add(other.edge_count);
+        self.first_tick = self.first_tick.min(other.first_tick);
+        self.last_tick = self.last_tick.max(other.last_tick);
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WaitForEdge {
     source: WaitForNode,
@@ -302,6 +375,10 @@ impl WaitForGraphSnapshot {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
+    }
+
+    pub fn blocked_node_windows(&self) -> Vec<WaitForBlockedNodeWindow> {
+        WaitForBlockedNodeWindow::from_edges(self.edges.iter().cloned())
     }
 
     pub fn dependencies(&self, source: &WaitForNode) -> Vec<WaitForEdge> {
@@ -482,6 +559,10 @@ impl WaitForGraph {
 
     pub fn edge_kind_windows(&self) -> Vec<WaitForEdgeKindWindow> {
         WaitForEdgeKindWindow::from_edges(self.edges())
+    }
+
+    pub fn blocked_node_windows(&self) -> Vec<WaitForBlockedNodeWindow> {
+        WaitForBlockedNodeWindow::from_edges(self.edges())
     }
 
     pub fn blocked_nodes(&self) -> Vec<WaitForNode> {

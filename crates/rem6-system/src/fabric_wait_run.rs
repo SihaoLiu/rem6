@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
-    DeadlockDiagnostic, Tick, WaitForEdge, WaitForEdgeKind, WaitForGraph, WaitForNode,
+    DeadlockDiagnostic, Tick, WaitForBlockedNodeWindow, WaitForEdge, WaitForEdgeKind, WaitForGraph,
+    WaitForNode,
 };
 
 use crate::RiscvSystemRun;
@@ -289,11 +290,9 @@ fn newest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {
 }
 
 fn blocked_nodes_from_edges(edges: Vec<WaitForEdge>) -> Vec<WaitForNode> {
-    edges
+    WaitForBlockedNodeWindow::from_edges(edges)
         .into_iter()
-        .map(|edge| edge.source().clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .map(|window| window.node().clone())
         .collect()
 }
 

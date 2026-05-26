@@ -53,7 +53,11 @@ isolated bugs:
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
   with the same deterministic semantics before the data is converted into
-  workload summaries.
+  workload summaries. Blocked-node observation windows are also kernel-owned,
+  so merged resource or full-system diagnostics can identify which partition,
+  component, resource, or transaction was blocked, how many distinct
+  dependencies contributed to that block, and the observed tick window without
+  rebuilding ad hoc sets in each subsystem.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -376,8 +380,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   truncated chunks cannot partially mutate live scheduler frontiers. Wait-for
   graph tests cover checkpoint barrier nodes, barrier wait edges, repeated
   observations, resource-scoped barrier release, kernel-owned edge-kind
-  observation windows, and full-system preservation of the barrier edge kind in
-  wait-for summaries.
+  observation windows, kernel-owned blocked-node observation windows, and
+  full-system preservation of the barrier edge kind in wait-for summaries.
   Progress-monitor tests cover typed livelock diagnostics for
   repeated progress-free transitions, transition-kind accounting, snapshots,
   and useful-work reset of active livelock windows. Scheduler progress tests
