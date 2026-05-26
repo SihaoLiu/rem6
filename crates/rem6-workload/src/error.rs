@@ -1579,6 +1579,11 @@ pub enum WorkloadError {
         edge_kind_count: usize,
         window_edge_count: usize,
     },
+    InvalidParallelDeadlockMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        merged_diagnostic_count: usize,
+        scoped_diagnostic_count: usize,
+    },
     InvalidParallelLivelockDiagnosticCountSummary {
         scope: WorkloadParallelDiagnosticScope,
         progress_transition_count: usize,

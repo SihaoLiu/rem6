@@ -1154,6 +1154,38 @@ fn workload_replay_plan_rejects_missing_or_dirty_parallel_diagnostics() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_incomplete_resource_deadlock_merge() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("dirty-resource-merge"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::Resource,
+        ))
+        .unwrap();
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_resource_diagnostics(0, 2, 0, 1)
+        .with_merged_resource_deadlock_diagnostics(1);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelDeadlockMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::Resource,
+            merged_diagnostic_count: 1,
+            scoped_diagnostic_count: 3,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_duplicate_clean_parallel_diagnostics() {
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("duplicate-clean-diagnostics"), boot_image())

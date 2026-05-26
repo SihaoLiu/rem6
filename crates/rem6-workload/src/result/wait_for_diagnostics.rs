@@ -289,6 +289,12 @@ impl WorkloadParallelExecutionSummary {
             WorkloadParallelDiagnosticScope::Resource,
             &self.dram_wait_for_edge_kind_counts,
             &self.dram_wait_for_edge_kind_windows,
+        )?;
+        validate_deadlock_merge_summary(
+            WorkloadParallelDiagnosticScope::Resource,
+            self.merged_resource_deadlock_diagnostic_count,
+            self.fabric_deadlock_diagnostic_count
+                .saturating_add(self.dram_deadlock_diagnostic_count),
         )
     }
 
@@ -1248,6 +1254,21 @@ fn validate_wait_for_edge_kind_window_summary(
                 window_edge_count: window.edge_count(),
             });
         }
+    }
+    Ok(())
+}
+
+fn validate_deadlock_merge_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    merged_diagnostic_count: usize,
+    scoped_diagnostic_count: usize,
+) -> Result<(), WorkloadError> {
+    if merged_diagnostic_count != 0 && merged_diagnostic_count < scoped_diagnostic_count {
+        return Err(WorkloadError::InvalidParallelDeadlockMergeSummary {
+            scope,
+            merged_diagnostic_count,
+            scoped_diagnostic_count,
+        });
     }
     Ok(())
 }
