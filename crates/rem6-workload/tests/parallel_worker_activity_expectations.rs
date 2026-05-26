@@ -4,8 +4,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelWorkerActivity, WorkloadId,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -45,6 +46,13 @@ fn replay_plan() -> WorkloadReplayPlan {
 
 fn expected_activity(
     scope: WorkloadParallelRemoteFlowScope,
+    minimum_total_workers: usize,
+) -> WorkloadExpectedParallelWorkerActivity {
+    WorkloadExpectedParallelWorkerActivity::new(scope, minimum_total_workers).unwrap()
+}
+
+fn expected_dma_activity(
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_total_workers: usize,
 ) -> WorkloadExpectedParallelWorkerActivity {
     WorkloadExpectedParallelWorkerActivity::new(scope, minimum_total_workers).unwrap()
@@ -159,7 +167,7 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_workers() {
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelWorkerActivitySummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_total_workers: 8,
         },
     );
@@ -172,7 +180,7 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_workers() {
     assert_eq!(
         plan.verify_result(&underactive).unwrap_err(),
         WorkloadError::ExpectedParallelWorkerActivityBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
             minimum_total_workers: 8,
             actual_total_workers: 7,
         },
@@ -221,6 +229,46 @@ fn workload_replay_plan_derives_total_workers_from_batch_histograms() {
     assert_eq!(summary.total_parallel_scheduler_workers(), 10);
     assert_eq!(summary.data_cache_parallel_scheduler_total_workers(), 11);
     assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 21);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_checks_dma_scheduler_total_workers_directly() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-worker-activity-dma-direct"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_dma_activity(
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler,
+            10,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_activity(expected_dma_activity(
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler,
+            6,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 3),
+            WorkloadParallelBatchWorkerCount::new(4, 1),
+        ])
+        .with_accelerator_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+        ]);
+
+    assert_eq!(summary.gpu_dma_scheduler_total_workers(), 10);
+    assert_eq!(summary.accelerator_dma_scheduler_total_workers(), 6);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
@@ -454,7 +502,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_worker_activity() {
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedParallelWorkerActivity {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
         },
     );
 
@@ -472,7 +520,7 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_worker_activity() {
     assert_eq!(
         duplicate,
         WorkloadError::DuplicateExpectedParallelWorkerActivity {
-            scope: WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            scope: WorkloadParallelBatchWorkerScope::DataCacheScheduler,
         },
     );
 }

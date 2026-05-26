@@ -4,8 +4,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelWorkerUse, WorkloadId,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -34,6 +35,13 @@ fn kernel_resource() -> WorkloadResource {
 
 fn expected_workers(
     scope: WorkloadParallelRemoteFlowScope,
+    minimum_max_workers: usize,
+) -> WorkloadExpectedParallelWorkerUse {
+    WorkloadExpectedParallelWorkerUse::new(scope, minimum_max_workers).unwrap()
+}
+
+fn expected_dma_workers(
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_max_workers: usize,
 ) -> WorkloadExpectedParallelWorkerUse {
     WorkloadExpectedParallelWorkerUse::new(scope, minimum_max_workers).unwrap()
@@ -153,7 +161,7 @@ fn workload_replay_plan_rejects_missing_or_underused_parallel_workers() {
     assert_eq!(
         plan.verify_result(&missing_summary).unwrap_err(),
         WorkloadError::MissingParallelWorkerSummary {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_max_workers: 2,
         },
     );
@@ -165,7 +173,7 @@ fn workload_replay_plan_rejects_missing_or_underused_parallel_workers() {
     assert_eq!(
         plan.verify_result(&serial_result).unwrap_err(),
         WorkloadError::ExpectedParallelWorkerCountBelowMinimum {
-            scope: WorkloadParallelRemoteFlowScope::Scheduler,
+            scope: WorkloadParallelBatchWorkerScope::Scheduler,
             minimum_max_workers: 2,
             actual_max_workers: 1,
         },
@@ -212,6 +220,44 @@ fn workload_replay_plan_derives_max_workers_from_batch_histograms() {
     assert_eq!(summary.max_parallel_scheduler_workers(), 4);
     assert_eq!(summary.data_cache_parallel_scheduler_max_workers(), 5);
     assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 5);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_checks_dma_scheduler_max_workers_directly() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("parallel-workers-dma-direct"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_worker_use(expected_dma_workers(
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler,
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_worker_use(expected_dma_workers(
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler,
+            3,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+            WorkloadParallelBatchWorkerCount::new(4, 1),
+        ])
+        .with_accelerator_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+        ]);
+
+    assert_eq!(summary.gpu_dma_scheduler_max_workers(), 4);
+    assert_eq!(summary.accelerator_dma_scheduler_max_workers(), 3);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
@@ -343,7 +389,7 @@ fn workload_replay_plan_rejects_invalid_parallel_worker_expectations() {
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedParallelWorkerCount {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
         },
     );
 
@@ -365,7 +411,7 @@ fn workload_replay_plan_rejects_invalid_parallel_worker_expectations() {
     assert_eq!(
         manifest,
         WorkloadError::DuplicateExpectedParallelWorkerUse {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
         },
     );
 }

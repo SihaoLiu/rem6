@@ -449,7 +449,7 @@ fn hash_resource_activity_scope(hash: &mut u64, scope: WorkloadResourceActivityS
 }
 
 fn hash_expected_parallel_worker_use(hash: &mut u64, expected: WorkloadExpectedParallelWorkerUse) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_max_workers() as u64);
 }
 
@@ -457,7 +457,7 @@ fn hash_expected_parallel_worker_activity(
     hash: &mut u64,
     expected: WorkloadExpectedParallelWorkerActivity,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_total_workers() as u64);
 }
 

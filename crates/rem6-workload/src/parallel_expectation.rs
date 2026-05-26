@@ -8,7 +8,8 @@ use rem6_kernel::{
 
 use crate::{
     result_collect::collect_conservative_partition_frontiers, WorkloadDataCacheProtocol,
-    WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelExecutionSummary,
+    WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelExecutionSummary,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1287,15 +1288,16 @@ where
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelWorkerUse {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_max_workers: usize,
 }
 
 impl WorkloadExpectedParallelWorkerUse {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_max_workers: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_max_workers == 0 {
             return Err(WorkloadError::ZeroExpectedParallelWorkerCount { scope });
         }
@@ -1305,7 +1307,7 @@ impl WorkloadExpectedParallelWorkerUse {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -1319,11 +1321,17 @@ impl WorkloadExpectedParallelWorkerUse {
 
     pub(crate) fn actual_max_workers(self, summary: &WorkloadParallelExecutionSummary) -> usize {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => summary.max_parallel_scheduler_workers(),
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => summary.max_parallel_scheduler_workers(),
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_max_workers()
             }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_max_workers()
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_max_workers()
+            }
+            WorkloadParallelBatchWorkerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_max_workers()
             }
         }
@@ -1332,15 +1340,16 @@ impl WorkloadExpectedParallelWorkerUse {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelWorkerActivity {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_total_workers: usize,
 }
 
 impl WorkloadExpectedParallelWorkerActivity {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_total_workers: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_total_workers == 0 {
             return Err(WorkloadError::ZeroExpectedParallelWorkerActivity { scope });
         }
@@ -1350,7 +1359,7 @@ impl WorkloadExpectedParallelWorkerActivity {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -1364,13 +1373,19 @@ impl WorkloadExpectedParallelWorkerActivity {
 
     pub(crate) fn actual_total_workers(self, summary: &WorkloadParallelExecutionSummary) -> usize {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => {
                 summary.total_parallel_scheduler_workers()
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => {
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_total_workers()
             }
-            WorkloadParallelRemoteFlowScope::FullSystem => {
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_total_workers()
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_total_workers()
+            }
+            WorkloadParallelBatchWorkerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_total_workers()
             }
         }

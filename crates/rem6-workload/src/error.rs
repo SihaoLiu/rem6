@@ -687,16 +687,16 @@ pub enum WorkloadError {
         actual_maximum_delay: Option<Tick>,
     },
     ZeroExpectedParallelWorkerCount {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
     },
     DuplicateExpectedParallelWorkerUse {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
     },
     ZeroExpectedParallelWorkerActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
     },
     DuplicateExpectedParallelWorkerActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
     },
     ZeroExpectedDataCacheProtocolRunCount {
         protocol: WorkloadDataCacheProtocol,
@@ -736,20 +736,20 @@ pub enum WorkloadError {
         protocol_run_count: usize,
     },
     MissingParallelWorkerSummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_max_workers: usize,
     },
     ExpectedParallelWorkerCountBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_max_workers: usize,
         actual_max_workers: usize,
     },
     MissingParallelWorkerActivitySummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_total_workers: usize,
     },
     ExpectedParallelWorkerActivityBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_total_workers: usize,
         actual_total_workers: usize,
     },
