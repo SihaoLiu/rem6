@@ -286,6 +286,40 @@ fn pci_type1_bridge_common_header_writes_bist_byte_and_snapshots() {
 }
 
 #[test]
+fn pci_type1_bridge_command_writes_mask_reserved_bits() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0xffff_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0xff, 0x03, 0x00, 0x00])
+    );
+
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0xffff_0002_u32.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x02, 0x00, 0x00, 0x00])
+    );
+}
+
+#[test]
 fn pci_type1_bridge_status_writes_do_not_create_status_bits() {
     let function = PciFunctionAddress::new(0, 1, 0).unwrap();
     let mut bridge = bridge_config(function);

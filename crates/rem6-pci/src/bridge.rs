@@ -1,9 +1,9 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{
-    write_common_status, write_u16_at, write_u32_at, PciBarIndex, PciBarKind, PciBarRange,
-    PciBarSpec, PciBarState, PciClassCode, PciConfigOffset, PciDeviceIdentity, PciError,
-    PciFunctionAddress, PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE,
+    write_common_command, write_common_status, write_u16_at, write_u32_at, PciBarIndex, PciBarKind,
+    PciBarRange, PciBarSpec, PciBarState, PciClassCode, PciConfigOffset, PciDeviceIdentity,
+    PciError, PciFunctionAddress, PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE,
     PCI_COMMAND_MEMORY_SPACE, PCI_CONFIG_SPACE_SIZE, PCI_STATUS_OFFSET, PCI_TYPE1_HEADER_TYPE,
 };
 
@@ -246,11 +246,19 @@ impl PciBridgeConfig {
         }
         match (offset.as_usize(), data.len()) {
             (PCI_COMMAND_OFFSET, 2) => {
-                self.config[span.start..span.end].copy_from_slice(data);
+                write_common_command(
+                    &mut self.config,
+                    PCI_COMMAND_OFFSET,
+                    u16::from_le_bytes(data.try_into().unwrap()),
+                );
                 Ok(())
             }
             (PCI_COMMAND_OFFSET, 4) => {
-                self.config[PCI_COMMAND_OFFSET..PCI_COMMAND_OFFSET + 2].copy_from_slice(&data[..2]);
+                write_common_command(
+                    &mut self.config,
+                    PCI_COMMAND_OFFSET,
+                    u16::from_le_bytes([data[0], data[1]]),
+                );
                 Ok(())
             }
             (PCI_STATUS_OFFSET, 2) => {

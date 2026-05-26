@@ -7,6 +7,7 @@ use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 mod bar;
 mod bridge;
 mod capability;
+mod common;
 mod interrupt;
 mod mmio;
 mod msi;
@@ -16,6 +17,7 @@ mod pm;
 
 use bar::{bar_index_for_offset, host_address_space, PciBarState};
 use capability::PciEndpointCapabilityList;
+use common::{write_common_command, write_common_status, write_u16_at, write_u32_at};
 
 pub use bar::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciHostAddressBases, PciHostAddressSpace,
@@ -450,11 +452,19 @@ impl PciEndpointConfig {
 
         match offset.as_usize() {
             PCI_COMMAND_OFFSET if data.len() == 2 => {
-                self.config[span.start..span.end].copy_from_slice(data);
+                write_common_command(
+                    &mut self.config,
+                    PCI_COMMAND_OFFSET,
+                    u16::from_le_bytes(data.try_into().unwrap()),
+                );
                 Ok(())
             }
             PCI_COMMAND_OFFSET if data.len() == 4 => {
-                self.config[PCI_COMMAND_OFFSET..PCI_COMMAND_OFFSET + 2].copy_from_slice(&data[..2]);
+                write_common_command(
+                    &mut self.config,
+                    PCI_COMMAND_OFFSET,
+                    u16::from_le_bytes([data[0], data[1]]),
+                );
                 Ok(())
             }
             PCI_STATUS_OFFSET if data.len() == 2 => {
@@ -1710,26 +1720,4 @@ fn checked_base_plus_offset(base: Address, offset: Address) -> Result<Address, P
         .checked_add(offset.get())
         .map(Address::new)
         .ok_or(PciError::HostAddressOverflow { base, offset })
-}
-
-pub(crate) fn write_u16_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u16) {
-    config[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-}
-
-pub(crate) fn write_common_status(
-    config: &mut [u8; PCI_CONFIG_SPACE_SIZE],
-    value: u16,
-    read_only_mask: u16,
-) {
-    let current = u16::from_le_bytes(
-        config[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2]
-            .try_into()
-            .unwrap(),
-    );
-    let writable_clear_mask = value & !read_only_mask;
-    write_u16_at(config, PCI_STATUS_OFFSET, current & !writable_clear_mask);
-}
-
-pub(crate) fn write_u32_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u32) {
-    config[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
