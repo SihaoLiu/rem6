@@ -362,6 +362,10 @@ Implementation evidence on 2026-05-26:
   counts and DMA timeline fallback decisions. Inverted or zero-duration batch
   windows can be rejected as unexpected actual evidence instead of disappearing
   before replay validation.
+- Workload batch partition-set replay also validates scoped raw batch timeline
+  windows before deriving partition-set counts. A partition-set contract can no
+  longer pass by filtering out an inverted or zero-duration actual timeline
+  record while another valid record satisfies the minimum count.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

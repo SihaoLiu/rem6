@@ -5,8 +5,9 @@ use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchPartitionSet, WorkloadId,
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchPartitionSet,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -323,6 +324,48 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_batch_partition_
             partitions: vec![0, 2],
             minimum_batch_count: 3,
             actual_batch_count: 1,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_malformed_timeline_for_batch_partition_sets() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            [partition(0), partition(1)],
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0), partition(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                9,
+                5,
+                [partition(0), partition(1)],
+                2,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 9,
+            horizon: 5,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 }
