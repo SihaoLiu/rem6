@@ -1,8 +1,15 @@
+use std::ops::Range;
+use std::sync::{Arc, Mutex};
+
+use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 use rem6_memory::ByteMask;
 
-use crate::{VirtioError, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec};
+use crate::{
+    VirtioError, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec, VirtioQueueIndex,
+};
 
 pub const VIRTIO_BLOCK_DEVICE_ID: u16 = 2;
+pub const VIRTIO_BLOCK_SECTOR_SIZE: u64 = 512;
 
 pub const VIRTIO_BLOCK_F_SIZE_MAX: u64 = 1 << 1;
 pub const VIRTIO_BLOCK_F_SEG_MAX: u64 = 1 << 2;
@@ -16,6 +23,19 @@ pub const VIRTIO_BLOCK_F_MQ: u64 = 1 << 12;
 pub const VIRTIO_BLOCK_F_DISCARD: u64 = 1 << 13;
 pub const VIRTIO_BLOCK_F_WRITE_ZEROES: u64 = 1 << 14;
 pub const VIRTIO_BLOCK_F_SECURE_ERASE: u64 = 1 << 16;
+
+pub const VIRTIO_BLOCK_T_IN: u32 = 0;
+pub const VIRTIO_BLOCK_T_OUT: u32 = 1;
+pub const VIRTIO_BLOCK_T_FLUSH: u32 = 4;
+pub const VIRTIO_BLOCK_T_GET_ID: u32 = 8;
+pub const VIRTIO_BLOCK_T_GET_LIFETIME: u32 = 10;
+pub const VIRTIO_BLOCK_T_DISCARD: u32 = 11;
+pub const VIRTIO_BLOCK_T_WRITE_ZEROES: u32 = 13;
+pub const VIRTIO_BLOCK_T_SECURE_ERASE: u32 = 14;
+
+pub const VIRTIO_BLOCK_S_OK: u8 = 0;
+pub const VIRTIO_BLOCK_S_IOERR: u8 = 1;
+pub const VIRTIO_BLOCK_S_UNSUPP: u8 = 2;
 
 pub const VIRTIO_BLOCK_CONFIG_CAPACITY_OFFSET: u64 = 0;
 pub const VIRTIO_BLOCK_CONFIG_SIZE_MAX_OFFSET: u64 = 8;
@@ -556,6 +576,434 @@ impl VirtioBlockConfigSpec {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct VirtioBlockRequestId(u64);
+
+impl VirtioBlockRequestId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VirtioBlockStatus {
+    Ok,
+    IoErr,
+    Unsupported,
+}
+
+impl VirtioBlockStatus {
+    pub const fn as_byte(self) -> u8 {
+        match self {
+            Self::Ok => VIRTIO_BLOCK_S_OK,
+            Self::IoErr => VIRTIO_BLOCK_S_IOERR,
+            Self::Unsupported => VIRTIO_BLOCK_S_UNSUPP,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VirtioBlockRequestKind {
+    Read { bytes: u64 },
+    Write { data: Vec<u8> },
+    Flush,
+    GetId,
+    Unsupported { raw_type: u32, data: Vec<u8> },
+}
+
+impl VirtioBlockRequestKind {
+    pub const fn raw_type(&self) -> u32 {
+        match self {
+            Self::Read { .. } => VIRTIO_BLOCK_T_IN,
+            Self::Write { .. } => VIRTIO_BLOCK_T_OUT,
+            Self::Flush => VIRTIO_BLOCK_T_FLUSH,
+            Self::GetId => VIRTIO_BLOCK_T_GET_ID,
+            Self::Unsupported { raw_type, .. } => *raw_type,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioBlockRequest {
+    id: VirtioBlockRequestId,
+    queue: VirtioQueueIndex,
+    sector: u64,
+    kind: VirtioBlockRequestKind,
+}
+
+impl VirtioBlockRequest {
+    pub fn read(
+        id: VirtioBlockRequestId,
+        queue: VirtioQueueIndex,
+        sector: u64,
+        bytes: u64,
+    ) -> Result<Self, VirtioError> {
+        validate_block_payload_length(VIRTIO_BLOCK_T_IN, bytes)?;
+        Ok(Self {
+            id,
+            queue,
+            sector,
+            kind: VirtioBlockRequestKind::Read { bytes },
+        })
+    }
+
+    pub fn write(
+        id: VirtioBlockRequestId,
+        queue: VirtioQueueIndex,
+        sector: u64,
+        data: Vec<u8>,
+    ) -> Result<Self, VirtioError> {
+        validate_block_payload_length(VIRTIO_BLOCK_T_OUT, data.len() as u64)?;
+        Ok(Self {
+            id,
+            queue,
+            sector,
+            kind: VirtioBlockRequestKind::Write { data },
+        })
+    }
+
+    pub fn flush(id: VirtioBlockRequestId, queue: VirtioQueueIndex) -> Result<Self, VirtioError> {
+        Ok(Self {
+            id,
+            queue,
+            sector: 0,
+            kind: VirtioBlockRequestKind::Flush,
+        })
+    }
+
+    pub fn get_id(id: VirtioBlockRequestId, queue: VirtioQueueIndex) -> Self {
+        Self {
+            id,
+            queue,
+            sector: 0,
+            kind: VirtioBlockRequestKind::GetId,
+        }
+    }
+
+    pub fn unsupported(
+        id: VirtioBlockRequestId,
+        queue: VirtioQueueIndex,
+        raw_type: u32,
+        data: Vec<u8>,
+    ) -> Result<Self, VirtioError> {
+        Ok(Self {
+            id,
+            queue,
+            sector: 0,
+            kind: VirtioBlockRequestKind::Unsupported { raw_type, data },
+        })
+    }
+
+    pub const fn id(&self) -> VirtioBlockRequestId {
+        self.id
+    }
+
+    pub const fn queue(&self) -> VirtioQueueIndex {
+        self.queue
+    }
+
+    pub const fn sector(&self) -> u64 {
+        self.sector
+    }
+
+    pub const fn kind(&self) -> &VirtioBlockRequestKind {
+        &self.kind
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioBlockCompletion {
+    request: VirtioBlockRequestId,
+    queue: VirtioQueueIndex,
+    tick: Tick,
+    status: VirtioBlockStatus,
+    data: Option<Vec<u8>>,
+}
+
+impl VirtioBlockCompletion {
+    fn new(
+        request: VirtioBlockRequestId,
+        queue: VirtioQueueIndex,
+        tick: Tick,
+        status: VirtioBlockStatus,
+        data: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            request,
+            queue,
+            tick,
+            status,
+            data,
+        }
+    }
+
+    pub const fn request(&self) -> VirtioBlockRequestId {
+        self.request
+    }
+
+    pub const fn queue(&self) -> VirtioQueueIndex {
+        self.queue
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn status(&self) -> VirtioBlockStatus {
+        self.status
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    pub fn status_byte(&self) -> u8 {
+        self.status.as_byte()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtioBlockMemoryBackend {
+    state: Arc<Mutex<VirtioBlockMemoryBackendState>>,
+}
+
+impl VirtioBlockMemoryBackend {
+    pub fn zeroed(capacity_sectors: u64) -> Result<Self, VirtioError> {
+        let bytes = capacity_sectors
+            .checked_mul(VIRTIO_BLOCK_SECTOR_SIZE)
+            .ok_or(VirtioError::BlockRequestAddressOverflow {
+                sector: capacity_sectors,
+                bytes: VIRTIO_BLOCK_SECTOR_SIZE,
+            })?;
+        Ok(Self {
+            state: Arc::new(Mutex::new(VirtioBlockMemoryBackendState {
+                bytes: vec![0; bytes as usize],
+                flush_count: 0,
+            })),
+        })
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, VirtioError> {
+        if bytes.is_empty() || !(bytes.len() as u64).is_multiple_of(VIRTIO_BLOCK_SECTOR_SIZE) {
+            return Err(VirtioError::InvalidBlockBackendSize {
+                bytes: bytes.len() as u64,
+            });
+        }
+        Ok(Self {
+            state: Arc::new(Mutex::new(VirtioBlockMemoryBackendState {
+                bytes,
+                flush_count: 0,
+            })),
+        })
+    }
+
+    pub fn capacity_sectors(&self) -> u64 {
+        let state = self.state.lock().expect("virtio block backend lock");
+        state.bytes.len() as u64 / VIRTIO_BLOCK_SECTOR_SIZE
+    }
+
+    pub fn flush_count(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("virtio block backend lock")
+            .flush_count
+    }
+
+    pub fn read_sector(&self, sector: u64) -> Result<Vec<u8>, VirtioError> {
+        self.read(sector, VIRTIO_BLOCK_SECTOR_SIZE)
+    }
+
+    fn read(&self, sector: u64, bytes: u64) -> Result<Vec<u8>, VirtioError> {
+        let state = self.state.lock().expect("virtio block backend lock");
+        let range = state.byte_range(sector, bytes)?;
+        Ok(state.bytes[range].to_vec())
+    }
+
+    fn write(&self, sector: u64, data: &[u8]) -> Result<(), VirtioError> {
+        let mut state = self.state.lock().expect("virtio block backend lock");
+        let range = state.byte_range(sector, data.len() as u64)?;
+        state.bytes[range].copy_from_slice(data);
+        Ok(())
+    }
+
+    fn flush(&self) {
+        self.state
+            .lock()
+            .expect("virtio block backend lock")
+            .flush_count += 1;
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VirtioBlockMemoryBackendState {
+    bytes: Vec<u8>,
+    flush_count: u64,
+}
+
+impl VirtioBlockMemoryBackendState {
+    fn byte_range(&self, sector: u64, bytes: u64) -> Result<Range<usize>, VirtioError> {
+        let start = sector
+            .checked_mul(VIRTIO_BLOCK_SECTOR_SIZE)
+            .ok_or(VirtioError::BlockRequestAddressOverflow { sector, bytes })?;
+        let end = start
+            .checked_add(bytes)
+            .ok_or(VirtioError::BlockRequestAddressOverflow { sector, bytes })?;
+        if end > self.bytes.len() as u64 {
+            return Err(VirtioError::BlockRequestOutOfRange {
+                sector,
+                bytes,
+                capacity_sectors: self.bytes.len() as u64 / VIRTIO_BLOCK_SECTOR_SIZE,
+            });
+        }
+        Ok(start as usize..end as usize)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtioBlockDevice {
+    backend: VirtioBlockMemoryBackend,
+    state: Arc<Mutex<VirtioBlockDeviceState>>,
+}
+
+impl VirtioBlockDevice {
+    pub fn new(
+        config: VirtioBlockConfigSpec,
+        backend: VirtioBlockMemoryBackend,
+    ) -> Result<Self, VirtioError> {
+        config.validate()?;
+        let backend_sectors = backend.capacity_sectors();
+        if config.capacity_sectors() != backend_sectors {
+            return Err(VirtioError::BlockBackendCapacityMismatch {
+                config_sectors: config.capacity_sectors(),
+                backend_sectors,
+            });
+        }
+        Ok(Self {
+            backend,
+            state: Arc::new(Mutex::new(VirtioBlockDeviceState {
+                config,
+                device_id: [0; 20],
+                completions: Vec::new(),
+            })),
+        })
+    }
+
+    pub fn with_device_id(self, device_id: &str) -> Result<Self, VirtioError> {
+        let bytes = device_id.as_bytes();
+        if bytes.len() > 20 {
+            return Err(VirtioError::InvalidBlockDeviceId { bytes: bytes.len() });
+        }
+        let mut id = [0; 20];
+        id[..bytes.len()].copy_from_slice(bytes);
+        self.state
+            .lock()
+            .expect("virtio block device lock")
+            .device_id = id;
+        Ok(self)
+    }
+
+    pub fn execute(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: VirtioBlockRequest,
+    ) -> Result<VirtioBlockCompletion, VirtioError> {
+        self.execute_at(context.now(), request)
+    }
+
+    pub fn execute_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: VirtioBlockRequest,
+    ) -> Result<VirtioBlockCompletion, VirtioError> {
+        self.execute_at(context.now(), request)
+    }
+
+    pub fn execute_at(
+        &self,
+        tick: Tick,
+        request: VirtioBlockRequest,
+    ) -> Result<VirtioBlockCompletion, VirtioError> {
+        let (status, data) = self.execute_request(&request);
+        let completion =
+            VirtioBlockCompletion::new(request.id(), request.queue(), tick, status, data);
+        self.state
+            .lock()
+            .expect("virtio block device lock")
+            .completions
+            .push(completion.clone());
+        Ok(completion)
+    }
+
+    pub fn completions(&self) -> Vec<VirtioBlockCompletion> {
+        self.state
+            .lock()
+            .expect("virtio block device lock")
+            .completions
+            .clone()
+    }
+
+    fn execute_request(
+        &self,
+        request: &VirtioBlockRequest,
+    ) -> (VirtioBlockStatus, Option<Vec<u8>>) {
+        match request.kind() {
+            VirtioBlockRequestKind::Read { bytes } => {
+                match self.backend.read(request.sector(), *bytes) {
+                    Ok(data) => (VirtioBlockStatus::Ok, Some(data)),
+                    Err(_) => (VirtioBlockStatus::IoErr, None),
+                }
+            }
+            VirtioBlockRequestKind::Write { data } => {
+                let read_only = self
+                    .state
+                    .lock()
+                    .expect("virtio block device lock")
+                    .config
+                    .read_only;
+                if read_only {
+                    return (VirtioBlockStatus::IoErr, None);
+                }
+                match self.backend.write(request.sector(), data) {
+                    Ok(()) => (VirtioBlockStatus::Ok, None),
+                    Err(_) => (VirtioBlockStatus::IoErr, None),
+                }
+            }
+            VirtioBlockRequestKind::Flush => {
+                self.backend.flush();
+                (VirtioBlockStatus::Ok, None)
+            }
+            VirtioBlockRequestKind::GetId => {
+                let id = self
+                    .state
+                    .lock()
+                    .expect("virtio block device lock")
+                    .device_id
+                    .to_vec();
+                (VirtioBlockStatus::Ok, Some(id))
+            }
+            VirtioBlockRequestKind::Unsupported { .. } => (VirtioBlockStatus::Unsupported, None),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VirtioBlockDeviceState {
+    config: VirtioBlockConfigSpec,
+    device_id: [u8; 20],
+    completions: Vec<VirtioBlockCompletion>,
+}
+
+fn validate_block_payload_length(raw_type: u32, bytes: u64) -> Result<(), VirtioError> {
+    if bytes == 0 || !bytes.is_multiple_of(VIRTIO_BLOCK_SECTOR_SIZE) {
+        return Err(VirtioError::InvalidBlockRequestDataLength { raw_type, bytes });
+    }
+    Ok(())
 }
 
 fn write_u16(bytes: &mut [u8], offset: u64, value: u16) {

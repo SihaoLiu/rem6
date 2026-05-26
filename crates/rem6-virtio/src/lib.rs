@@ -17,12 +17,14 @@ mod shared_memory;
 mod transport;
 
 pub use block::{
-    VirtioBlockCacheMode, VirtioBlockConfigSpec, VirtioBlockDiscardLimits, VirtioBlockGeometry,
-    VirtioBlockSecureEraseLimits, VirtioBlockTopology, VirtioBlockWriteZeroesLimits,
-    VIRTIO_BLOCK_CONFIG_ALIGNMENT_OFFSET_OFFSET, VIRTIO_BLOCK_CONFIG_BLK_SIZE_OFFSET,
-    VIRTIO_BLOCK_CONFIG_CAPACITY_OFFSET, VIRTIO_BLOCK_CONFIG_CYLINDERS_OFFSET,
-    VIRTIO_BLOCK_CONFIG_DISCARD_ALIGNMENT_OFFSET, VIRTIO_BLOCK_CONFIG_HEADS_OFFSET,
-    VIRTIO_BLOCK_CONFIG_MAX_DISCARD_SECTORS_OFFSET, VIRTIO_BLOCK_CONFIG_MAX_DISCARD_SEG_OFFSET,
+    VirtioBlockCacheMode, VirtioBlockCompletion, VirtioBlockConfigSpec, VirtioBlockDevice,
+    VirtioBlockDiscardLimits, VirtioBlockGeometry, VirtioBlockMemoryBackend, VirtioBlockRequest,
+    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioBlockSecureEraseLimits, VirtioBlockStatus,
+    VirtioBlockTopology, VirtioBlockWriteZeroesLimits, VIRTIO_BLOCK_CONFIG_ALIGNMENT_OFFSET_OFFSET,
+    VIRTIO_BLOCK_CONFIG_BLK_SIZE_OFFSET, VIRTIO_BLOCK_CONFIG_CAPACITY_OFFSET,
+    VIRTIO_BLOCK_CONFIG_CYLINDERS_OFFSET, VIRTIO_BLOCK_CONFIG_DISCARD_ALIGNMENT_OFFSET,
+    VIRTIO_BLOCK_CONFIG_HEADS_OFFSET, VIRTIO_BLOCK_CONFIG_MAX_DISCARD_SECTORS_OFFSET,
+    VIRTIO_BLOCK_CONFIG_MAX_DISCARD_SEG_OFFSET,
     VIRTIO_BLOCK_CONFIG_MAX_SECURE_ERASE_SECTORS_OFFSET,
     VIRTIO_BLOCK_CONFIG_MAX_SECURE_ERASE_SEG_OFFSET,
     VIRTIO_BLOCK_CONFIG_MAX_WRITE_ZEROES_SECTORS_OFFSET,
@@ -37,6 +39,10 @@ pub use block::{
     VIRTIO_BLOCK_F_DISCARD, VIRTIO_BLOCK_F_FLUSH, VIRTIO_BLOCK_F_GEOMETRY, VIRTIO_BLOCK_F_MQ,
     VIRTIO_BLOCK_F_RO, VIRTIO_BLOCK_F_SECURE_ERASE, VIRTIO_BLOCK_F_SEG_MAX,
     VIRTIO_BLOCK_F_SIZE_MAX, VIRTIO_BLOCK_F_TOPOLOGY, VIRTIO_BLOCK_F_WRITE_ZEROES,
+    VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_IOERR, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_S_UNSUPP,
+    VIRTIO_BLOCK_T_DISCARD, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID,
+    VIRTIO_BLOCK_T_GET_LIFETIME, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
+    VIRTIO_BLOCK_T_SECURE_ERASE, VIRTIO_BLOCK_T_WRITE_ZEROES,
 };
 pub use device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
@@ -1247,6 +1253,29 @@ pub enum VirtioError {
         queues: u16,
     },
     BlockWritebackRequiresFlush,
+    InvalidBlockBackendSize {
+        bytes: u64,
+    },
+    BlockBackendCapacityMismatch {
+        config_sectors: u64,
+        backend_sectors: u64,
+    },
+    InvalidBlockRequestDataLength {
+        raw_type: u32,
+        bytes: u64,
+    },
+    BlockRequestAddressOverflow {
+        sector: u64,
+        bytes: u64,
+    },
+    BlockRequestOutOfRange {
+        sector: u64,
+        bytes: u64,
+        capacity_sectors: u64,
+    },
+    InvalidBlockDeviceId {
+        bytes: usize,
+    },
     InvalidBlockGeometry {
         cylinders: u16,
         heads: u8,
@@ -1475,6 +1504,37 @@ impl fmt::Display for VirtioError {
             Self::BlockWritebackRequiresFlush => write!(
                 formatter,
                 "VirtIO block writeback configuration requires the flush feature"
+            ),
+            Self::InvalidBlockBackendSize { bytes } => write!(
+                formatter,
+                "VirtIO block backend image has {bytes} bytes and must contain a nonzero number of 512-byte sectors"
+            ),
+            Self::BlockBackendCapacityMismatch {
+                config_sectors,
+                backend_sectors,
+            } => write!(
+                formatter,
+                "VirtIO block config capacity {config_sectors} sectors does not match backend capacity {backend_sectors} sectors"
+            ),
+            Self::InvalidBlockRequestDataLength { raw_type, bytes } => write!(
+                formatter,
+                "VirtIO block request type {raw_type} data length {bytes} must be a nonzero multiple of 512 bytes"
+            ),
+            Self::BlockRequestAddressOverflow { sector, bytes } => write!(
+                formatter,
+                "VirtIO block request at sector {sector} overflows with {bytes} bytes"
+            ),
+            Self::BlockRequestOutOfRange {
+                sector,
+                bytes,
+                capacity_sectors,
+            } => write!(
+                formatter,
+                "VirtIO block request at sector {sector} for {bytes} bytes exceeds capacity {capacity_sectors} sectors"
+            ),
+            Self::InvalidBlockDeviceId { bytes } => write!(
+                formatter,
+                "VirtIO block device id has {bytes} bytes but at most 20 bytes are allowed"
             ),
             Self::InvalidBlockGeometry {
                 cylinders,
