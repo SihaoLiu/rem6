@@ -143,6 +143,50 @@ fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
 }
 
 #[test]
+fn fabric_summarizes_activity_by_virtual_network() {
+    let mut fabric = FabricModel::new();
+    let shared = link("mesh_vn_summary");
+    let route = path([FabricPathHop::new(shared, 2, 8)
+        .unwrap()
+        .with_credit_depth(1)
+        .unwrap()]);
+
+    fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(3, 8, 1), route.clone()),
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 2), route.clone()),
+            ],
+        )
+        .unwrap();
+
+    let activities = fabric.virtual_network_activities();
+    assert_eq!(activities.len(), 2);
+    assert_eq!(activities[0].virtual_network(), VirtualNetworkId::new(1));
+    assert_eq!(activities[0].active_lane_count(), 1);
+    assert_eq!(activities[0].transfer_count(), 2);
+    assert_eq!(activities[0].byte_count(), 16);
+    assert_eq!(activities[0].occupied_ticks(), 2);
+    assert_eq!(activities[0].queue_delay_ticks(), 3);
+    assert_eq!(activities[0].max_queue_delay_ticks(), 3);
+    assert_eq!(activities[0].contended_lane_count(), 1);
+    assert_eq!(activities[0].first_tick(), 0);
+    assert_eq!(activities[0].last_tick(), 6);
+    assert!(activities[0].has_contention());
+    assert_eq!(activities[1].virtual_network(), VirtualNetworkId::new(2));
+    assert_eq!(activities[1].transfer_count(), 1);
+    assert_eq!(activities[1].queue_delay_ticks(), 0);
+    assert_eq!(
+        fabric
+            .virtual_network_activity(VirtualNetworkId::new(1))
+            .unwrap(),
+        activities[0],
+    );
+}
+
+#[test]
 fn fabric_wait_for_graph_tracks_credit_blocked_packets_until_credit_returns() {
     let mut fabric = FabricModel::new();
     let route = path([FabricPathHop::new(link("mesh_wait_credit"), 10, 8)

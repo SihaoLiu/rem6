@@ -1,6 +1,7 @@
 use rem6_boot::BootImage;
 use rem6_cpu::CpuId;
 use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
+use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{
@@ -1268,6 +1269,27 @@ fn workload_replay_routes_declared_fabric_path_and_reports_activity() {
     assert_eq!(
         summary.fabric_byte_count(),
         outcome.run().fabric_profile().byte_count(),
+    );
+    let lane_key = outcome
+        .run()
+        .fabric_activities()
+        .into_keys()
+        .next()
+        .unwrap();
+    assert_eq!(
+        summary.fabric_lane_activity(&lane_key.0, lane_key.1),
+        outcome.run().fabric_activity(&lane_key.0, lane_key.1),
+    );
+    assert_eq!(
+        summary
+            .fabric_virtual_network_activity(VirtualNetworkId::new(1))
+            .unwrap()
+            .transfer_count(),
+        outcome
+            .run()
+            .fabric_virtual_network_activity(VirtualNetworkId::new(1))
+            .unwrap()
+            .transfer_count(),
     );
     assert!(summary.has_fabric_activity());
     assert_eq!(

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_fabric::{QosPriority, QosRequestorId};
+use rem6_fabric::{FabricLaneActivity, FabricVirtualNetworkActivity, QosPriority, QosRequestorId};
 use rem6_kernel::{
     LivelockDiagnostic, ParallelPartitionActivity, ParallelProgressTransitionRecord,
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
@@ -31,6 +31,7 @@ use crate::result_partition_activity::{
 };
 mod batch_timeline;
 mod batch_worker_count;
+mod fabric_activity;
 mod full_system_parallel;
 mod heterogeneous_activity;
 mod progress;
@@ -282,6 +283,8 @@ pub struct WorkloadParallelExecutionSummary {
     fabric_queue_delay_ticks: u64,
     fabric_max_queue_delay_ticks: u64,
     contended_fabric_lane_count: usize,
+    fabric_lane_activities: Vec<FabricLaneActivity>,
+    fabric_virtual_network_activities: Vec<FabricVirtualNetworkActivity>,
     fabric_wait_for_edge_count: usize,
     fabric_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     fabric_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,

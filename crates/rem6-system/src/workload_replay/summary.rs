@@ -216,6 +216,10 @@ pub(super) fn parallel_execution_summary(
             fabric.max_queue_delay_ticks(),
             fabric.contended_lane_count(),
         )
+        .with_fabric_lane_activities(run.fabric_activities().into_values())
+        .with_fabric_virtual_network_activities(
+            run.fabric_virtual_network_activities().into_values(),
+        )
         .with_dram_activity(
             dram.active_target_count(),
             dram.active_port_count(),

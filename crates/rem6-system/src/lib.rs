@@ -10,7 +10,10 @@ use rem6_cpu::{
     RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
-use rem6_fabric::{FabricActivityProfile, FabricLaneActivity, FabricLinkId, VirtualNetworkId};
+use rem6_fabric::{
+    FabricActivityProfile, FabricLaneActivity, FabricLinkId, FabricVirtualNetworkActivity,
+    VirtualNetworkId,
+};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelPartitionActivity, ParallelRunProfile,
@@ -554,6 +557,20 @@ impl RiscvSystemRun {
         collect_run_fabric_activity(&self.fabric_activity)
     }
 
+    pub fn fabric_virtual_network_activity(
+        &self,
+        virtual_network: VirtualNetworkId,
+    ) -> Option<FabricVirtualNetworkActivity> {
+        self.fabric_virtual_network_activities()
+            .remove(&virtual_network)
+    }
+
+    pub fn fabric_virtual_network_activities(
+        &self,
+    ) -> BTreeMap<VirtualNetworkId, FabricVirtualNetworkActivity> {
+        collect_run_fabric_virtual_network_activity(self.fabric_activities().values())
+    }
+
     pub fn fabric_profile(&self) -> FabricActivityProfile {
         let activities = self.fabric_activities();
         FabricActivityProfile::from_lanes(activities.values())
@@ -561,6 +578,10 @@ impl RiscvSystemRun {
 
     pub fn active_fabric_lane_count(&self) -> usize {
         self.fabric_activities().len()
+    }
+
+    pub fn active_fabric_virtual_network_count(&self) -> usize {
+        self.fabric_virtual_network_activities().len()
     }
 
     pub fn fabric_transfer_count(&self) -> usize {
@@ -992,6 +1013,15 @@ fn merge_run_fabric_activity_maps(
             .and_modify(|stored| *stored = stored.clone().merge_window(activity.clone()))
             .or_insert_with(|| activity.clone());
     }
+}
+
+fn collect_run_fabric_virtual_network_activity<'a>(
+    source: impl IntoIterator<Item = &'a FabricLaneActivity>,
+) -> BTreeMap<VirtualNetworkId, FabricVirtualNetworkActivity> {
+    FabricVirtualNetworkActivity::from_lanes(source)
+        .into_iter()
+        .map(|activity| (activity.virtual_network(), activity))
+        .collect()
 }
 
 fn collect_run_dram_activity(
