@@ -1,0 +1,209 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::scheduler::PartitionId;
+use crate::Tick;
+
+use super::ParallelEpochBatchRecord;
+
+pub(super) fn collect_batch_worker_count_summaries<'a, I>(batches: I) -> Vec<(usize, usize)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<usize, usize>::new();
+    for batch in batches {
+        let worker_count = batch.worker_count();
+        if worker_count != 0 {
+            *summaries.entry(worker_count).or_default() += 1;
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+pub(super) fn batch_count_for_worker_count<'a, I>(batches: I, worker_count: usize) -> usize
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() == worker_count)
+        .count()
+}
+
+pub(super) fn batch_count_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> usize
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .count()
+}
+
+pub(super) fn collect_batch_partition_set_summaries<'a, I>(
+    batches: I,
+) -> Vec<(Vec<PartitionId>, usize)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
+    for batch in batches {
+        let partitions = batch.partition_set();
+        if !partitions.is_empty() {
+            *summaries.entry(partitions).or_default() += 1;
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+pub(super) fn batch_count_for_partition_set<'a, I>(
+    batches: I,
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> usize
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let expected = normalize_partition_set(partitions);
+    batches
+        .into_iter()
+        .filter(|batch| batch.partition_set() == expected)
+        .count()
+}
+
+pub(super) fn collect_batch_partition_streak_summaries<'a, I>(
+    batches: I,
+) -> Vec<(Vec<PartitionId>, usize)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
+    let mut current: Option<(Vec<PartitionId>, usize)> = None;
+    for batch in batches {
+        let partitions = batch.partition_set();
+        if partitions.is_empty() {
+            continue;
+        }
+        match current.as_mut() {
+            Some((current_partitions, count)) if current_partitions == &partitions => {
+                *count += 1;
+            }
+            Some(_) => {
+                flush_partition_streak(&mut summaries, current.take());
+                current = Some((partitions, 1));
+            }
+            None => {
+                current = Some((partitions, 1));
+            }
+        }
+    }
+    flush_partition_streak(&mut summaries, current);
+    summaries.into_iter().collect()
+}
+
+pub(super) fn max_consecutive_batch_count_for_partition_set(
+    streaks: impl IntoIterator<Item = (Vec<PartitionId>, usize)>,
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> usize {
+    let expected = normalize_partition_set(partitions);
+    streaks
+        .into_iter()
+        .find_map(|(partitions, count)| (partitions == expected).then_some(count))
+        .unwrap_or(0)
+}
+
+fn flush_partition_streak(
+    summaries: &mut BTreeMap<Vec<PartitionId>, usize>,
+    streak: Option<(Vec<PartitionId>, usize)>,
+) {
+    if let Some((partitions, count)) = streak {
+        summaries
+            .entry(partitions)
+            .and_modify(|stored| *stored = (*stored).max(count))
+            .or_insert(count);
+    }
+}
+
+pub(super) fn collect_batch_worker_count_tick_summaries<'a, I>(batches: I) -> Vec<(usize, Tick)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for batch in batches {
+        let worker_count = batch.worker_count();
+        if worker_count != 0 {
+            let duration_ticks = batch_duration_ticks(batch);
+            let summary_ticks = summaries.entry(worker_count).or_default();
+            *summary_ticks = summary_ticks.saturating_add(duration_ticks);
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+pub(super) fn batch_ticks_for_worker_count<'a, I>(batches: I, worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() == worker_count)
+        .map(batch_duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+pub(super) fn batch_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .map(batch_duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+pub(super) fn batch_worker_ticks<'a, I>(batches: I) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .map(batch_worker_tick_count)
+        .fold(0, Tick::saturating_add)
+}
+
+pub(super) fn batch_worker_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .map(batch_worker_tick_count)
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_tick_count(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch_duration_ticks(batch).saturating_mul(batch.worker_count() as Tick)
+}
+
+fn batch_duration_ticks(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch.horizon().saturating_sub(batch_start_tick(batch))
+}
+
+fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
+    batch
+        .workers()
+        .iter()
+        .map(|worker| worker.start_tick())
+        .min()
+        .unwrap_or_else(|| batch.horizon())
+}
+
+pub(super) fn normalize_partition_set(
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> Vec<PartitionId> {
+    partitions
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}

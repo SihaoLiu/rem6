@@ -37,13 +37,12 @@ pub struct RiscvSystemParallelBatchTimelineRecord {
 
 impl RiscvSystemParallelBatchTimelineRecord {
     pub fn new(scope: RiscvSystemParallelBatchScope, batch: &ParallelEpochBatchRecord) -> Self {
-        let partitions = normalize_partition_set(batch.worker_partitions());
         Self {
             scope,
             start_tick: batch_start_tick(batch),
             horizon: batch.horizon(),
             worker_count: batch.worker_count(),
-            partitions,
+            partitions: batch.partition_set(),
         }
     }
 
@@ -550,7 +549,7 @@ fn collect_batch_partition_set_summaries(
 ) -> Vec<(Vec<PartitionId>, usize)> {
     let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
     for batch in batches {
-        let partitions = normalize_partition_set(batch.worker_partitions());
+        let partitions = batch.partition_set();
         if !partitions.is_empty() {
             *summaries.entry(partitions).or_default() += 1;
         }
@@ -565,7 +564,7 @@ fn batch_count_for_partition_set(
     let expected = normalize_partition_set(partitions);
     batches
         .into_iter()
-        .filter(|batch| normalize_partition_set(batch.worker_partitions()) == expected)
+        .filter(|batch| batch.partition_set() == expected)
         .count()
 }
 
@@ -575,7 +574,7 @@ fn collect_batch_partition_streak_summaries(
     let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
     let mut current: Option<(Vec<PartitionId>, usize)> = None;
     for batch in batches {
-        let partitions = normalize_partition_set(batch.worker_partitions());
+        let partitions = batch.partition_set();
         if partitions.is_empty() {
             continue;
         }

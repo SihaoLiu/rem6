@@ -6,6 +6,17 @@ use crate::{
     WaitForNode,
 };
 
+mod batch_evidence;
+
+use self::batch_evidence::{
+    batch_count_at_or_above, batch_count_for_partition_set, batch_count_for_worker_count,
+    batch_ticks_at_or_above, batch_ticks_for_worker_count, batch_worker_ticks,
+    batch_worker_ticks_at_or_above, collect_batch_partition_set_summaries,
+    collect_batch_partition_streak_summaries, collect_batch_worker_count_summaries,
+    collect_batch_worker_count_tick_summaries, max_consecutive_batch_count_for_partition_set,
+    normalize_partition_set,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EpochPlan {
     pub(super) horizon: Tick,
@@ -132,6 +143,10 @@ impl ParallelEpochBatchRecord {
             .iter()
             .map(|worker| worker.partition())
             .collect()
+    }
+
+    pub fn partition_set(&self) -> Vec<PartitionId> {
+        normalize_partition_set(self.worker_partitions())
     }
 
     pub fn contains_worker(&self, partition: PartitionId) -> bool {
@@ -1058,6 +1073,31 @@ impl RecordedRunSummary {
         batch_count_at_or_above(&self.batches, minimum_worker_count)
     }
 
+    pub fn batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_batch_partition_set_summaries(&self.batches)
+    }
+
+    pub fn batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        batch_count_for_partition_set(&self.batches, partitions)
+    }
+
+    pub fn batch_partition_streak_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_batch_partition_streak_summaries(&self.batches)
+    }
+
+    pub fn max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        max_consecutive_batch_count_for_partition_set(
+            self.batch_partition_streak_summaries(),
+            partitions,
+        )
+    }
+
     pub fn batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
         collect_batch_worker_count_tick_summaries(&self.batches)
     }
@@ -1392,6 +1432,38 @@ impl RecordedConservativeRunSummary {
         )
     }
 
+    pub fn batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_batch_partition_set_summaries(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+        )
+    }
+
+    pub fn batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        batch_count_for_partition_set(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            partitions,
+        )
+    }
+
+    pub fn batch_partition_streak_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_batch_partition_streak_summaries(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+        )
+    }
+
+    pub fn max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        max_consecutive_batch_count_for_partition_set(
+            self.batch_partition_streak_summaries(),
+            partitions,
+        )
+    }
+
     pub fn batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
         collect_batch_worker_count_tick_summaries(
             self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
@@ -1512,116 +1584,6 @@ fn merge_parallel_partition_activities(
             .and_modify(|stored| *stored = stored.merge(activity))
             .or_insert(activity);
     }
-}
-
-fn collect_batch_worker_count_summaries<'a, I>(batches: I) -> Vec<(usize, usize)>
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    let mut summaries = BTreeMap::<usize, usize>::new();
-    for batch in batches {
-        let worker_count = batch.worker_count();
-        if worker_count != 0 {
-            *summaries.entry(worker_count).or_default() += 1;
-        }
-    }
-    summaries.into_iter().collect()
-}
-
-fn batch_count_for_worker_count<'a, I>(batches: I, worker_count: usize) -> usize
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    batches
-        .into_iter()
-        .filter(|batch| batch.worker_count() == worker_count)
-        .count()
-}
-
-fn batch_count_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> usize
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    batches
-        .into_iter()
-        .filter(|batch| batch.worker_count() >= minimum_worker_count)
-        .count()
-}
-
-fn collect_batch_worker_count_tick_summaries<'a, I>(batches: I) -> Vec<(usize, Tick)>
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    let mut summaries = BTreeMap::<usize, Tick>::new();
-    for batch in batches {
-        let worker_count = batch.worker_count();
-        if worker_count != 0 {
-            let duration_ticks = batch_duration_ticks(batch);
-            let summary_ticks = summaries.entry(worker_count).or_default();
-            *summary_ticks = summary_ticks.saturating_add(duration_ticks);
-        }
-    }
-    summaries.into_iter().collect()
-}
-
-fn batch_ticks_for_worker_count<'a, I>(batches: I, worker_count: usize) -> Tick
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    batches
-        .into_iter()
-        .filter(|batch| batch.worker_count() == worker_count)
-        .map(batch_duration_ticks)
-        .fold(0, Tick::saturating_add)
-}
-
-fn batch_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    batches
-        .into_iter()
-        .filter(|batch| batch.worker_count() >= minimum_worker_count)
-        .map(batch_duration_ticks)
-        .fold(0, Tick::saturating_add)
-}
-
-fn batch_worker_ticks<'a, I>(batches: I) -> Tick
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    batches
-        .into_iter()
-        .map(batch_worker_tick_count)
-        .fold(0, Tick::saturating_add)
-}
-
-fn batch_worker_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
-where
-    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
-{
-    batches
-        .into_iter()
-        .filter(|batch| batch.worker_count() >= minimum_worker_count)
-        .map(batch_worker_tick_count)
-        .fold(0, Tick::saturating_add)
-}
-
-fn batch_worker_tick_count(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch_duration_ticks(batch).saturating_mul(batch.worker_count() as Tick)
-}
-
-fn batch_duration_ticks(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch.horizon().saturating_sub(batch_start_tick(batch))
-}
-
-fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch
-        .workers()
-        .iter()
-        .map(|worker| worker.start_tick())
-        .min()
-        .unwrap_or_else(|| batch.horizon())
 }
 
 fn progress_monitor_snapshot<I>(

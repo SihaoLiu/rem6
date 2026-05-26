@@ -777,12 +777,7 @@ fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
 }
 
 fn batch_partition_key(batch: &ParallelEpochBatchRecord) -> Vec<PartitionId> {
-    batch
-        .worker_partitions()
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    batch.partition_set()
 }
 
 fn oldest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {
