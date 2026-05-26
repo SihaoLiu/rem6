@@ -9,13 +9,13 @@ use rem6_system::{
     RiscvWorkloadReplay, SystemActionOutcome,
 };
 use rem6_workload::{
-    HostEventIntent, WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
-    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
-    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
-    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    HostEventIntent, WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol,
+    WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadExpectedDataCacheProtocolRunCount,
+    WorkloadExpectedDataCacheRunAttribution, WorkloadGuestHostCallResponse,
+    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -975,6 +975,41 @@ fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_checkpointed_execution_mode() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-checkpoint-summary"), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::SwitchExecutionMode {
+                target: "cpu0".to_string(),
+                mode: WorkloadExecutionMode::Functional,
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::Checkpoint {
+                label: "after-mode-switch".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            1,
+            HostEventIntent::RestoreCheckpoint {
+                label: "after-mode-switch".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_planned_guest_host_call() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay-guest-host-call"), boot_image())
         .with_topology(replay_topology())
@@ -1439,6 +1474,46 @@ fn workload_replay_executes_planned_host_actions() {
             && *stats_epoch == 1
             && *stats_reset_tick == 1
     )));
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_records_checkpoint_manifest_summaries() {
+    let manifest = replay_manifest_with_checkpointed_execution_mode();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    let captured = outcome
+        .host_action_outcomes()
+        .iter()
+        .find_map(|event| match event {
+            SystemActionOutcome::Checkpoint { manifest, .. } => Some(manifest.summary()),
+            _ => None,
+        })
+        .unwrap();
+    let expected = WorkloadCheckpointManifestSummary::new(
+        "after-mode-switch",
+        1,
+        captured.component_count(),
+        captured.chunk_count(),
+        captured.payload_bytes(),
+    );
+
+    assert!(expected.component_count() >= 1);
+    assert!(expected.chunk_count() >= 1);
+    assert!(expected.payload_bytes() >= 1);
+    assert_eq!(
+        outcome.result().checkpoint_manifest_summaries(),
+        std::slice::from_ref(&expected)
+    );
+    assert_eq!(
+        outcome.result().restored_checkpoint_manifest_summaries(),
+        &[expected]
+    );
     plan.verify_result(outcome.result()).unwrap();
 }
 

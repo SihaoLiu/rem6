@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError};
 use rem6_boot::{BootError, BootImage};
+use rem6_checkpoint::CheckpointManifest;
 use rem6_coherence::{
     ChiHarnessError, HarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
     PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
@@ -35,13 +36,13 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId, TransportError,
 };
 use rem6_workload::{
-    WorkloadDataCacheProtocol, WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
-    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount, WorkloadReplayPlan, WorkloadResolvedResources,
-    WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadTopology, WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
-    WorkloadWaitForTargetNodeWindow,
+    WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol, WorkloadError,
+    WorkloadExpectedCleanParallelDiagnostics, WorkloadGpuDmaCopy, WorkloadHostActionSummary,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount, WorkloadReplayPlan,
+    WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
+    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology, WorkloadWaitForBlockedNodeWindow,
+    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 
 mod cache_response;
@@ -1346,11 +1347,14 @@ impl RiscvWorkloadReplay {
                 }
                 SystemActionOutcome::Checkpoint { manifest, .. } => {
                     host_action_summary.record_checkpoint();
-                    result = result.with_checkpoint_label(manifest.label());
+                    result = result
+                        .with_checkpoint_manifest_summary(workload_checkpoint_summary(manifest));
                 }
                 SystemActionOutcome::CheckpointRestored { manifest, .. } => {
                     host_action_summary.record_checkpoint_restore();
-                    result = result.with_restored_checkpoint_label(manifest.label());
+                    result = result.with_restored_checkpoint_manifest_summary(
+                        workload_checkpoint_summary(manifest),
+                    );
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
                     tick,
@@ -1483,6 +1487,17 @@ fn workload_execution_mode_from_system(
         ExecutionMode::Timing => rem6_workload::WorkloadExecutionMode::Timing,
         ExecutionMode::Detailed => rem6_workload::WorkloadExecutionMode::Detailed,
     }
+}
+
+fn workload_checkpoint_summary(manifest: &CheckpointManifest) -> WorkloadCheckpointManifestSummary {
+    let summary = manifest.summary();
+    WorkloadCheckpointManifestSummary::new(
+        manifest.label(),
+        manifest.tick(),
+        summary.component_count(),
+        summary.chunk_count(),
+        summary.payload_bytes(),
+    )
 }
 
 #[derive(Clone, Debug)]

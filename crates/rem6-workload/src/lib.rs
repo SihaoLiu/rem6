@@ -121,7 +121,7 @@ pub use topology::{
     WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
     WorkloadRouteLatency, WorkloadTopology,
 };
-pub use workload_result::WorkloadResult;
+pub use workload_result::{WorkloadCheckpointManifestSummary, WorkloadResult};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct WorkloadId(String);

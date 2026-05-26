@@ -7,6 +7,53 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadCheckpointManifestSummary {
+    label: String,
+    tick: Tick,
+    component_count: usize,
+    chunk_count: usize,
+    payload_bytes: usize,
+}
+
+impl WorkloadCheckpointManifestSummary {
+    pub fn new(
+        label: impl Into<String>,
+        tick: Tick,
+        component_count: usize,
+        chunk_count: usize,
+        payload_bytes: usize,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            tick,
+            component_count,
+            chunk_count,
+            payload_bytes,
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn component_count(&self) -> usize {
+        self.component_count
+    }
+
+    pub const fn chunk_count(&self) -> usize {
+        self.chunk_count
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResult {
     manifest_identity: WorkloadManifestIdentity,
     start_tick: Tick,
@@ -17,6 +64,8 @@ pub struct WorkloadResult {
     host_action_summary: Option<WorkloadHostActionSummary>,
     checkpoint_labels: Vec<String>,
     restored_checkpoint_labels: Vec<String>,
+    checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
+    restored_checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
     execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
 }
 
@@ -32,6 +81,8 @@ impl WorkloadResult {
             host_action_summary: None,
             checkpoint_labels: Vec::new(),
             restored_checkpoint_labels: Vec::new(),
+            checkpoint_manifest_summaries: Vec::new(),
+            restored_checkpoint_manifest_summaries: Vec::new(),
             execution_mode_switches: Vec::new(),
         }
     }
@@ -77,6 +128,25 @@ impl WorkloadResult {
 
     pub fn with_restored_checkpoint_label(mut self, label: impl Into<String>) -> Self {
         self.restored_checkpoint_labels.push(label.into());
+        self
+    }
+
+    pub fn with_checkpoint_manifest_summary(
+        mut self,
+        summary: WorkloadCheckpointManifestSummary,
+    ) -> Self {
+        self.checkpoint_labels.push(summary.label().to_string());
+        self.checkpoint_manifest_summaries.push(summary);
+        self
+    }
+
+    pub fn with_restored_checkpoint_manifest_summary(
+        mut self,
+        summary: WorkloadCheckpointManifestSummary,
+    ) -> Self {
+        self.restored_checkpoint_labels
+            .push(summary.label().to_string());
+        self.restored_checkpoint_manifest_summaries.push(summary);
         self
     }
 
@@ -140,6 +210,14 @@ impl WorkloadResult {
 
     pub fn restored_checkpoint_labels(&self) -> &[String] {
         &self.restored_checkpoint_labels
+    }
+
+    pub fn checkpoint_manifest_summaries(&self) -> &[WorkloadCheckpointManifestSummary] {
+        &self.checkpoint_manifest_summaries
+    }
+
+    pub fn restored_checkpoint_manifest_summaries(&self) -> &[WorkloadCheckpointManifestSummary] {
+        &self.restored_checkpoint_manifest_summaries
     }
 
     pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
