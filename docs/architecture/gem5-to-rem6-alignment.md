@@ -199,6 +199,8 @@ Research anchors refreshed on 2026-05-26:
   <https://www.gem5.org/documentation/general_docs/common-errors/>
 - gem5 call-stack profiling:
   <https://arxiv.org/abs/2605.01419>
+- VirtIO 1.2 split virtqueue descriptor and notification requirements:
+  <https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html>
 - Local read-only reference anchors: gem5 `src/sim`, `src/python`,
   `configs`, `src/mem`, `src/cpu`, and public issues for stats reset,
   syscall emulation, RISC-V vector tracing, and CHI LR/SC behavior.
@@ -211,13 +213,16 @@ Implementation evidence on 2026-05-26:
   INTx, MSI, or MSI-X delivery when the guest has requested no completion
   interrupt. This keeps full-system device behavior observable through typed
   writeback and interrupt-delivery results instead of relying on implicit logs.
+  Split queues can also opt into event-index notification suppression so
+  completion interrupts follow the guest's `used_event` threshold instead of
+  the legacy available-ring flag.
 - `rem6-virtio` split queues can now consume guest-memory indirect descriptor
   tables for block requests while preserving the main queue head as the request
   id and used-ring id. The indirect table is still typed guest memory, not a
   host-side descriptor shortcut, so descriptor data, writeback targets, and
-  used-ring completion evidence remain replayable. Invalid main indirect
-  descriptors that advertise device writeback are rejected before queue
-  consumption, keeping guest ownership and device ownership explicit.
+  used-ring completion evidence remain replayable. The main descriptor's
+  write-only flag is ignored for indirect-table lookup, matching the VirtIO
+  device requirement while still rejecting invalid direct/indirect chaining.
 
 ## Audit Method
 
@@ -644,16 +649,18 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   read, write, flush, and get-id decoding into typed requests, status
   descriptor tracking, writable data-byte accounting, loop rejection, short
   header rejection, missing status rejection, wrong readable/writable
-  direction rejection, invalid writable indirect-table descriptor rejection,
-  get-id output shape validation, block completion
+  direction rejection, indirect-table write-only flag ignore behavior, get-id
+  output shape validation, block completion
   scatter-data writeback records, status-byte writeback records, used-ring slot
   selection, wrapping used indices, little-endian used elements, and split
   available-ring walking from typed guest memory into decoded block requests,
   plus guest-memory writeback for block data buffers, status bytes, used
-  elements, used indices, and queue-interrupt ISR status after completion
-  writeback, with serial and parallel PCI legacy INTx delivery. VirtIO PCI ISR-status
-  tests cover queue and configuration-change bit recording, serial and parallel
-  read-clear behavior, snapshot restore, reserved-bit masking, read-only write
+  elements, used indices, legacy available-ring interrupt suppression,
+  event-index interrupt suppression, and queue-interrupt ISR status after
+  completion writeback, with serial and parallel PCI legacy INTx delivery.
+  VirtIO PCI ISR-status tests cover queue and configuration-change bit
+  recording, serial and parallel read-clear behavior, snapshot restore,
+  reserved-bit masking, read-only write
   rejection, width errors, and boundary errors. VirtIO PCI device-config tests
   cover typed mutable and read-only byte masks, serial and parallel config reads
   and writes, byte-mask writes, snapshot restore, access trace recording,

@@ -452,6 +452,53 @@ fn virtio_split_queue_suppresses_isr_when_available_ring_requests_no_interrupt()
 }
 
 #[test]
+fn virtio_split_queue_uses_event_index_for_isr_suppression() {
+    let mut store = guest_store();
+    write_guest_read_queue(&mut store, 0, 1);
+    write_guest(&mut store, 0x110c, &1_u16.to_le_bytes(), 7);
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0x64)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let isr = VirtioPciIsrDevice::new();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap()
+    .with_event_index(true);
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+        let decoded = split_queue
+            .consume_available_block(&mut guest, queue(2))
+            .unwrap()
+            .unwrap();
+        let completion = device.execute_at(58, decoded.request().clone()).unwrap();
+        let writeback = split_queue
+            .complete_block_request_and_raise_isr(&mut guest, &decoded, &completion, &isr)
+            .unwrap();
+
+        assert_eq!(
+            writeback.used_element(),
+            VirtioSplitUsedElement::new(0, 529)
+        );
+    }
+
+    assert_eq!(read_guest(&mut store, 0x1300, 512, 100), sector(0x64));
+    assert_eq!(
+        read_guest(&mut store, 0x1500, 1, 200),
+        vec![VIRTIO_BLOCK_S_OK]
+    );
+    assert_eq!(
+        read_guest(&mut store, 0x1804, 8, 300),
+        VirtioSplitUsedElement::new(0, 529).to_le_bytes()
+    );
+    assert_eq!(isr.status(), VirtioPciIsrStatus::empty());
+}
+
+#[test]
 fn virtio_split_queue_posts_serial_intx_after_completion_writeback() {
     let cpu = PartitionId::new(0);
     let pci = PartitionId::new(1);

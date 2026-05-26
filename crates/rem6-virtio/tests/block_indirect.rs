@@ -3,10 +3,10 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_virtio::{
-    VirtioBlockConfigSpec, VirtioBlockDevice, VirtioBlockMemoryBackend, VirtioError,
-    VirtioGuestMemory, VirtioQueueIndex, VirtioSplitQueue, VirtioSplitUsedElement,
-    VIRTIO_BLOCK_SECTOR_SIZE, VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_IN, VIRTIO_SPLIT_DESC_F_INDIRECT,
-    VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioBlockConfigSpec, VirtioBlockDevice, VirtioBlockMemoryBackend, VirtioGuestMemory,
+    VirtioQueueIndex, VirtioSplitQueue, VirtioSplitUsedElement, VIRTIO_BLOCK_SECTOR_SIZE,
+    VIRTIO_BLOCK_S_OK, VIRTIO_BLOCK_T_IN, VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT,
+    VIRTIO_SPLIT_DESC_F_WRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -189,7 +189,7 @@ fn virtio_split_queue_consumes_indirect_block_read_chain_from_guest_memory() {
 }
 
 #[test]
-fn virtio_split_queue_rejects_writable_indirect_table_descriptor() {
+fn virtio_split_queue_ignores_writable_flag_on_indirect_table_descriptor() {
     let mut store = guest_store();
     write_guest(
         &mut store,
@@ -237,19 +237,37 @@ fn virtio_split_queue_rejects_writable_indirect_table_descriptor() {
         0,
     )
     .unwrap();
-    let error = {
+    {
         let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
-        split_queue
+        let decoded = split_queue
             .consume_available_block(&mut guest, queue(2))
-            .expect_err("writable indirect table descriptor must be rejected")
-    };
+            .unwrap()
+            .unwrap();
 
-    match error {
-        VirtioError::PciTransportRuntimeConfig { message } => {
-            assert!(message.contains("indirect descriptor"));
-            assert!(message.contains("cannot be writable"));
-        }
-        other => panic!("unexpected error: {other}"),
+        assert_eq!(decoded.request().id().get(), 3);
+        assert_eq!(decoded.writable_data_bytes(), VIRTIO_BLOCK_SECTOR_SIZE);
+
+        let backend = VirtioBlockMemoryBackend::from_bytes(sector(0xa5)).unwrap();
+        let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+        let completion = device.execute_at(61, decoded.request().clone()).unwrap();
+        let writeback = split_queue
+            .complete_block_request(&mut guest, &decoded, &completion)
+            .unwrap();
+
+        assert_eq!(
+            writeback.used_element(),
+            VirtioSplitUsedElement::new(3, 529)
+        );
     }
-    assert_eq!(split_queue.last_available_index(), 0);
+
+    assert_eq!(split_queue.last_available_index(), 1);
+    assert_eq!(read_guest(&mut store, 0x1300, 512, 100), sector(0xa5));
+    assert_eq!(
+        read_guest(&mut store, 0x1500, 1, 200),
+        vec![VIRTIO_BLOCK_S_OK]
+    );
+    assert_eq!(
+        read_guest(&mut store, 0x1804, 8, 300),
+        VirtioSplitUsedElement::new(3, 529).to_le_bytes()
+    );
 }

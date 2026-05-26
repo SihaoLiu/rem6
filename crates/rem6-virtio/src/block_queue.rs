@@ -259,6 +259,7 @@ pub struct VirtioSplitQueue {
     available_ring: Address,
     used_ring: Address,
     last_available_index: u16,
+    event_index: bool,
 }
 
 impl VirtioSplitQueue {
@@ -281,7 +282,13 @@ impl VirtioSplitQueue {
             available_ring,
             used_ring,
             last_available_index,
+            event_index: false,
         })
+    }
+
+    pub const fn with_event_index(mut self, event_index: bool) -> Self {
+        self.event_index = event_index;
+        self
     }
 
     pub const fn queue_size(&self) -> u16 {
@@ -506,7 +513,7 @@ impl VirtioSplitQueue {
         isr: &VirtioPciIsrDevice,
     ) -> Result<(VirtioBlockQueueCompletionWrite, bool), VirtioError> {
         let writeback = self.complete_block_request(guest, decoded, completion)?;
-        let should_deliver = self.completion_interrupt_enabled(guest)?;
+        let should_deliver = self.completion_interrupt_enabled(guest, &writeback)?;
         if should_deliver {
             isr.raise_queue_interrupt(completion.tick());
         }
@@ -516,7 +523,16 @@ impl VirtioSplitQueue {
     fn completion_interrupt_enabled(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
+        writeback: &VirtioBlockQueueCompletionWrite,
     ) -> Result<bool, VirtioError> {
+        if self.event_index {
+            let used_event = guest.read_u16(add_address(
+                self.available_ring,
+                4 + u64::from(self.queue_size) * 2,
+            )?)?;
+            let previous_used_index = writeback.used_index().wrapping_sub(1);
+            return Ok(previous_used_index == used_event);
+        }
         let flags = guest.read_u16(self.available_ring)?;
         Ok(flags & VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT == 0)
     }
@@ -563,13 +579,6 @@ impl VirtioSplitQueue {
                 )?,
             )?;
             if raw.is_indirect() {
-                if raw.is_writable() {
-                    return Err(VirtioError::PciTransportRuntimeConfig {
-                        message: format!(
-                            "VirtIO split indirect descriptor {index} cannot be writable"
-                        ),
-                    });
-                }
                 if !descriptors.is_empty() || raw.has_next() {
                     return Err(VirtioError::PciTransportRuntimeConfig {
                         message: format!(
