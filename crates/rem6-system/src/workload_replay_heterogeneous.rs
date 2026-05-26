@@ -105,8 +105,14 @@ impl WorkloadAcceleratorRuntime {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct WorkloadAcceleratorActivity {
     pub(crate) command_count: usize,
+    pub(crate) gpu_kernel_command_count: usize,
+    pub(crate) npu_inference_command_count: usize,
+    pub(crate) dma_command_count: usize,
     pub(crate) trace_event_count: usize,
     pub(crate) completion_count: usize,
+    pub(crate) gpu_kernel_completion_count: usize,
+    pub(crate) npu_inference_completion_count: usize,
+    pub(crate) dma_command_completion_count: usize,
     pub(crate) active_device_count: usize,
     pub(crate) wait_for_edge_count: usize,
     pub(crate) deadlock_diagnostic_count: usize,
@@ -115,11 +121,15 @@ pub(crate) struct WorkloadAcceleratorActivity {
 impl WorkloadAcceleratorActivity {
     pub(crate) fn from_snapshots(
         command_count: usize,
+        command_kind_counts: WorkloadAcceleratorCommandKindCounts,
         before: &BTreeMap<AcceleratorEngineId, AcceleratorEngineSnapshot>,
         after: &BTreeMap<AcceleratorEngineId, AcceleratorEngineSnapshot>,
     ) -> Self {
         let mut activity = Self {
             command_count,
+            gpu_kernel_command_count: command_kind_counts.gpu_kernel_count,
+            npu_inference_command_count: command_kind_counts.npu_inference_count,
+            dma_command_count: command_kind_counts.dma_count,
             ..Self::default()
         };
 
@@ -137,6 +147,19 @@ impl WorkloadAcceleratorActivity {
             }
             activity.trace_event_count += trace_event_count;
             activity.completion_count += completion_count;
+            for completion in after.completed().iter().skip(before.completed().len()) {
+                match completion.kind() {
+                    AcceleratorCommandKind::GpuKernel { .. } => {
+                        activity.gpu_kernel_completion_count += 1;
+                    }
+                    AcceleratorCommandKind::NpuInference { .. } => {
+                        activity.npu_inference_completion_count += 1;
+                    }
+                    AcceleratorCommandKind::DmaCopy { .. } => {
+                        activity.dma_command_completion_count += 1;
+                    }
+                }
+            }
         }
 
         activity
@@ -147,6 +170,33 @@ impl WorkloadAcceleratorActivity {
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct WorkloadAcceleratorCommandKindCounts {
+    pub(crate) gpu_kernel_count: usize,
+    pub(crate) npu_inference_count: usize,
+    pub(crate) dma_count: usize,
+}
+
+pub(crate) fn accelerator_command_kind_counts(
+    commands: &[WorkloadAcceleratorCommand],
+) -> WorkloadAcceleratorCommandKindCounts {
+    let mut counts = WorkloadAcceleratorCommandKindCounts::default();
+    for command in commands {
+        match command.kind() {
+            WorkloadAcceleratorCommandKind::GpuKernel { .. } => {
+                counts.gpu_kernel_count += 1;
+            }
+            WorkloadAcceleratorCommandKind::NpuInference { .. } => {
+                counts.npu_inference_count += 1;
+            }
+            WorkloadAcceleratorCommandKind::DmaCopy { .. } => {
+                counts.dma_count += 1;
+            }
+        }
+    }
+    counts
 }
 
 pub(crate) fn build_gpu_devices(

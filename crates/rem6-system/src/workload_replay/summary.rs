@@ -304,6 +304,16 @@ pub(super) fn parallel_execution_summary(
             activities.accelerator.completion_count,
             activities.accelerator.active_device_count,
         )
+        .with_accelerator_command_kind_counts(
+            activities.accelerator.gpu_kernel_command_count,
+            activities.accelerator.npu_inference_command_count,
+            activities.accelerator.dma_command_count,
+        )
+        .with_accelerator_completion_kind_counts(
+            activities.accelerator.gpu_kernel_completion_count,
+            activities.accelerator.npu_inference_completion_count,
+            activities.accelerator.dma_command_completion_count,
+        )
         .with_accelerator_compute_diagnostics(
             activities.accelerator.wait_for_edge_count,
             activities.accelerator.deadlock_diagnostic_count,

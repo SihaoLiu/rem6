@@ -344,6 +344,18 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_command_count
     }
 
+    pub const fn accelerator_gpu_kernel_command_count(&self) -> usize {
+        self.accelerator_gpu_kernel_command_count
+    }
+
+    pub const fn accelerator_npu_inference_command_count(&self) -> usize {
+        self.accelerator_npu_inference_command_count
+    }
+
+    pub const fn accelerator_dma_command_count(&self) -> usize {
+        self.accelerator_dma_command_count
+    }
+
     pub const fn accelerator_trace_event_count(&self) -> usize {
         self.accelerator_trace_event_count
     }
@@ -352,14 +364,37 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_completion_count
     }
 
+    pub const fn accelerator_gpu_kernel_completion_count(&self) -> usize {
+        self.accelerator_gpu_kernel_completion_count
+    }
+
+    pub const fn accelerator_npu_inference_completion_count(&self) -> usize {
+        self.accelerator_npu_inference_completion_count
+    }
+
+    pub const fn accelerator_dma_command_completion_count(&self) -> usize {
+        self.accelerator_dma_command_completion_count
+    }
+
     pub const fn active_accelerator_device_count(&self) -> usize {
         self.active_accelerator_device_count
     }
 
     pub const fn has_accelerator_compute_activity(&self) -> bool {
         self.accelerator_command_count != 0
+            || self.accelerator_gpu_kernel_command_count != 0
+            || self.accelerator_npu_inference_command_count != 0
+            || self.accelerator_dma_command_count != 0
             || self.accelerator_trace_event_count != 0
             || self.accelerator_completion_count != 0
+            || self.accelerator_gpu_kernel_completion_count != 0
+            || self.accelerator_npu_inference_completion_count != 0
+            || self.accelerator_dma_command_completion_count != 0
+    }
+
+    pub const fn has_accelerator_npu_activity(&self) -> bool {
+        self.accelerator_npu_inference_command_count != 0
+            || self.accelerator_npu_inference_completion_count != 0
     }
 
     pub const fn accelerator_compute_wait_for_edge_count(&self) -> usize {

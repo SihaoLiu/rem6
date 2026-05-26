@@ -262,8 +262,14 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_wait_for_edge_count: usize,
     gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
+    accelerator_gpu_kernel_command_count: usize,
+    accelerator_npu_inference_command_count: usize,
+    accelerator_dma_command_count: usize,
     accelerator_trace_event_count: usize,
     accelerator_completion_count: usize,
+    accelerator_gpu_kernel_completion_count: usize,
+    accelerator_npu_inference_completion_count: usize,
+    accelerator_dma_command_completion_count: usize,
     active_accelerator_device_count: usize,
     accelerator_compute_wait_for_edge_count: usize,
     accelerator_compute_deadlock_diagnostic_count: usize,
@@ -782,6 +788,30 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_trace_event_count = trace_event_count;
         self.accelerator_completion_count = completion_count;
         self.active_accelerator_device_count = active_device_count;
+        self
+    }
+
+    pub const fn with_accelerator_command_kind_counts(
+        mut self,
+        gpu_kernel_count: usize,
+        npu_inference_count: usize,
+        dma_count: usize,
+    ) -> Self {
+        self.accelerator_gpu_kernel_command_count = gpu_kernel_count;
+        self.accelerator_npu_inference_command_count = npu_inference_count;
+        self.accelerator_dma_command_count = dma_count;
+        self
+    }
+
+    pub const fn with_accelerator_completion_kind_counts(
+        mut self,
+        gpu_kernel_count: usize,
+        npu_inference_count: usize,
+        dma_count: usize,
+    ) -> Self {
+        self.accelerator_gpu_kernel_completion_count = gpu_kernel_count;
+        self.accelerator_npu_inference_completion_count = npu_inference_count;
+        self.accelerator_dma_command_completion_count = dma_count;
         self
     }
 

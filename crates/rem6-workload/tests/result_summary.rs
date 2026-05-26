@@ -1152,6 +1152,23 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
 }
 
 #[test]
+fn workload_result_reports_accelerator_command_kind_counts() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_accelerator_compute_counts(4, 9, 3, 1)
+        .with_accelerator_command_kind_counts(1, 2, 1)
+        .with_accelerator_completion_kind_counts(1, 2, 0);
+
+    assert_eq!(summary.accelerator_gpu_kernel_command_count(), 1);
+    assert_eq!(summary.accelerator_npu_inference_command_count(), 2);
+    assert_eq!(summary.accelerator_dma_command_count(), 1);
+    assert_eq!(summary.accelerator_gpu_kernel_completion_count(), 1);
+    assert_eq!(summary.accelerator_npu_inference_completion_count(), 2);
+    assert_eq!(summary.accelerator_dma_command_completion_count(), 0);
+    assert!(summary.has_accelerator_npu_activity());
+    assert!(summary.has_accelerator_compute_activity());
+}
+
+#[test]
 fn workload_result_full_system_frontiers_merge_partitions_conservatively() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_frontiers(

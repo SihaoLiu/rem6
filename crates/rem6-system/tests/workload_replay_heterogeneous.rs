@@ -1132,9 +1132,16 @@ fn workload_replay_runs_declared_accelerator_command_on_parallel_scheduler() {
     assert!(accelerator.pending_dma_writes().is_empty());
     let summary = outcome.result().parallel_execution_summary().unwrap();
     assert_eq!(summary.accelerator_command_count(), 1);
+    assert_eq!(summary.accelerator_gpu_kernel_command_count(), 0);
+    assert_eq!(summary.accelerator_npu_inference_command_count(), 1);
+    assert_eq!(summary.accelerator_dma_command_count(), 0);
     assert_eq!(summary.accelerator_trace_event_count(), 3);
     assert_eq!(summary.accelerator_completion_count(), 1);
+    assert_eq!(summary.accelerator_gpu_kernel_completion_count(), 0);
+    assert_eq!(summary.accelerator_npu_inference_completion_count(), 1);
+    assert_eq!(summary.accelerator_dma_command_completion_count(), 0);
     assert_eq!(summary.active_accelerator_device_count(), 1);
+    assert!(summary.has_accelerator_npu_activity());
     assert!(summary.has_accelerator_compute_activity());
     assert!(summary.has_full_system_parallel_scheduler_work());
     plan.verify_result(outcome.result()).unwrap();

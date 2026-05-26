@@ -64,11 +64,11 @@ use self::qos::{fixed_priority_policy, queue_arbiter};
 use self::summary::{parallel_execution_summary, WorkloadReplayActivityRefs};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
-    accelerator_snapshots, accelerator_wait_for_graph_since, accelerator_wait_for_markers,
-    build_accelerator_devices, build_gpu_devices, gpu_snapshots, gpu_wait_for_graph_since,
-    gpu_wait_for_markers, merge_wait_for_graph, schedule_accelerator_commands,
-    schedule_gpu_kernel_launches, WorkloadAcceleratorActivity, WorkloadGpuActivity,
-    WorkloadGpuRuntime,
+    accelerator_command_kind_counts, accelerator_snapshots, accelerator_wait_for_graph_since,
+    accelerator_wait_for_markers, build_accelerator_devices, build_gpu_devices, gpu_snapshots,
+    gpu_wait_for_graph_since, gpu_wait_for_markers, merge_wait_for_graph,
+    schedule_accelerator_commands, schedule_gpu_kernel_launches, WorkloadAcceleratorActivity,
+    WorkloadGpuActivity, WorkloadGpuRuntime,
 };
 use crate::workload_replay_host::schedule_planned_host_events;
 use crate::{
@@ -675,6 +675,7 @@ impl RiscvWorkloadReplay {
             accelerator_wait_for_graph_since(&accelerator_devices, &accelerator_wait_for_start);
         let accelerator_activity = WorkloadAcceleratorActivity::from_snapshots(
             accelerator_command_count,
+            accelerator_command_kind_counts(topology.accelerator_commands()),
             &accelerator_before,
             &accelerator_snapshots,
         )

@@ -453,7 +453,10 @@ heterogeneous memory movement does not disappear behind copy/completion
 counters. They also preserve DMA scheduler remote-send records and derived
 remote-flow evidence from those recorded read and write schedulers, so
 cross-partition DMA traffic keeps source tick, delivery tick, order, and delay
-data instead of collapsing into a device-local copy counter. The workload
+data instead of collapsing into a device-local copy counter. Accelerator compute
+summaries preserve submitted and completed command counts by command kind, so
+GPU-kernel, NPU-inference, and DMA-command work remain directly visible without
+trace scraping. The workload
 full-system scheduler aggregate includes that DMA scheduler evidence alongside
 CPU and data-cache scheduler evidence, so
 heterogeneous parallel work remains visible through the same full-system batch
