@@ -93,8 +93,8 @@ pub use riscv_checkpoint::{
 };
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use scheduler_checkpoint::{
-    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
-    SchedulerCheckpointRecord,
+    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPendingPartition,
+    SchedulerCheckpointPort, SchedulerCheckpointQuiescenceReport, SchedulerCheckpointRecord,
 };
 pub use system_run_parallel_batch::{
     RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,

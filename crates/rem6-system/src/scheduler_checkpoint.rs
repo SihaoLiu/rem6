@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_kernel::{
-    PartitionId, PartitionSnapshot, PartitionedScheduler, SchedulerError, SchedulerSnapshot,
+    PartitionId, PartitionSnapshot, PartitionedScheduler, ScheduledEventKind, SchedulerError,
+    SchedulerSnapshot, Tick,
 };
 
 const SCHEDULER_CHUNK: &str = "scheduler";
@@ -36,6 +37,158 @@ impl SchedulerCheckpointRecord {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerCheckpointPendingPartition {
+    partition: PartitionId,
+    pending_events: usize,
+    first_pending_tick: Option<Tick>,
+    last_pending_tick: Option<Tick>,
+    serial_pending_events: usize,
+    parallel_pending_events: usize,
+}
+
+impl SchedulerCheckpointPendingPartition {
+    fn from_snapshot(snapshot: &PartitionSnapshot) -> Option<Self> {
+        if snapshot.pending_events().is_empty() {
+            return None;
+        }
+
+        let mut first_pending_tick = None;
+        let mut last_pending_tick = None;
+        let mut serial_pending_events = 0;
+        let mut parallel_pending_events = 0;
+        for event in snapshot.pending_events() {
+            first_pending_tick =
+                Some(first_pending_tick.map_or(event.tick(), |tick: Tick| tick.min(event.tick())));
+            last_pending_tick =
+                Some(last_pending_tick.map_or(event.tick(), |tick: Tick| tick.max(event.tick())));
+            match event.kind() {
+                ScheduledEventKind::Serial => serial_pending_events += 1,
+                ScheduledEventKind::Parallel => parallel_pending_events += 1,
+            }
+        }
+
+        Some(Self {
+            partition: snapshot.partition(),
+            pending_events: snapshot.pending_events().len(),
+            first_pending_tick,
+            last_pending_tick,
+            serial_pending_events,
+            parallel_pending_events,
+        })
+    }
+
+    pub fn partition(&self) -> PartitionId {
+        self.partition
+    }
+
+    pub fn pending_event_count(&self) -> usize {
+        self.pending_events
+    }
+
+    pub fn first_pending_tick(&self) -> Option<Tick> {
+        self.first_pending_tick
+    }
+
+    pub fn last_pending_tick(&self) -> Option<Tick> {
+        self.last_pending_tick
+    }
+
+    pub fn event_count_by_kind(&self, kind: ScheduledEventKind) -> usize {
+        match kind {
+            ScheduledEventKind::Serial => self.serial_pending_events,
+            ScheduledEventKind::Parallel => self.parallel_pending_events,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerCheckpointQuiescenceReport {
+    component: CheckpointComponentId,
+    partition_count: u32,
+    pending_partitions: Vec<SchedulerCheckpointPendingPartition>,
+}
+
+impl SchedulerCheckpointQuiescenceReport {
+    fn from_snapshot(component: CheckpointComponentId, snapshot: &SchedulerSnapshot) -> Self {
+        let pending_partitions = snapshot
+            .partitions()
+            .iter()
+            .filter_map(SchedulerCheckpointPendingPartition::from_snapshot)
+            .collect();
+        Self {
+            component,
+            partition_count: snapshot.partitions().len() as u32,
+            pending_partitions,
+        }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn is_quiescent(&self) -> bool {
+        self.pending_partitions.is_empty()
+    }
+
+    pub fn partition_count(&self) -> u32 {
+        self.partition_count
+    }
+
+    pub fn pending_event_count(&self) -> usize {
+        self.pending_partitions
+            .iter()
+            .map(SchedulerCheckpointPendingPartition::pending_event_count)
+            .sum()
+    }
+
+    pub fn pending_partition_count(&self) -> usize {
+        self.pending_partitions.len()
+    }
+
+    pub fn first_pending_tick(&self) -> Option<Tick> {
+        self.pending_partitions
+            .iter()
+            .filter_map(SchedulerCheckpointPendingPartition::first_pending_tick)
+            .min()
+    }
+
+    pub fn last_pending_tick(&self) -> Option<Tick> {
+        self.pending_partitions
+            .iter()
+            .filter_map(SchedulerCheckpointPendingPartition::last_pending_tick)
+            .max()
+    }
+
+    pub fn serial_pending_event_count(&self) -> usize {
+        self.event_count_by_kind(ScheduledEventKind::Serial)
+    }
+
+    pub fn parallel_pending_event_count(&self) -> usize {
+        self.event_count_by_kind(ScheduledEventKind::Parallel)
+    }
+
+    pub fn event_count_by_kind(&self, kind: ScheduledEventKind) -> usize {
+        self.pending_partitions
+            .iter()
+            .map(|partition| partition.event_count_by_kind(kind))
+            .sum()
+    }
+
+    pub fn pending_partitions(&self) -> &[SchedulerCheckpointPendingPartition] {
+        &self.pending_partitions
+    }
+
+    pub fn pending_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<&SchedulerCheckpointPendingPartition> {
+        self.pending_partitions
+            .iter()
+            .find(|report| report.partition() == partition)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SchedulerCheckpointPort {
     component: CheckpointComponentId,
@@ -59,6 +212,15 @@ impl SchedulerCheckpointPort {
 
     pub fn scheduler(&self) -> Arc<Mutex<PartitionedScheduler>> {
         Arc::clone(&self.scheduler)
+    }
+
+    pub fn quiescence_report(&self) -> SchedulerCheckpointQuiescenceReport {
+        let snapshot = self
+            .scheduler
+            .lock()
+            .expect("scheduler checkpoint lock")
+            .snapshot();
+        SchedulerCheckpointQuiescenceReport::from_snapshot(self.component.clone(), &snapshot)
     }
 
     pub fn register(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
@@ -172,6 +334,13 @@ impl SchedulerCheckpointBank {
 
     pub fn components(&self) -> Vec<CheckpointComponentId> {
         self.ports.keys().cloned().collect()
+    }
+
+    pub fn quiescence_reports(&self) -> Vec<SchedulerCheckpointQuiescenceReport> {
+        self.ports
+            .values()
+            .map(SchedulerCheckpointPort::quiescence_report)
+            .collect()
     }
 
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {

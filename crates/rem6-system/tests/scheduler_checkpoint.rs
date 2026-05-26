@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_kernel::{
-    LivelockTransitionKind, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
-    WaitForNode,
+    LivelockTransitionKind, PartitionEventId, PartitionId, PartitionedScheduler,
+    ScheduledEventKind, SchedulerError, WaitForNode,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -326,4 +326,103 @@ fn host_checkpoint_rejects_scheduler_with_pending_events() {
             error: SchedulerError::SnapshotContainsPendingEvents { pending_events: 1 },
         })
     );
+}
+
+#[test]
+fn host_checkpoint_reports_scheduler_quiescence_blockers() {
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let io = PartitionId::new(2);
+    let component = CheckpointComponentId::new("scheduler0").unwrap();
+    let scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(3, 5, 2).unwrap(),
+    ));
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(core, 3, move |context| {
+            context.schedule_remote_after(memory, 5, |_| {}).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_at(io, 9, |_| {})
+        .unwrap();
+    let port = SchedulerCheckpointPort::new(component.clone(), Arc::clone(&scheduler));
+
+    let report = port.quiescence_report();
+
+    assert_eq!(report.component(), &component);
+    assert!(!report.is_quiescent());
+    assert_eq!(report.partition_count(), 3);
+    assert_eq!(report.pending_event_count(), 2);
+    assert_eq!(report.pending_partition_count(), 2);
+    assert_eq!(report.first_pending_tick(), Some(3));
+    assert_eq!(report.last_pending_tick(), Some(9));
+    assert_eq!(report.parallel_pending_event_count(), 1);
+    assert_eq!(report.serial_pending_event_count(), 1);
+    assert_eq!(report.pending_partitions().len(), 2);
+
+    let core_report = report.pending_partition(core).unwrap();
+    assert_eq!(core_report.partition(), core);
+    assert_eq!(core_report.pending_event_count(), 1);
+    assert_eq!(core_report.first_pending_tick(), Some(3));
+    assert_eq!(core_report.last_pending_tick(), Some(3));
+    assert_eq!(
+        core_report.event_count_by_kind(ScheduledEventKind::Parallel),
+        1
+    );
+    assert_eq!(
+        core_report.event_count_by_kind(ScheduledEventKind::Serial),
+        0
+    );
+
+    let io_report = report.pending_partition(io).unwrap();
+    assert_eq!(io_report.partition(), io);
+    assert_eq!(io_report.pending_event_count(), 1);
+    assert_eq!(io_report.first_pending_tick(), Some(9));
+    assert_eq!(io_report.last_pending_tick(), Some(9));
+    assert_eq!(io_report.event_count_by_kind(ScheduledEventKind::Serial), 1);
+    assert_eq!(
+        io_report.event_count_by_kind(ScheduledEventKind::Parallel),
+        0
+    );
+    assert!(report.pending_partition(memory).is_none());
+}
+
+#[test]
+fn host_checkpoint_bank_reports_quiescence_by_component() {
+    let component0 = CheckpointComponentId::new("scheduler0").unwrap();
+    let component1 = CheckpointComponentId::new("scheduler1").unwrap();
+    let scheduler0 = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    let scheduler1 = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    scheduler1
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(PartitionId::new(1), 11, |_| {})
+        .unwrap();
+    let bank = SchedulerCheckpointBank::new([
+        SchedulerCheckpointPort::new(component0.clone(), Arc::clone(&scheduler0)),
+        SchedulerCheckpointPort::new(component1.clone(), Arc::clone(&scheduler1)),
+    ])
+    .unwrap();
+
+    let reports = bank.quiescence_reports();
+
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0].component(), &component0);
+    assert!(reports[0].is_quiescent());
+    assert_eq!(reports[0].pending_event_count(), 0);
+    assert_eq!(reports[0].first_pending_tick(), None);
+    assert_eq!(reports[0].last_pending_tick(), None);
+    assert_eq!(reports[1].component(), &component1);
+    assert!(!reports[1].is_quiescent());
+    assert_eq!(reports[1].pending_event_count(), 1);
+    assert_eq!(reports[1].first_pending_tick(), Some(11));
+    assert_eq!(reports[1].last_pending_tick(), Some(11));
 }
