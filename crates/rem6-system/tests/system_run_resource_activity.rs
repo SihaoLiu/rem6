@@ -677,6 +677,54 @@ fn system_run_aggregates_dram_wait_for_diagnostics() {
 }
 
 #[test]
+fn system_run_preserves_barrier_wait_kind_in_full_system_diagnostics() {
+    let barrier = WaitForNode::checkpoint_barrier("roi-start").unwrap();
+    let first_partition = WaitForNode::partition(PartitionId::new(0));
+    let second_partition = WaitForNode::partition(PartitionId::new(1));
+    let mut graph = WaitForGraph::new();
+    graph
+        .record_wait(
+            first_partition.clone(),
+            barrier.clone(),
+            WaitForEdgeKind::Barrier,
+            40,
+        )
+        .unwrap();
+    graph
+        .record_wait(
+            second_partition.clone(),
+            barrier,
+            WaitForEdgeKind::Barrier,
+            41,
+        )
+        .unwrap();
+
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 42 },
+    )
+    .with_fabric_wait_for(graph);
+
+    assert_eq!(
+        run.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Barrier),
+        2,
+    );
+    assert_eq!(
+        run.full_system_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Barrier)
+            .copied(),
+        Some(2),
+    );
+    assert_eq!(
+        run.full_system_wait_for_blocked_nodes(),
+        vec![first_partition, second_partition],
+    );
+    assert_eq!(run.full_system_first_wait_tick(), Some(40));
+    assert_eq!(run.full_system_last_wait_tick(), Some(41));
+}
+
+#[test]
 fn system_run_aggregates_data_cache_wait_for_diagnostics() {
     let cache_run = coherence_run_with_waits();
     let run = RiscvSystemRun::new(

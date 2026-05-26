@@ -246,6 +246,20 @@ impl RiscvSystemRun {
         wait_for_edge_count_by_kind(self.full_system_wait_for_edges(), kind)
     }
 
+    pub fn full_system_first_wait_tick(&self) -> Option<Tick> {
+        self.full_system_wait_for_edges()
+            .iter()
+            .map(WaitForEdge::first_observed_tick)
+            .min()
+    }
+
+    pub fn full_system_last_wait_tick(&self) -> Option<Tick> {
+        self.full_system_wait_for_edges()
+            .iter()
+            .map(WaitForEdge::last_observed_tick)
+            .max()
+    }
+
     pub fn full_system_deadlock_diagnostics(&self) -> Vec<DeadlockDiagnostic> {
         let mut diagnostics = self.resource_deadlock_diagnostics();
         diagnostics.extend(self.data_cache_deadlock_diagnostics());

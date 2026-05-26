@@ -25,6 +25,11 @@ impl WaitForNode {
         Ok(Self::Resource(validate_label(label.into())?))
     }
 
+    pub fn checkpoint_barrier(label: impl Into<String>) -> Result<Self, WaitForGraphError> {
+        let label = validate_label(label.into())?;
+        Ok(Self::Resource(format!("checkpoint_barrier:{label}")))
+    }
+
     pub fn transaction(label: impl Into<String>) -> Result<Self, WaitForGraphError> {
         Ok(Self::Transaction(validate_label(label.into())?))
     }
@@ -49,6 +54,7 @@ pub enum WaitForEdgeKind {
     Queue,
     Credit,
     HostAction,
+    Barrier,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

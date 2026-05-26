@@ -13,6 +13,60 @@ fn transaction(name: &str) -> WaitForNode {
 }
 
 #[test]
+fn wait_for_graph_tracks_checkpoint_barrier_waits_and_release() {
+    let first_partition = WaitForNode::partition(PartitionId::new(0));
+    let second_partition = WaitForNode::partition(PartitionId::new(1));
+    let barrier = WaitForNode::checkpoint_barrier("boot-cpt").unwrap();
+    let mut graph = WaitForGraph::new();
+
+    graph
+        .record_wait(
+            first_partition.clone(),
+            barrier.clone(),
+            WaitForEdgeKind::Barrier,
+            21,
+        )
+        .unwrap();
+    graph
+        .record_wait(
+            first_partition.clone(),
+            barrier.clone(),
+            WaitForEdgeKind::Barrier,
+            25,
+        )
+        .unwrap();
+    graph
+        .record_wait(
+            second_partition.clone(),
+            barrier.clone(),
+            WaitForEdgeKind::Barrier,
+            23,
+        )
+        .unwrap();
+
+    let snapshot = graph.snapshot();
+
+    assert_eq!(snapshot.edge_count(), 2);
+    assert_eq!(snapshot.edge_count_by_kind(WaitForEdgeKind::Barrier), 2);
+    assert_eq!(snapshot.first_observed_tick(), Some(21));
+    assert_eq!(snapshot.last_observed_tick(), Some(25));
+    assert_eq!(snapshot.total_observation_count(), 3);
+    assert_eq!(snapshot.longest_observed_span(), Some(4));
+    assert_eq!(
+        snapshot.blocked_nodes(),
+        vec![first_partition.clone(), second_partition]
+    );
+    assert_eq!(graph.clear_waits_to(&barrier), 2);
+    assert!(graph.is_empty());
+    assert_eq!(
+        WaitForNode::checkpoint_barrier("bad barrier"),
+        Err(WaitForGraphError::InvalidNodeLabel {
+            label: "bad barrier".to_string(),
+        })
+    );
+}
+
+#[test]
 fn wait_for_graph_reports_deterministic_deadlock_cycle() {
     let cache = component("l1d0");
     let directory = component("dir0");
