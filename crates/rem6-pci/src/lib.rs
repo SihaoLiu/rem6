@@ -182,6 +182,7 @@ impl PciBarIndex {
 pub enum PciBarKind {
     Memory32 { prefetchable: bool },
     Memory64 { prefetchable: bool },
+    LegacyIo { address: Address },
     Io,
 }
 
@@ -196,6 +197,7 @@ impl PciBarKind {
                 }
             }
             Self::Memory64 { prefetchable } => 0x4 | if prefetchable { 0x8 } else { 0 },
+            Self::LegacyIo { .. } => 0,
             Self::Io => 0x1,
         }
     }
@@ -203,6 +205,7 @@ impl PciBarKind {
     const fn fixed_low_bits(self) -> u64 {
         match self {
             Self::Memory32 { .. } | Self::Memory64 { .. } => 0xf,
+            Self::LegacyIo { .. } => 0x3,
             Self::Io => 0x3,
         }
     }
@@ -705,7 +708,7 @@ impl PciEndpointConfig {
             PciBarKind::Memory32 { .. } | PciBarKind::Memory64 { .. } => {
                 command & PCI_COMMAND_MEMORY_SPACE != 0
             }
-            PciBarKind::Io => command & PCI_COMMAND_IO_SPACE != 0,
+            PciBarKind::LegacyIo { .. } | PciBarKind::Io => command & PCI_COMMAND_IO_SPACE != 0,
         }
     }
 }
@@ -1131,6 +1134,10 @@ impl PciBarState {
         let Self::Endpoint { spec, raw, .. } = self else {
             return;
         };
+        if matches!(spec.kind(), PciBarKind::LegacyIo { .. }) {
+            *raw = 0;
+            return;
+        }
         let mask = !((spec.size().bytes() - 1) as u32);
         *raw = (value & mask) | spec.kind().flags();
     }
@@ -1155,8 +1162,13 @@ impl PciBarState {
         else {
             return Err(PciError::UpperBarRange);
         };
-        let fixed_low_bits = spec.kind().fixed_low_bits() as u32;
-        let lower = (raw & !fixed_low_bits) as u64;
+        let lower = match spec.kind() {
+            PciBarKind::LegacyIo { address } => address.get(),
+            kind => {
+                let fixed_low_bits = kind.fixed_low_bits() as u32;
+                (raw & !fixed_low_bits) as u64
+            }
+        };
         let upper = if spec.kind().is_64_bit() {
             (*upper_raw as u64) << 32
         } else {
@@ -1754,6 +1766,7 @@ const fn host_address_space(kind: PciBarKind) -> PciHostAddressSpace {
         PciBarKind::Memory64 {
             prefetchable: false,
         } => PciHostAddressSpace::Memory,
+        PciBarKind::LegacyIo { .. } => PciHostAddressSpace::Io,
         PciBarKind::Io => PciHostAddressSpace::Io,
     }
 }

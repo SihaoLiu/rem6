@@ -109,6 +109,55 @@ fn pci_endpoint_bar_writes_apply_size_masks_and_enable_ranges() {
 }
 
 #[test]
+fn pci_endpoint_legacy_io_bar_ignores_writes_and_uses_fixed_range() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::LegacyIo {
+                    address: Address::new(0x03f8),
+                },
+                AccessSize::new(8).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0)
+    );
+    endpoint
+        .write_u32(PciConfigOffset::new(0x10).unwrap(), 0xffff_ffff)
+        .unwrap();
+    assert_eq!(
+        endpoint.read_u32(PciConfigOffset::new(0x10).unwrap()),
+        Ok(0)
+    );
+    assert_eq!(endpoint.active_bar_ranges(), Vec::new());
+
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0001_u16.to_le_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        endpoint.active_bar_ranges(),
+        vec![PciBarRange::new(
+            PciBarIndex::new(0).unwrap(),
+            PciBarKind::LegacyIo {
+                address: Address::new(0x03f8),
+            },
+            Address::new(0x03f8),
+            AccessSize::new(8).unwrap(),
+        )
+        .unwrap()]
+    );
+}
+
+#[test]
 fn pci_endpoint_memory64_bar_writes_lower_and_upper_config_dwords() {
     let mut endpoint = network_endpoint();
     endpoint

@@ -326,6 +326,7 @@ const fn bridge_space(kind: PciBarKind) -> PciHostAddressSpace {
         | PciBarKind::Memory64 {
             prefetchable: false,
         } => PciHostAddressSpace::Memory,
+        PciBarKind::LegacyIo { .. } => PciHostAddressSpace::Io,
         PciBarKind::Io => PciHostAddressSpace::Io,
     }
 }

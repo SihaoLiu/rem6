@@ -35,6 +35,27 @@ fn storage_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
     endpoint
 }
 
+fn legacy_io_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
+    let mut endpoint = PciEndpointConfig::new(
+        function,
+        PciDeviceIdentity::new(0x8086, 0x100e),
+        PciClassCode::new(0x02, 0x00, 0x00, 0x00),
+    );
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::LegacyIo {
+                    address: Address::new(0x3000),
+                },
+                AccessSize::new(0x10).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+}
+
 #[test]
 fn pci_type1_bridge_config_exposes_header_bus_numbers_and_windows() {
     let function = PciFunctionAddress::new(0, 1, 0).unwrap();
@@ -194,6 +215,60 @@ fn pci_host_filters_downstream_bar_ranges_through_type1_memory_window() {
     );
 
     host.write_config_address(bridge_memory_window_addr, &0x0040_0040_u32.to_le_bytes())
+        .unwrap();
+    assert_eq!(host.active_host_bar_ranges(), Ok(Vec::new()));
+}
+
+#[test]
+fn pci_host_filters_downstream_legacy_io_bar_ranges_through_type1_io_window() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(1, 2, 0).unwrap();
+
+    host.register_bridge(bridge_config(bridge_function))
+        .unwrap();
+    host.register_endpoint(legacy_io_endpoint(endpoint_function))
+        .unwrap();
+
+    let endpoint_command_addr = aperture
+        .config_address(endpoint_function, PciConfigOffset::new(0x04).unwrap())
+        .unwrap();
+    host.write_config_address(endpoint_command_addr, &0x0001_u16.to_le_bytes())
+        .unwrap();
+    assert_eq!(host.active_host_bar_ranges(), Ok(Vec::new()));
+
+    let bridge_io_base_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x1c).unwrap())
+        .unwrap();
+    let bridge_io_limit_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x1d).unwrap())
+        .unwrap();
+    host.write_config_address(bridge_io_base_addr, &[0x30])
+        .unwrap();
+    host.write_config_address(bridge_io_limit_addr, &[0x30])
+        .unwrap();
+    assert_eq!(
+        host.active_host_bar_ranges(),
+        Ok(vec![PciHostBarRange::new(
+            endpoint_function,
+            PciBarIndex::new(0).unwrap(),
+            PciHostAddressSpace::Io,
+            Address::new(0x3000),
+            Address::new(0x1000_3000),
+            AccessSize::new(0x10).unwrap(),
+        )
+        .unwrap()])
+    );
+
+    host.write_config_address(bridge_io_base_addr, &[0x40])
+        .unwrap();
+    host.write_config_address(bridge_io_limit_addr, &[0x40])
         .unwrap();
     assert_eq!(host.active_host_bar_ranges(), Ok(Vec::new()));
 }
