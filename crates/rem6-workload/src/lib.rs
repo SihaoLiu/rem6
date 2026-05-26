@@ -186,12 +186,103 @@ impl WorkloadResourceKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadResourceAcquisitionKind {
+    LocalFile,
+    RemoteUri,
+    Generated,
+    Preloaded,
+}
+
+impl WorkloadResourceAcquisitionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalFile => "local-file",
+            Self::RemoteUri => "remote-uri",
+            Self::Generated => "generated",
+            Self::Preloaded => "preloaded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WorkloadResourceAcquisitionField {
+    Locator,
+    Tool,
+    Revision,
+}
+
+impl WorkloadResourceAcquisitionField {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Locator => "locator",
+            Self::Tool => "tool",
+            Self::Revision => "revision",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadResourceAcquisition {
+    kind: WorkloadResourceAcquisitionKind,
+    locator: String,
+    tool: Option<String>,
+    revision: Option<String>,
+}
+
+impl WorkloadResourceAcquisition {
+    pub fn new(
+        kind: WorkloadResourceAcquisitionKind,
+        locator: impl Into<String>,
+    ) -> Result<Self, WorkloadError> {
+        let locator = locator.into();
+        validate_resource_acquisition_text(WorkloadResourceAcquisitionField::Locator, &locator)?;
+        Ok(Self {
+            kind,
+            locator,
+            tool: None,
+            revision: None,
+        })
+    }
+
+    pub fn with_tool(mut self, tool: impl Into<String>) -> Result<Self, WorkloadError> {
+        let tool = tool.into();
+        validate_resource_acquisition_text(WorkloadResourceAcquisitionField::Tool, &tool)?;
+        self.tool = Some(tool);
+        Ok(self)
+    }
+
+    pub fn with_revision(mut self, revision: impl Into<String>) -> Result<Self, WorkloadError> {
+        let revision = revision.into();
+        validate_resource_acquisition_text(WorkloadResourceAcquisitionField::Revision, &revision)?;
+        self.revision = Some(revision);
+        Ok(self)
+    }
+
+    pub const fn kind(&self) -> WorkloadResourceAcquisitionKind {
+        self.kind
+    }
+
+    pub fn locator(&self) -> &str {
+        &self.locator
+    }
+
+    pub fn tool(&self) -> Option<&str> {
+        self.tool.as_deref()
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResource {
     id: WorkloadResourceId,
     kind: WorkloadResourceKind,
     digest: String,
     locator: String,
+    acquisition: Option<WorkloadResourceAcquisition>,
 }
 
 impl WorkloadResource {
@@ -220,7 +311,13 @@ impl WorkloadResource {
             kind,
             digest,
             locator,
+            acquisition: None,
         })
+    }
+
+    pub fn with_acquisition(mut self, acquisition: WorkloadResourceAcquisition) -> Self {
+        self.acquisition = Some(acquisition);
+        self
     }
 
     pub fn id(&self) -> &WorkloadResourceId {
@@ -238,6 +335,20 @@ impl WorkloadResource {
     pub fn locator(&self) -> &str {
         &self.locator
     }
+
+    pub fn acquisition(&self) -> Option<&WorkloadResourceAcquisition> {
+        self.acquisition.as_ref()
+    }
+}
+
+fn validate_resource_acquisition_text(
+    field: WorkloadResourceAcquisitionField,
+    value: &str,
+) -> Result<(), WorkloadError> {
+    if value.is_empty() {
+        return Err(WorkloadError::EmptyResourceAcquisitionField { field });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

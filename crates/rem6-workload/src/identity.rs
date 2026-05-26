@@ -130,6 +130,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         hash_u64(&mut hash, resource.kind() as u64);
         hash_str(&mut hash, resource.digest());
         hash_str(&mut hash, resource.locator());
+        hash_resource_acquisition(&mut hash, resource.acquisition());
     }
     hash_u64(&mut hash, input.required_resources.len() as u64);
     for resource in input.required_resources {
@@ -620,6 +621,21 @@ fn hash_expected_checkpoint_component_summary(
     hash_u64(hash, expected.minimum_payload_bytes() as u64);
 }
 
+fn hash_resource_acquisition(
+    hash: &mut u64,
+    acquisition: Option<&crate::WorkloadResourceAcquisition>,
+) {
+    let Some(acquisition) = acquisition else {
+        hash_u64(hash, 0);
+        return;
+    };
+    hash_u64(hash, 1);
+    hash_str(hash, acquisition.kind().as_str());
+    hash_str(hash, acquisition.locator());
+    hash_optional_str(hash, acquisition.tool());
+    hash_optional_str(hash, acquisition.revision());
+}
+
 fn hash_parallel_remote_flow_scope(hash: &mut u64, scope: WorkloadParallelRemoteFlowScope) {
     hash_str(hash, scope.as_str());
 }
@@ -839,6 +855,16 @@ fn hash_optional_tick(hash: &mut u64, tick: Option<Tick>) {
         Some(tick) => {
             hash_u64(hash, 1);
             hash_u64(hash, tick);
+        }
+        None => hash_u64(hash, 0),
+    }
+}
+
+fn hash_optional_str(hash: &mut u64, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash_u64(hash, 1);
+            hash_str(hash, value);
         }
         None => hash_u64(hash, 0),
     }

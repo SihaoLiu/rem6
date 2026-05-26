@@ -9,8 +9,9 @@ use crate::{
     WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
-    WorkloadParallelSchedulerScope, WorkloadResourceActivityScope, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRouteId, WorkloadRouteLatency, WorkloadSuiteIdentity,
+    WorkloadParallelSchedulerScope, WorkloadResourceAcquisitionField,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadRouteId,
+    WorkloadRouteLatency, WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -49,6 +50,9 @@ pub enum WorkloadError {
     },
     EmptyResourceLocator {
         resource: WorkloadResourceId,
+    },
+    EmptyResourceAcquisitionField {
+        field: WorkloadResourceAcquisitionField,
     },
     DuplicateResource {
         resource: WorkloadResourceId,

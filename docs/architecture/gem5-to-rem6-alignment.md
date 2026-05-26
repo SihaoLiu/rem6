@@ -319,6 +319,10 @@ Implementation evidence on 2026-05-26:
 - Workload checkpoint summaries now preserve per-component chunk and
   payload-byte counts in replay results, and workload manifests can require
   minimum coverage for named checkpoint components during capture or restore.
+- Workload resources now carry optional typed acquisition provenance, including
+  acquisition kind, acquisition locator, tool, and revision. The manifest
+  identity hashes this provenance, so artifact acquisition state cannot drift
+  outside the reproducible workload contract.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes
@@ -471,7 +475,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `ext/sst`, `src/sst`, `configs/example/sst` | future SST adapter | external-adapter | SST co-simulation should be explicit and checkpoint-aware. |
 | `ext/nomali`, `ext/mcpat`, `ext/dsent` | future optional analysis adapters | external-adapter | Preserve modeling value behind typed records and stable APIs. |
 | `ext/libelf`, `ext/libfdt`, `ext/softfloat`, `ext/gdbremote` | `rem6-boot`, `rem6-platform`, future debug and ISA support crates | partial | rem6-platform has an initial typed DTS source tree and deterministic binary FDT/DTB writer for RISC-V platform boot descriptions, including Linux `/chosen` bootargs and initrd start/end metadata, and rem6-system installs initrd bytes plus generated or resolved-resource DTBs into guest memory with the RISC-V A1 register handoff for both store-backed and DRAM-backed memory. rem6 still needs equivalent ELF loading breadth, kernel image loaders, bootloader handoff coverage, soft-float, and debug capability without vendoring unneeded code into the core. |
-| `util/gem5art`, resources tooling, disk image tooling | `rem6-workload`, future artifact tooling | partial | rem6 manifests make artifact provenance first-class and reproducible for boot images, declared resources, typed Linux device-tree resources, and typed Linux initrd handoff resources. Resolved payloads are explicit caller-provided data with manifest identity, id, digest, kind validation, and initrd handoff-size validation; workload replay rejects payload sets resolved for a different manifest, and no hidden download path is part of replay authority. Future tooling still needs richer artifact acquisition and disk-image construction records. |
+| `util/gem5art`, resources tooling, disk image tooling | `rem6-workload`, future artifact tooling | partial | rem6 manifests make artifact provenance first-class and reproducible for boot images, declared resources, typed Linux device-tree resources, and typed Linux initrd handoff resources. Resource declarations can now carry typed acquisition provenance with kind, acquisition locator, tool, and revision, and manifest identity hashing includes that provenance so acquisition state cannot silently drift from the workload contract. Resolved payloads are explicit caller-provided data with manifest identity, id, digest, kind validation, and initrd handoff-size validation; workload replay rejects payload sets resolved for a different manifest, and no hidden download path is part of replay authority. Future tooling still needs richer artifact acquisition execution and disk-image construction records. |
 | `tests`, `tests/test-progs`, `util/statetrace` | rem6 tests and trace tooling | partial | gem5 tests are audit input. rem6 acceptance remains Rust tests and typed trace comparison. |
 
 ## Evidence Already Present in rem6
@@ -894,10 +898,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 - Workload manifests record boot images, resources, topology, host events,
   checkpoint lineage, typed QoS policy intent, typed Linux boot handoff intent
   with device-tree and initrd resource validation, explicit required-resource
-  payload resolution bound to manifest identity, RISC-V core route source
-  partition and endpoint validation, explicit RISC-V data-cache backing-route
-  validation and identity hashing, GPU and accelerator command plus DMA endpoint
-  validation, manifest-owned parallel remote-flow count, remote-flow timing,
+  payload resolution bound to manifest identity, resource acquisition
+  provenance hashing, RISC-V core route source partition and endpoint
+  validation, explicit RISC-V data-cache backing-route validation and identity
+  hashing, GPU and accelerator command plus DMA endpoint validation,
+  manifest-owned parallel remote-flow count, remote-flow timing,
   remote endpoints, remote delay bounds, and exact remote-send contracts for
   CPU/cache/full-system plus direct GPU and accelerator DMA scheduler scopes,
   CPU/cache/full-system scheduler progress, direct GPU and accelerator DMA

@@ -44,6 +44,11 @@ impl fmt::Display for WorkloadError {
                 "resource {} must include a locator",
                 resource.as_str()
             ),
+            Self::EmptyResourceAcquisitionField { field } => write!(
+                formatter,
+                "resource acquisition {} must not be empty",
+                field.as_str()
+            ),
             Self::DuplicateResource { resource } => {
                 write!(
                     formatter,

@@ -17,8 +17,10 @@ use rem6_workload::{
     WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
     WorkloadMemoryTarget, WorkloadQosPolicy, WorkloadQosQueuePolicyKind,
     WorkloadQosRequestorPriority, WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRiscvCore,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadResource, WorkloadResourceAcquisition, WorkloadResourceAcquisitionField,
+    WorkloadResourceAcquisitionKind, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadRiscvCore, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope,
+    WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -1091,6 +1093,85 @@ fn workload_manifest_identity_is_stable_for_resource_insertion_order() {
     assert_eq!(first.resources(), second.resources());
     assert_eq!(first.required_resources(), second.required_resources());
     assert_eq!(first.identity(), second.identity());
+}
+
+#[test]
+fn workload_manifest_records_resource_acquisition_provenance() {
+    let acquisition = WorkloadResourceAcquisition::new(
+        WorkloadResourceAcquisitionKind::RemoteUri,
+        "https://resources.example/kernel.elf",
+    )
+    .unwrap()
+    .with_tool("resource-cache")
+    .unwrap()
+    .with_revision("sha256:resource-index")
+    .unwrap();
+    let resource = kernel_resource().with_acquisition(acquisition.clone());
+    let manifest = WorkloadManifest::builder(id("resource-provenance"), boot_image())
+        .add_resource(resource.clone())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        manifest.resource(resource.id()).unwrap().acquisition(),
+        Some(&acquisition)
+    );
+    assert_eq!(
+        acquisition.kind(),
+        WorkloadResourceAcquisitionKind::RemoteUri
+    );
+    assert_eq!(
+        acquisition.locator(),
+        "https://resources.example/kernel.elf"
+    );
+    assert_eq!(acquisition.tool(), Some("resource-cache"));
+    assert_eq!(acquisition.revision(), Some("sha256:resource-index"));
+
+    let without_acquisition = WorkloadManifest::builder(id("resource-provenance"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let different_revision = WorkloadManifest::builder(id("resource-provenance"), boot_image())
+        .add_resource(
+            kernel_resource().with_acquisition(
+                WorkloadResourceAcquisition::new(
+                    WorkloadResourceAcquisitionKind::RemoteUri,
+                    "https://resources.example/kernel.elf",
+                )
+                .unwrap()
+                .with_tool("resource-cache")
+                .unwrap()
+                .with_revision("sha256:different-resource-index")
+                .unwrap(),
+            ),
+        )
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+
+    assert_ne!(manifest.identity(), without_acquisition.identity());
+    assert_ne!(manifest.identity(), different_revision.identity());
+    assert_eq!(
+        WorkloadResourceAcquisition::new(WorkloadResourceAcquisitionKind::LocalFile, "")
+            .unwrap_err(),
+        WorkloadError::EmptyResourceAcquisitionField {
+            field: WorkloadResourceAcquisitionField::Locator,
+        }
+    );
+    assert_eq!(
+        WorkloadResourceAcquisition::new(WorkloadResourceAcquisitionKind::Generated, "build:dtb")
+            .unwrap()
+            .with_tool("")
+            .unwrap_err(),
+        WorkloadError::EmptyResourceAcquisitionField {
+            field: WorkloadResourceAcquisitionField::Tool,
+        }
+    );
 }
 
 #[test]
