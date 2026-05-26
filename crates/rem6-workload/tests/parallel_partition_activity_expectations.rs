@@ -3,7 +3,8 @@ use rem6_kernel::{ParallelPartitionActivity, ParallelRemoteFlowRecord, Partition
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelPartitionActivity, WorkloadId,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelExecutionSummary,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelExecutionSummary,
     WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult,
 };
@@ -60,6 +61,16 @@ fn expected_activity(
         minimum_remote_receive_count,
     )
     .unwrap()
+}
+
+fn timeline_record(
+    scope: WorkloadParallelBatchScope,
+    start_tick: u64,
+    horizon: u64,
+    partitions: impl IntoIterator<Item = PartitionId>,
+    worker_count: usize,
+) -> WorkloadParallelBatchTimelineRecord {
+    WorkloadParallelBatchTimelineRecord::new(scope, start_tick, horizon, partitions, worker_count)
 }
 
 #[test]
@@ -362,6 +373,66 @@ fn workload_replay_plan_derives_partition_activity_from_batch_partition_sets() {
     assert_eq!(
         summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(3)),
         Some(ParallelPartitionActivity::with_remote_counts(9, 9, 0, 0, 0)),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_full_system_partition_activity_from_dma_batch_timelines() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            4,
+            3,
+            3,
+            0,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            5,
+            2,
+            2,
+            0,
+            0,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            8,
+            10,
+            [PartitionId::new(3), PartitionId::new(4)],
+            2,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                10,
+                12,
+                [PartitionId::new(4), PartitionId::new(5)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                12,
+                14,
+                [PartitionId::new(5), PartitionId::new(4)],
+                2,
+            ),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(4)),
+        Some(ParallelPartitionActivity::with_remote_counts(3, 3, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(5)),
+        Some(ParallelPartitionActivity::with_remote_counts(2, 2, 0, 0, 0)),
     );
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);

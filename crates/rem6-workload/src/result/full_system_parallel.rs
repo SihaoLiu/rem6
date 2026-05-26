@@ -8,6 +8,7 @@ use crate::parallel_batch::{
     collect_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
     normalize_partition_set, parallel_batch_active_partition_count,
     parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
+    parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
     parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
     total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
@@ -18,7 +19,8 @@ use crate::result_collect::{
     parallel_remote_flow_evidence_count, parallel_remote_send_count,
 };
 use crate::result_partition_activity::{
-    combined_parallel_active_partition_count, merge_parallel_partition_activity_options,
+    combined_parallel_active_partition_count, merge_parallel_partition_activity_evidence_options,
+    merge_parallel_partition_activity_options,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -268,9 +270,18 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
+        let dma_partition_sets = self.dma_scheduler_batch_partition_sets();
+        let dma_partition_streaks = self.dma_scheduler_batch_partition_streaks();
+        let dma_activity = merge_parallel_partition_activity_evidence_options(
+            parallel_batch_partition_activity_for_partition(&dma_partition_sets, partition),
+            parallel_batch_streak_activity_for_partition(&dma_partition_streaks, partition),
+        );
         merge_parallel_partition_activity_options(
-            self.parallel_scheduler_partition_activity(partition),
-            self.data_cache_parallel_scheduler_partition_activity(partition),
+            merge_parallel_partition_activity_options(
+                self.parallel_scheduler_partition_activity(partition),
+                self.data_cache_parallel_scheduler_partition_activity(partition),
+            ),
+            dma_activity,
         )
     }
 
