@@ -33,8 +33,9 @@ pub use shared_memory::{
     VirtioPciSharedMemoryRegionSpec, VirtioPciSharedMemoryRegistry,
 };
 pub use transport::{
-    VirtioPciModernTransportSpec, VirtioPciNotifyRegion, VirtioPciTransportBarSpec,
-    VirtioPciTransportEndpointSpec, VirtioPciTransportRegion,
+    VirtioPciModernTransportDevices, VirtioPciModernTransportSpec, VirtioPciNotifyRegion,
+    VirtioPciTransportBarRuntime, VirtioPciTransportBarSpec, VirtioPciTransportEndpointSpec,
+    VirtioPciTransportRegion,
 };
 
 pub const VIRTIO_PCI_COMMON_CONFIG_SIZE: u64 = 0x40;
@@ -1279,10 +1280,26 @@ pub enum VirtioError {
         bar: u8,
         offset: u64,
     },
+    PciTransportDeviceRegionTooSmall {
+        cfg_type: u8,
+        bar: u8,
+        declared_length: u64,
+        device_length: u64,
+    },
     OverlappingPciTransportRegion {
         first_cfg_type: u8,
         second_cfg_type: u8,
         bar: u8,
+    },
+    OverlappingPciTransportRuntimeDevice {
+        first_cfg_type: u8,
+        second_cfg_type: u8,
+        bar: u8,
+    },
+    MissingPciTransportDeviceConfigDevice,
+    UnexpectedPciTransportDeviceConfigDevice,
+    PciTransportRuntimeConfig {
+        message: String,
     },
     PciEndpointConfig {
         message: String,
@@ -1290,6 +1307,12 @@ pub enum VirtioError {
 }
 
 impl VirtioError {
+    fn memory(error: rem6_memory::MemoryError) -> Self {
+        Self::PciTransportRuntimeConfig {
+            message: error.to_string(),
+        }
+    }
+
     fn pci_endpoint(error: rem6_pci::PciError) -> Self {
         Self::PciEndpointConfig {
             message: error.to_string(),
@@ -1453,6 +1476,15 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO PCI capability type {cfg_type} in BAR {bar} offset {offset:#x} does not fit the 32-bit PCI capability field"
             ),
+            Self::PciTransportDeviceRegionTooSmall {
+                cfg_type,
+                bar,
+                declared_length,
+                device_length,
+            } => write!(
+                formatter,
+                "VirtIO PCI capability type {cfg_type} in BAR {bar} device length {device_length:#x} does not fit declared region length {declared_length:#x}"
+            ),
             Self::OverlappingPciTransportRegion {
                 first_cfg_type,
                 second_cfg_type,
@@ -1461,6 +1493,25 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO PCI capability type {second_cfg_type} overlaps type {first_cfg_type} in BAR {bar}"
             ),
+            Self::OverlappingPciTransportRuntimeDevice {
+                first_cfg_type,
+                second_cfg_type,
+                bar,
+            } => write!(
+                formatter,
+                "VirtIO PCI runtime device type {second_cfg_type} overlaps type {first_cfg_type} in BAR {bar}"
+            ),
+            Self::MissingPciTransportDeviceConfigDevice => write!(
+                formatter,
+                "VirtIO PCI transport declares a device-specific config region but no device was provided"
+            ),
+            Self::UnexpectedPciTransportDeviceConfigDevice => write!(
+                formatter,
+                "VirtIO PCI transport received a device-specific config device without a declared region"
+            ),
+            Self::PciTransportRuntimeConfig { message } => {
+                write!(formatter, "VirtIO PCI transport runtime configuration failed: {message}")
+            }
             Self::PciEndpointConfig { message } => {
                 write!(formatter, "VirtIO PCI endpoint configuration failed: {message}")
             }

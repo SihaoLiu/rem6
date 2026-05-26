@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use rem6_memory::AccessSize;
+use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
+use rem6_memory::{AccessSize, Address, AddressRange};
+use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciClassCode, PciDeviceIdentity, PciEndpointConfig,
     PciFunctionAddress, PciRawCapabilitySpec,
@@ -9,8 +12,9 @@ use rem6_pci::{
 use crate::{
     pci_capability::{VIRTIO_PCI_CAP_SIZE, VIRTIO_PCI_NOTIFY_CAP_SIZE},
     validate_notify_multiplier, VirtioError, VirtioPciBarIndex, VirtioPciCapabilityEntry,
-    VirtioPciCapabilityKind, VirtioPciCapabilityOffset, VirtioPciNotifyCapabilityEntry,
-    VirtioPciSharedMemoryCapabilities, VirtioPciSharedMemoryRegistry,
+    VirtioPciCapabilityKind, VirtioPciCapabilityOffset, VirtioPciCommonConfigDevice,
+    VirtioPciDeviceConfigDevice, VirtioPciIsrDevice, VirtioPciNotifyCapabilityEntry,
+    VirtioPciNotifyDevice, VirtioPciSharedMemoryCapabilities, VirtioPciSharedMemoryRegistry,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -194,6 +198,48 @@ impl VirtioPciModernTransportSpec {
         Ok(endpoint)
     }
 
+    pub fn build_bar_runtime(
+        &self,
+        bar: VirtioPciBarIndex,
+        devices: VirtioPciModernTransportDevices,
+    ) -> Result<VirtioPciTransportBarRuntime, VirtioError> {
+        let bars = self.checked_bars()?;
+        self.validate_regions(&bars)?;
+        let bar_spec = bars
+            .get(&bar)
+            .copied()
+            .ok_or(VirtioError::MissingPciTransportBar {
+                cfg_type: 0,
+                bar: bar.get(),
+            })?;
+        let mut runtime = VirtioPciTransportBarRuntime::new(bar, bar_spec.size())?;
+
+        runtime.insert_runtime_device(
+            VirtioPciCapabilityKind::CommonConfig,
+            self.common,
+            devices.common,
+        )?;
+        runtime.insert_runtime_device(
+            VirtioPciCapabilityKind::NotifyConfig,
+            self.notify.region(),
+            devices.notify,
+        )?;
+        runtime.insert_runtime_device(VirtioPciCapabilityKind::IsrConfig, self.isr, devices.isr)?;
+        match (self.device_config, devices.device_config) {
+            (Some(region), Some(device)) => {
+                runtime.insert_runtime_device(
+                    VirtioPciCapabilityKind::DeviceConfig,
+                    region,
+                    device,
+                )?;
+            }
+            (Some(_), None) => return Err(VirtioError::MissingPciTransportDeviceConfigDevice),
+            (None, Some(_)) => return Err(VirtioError::UnexpectedPciTransportDeviceConfigDevice),
+            (None, None) => {}
+        }
+        Ok(runtime)
+    }
+
     fn checked_bars(
         &self,
     ) -> Result<BTreeMap<VirtioPciBarIndex, VirtioPciTransportBarSpec>, VirtioError> {
@@ -351,6 +397,240 @@ impl VirtioPciModernTransportSpec {
             );
         }
         Ok(capabilities)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtioPciModernTransportDevices {
+    common: VirtioPciCommonConfigDevice,
+    notify: VirtioPciNotifyDevice,
+    isr: VirtioPciIsrDevice,
+    device_config: Option<VirtioPciDeviceConfigDevice>,
+}
+
+impl VirtioPciModernTransportDevices {
+    pub const fn new(
+        common: VirtioPciCommonConfigDevice,
+        notify: VirtioPciNotifyDevice,
+        isr: VirtioPciIsrDevice,
+    ) -> Self {
+        Self {
+            common,
+            notify,
+            isr,
+            device_config: None,
+        }
+    }
+
+    pub fn with_device_config(mut self, device_config: VirtioPciDeviceConfigDevice) -> Self {
+        self.device_config = Some(device_config);
+        self
+    }
+}
+
+#[derive(Clone)]
+pub struct VirtioPciTransportBarRuntime {
+    bar: VirtioPciBarIndex,
+    range: AddressRange,
+    devices: Vec<VirtioPciTransportRuntimeDevice>,
+}
+
+impl VirtioPciTransportBarRuntime {
+    fn new(bar: VirtioPciBarIndex, size: AccessSize) -> Result<Self, VirtioError> {
+        Ok(Self {
+            bar,
+            range: AddressRange::new(Address::new(0), size).map_err(VirtioError::memory)?,
+            devices: Vec::new(),
+        })
+    }
+
+    pub const fn bar(&self) -> VirtioPciBarIndex {
+        self.bar
+    }
+
+    pub const fn range(&self) -> AddressRange {
+        self.range
+    }
+
+    pub fn device_count(&self) -> usize {
+        self.devices.len()
+    }
+
+    fn insert_runtime_device<D>(
+        &mut self,
+        kind: VirtioPciCapabilityKind,
+        region: VirtioPciTransportRegion,
+        device: D,
+    ) -> Result<(), VirtioError>
+    where
+        D: MmioDevice + VirtioPciTransportDeviceRange + 'static,
+    {
+        if region.bar() != self.bar {
+            return Ok(());
+        }
+        let device_size = device_range(&device).size();
+        if u64::from(region.length()) < device_size.bytes() {
+            return Err(VirtioError::PciTransportDeviceRegionTooSmall {
+                cfg_type: kind.cfg_type(),
+                bar: self.bar.get(),
+                declared_length: u64::from(region.length()),
+                device_length: device_size.bytes(),
+            });
+        }
+        let range = AddressRange::new(Address::new(region.offset()), device_size)
+            .map_err(VirtioError::memory)?;
+        if !self.range.contains_range(range) {
+            return Err(VirtioError::PciTransportRegionOutOfBar {
+                cfg_type: kind.cfg_type(),
+                bar: self.bar.get(),
+                offset: region.offset(),
+                length: device_size.bytes(),
+                bar_length: self.range.size().bytes(),
+            });
+        }
+        if let Some(existing) = self
+            .devices
+            .iter()
+            .find(|entry| entry.range.overlaps(range))
+        {
+            return Err(VirtioError::OverlappingPciTransportRuntimeDevice {
+                first_cfg_type: existing.cfg_type,
+                second_cfg_type: kind.cfg_type(),
+                bar: self.bar.get(),
+            });
+        }
+        self.devices.push(VirtioPciTransportRuntimeDevice {
+            cfg_type: kind.cfg_type(),
+            range,
+            device: Arc::new(device),
+        });
+        self.devices.sort_by_key(|entry| entry.range.start().get());
+        Ok(())
+    }
+
+    fn device_for(
+        &self,
+        request: &MmioRequest,
+    ) -> Result<&VirtioPciTransportRuntimeDevice, MmioError> {
+        let requested = request.range();
+        if !self.range.contains_range(requested) {
+            return Err(MmioError::DeviceBoundaryCrossed {
+                request: request.id(),
+                device_start: self.range.start(),
+                device_end: self.range.end(),
+                requested_start: requested.start(),
+                requested_end: requested.end(),
+            });
+        }
+        for device in &self.devices {
+            if device.range.contains(requested.start()) {
+                if !device.range.contains_range(requested) {
+                    return Err(MmioError::DeviceBoundaryCrossed {
+                        request: request.id(),
+                        device_start: device.range.start(),
+                        device_end: device.range.end(),
+                        requested_start: requested.start(),
+                        requested_end: requested.end(),
+                    });
+                }
+                return Ok(device);
+            }
+        }
+        Err(MmioError::UnmappedAddress {
+            address: requested.start(),
+        })
+    }
+}
+
+impl MmioDevice for VirtioPciTransportBarRuntime {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        let device = self.device_for(request)?;
+        device
+            .device
+            .respond(context, &device.local_request(request)?)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        let device = self.device_for(request)?;
+        device
+            .device
+            .respond_parallel(context, &device.local_request(request)?)
+    }
+}
+
+#[derive(Clone)]
+struct VirtioPciTransportRuntimeDevice {
+    cfg_type: u8,
+    range: AddressRange,
+    device: Arc<dyn MmioDevice>,
+}
+
+impl VirtioPciTransportRuntimeDevice {
+    fn local_request(&self, request: &MmioRequest) -> Result<MmioRequest, MmioError> {
+        let offset = request.range().start().get() - self.range.start().get();
+        let local = Address::new(offset);
+        match request.operation() {
+            MmioOperation::Read => MmioRequest::read(request.id(), local, request.size()),
+            MmioOperation::Write => MmioRequest::write(
+                request.id(),
+                local,
+                request
+                    .data()
+                    .ok_or(MmioError::MissingWriteData {
+                        request: request.id(),
+                    })?
+                    .to_vec(),
+                request
+                    .byte_mask()
+                    .ok_or(MmioError::MissingByteMask {
+                        request: request.id(),
+                    })?
+                    .clone(),
+            ),
+        }
+    }
+}
+
+fn device_range<D>(device: &D) -> AddressRange
+where
+    D: VirtioPciTransportDeviceRange,
+{
+    device.transport_range()
+}
+
+trait VirtioPciTransportDeviceRange {
+    fn transport_range(&self) -> AddressRange;
+}
+
+impl VirtioPciTransportDeviceRange for VirtioPciCommonConfigDevice {
+    fn transport_range(&self) -> AddressRange {
+        self.range()
+    }
+}
+
+impl VirtioPciTransportDeviceRange for VirtioPciNotifyDevice {
+    fn transport_range(&self) -> AddressRange {
+        self.range()
+    }
+}
+
+impl VirtioPciTransportDeviceRange for VirtioPciIsrDevice {
+    fn transport_range(&self) -> AddressRange {
+        self.range()
+    }
+}
+
+impl VirtioPciTransportDeviceRange for VirtioPciDeviceConfigDevice {
+    fn transport_range(&self) -> AddressRange {
+        self.range()
     }
 }
 
