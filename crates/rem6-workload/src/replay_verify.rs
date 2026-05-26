@@ -1117,6 +1117,55 @@ fn missing_fabric_link_activity_summary(
     }
 }
 
+pub(crate) fn verify_expected_fabric_virtual_network_activity(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_activity = plan.expected_fabric_virtual_network_activity();
+    if expected_activity.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_activity[0];
+        return Err(missing_fabric_virtual_network_activity_summary(expected));
+    };
+
+    for expected in expected_activity {
+        let Some(actual) = summary.fabric_virtual_network_activity(expected.virtual_network())
+        else {
+            return Err(missing_fabric_virtual_network_activity_summary(*expected));
+        };
+        if expected.below_minimum(&actual) {
+            return Err(
+                WorkloadError::ExpectedFabricVirtualNetworkActivityBelowMinimum {
+                    virtual_network: expected.virtual_network(),
+                    minimum_transfer_count: expected.minimum_transfer_count(),
+                    actual_transfer_count: actual.transfer_count(),
+                    minimum_active_lane_count: expected.minimum_active_lane_count(),
+                    actual_active_lane_count: actual.active_lane_count(),
+                    minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
+                    actual_queue_delay_ticks: actual.queue_delay_ticks(),
+                    minimum_contended_lane_count: expected.minimum_contended_lane_count(),
+                    actual_contended_lane_count: actual.contended_lane_count(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn missing_fabric_virtual_network_activity_summary(
+    expected: crate::WorkloadExpectedFabricVirtualNetworkActivity,
+) -> WorkloadError {
+    WorkloadError::MissingFabricVirtualNetworkActivitySummary {
+        virtual_network: expected.virtual_network(),
+        minimum_transfer_count: expected.minimum_transfer_count(),
+        minimum_active_lane_count: expected.minimum_active_lane_count(),
+        minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
+        minimum_contended_lane_count: expected.minimum_contended_lane_count(),
+    }
+}
+
 pub(crate) fn verify_expected_data_cache_protocol_run_counts(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

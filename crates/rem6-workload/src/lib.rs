@@ -12,6 +12,7 @@ mod host_event;
 mod identity;
 mod manifest_diagnostics;
 mod manifest_fabric_link_activity;
+mod manifest_fabric_virtual_network_activity;
 mod manifest_identity;
 mod manifest_parallel_frontier;
 mod manifest_progress;
@@ -77,16 +78,17 @@ pub use parallel_diagnostic_expectation::{
 };
 pub use parallel_expectation::{
     WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
-    WorkloadExpectedFabricLinkActivity, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelRemoteDelayCeiling,
-    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResourceActivityScope,
+    WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
+    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelFrontier,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadResourceActivityScope,
 };
 pub use parallel_progress_transition_expectation::{
     WorkloadExpectedParallelProgressTransition, WorkloadParallelProgressTransitionExpectationError,
@@ -281,6 +283,7 @@ pub struct WorkloadManifest {
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     expected_fabric_link_activity: Vec<WorkloadExpectedFabricLinkActivity>,
+    expected_fabric_virtual_network_activity: Vec<WorkloadExpectedFabricVirtualNetworkActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
     identity: WorkloadManifestIdentity,
 }
@@ -459,6 +462,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     expected_fabric_link_activity: Vec<WorkloadExpectedFabricLinkActivity>,
+    expected_fabric_virtual_network_activity: Vec<WorkloadExpectedFabricVirtualNetworkActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -505,6 +509,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_frontiers: Vec::new(),
             expected_resource_activity: Vec::new(),
             expected_fabric_link_activity: Vec::new(),
+            expected_fabric_virtual_network_activity: Vec::new(),
             checkpoint_lineage: None,
         }
     }
@@ -889,6 +894,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_frontiers: &self.expected_parallel_frontiers,
             expected_resource_activity: &self.expected_resource_activity,
             expected_fabric_link_activity: &self.expected_fabric_link_activity,
+            expected_fabric_virtual_network_activity: &self
+                .expected_fabric_virtual_network_activity,
             checkpoint_lineage: self.checkpoint_lineage.as_ref(),
         });
 
@@ -942,6 +949,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_frontiers: self.expected_parallel_frontiers,
             expected_resource_activity: self.expected_resource_activity,
             expected_fabric_link_activity: self.expected_fabric_link_activity,
+            expected_fabric_virtual_network_activity: self.expected_fabric_virtual_network_activity,
             checkpoint_lineage: self.checkpoint_lineage,
             identity,
         })
@@ -998,6 +1006,7 @@ pub struct WorkloadReplayPlan {
     expected_parallel_frontiers: Vec<WorkloadExpectedParallelFrontier>,
     expected_resource_activity: Vec<WorkloadExpectedResourceActivity>,
     expected_fabric_link_activity: Vec<WorkloadExpectedFabricLinkActivity>,
+    expected_fabric_virtual_network_activity: Vec<WorkloadExpectedFabricVirtualNetworkActivity>,
     checkpoint_lineage: Option<CheckpointLineage>,
 }
 
@@ -1097,6 +1106,9 @@ impl WorkloadReplayPlan {
             expected_parallel_frontiers: manifest.expected_parallel_frontiers().to_vec(),
             expected_resource_activity: manifest.expected_resource_activity().to_vec(),
             expected_fabric_link_activity: manifest.expected_fabric_link_activity().to_vec(),
+            expected_fabric_virtual_network_activity: manifest
+                .expected_fabric_virtual_network_activity()
+                .to_vec(),
             host_events,
             checkpoint_lineage: manifest.checkpoint_lineage().cloned(),
         })
@@ -1491,6 +1503,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_frontiers(self, result)?;
         replay_verify::verify_expected_resource_activity(self, result)?;
         replay_verify::verify_expected_fabric_link_activity(self, result)?;
+        replay_verify::verify_expected_fabric_virtual_network_activity(self, result)?;
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
         replay_verify::verify_expected_parallel_wait_for_edge_kind_counts(self, result)?;
         replay_verify::verify_expected_parallel_wait_for_edge_kind_windows(self, result)?;
