@@ -390,6 +390,12 @@ Implementation evidence on 2026-05-26:
 - Workload scheduler progress, idle, and frontier replay now reject scheduler
   summaries whose empty-epoch count exceeds the total epoch count before
   applying liveness, idle, or frontier thresholds.
+- Workload wait-for diagnostic replay now rejects same-scope summaries whose
+  edge-kind aggregate count falls below the exact edge-kind window count before
+  applying clean-diagnostic, edge-kind count, edge-kind window, blocked-node
+  window, or target-node window expectations. Exact diagnostic windows can no
+  longer be used to satisfy replay while a weaker same-kind summary hides the
+  stronger evidence.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

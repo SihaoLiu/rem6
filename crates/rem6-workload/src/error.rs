@@ -1568,6 +1568,12 @@ pub enum WorkloadError {
         minimum_edge_count: usize,
         actual_edge_count: usize,
     },
+    InvalidParallelWaitForEdgeKindWindowSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        edge_kind_count: usize,
+        window_edge_count: usize,
+    },
     ExpectedParallelWaitForEdgeKindWindowMismatch {
         scope: WorkloadParallelDiagnosticScope,
         kind: WaitForEdgeKind,

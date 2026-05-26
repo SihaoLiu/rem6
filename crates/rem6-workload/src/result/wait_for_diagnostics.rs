@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 
+use crate::{WorkloadError, WorkloadParallelDiagnosticScope};
+
 use super::{WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -117,6 +119,75 @@ impl WorkloadWaitForTargetNodeWindow {
 }
 
 impl WorkloadParallelExecutionSummary {
+    pub(crate) fn validate_parallel_diagnostic_scope_summary(
+        &self,
+        scope: WorkloadParallelDiagnosticScope,
+    ) -> Result<(), WorkloadError> {
+        match scope {
+            WorkloadParallelDiagnosticScope::Resource => {
+                self.validate_resource_diagnostic_summary()
+            }
+            WorkloadParallelDiagnosticScope::DataCache => {
+                validate_wait_for_edge_kind_window_summary(
+                    scope,
+                    &self.data_cache_wait_for_edge_kind_counts,
+                    &self.data_cache_wait_for_edge_kind_windows,
+                )
+            }
+            WorkloadParallelDiagnosticScope::Compute => {
+                validate_wait_for_edge_kind_window_summary(
+                    scope,
+                    &self.gpu_compute_wait_for_edge_kind_counts,
+                    &self.gpu_compute_wait_for_edge_kind_windows,
+                )?;
+                validate_wait_for_edge_kind_window_summary(
+                    scope,
+                    &self.accelerator_compute_wait_for_edge_kind_counts,
+                    &self.accelerator_compute_wait_for_edge_kind_windows,
+                )
+            }
+            WorkloadParallelDiagnosticScope::Dma => {
+                validate_wait_for_edge_kind_window_summary(
+                    scope,
+                    &self.gpu_dma_wait_for_edge_kind_counts,
+                    &self.gpu_dma_wait_for_edge_kind_windows,
+                )?;
+                validate_wait_for_edge_kind_window_summary(
+                    scope,
+                    &self.accelerator_dma_wait_for_edge_kind_counts,
+                    &self.accelerator_dma_wait_for_edge_kind_windows,
+                )
+            }
+            WorkloadParallelDiagnosticScope::FullSystem => {
+                self.validate_parallel_diagnostic_scope_summary(
+                    WorkloadParallelDiagnosticScope::Resource,
+                )?;
+                self.validate_parallel_diagnostic_scope_summary(
+                    WorkloadParallelDiagnosticScope::DataCache,
+                )?;
+                self.validate_parallel_diagnostic_scope_summary(
+                    WorkloadParallelDiagnosticScope::Compute,
+                )?;
+                self.validate_parallel_diagnostic_scope_summary(
+                    WorkloadParallelDiagnosticScope::Dma,
+                )
+            }
+        }
+    }
+
+    fn validate_resource_diagnostic_summary(&self) -> Result<(), WorkloadError> {
+        validate_wait_for_edge_kind_window_summary(
+            WorkloadParallelDiagnosticScope::Resource,
+            &self.fabric_wait_for_edge_kind_counts,
+            &self.fabric_wait_for_edge_kind_windows,
+        )?;
+        validate_wait_for_edge_kind_window_summary(
+            WorkloadParallelDiagnosticScope::Resource,
+            &self.dram_wait_for_edge_kind_counts,
+            &self.dram_wait_for_edge_kind_windows,
+        )
+    }
+
     pub fn with_data_cache_wait_for_edge_kind_counts(
         mut self,
         counts: impl IntoIterator<Item = (WaitForEdgeKind, usize)>,
@@ -1022,6 +1093,25 @@ pub(super) fn collect_wait_for_edge_kind_counts(
         *stored = stored.saturating_add(count);
     }
     by_kind
+}
+
+fn validate_wait_for_edge_kind_window_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    counts: &BTreeMap<WaitForEdgeKind, usize>,
+    windows: &[WorkloadWaitForEdgeKindWindow],
+) -> Result<(), WorkloadError> {
+    for window in windows {
+        let edge_kind_count = wait_for_edge_kind_count(counts, window.kind());
+        if edge_kind_count < window.edge_count() {
+            return Err(WorkloadError::InvalidParallelWaitForEdgeKindWindowSummary {
+                scope,
+                kind: window.kind(),
+                edge_kind_count,
+                window_edge_count: window.edge_count(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn wait_for_edge_kind_count(

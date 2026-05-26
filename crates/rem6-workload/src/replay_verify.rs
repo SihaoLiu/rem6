@@ -245,6 +245,7 @@ pub(crate) fn verify_expected_clean_parallel_diagnostics(
     };
 
     for expected in expected_diagnostics {
+        summary.validate_parallel_diagnostic_scope_summary(expected.scope())?;
         let (wait_for_edge_count, deadlock_diagnostic_count, livelock_diagnostic_count) =
             expected.actual_counts(summary);
         if wait_for_edge_count != 0
@@ -279,6 +280,7 @@ pub(crate) fn verify_expected_parallel_wait_for_edge_kind_counts(
     };
 
     for expected in expected_counts {
+        summary.validate_parallel_diagnostic_scope_summary(expected.scope())?;
         let actual_edge_count = expected.actual_count(summary);
         if actual_edge_count < expected.minimum_edge_count() {
             return Err(
@@ -310,6 +312,7 @@ pub(crate) fn verify_expected_parallel_wait_for_edge_kind_windows(
     };
 
     for expected in expected_windows {
+        summary.validate_parallel_diagnostic_scope_summary(expected.scope())?;
         let actual_window = expected.actual_window(summary);
         let actual_edge_count = actual_window.map(|window| window.edge_count()).unwrap_or(0);
         let actual_first_tick = actual_window.map(|window| window.first_tick());
@@ -351,6 +354,7 @@ pub(crate) fn verify_expected_parallel_wait_for_blocked_node_windows(
     };
 
     for expected in expected_windows {
+        summary.validate_parallel_diagnostic_scope_summary(expected.scope())?;
         let actual_window = expected.actual_window(summary);
         let actual_edge_count = actual_window
             .as_ref()
@@ -395,6 +399,7 @@ pub(crate) fn verify_expected_parallel_wait_for_target_node_windows(
     };
 
     for expected in expected_windows {
+        summary.validate_parallel_diagnostic_scope_summary(expected.scope())?;
         let actual_window = expected.actual_window(summary);
         let actual_edge_count = actual_window
             .as_ref()

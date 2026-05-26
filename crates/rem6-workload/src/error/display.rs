@@ -1217,6 +1217,16 @@ impl fmt::Display for WorkloadError {
                 "expected {} wait-for edge kind {kind:?} to reach at least {minimum_edge_count} edges, got {actual_edge_count}",
                 scope.as_str()
             ),
+            Self::InvalidParallelWaitForEdgeKindWindowSummary {
+                scope,
+                kind,
+                edge_kind_count,
+                window_edge_count,
+            } => write!(
+                formatter,
+                "invalid {} wait-for edge kind {kind:?} summary: kind count {edge_kind_count} is below exact window count {window_edge_count}",
+                scope.as_str()
+            ),
             Self::ExpectedParallelWaitForEdgeKindWindowMismatch {
                 scope,
                 kind,
