@@ -46,6 +46,7 @@ const PCI_CLASS_REVISION_OFFSET: usize = 0x08;
 const PCI_CACHE_LINE_SIZE_OFFSET: usize = 0x0c;
 const PCI_LATENCY_TIMER_OFFSET: usize = 0x0d;
 const PCI_HEADER_TYPE_OFFSET: usize = 0x0e;
+const PCI_BIST_OFFSET: usize = 0x0f;
 pub(crate) const PCI_BAR0_OFFSET: usize = 0x10;
 const PCI_CARD_BUS_CIS_OFFSET: usize = 0x28;
 const PCI_SUBSYSTEM_VENDOR_ID_OFFSET: usize = 0x2c;
@@ -466,6 +467,10 @@ impl PciEndpointConfig {
             }
             PCI_CACHE_LINE_SIZE_OFFSET | PCI_LATENCY_TIMER_OFFSET if data.len() == 1 => {
                 self.config[span.start] = data[0];
+                Ok(())
+            }
+            PCI_BIST_OFFSET if data.len() == 1 => {
+                self.config[PCI_BIST_OFFSET] = data[0];
                 Ok(())
             }
             PCI_CACHE_LINE_SIZE_OFFSET if data.len() == 2 => {

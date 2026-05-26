@@ -176,6 +176,44 @@ fn pci_endpoint_common_header_writes_cache_line_latency_and_snapshots() {
 }
 
 #[test]
+fn pci_endpoint_common_header_writes_bist_byte_and_snapshots() {
+    let mut endpoint = network_endpoint();
+
+    endpoint
+        .write_config(PciConfigOffset::new(0x0f).unwrap(), &[0x40])
+        .unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x00, 0x40])
+    );
+
+    let snapshot = endpoint.snapshot();
+    endpoint
+        .write_config(PciConfigOffset::new(0x0f).unwrap(), &[0x00])
+        .unwrap();
+    endpoint.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        endpoint.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x00, 0x40])
+    );
+    assert_eq!(
+        endpoint.write_config(PciConfigOffset::new(0x0e).unwrap(), &[0x01, 0x80]),
+        Err(PciError::ReadOnlyConfigWrite {
+            offset: PciConfigOffset::new(0x0e).unwrap(),
+            size: AccessSize::new(2).unwrap(),
+        })
+    );
+}
+
+#[test]
 fn pci_endpoint_status_writes_preserve_read_only_capability_list_bit() {
     let mut endpoint = network_endpoint();
     endpoint

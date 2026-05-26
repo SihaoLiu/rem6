@@ -247,6 +247,45 @@ fn pci_type1_bridge_common_header_writes_cache_line_latency_and_snapshots() {
 }
 
 #[test]
+fn pci_type1_bridge_common_header_writes_bist_byte_and_snapshots() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+
+    bridge
+        .write_config(PciConfigOffset::new(0x0f).unwrap(), &[0x40])
+        .unwrap();
+
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x01, 0x40])
+    );
+
+    let snapshot = bridge.snapshot();
+    bridge
+        .write_config(PciConfigOffset::new(0x0f).unwrap(), &[0x00])
+        .unwrap();
+    bridge.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        bridge.read_config(
+            PciConfigOffset::new(0x0c).unwrap(),
+            AccessSize::new(4).unwrap(),
+        ),
+        Ok(vec![0x00, 0x00, 0x01, 0x40])
+    );
+    assert_eq!(
+        bridge.write_config(PciConfigOffset::new(0x0e).unwrap(), &[0x00, 0x80]),
+        Err(PciError::ReadOnlyConfigWrite {
+            offset: PciConfigOffset::new(0x0e).unwrap(),
+            size: AccessSize::new(2).unwrap(),
+        })
+    );
+}
+
+#[test]
 fn pci_type1_bridge_status_writes_do_not_create_status_bits() {
     let function = PciFunctionAddress::new(0, 1, 0).unwrap();
     let mut bridge = bridge_config(function);
