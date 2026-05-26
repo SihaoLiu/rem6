@@ -1,6 +1,6 @@
 use rem6_boot::BootError;
 use rem6_fabric::{QosPriority, QosRequestorId};
-use rem6_kernel::Tick;
+use rem6_kernel::{Tick, WaitForEdgeKind};
 use rem6_memory::MemoryError;
 
 use crate::{
@@ -1081,6 +1081,14 @@ pub enum WorkloadError {
     DuplicateExpectedCleanParallelDiagnostics {
         scope: WorkloadParallelDiagnosticScope,
     },
+    ZeroExpectedParallelWaitForEdgeKindCount {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+    },
+    DuplicateExpectedParallelWaitForEdgeKindCount {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+    },
     ZeroExpectedLivelockTransitionThreshold {
         scope: WorkloadParallelDiagnosticScope,
     },
@@ -1111,5 +1119,11 @@ pub enum WorkloadError {
         deadlock_diagnostic_count: usize,
         livelock_diagnostic_count: usize,
         livelock_subjects: Vec<String>,
+    },
+    ExpectedParallelWaitForEdgeKindCountBelowMinimum {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        minimum_edge_count: usize,
+        actual_edge_count: usize,
     },
 }

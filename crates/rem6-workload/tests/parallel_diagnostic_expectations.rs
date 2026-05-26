@@ -1,9 +1,11 @@
 use rem6_boot::BootImage;
+use rem6_kernel::WaitForEdgeKind;
 use rem6_memory::Address;
 use rem6_workload::{
-    WorkloadError, WorkloadExpectedCleanParallelDiagnostics, WorkloadId,
-    WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
+    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadId, WorkloadParallelDiagnosticScope,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -34,6 +36,14 @@ fn expected_clean(
     scope: WorkloadParallelDiagnosticScope,
 ) -> WorkloadExpectedCleanParallelDiagnostics {
     WorkloadExpectedCleanParallelDiagnostics::new(scope)
+}
+
+fn expected_wait_kind(
+    scope: WorkloadParallelDiagnosticScope,
+    kind: WaitForEdgeKind,
+    minimum_edge_count: usize,
+) -> WorkloadExpectedParallelWaitForEdgeKindCount {
+    WorkloadExpectedParallelWaitForEdgeKindCount::new(scope, kind, minimum_edge_count).unwrap()
 }
 
 #[test]
@@ -88,6 +98,139 @@ fn workload_manifest_records_clean_parallel_diagnostic_expectations() {
     let result = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_parallel_execution_summary(WorkloadParallelExecutionSummary::default());
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_manifest_records_parallel_wait_for_edge_kind_expectations() {
+    let resource_queue = expected_wait_kind(
+        WorkloadParallelDiagnosticScope::Resource,
+        WaitForEdgeKind::Queue,
+        2,
+    );
+    let full_system_barrier = expected_wait_kind(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        WaitForEdgeKind::Barrier,
+        1,
+    );
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("manifest-wait-kind-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_count(full_system_barrier)
+    .unwrap()
+    .add_expected_parallel_wait_for_edge_kind_count(resource_queue)
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_eq!(
+        manifest.expected_parallel_wait_for_edge_kind_counts(),
+        &[resource_queue, full_system_barrier],
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_parallel_wait_for_edge_kind_counts(),
+        manifest.expected_parallel_wait_for_edge_kind_counts(),
+    );
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_parallel_wait_for_edge_kind_counts() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-kind-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let queue = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-kind-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_count(expected_wait_kind(
+        WorkloadParallelDiagnosticScope::Resource,
+        WaitForEdgeKind::Queue,
+        1,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let barrier = rem6_workload::WorkloadManifest::builder(
+        id("identity-wait-kind-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_count(expected_wait_kind(
+        WorkloadParallelDiagnosticScope::Resource,
+        WaitForEdgeKind::Barrier,
+        1,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), queue.identity());
+    assert_ne!(queue.identity(), barrier.identity());
+}
+
+#[test]
+fn workload_replay_plan_verifies_parallel_wait_for_edge_kind_counts() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("verify-wait-kind-diagnostics"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_parallel_wait_for_edge_kind_count(expected_wait_kind(
+                WorkloadParallelDiagnosticScope::FullSystem,
+                WaitForEdgeKind::Barrier,
+                2,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::MissingParallelDiagnosticSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+        },
+    );
+
+    let underactive_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_counts([(WaitForEdgeKind::Barrier, 1)]);
+    let underactive_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive_summary);
+    assert_eq!(
+        plan.verify_result(&underactive_result).unwrap_err(),
+        WorkloadError::ExpectedParallelWaitForEdgeKindCountBelowMinimum {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            kind: WaitForEdgeKind::Barrier,
+            minimum_edge_count: 2,
+            actual_edge_count: 1,
+        },
+    );
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_counts([(WaitForEdgeKind::Barrier, 1)])
+        .with_resource_wait_for_edge_kind_counts(
+            [(WaitForEdgeKind::Barrier, 1)],
+            [(WaitForEdgeKind::Queue, 3)],
+        );
+    let satisfied_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied_result).unwrap();
 }
 
 #[test]

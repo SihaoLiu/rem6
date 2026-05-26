@@ -10,6 +10,7 @@ mod error_support;
 mod heterogeneous;
 mod host_event;
 mod identity;
+mod manifest_diagnostics;
 mod manifest_identity;
 mod manifest_parallel_frontier;
 mod manifest_progress;
@@ -75,10 +76,10 @@ pub use parallel_expectation::{
     WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
     WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
     WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadParallelDiagnosticScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
-    WorkloadResourceActivityScope,
+    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResourceActivityScope,
 };
 pub use parallel_progress_transition_expectation::{
     WorkloadExpectedParallelProgressTransition, WorkloadParallelProgressTransitionExpectationError,
@@ -234,6 +235,7 @@ pub struct WorkloadManifest {
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
+    expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
@@ -315,12 +317,6 @@ impl WorkloadManifest {
 
     pub fn host_events(&self) -> &[WorkloadHostEvent] {
         &self.host_events
-    }
-
-    pub fn expected_clean_parallel_diagnostics(
-        &self,
-    ) -> &[WorkloadExpectedCleanParallelDiagnostics] {
-        &self.expected_clean_parallel_diagnostics
     }
 
     pub fn expected_data_cache_protocol_run_counts(
@@ -414,6 +410,7 @@ pub struct WorkloadManifestBuilder {
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
+    expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
@@ -457,6 +454,7 @@ impl WorkloadManifestBuilder {
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
             expected_clean_parallel_diagnostics: Vec::new(),
+            expected_parallel_wait_for_edge_kind_counts: Vec::new(),
             expected_data_cache_protocol_run_counts: Vec::new(),
             expected_data_cache_run_attribution: None,
             expected_parallel_remote_flows: Vec::new(),
@@ -494,25 +492,6 @@ impl WorkloadManifestBuilder {
             return Err(WorkloadError::DuplicateResource { resource: id });
         }
         self.resources.insert(id, resource);
-        Ok(self)
-    }
-
-    pub fn add_expected_clean_parallel_diagnostics(
-        mut self,
-        expected: WorkloadExpectedCleanParallelDiagnostics,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_clean_parallel_diagnostics
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedCleanParallelDiagnostics {
-                scope: expected.scope(),
-            });
-        }
-        self.expected_clean_parallel_diagnostics.push(expected);
-        self.expected_clean_parallel_diagnostics
-            .sort_by_key(|diagnostics| diagnostics.sort_key());
         Ok(self)
     }
 
@@ -864,6 +843,8 @@ impl WorkloadManifestBuilder {
             required_resources: &required_resources,
             host_events: &self.host_events,
             expected_clean_parallel_diagnostics: &self.expected_clean_parallel_diagnostics,
+            expected_parallel_wait_for_edge_kind_counts: &self
+                .expected_parallel_wait_for_edge_kind_counts,
             expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
@@ -909,6 +890,8 @@ impl WorkloadManifestBuilder {
             required_resources,
             host_events: self.host_events,
             expected_clean_parallel_diagnostics: self.expected_clean_parallel_diagnostics,
+            expected_parallel_wait_for_edge_kind_counts: self
+                .expected_parallel_wait_for_edge_kind_counts,
             expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
@@ -960,6 +943,7 @@ pub struct WorkloadReplayPlan {
     planned_execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     planned_stop_reason: Option<String>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
+    expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
@@ -1007,6 +991,9 @@ impl WorkloadReplayPlan {
             planned_stop_reason: planned_stop_reason(&host_events),
             expected_clean_parallel_diagnostics: manifest
                 .expected_clean_parallel_diagnostics()
+                .to_vec(),
+            expected_parallel_wait_for_edge_kind_counts: manifest
+                .expected_parallel_wait_for_edge_kind_counts()
                 .to_vec(),
             expected_data_cache_protocol_run_counts: manifest
                 .expected_data_cache_protocol_run_counts()
@@ -1392,31 +1379,6 @@ impl WorkloadReplayPlan {
         Ok(self)
     }
 
-    pub fn add_expected_clean_parallel_diagnostics(
-        mut self,
-        expected: WorkloadExpectedCleanParallelDiagnostics,
-    ) -> Result<Self, WorkloadError> {
-        if self
-            .expected_clean_parallel_diagnostics
-            .iter()
-            .any(|existing| existing.sort_key() == expected.sort_key())
-        {
-            return Err(WorkloadError::DuplicateExpectedCleanParallelDiagnostics {
-                scope: expected.scope(),
-            });
-        }
-        self.expected_clean_parallel_diagnostics.push(expected);
-        self.expected_clean_parallel_diagnostics
-            .sort_by_key(|diagnostics| diagnostics.sort_key());
-        Ok(self)
-    }
-
-    pub fn expected_clean_parallel_diagnostics(
-        &self,
-    ) -> &[WorkloadExpectedCleanParallelDiagnostics] {
-        &self.expected_clean_parallel_diagnostics
-    }
-
     pub fn expected_parallel_partition_use(&self) -> &[WorkloadExpectedParallelPartitionUse] {
         &self.expected_parallel_partition_use
     }
@@ -1517,6 +1479,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_frontiers(self, result)?;
         replay_verify::verify_expected_resource_activity(self, result)?;
         replay_verify::verify_expected_clean_parallel_diagnostics(self, result)?;
+        replay_verify::verify_expected_parallel_wait_for_edge_kind_counts(self, result)?;
         Ok(())
     }
 

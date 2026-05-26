@@ -1479,6 +1479,16 @@ impl fmt::Display for WorkloadError {
                 "expected {} clean parallel diagnostics is already declared",
                 scope.as_str()
             ),
+            Self::ZeroExpectedParallelWaitForEdgeKindCount { scope, kind } => write!(
+                formatter,
+                "expected {} wait-for edge kind {kind:?} must require a positive edge count",
+                scope.as_str()
+            ),
+            Self::DuplicateExpectedParallelWaitForEdgeKindCount { scope, kind } => write!(
+                formatter,
+                "expected {} wait-for edge kind {kind:?} is already declared",
+                scope.as_str()
+            ),
             Self::ZeroExpectedLivelockTransitionThreshold { scope } => write!(
                 formatter,
                 "expected {} livelock transition threshold must be positive",
@@ -1540,6 +1550,16 @@ impl fmt::Display for WorkloadError {
                 }
                 Ok(())
             }
+            Self::ExpectedParallelWaitForEdgeKindCountBelowMinimum {
+                scope,
+                kind,
+                minimum_edge_count,
+                actual_edge_count,
+            } => write!(
+                formatter,
+                "expected {} wait-for edge kind {kind:?} to reach at least {minimum_edge_count} edges, got {actual_edge_count}",
+                scope.as_str()
+            ),
         }
     }
 }

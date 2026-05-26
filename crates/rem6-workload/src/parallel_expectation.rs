@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId,
+    PartitionFrontier, PartitionId, WaitForEdgeKind,
 };
 
 use crate::{
@@ -463,6 +463,66 @@ impl WorkloadExpectedCleanParallelDiagnostics {
                 summary.full_system_deadlock_diagnostic_count(),
                 summary.full_system_livelock_diagnostic_count(),
             ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedParallelWaitForEdgeKindCount {
+    scope: WorkloadParallelDiagnosticScope,
+    kind: WaitForEdgeKind,
+    minimum_edge_count: usize,
+}
+
+impl WorkloadExpectedParallelWaitForEdgeKindCount {
+    pub fn new(
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        minimum_edge_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_edge_count == 0 {
+            return Err(WorkloadError::ZeroExpectedParallelWaitForEdgeKindCount { scope, kind });
+        }
+        Ok(Self {
+            scope,
+            kind,
+            minimum_edge_count,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelDiagnosticScope {
+        self.scope
+    }
+
+    pub const fn kind(self) -> WaitForEdgeKind {
+        self.kind
+    }
+
+    pub const fn minimum_edge_count(self) -> usize {
+        self.minimum_edge_count
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, WaitForEdgeKind) {
+        (self.scope.sort_rank(), self.kind)
+    }
+
+    pub(crate) fn actual_count(self, summary: &WorkloadParallelExecutionSummary) -> usize {
+        match self.scope {
+            WorkloadParallelDiagnosticScope::Resource => {
+                summary.resource_wait_for_edge_count_by_kind(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::DataCache => {
+                summary.data_cache_wait_for_edge_count_by_kind(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::Compute => {
+                summary.compute_wait_for_edge_count_by_kind(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::Dma => {
+                summary.dma_wait_for_edge_count_by_kind(self.kind)
+            }
+            WorkloadParallelDiagnosticScope::FullSystem => {
+                summary.full_system_wait_for_edge_count_by_kind(self.kind)
+            }
         }
     }
 }

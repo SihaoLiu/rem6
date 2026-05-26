@@ -849,6 +849,37 @@ pub(crate) fn verify_expected_clean_parallel_diagnostics(
     Ok(())
 }
 
+pub(crate) fn verify_expected_parallel_wait_for_edge_kind_counts(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_counts = plan.expected_parallel_wait_for_edge_kind_counts();
+    if expected_counts.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_counts[0];
+        return Err(WorkloadError::MissingParallelDiagnosticSummary {
+            scope: expected.scope(),
+        });
+    };
+
+    for expected in expected_counts {
+        let actual_edge_count = expected.actual_count(summary);
+        if actual_edge_count < expected.minimum_edge_count() {
+            return Err(
+                WorkloadError::ExpectedParallelWaitForEdgeKindCountBelowMinimum {
+                    scope: expected.scope(),
+                    kind: expected.kind(),
+                    minimum_edge_count: expected.minimum_edge_count(),
+                    actual_edge_count,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 fn actual_livelock_subjects(
     scope: WorkloadParallelDiagnosticScope,
     summary: &WorkloadParallelExecutionSummary,

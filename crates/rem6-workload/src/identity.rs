@@ -1,4 +1,5 @@
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
+use rem6_kernel::WaitForEdgeKind;
 
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
@@ -14,13 +15,13 @@ use crate::{
     WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
     WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
     WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForEdgeKindCount,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -36,6 +37,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) host_events: &'a [WorkloadHostEvent],
     pub(crate) expected_clean_parallel_diagnostics:
         &'a [WorkloadExpectedCleanParallelDiagnostics],
+    pub(crate) expected_parallel_wait_for_edge_kind_counts:
+        &'a [WorkloadExpectedParallelWaitForEdgeKindCount],
     pub(crate) expected_data_cache_protocol_run_counts:
         &'a [WorkloadExpectedDataCacheProtocolRunCount],
     pub(crate) expected_data_cache_run_attribution:
@@ -119,6 +122,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_clean_parallel_diagnostics {
         hash_expected_clean_parallel_diagnostics(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input.expected_parallel_wait_for_edge_kind_counts.len() as u64,
+    );
+    for expected in input.expected_parallel_wait_for_edge_kind_counts {
+        hash_expected_parallel_wait_for_edge_kind_count(&mut hash, *expected);
     }
     hash_u64(
         &mut hash,
@@ -304,6 +314,30 @@ fn hash_expected_clean_parallel_diagnostics(
         }
         None => hash_u64(hash, 0),
     }
+}
+
+fn hash_expected_parallel_wait_for_edge_kind_count(
+    hash: &mut u64,
+    expected: WorkloadExpectedParallelWaitForEdgeKindCount,
+) {
+    hash_str(hash, expected.scope().as_str());
+    hash_wait_for_edge_kind(hash, expected.kind());
+    hash_u64(hash, expected.minimum_edge_count() as u64);
+}
+
+fn hash_wait_for_edge_kind(hash: &mut u64, kind: WaitForEdgeKind) {
+    hash_u64(
+        hash,
+        match kind {
+            WaitForEdgeKind::Resource => 0,
+            WaitForEdgeKind::Message => 1,
+            WaitForEdgeKind::Protocol => 2,
+            WaitForEdgeKind::Queue => 3,
+            WaitForEdgeKind::Credit => 4,
+            WaitForEdgeKind::HostAction => 5,
+            WaitForEdgeKind::Barrier => 6,
+        },
+    );
 }
 
 fn hash_expected_data_cache_protocol_run_count(
