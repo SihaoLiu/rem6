@@ -345,7 +345,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         input.expected_fabric_virtual_network_activity.len() as u64,
     );
     for expected in input.expected_fabric_virtual_network_activity {
-        hash_expected_fabric_virtual_network_activity(&mut hash, *expected);
+        hash_expected_fabric_virtual_network_activity(&mut hash, expected);
     }
     hash_checkpoint_lineage(&mut hash, input.checkpoint_lineage);
     WorkloadManifestIdentity::new(hash)
@@ -799,7 +799,7 @@ fn hash_expected_fabric_link_activity(
 
 fn hash_expected_fabric_virtual_network_activity(
     hash: &mut u64,
-    expected: WorkloadExpectedFabricVirtualNetworkActivity,
+    expected: &WorkloadExpectedFabricVirtualNetworkActivity,
 ) {
     hash_u64(hash, u64::from(expected.virtual_network().get()));
     hash_u64(hash, expected.minimum_transfer_count() as u64);
@@ -812,6 +812,10 @@ fn hash_expected_fabric_virtual_network_activity(
     hash_optional_usize(hash, expected.maximum_contended_lane_count());
     hash_optional_tick(hash, expected.required_first_tick());
     hash_optional_tick(hash, expected.required_last_tick());
+    hash_u64(hash, expected.required_links().len() as u64);
+    for link in expected.required_links() {
+        hash_str(hash, link.as_str());
+    }
 }
 
 fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHandoff>) {

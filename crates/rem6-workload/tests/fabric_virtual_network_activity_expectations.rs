@@ -1,5 +1,7 @@
 use rem6_boot::BootImage;
-use rem6_fabric::{FabricVirtualNetworkActivity, VirtualNetworkId};
+use rem6_fabric::{
+    FabricLaneActivity, FabricLinkId, FabricVirtualNetworkActivity, VirtualNetworkId,
+};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedFabricVirtualNetworkActivity, WorkloadId,
@@ -17,6 +19,10 @@ fn resource_id(value: &str) -> WorkloadResourceId {
 
 fn vn(value: u16) -> VirtualNetworkId {
     VirtualNetworkId::new(value)
+}
+
+fn link(value: &str) -> FabricLinkId {
+    FabricLinkId::new(value).unwrap()
 }
 
 fn boot_image() -> BootImage {
@@ -66,6 +72,31 @@ fn expected_virtual_network_activity(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn lane_activity(
+    link: &str,
+    virtual_network: u16,
+    transfer_count: usize,
+    byte_count: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    first_tick: u64,
+    last_tick: u64,
+) -> FabricLaneActivity {
+    FabricLaneActivity::new(
+        self::link(link),
+        vn(virtual_network),
+        transfer_count,
+        byte_count,
+        occupied_ticks,
+        queue_delay_ticks,
+        max_queue_delay_ticks,
+        first_tick,
+        last_tick,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn virtual_network_activity(
     virtual_network: u16,
     active_lane_count: usize,
@@ -103,9 +134,9 @@ fn workload_manifest_records_fabric_virtual_network_activity_expectations() {
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
-    .add_expected_fabric_virtual_network_activity(data)
+    .add_expected_fabric_virtual_network_activity(data.clone())
     .unwrap()
-    .add_expected_fabric_virtual_network_activity(control)
+    .add_expected_fabric_virtual_network_activity(control.clone())
     .unwrap()
     .build()
     .unwrap();
@@ -166,6 +197,61 @@ fn workload_manifest_identity_changes_with_fabric_virtual_network_activity() {
 
     assert_ne!(base.identity(), control.identity());
     assert_ne!(control.identity(), data.identity());
+}
+
+#[test]
+fn workload_replay_plan_requires_fabric_virtual_network_link_coverage_evidence() {
+    let expected = expected_virtual_network_activity(1, 4, 2, 6, 1)
+        .with_required_links([link("mesh_a"), link("mesh_c")])
+        .unwrap();
+    assert_eq!(expected.required_links(), &[link("mesh_a"), link("mesh_c")]);
+    let plan = replay_plan()
+        .add_expected_fabric_virtual_network_activity(expected)
+        .unwrap();
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_lane_activities([
+            lane_activity("mesh_a", 1, 2, 64, 5, 6, 4, 0, 8),
+            lane_activity("mesh_c", 1, 3, 96, 8, 5, 5, 2, 12),
+        ]);
+    assert_eq!(
+        satisfied_summary.fabric_virtual_network_links(vn(1)),
+        vec![link("mesh_a"), link("mesh_c")],
+    );
+    let satisfied = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied).unwrap();
+
+    let aggregate_only_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 13, 11, 5, 2, 0, 12,
+        )]);
+    let aggregate_only = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(aggregate_only_summary);
+    assert_eq!(
+        plan.verify_result(&aggregate_only).unwrap_err(),
+        WorkloadError::MissingFabricVirtualNetworkLinkCoverage {
+            virtual_network: vn(1),
+            required_links: vec![link("mesh_a"), link("mesh_c")],
+        },
+    );
+
+    let missing_link_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_lane_activities([
+            lane_activity("mesh_a", 1, 2, 64, 5, 6, 4, 0, 8),
+            lane_activity("mesh_b", 1, 3, 96, 8, 5, 5, 2, 12),
+        ]);
+    let missing_link = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(missing_link_summary);
+    assert_eq!(
+        plan.verify_result(&missing_link).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkLinkCoverageMissing {
+            virtual_network: vn(1),
+            required_links: vec![link("mesh_a"), link("mesh_c")],
+            actual_links: vec![link("mesh_a"), link("mesh_b")],
+            missing_links: vec![link("mesh_c")],
+        },
+    );
 }
 
 #[test]
@@ -509,6 +595,54 @@ fn workload_manifest_identity_changes_with_fabric_virtual_network_lane_budget() 
 }
 
 #[test]
+fn workload_manifest_identity_changes_with_fabric_virtual_network_link_coverage() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-link-coverage"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(expected_virtual_network_activity(1, 4, 2, 6, 1))
+    .unwrap()
+    .build()
+    .unwrap();
+    let mesh_a = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-link-coverage"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_required_links([link("mesh_a")])
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    let mesh_ac = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-link-coverage"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_required_links([link("mesh_c"), link("mesh_a")])
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), mesh_a.identity());
+    assert_ne!(mesh_a.identity(), mesh_ac.identity());
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_fabric_virtual_network_activity_window() {
     let base = rem6_workload::WorkloadManifest::builder(
         id("identity-fabric-virtual-network-window"),
@@ -563,6 +697,17 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_fabric_virtual_network_acti
         zero,
         WorkloadError::ZeroExpectedFabricVirtualNetworkActivity {
             virtual_network: vn(1),
+        },
+    );
+
+    let duplicate_link = expected_virtual_network_activity(1, 1, 1, 0, 0)
+        .with_required_links([link("mesh_a"), link("mesh_a")])
+        .unwrap_err();
+    assert_eq!(
+        duplicate_link,
+        WorkloadError::DuplicateExpectedFabricVirtualNetworkActivityCoverageLink {
+            virtual_network: vn(1),
+            link: link("mesh_a"),
         },
     );
 

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{
     FabricActivityProfile, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
@@ -85,6 +85,19 @@ impl WorkloadParallelExecutionSummary {
             .iter()
             .find(|activity| activity.virtual_network() == virtual_network)
             .cloned()
+    }
+
+    pub fn fabric_virtual_network_links(
+        &self,
+        virtual_network: VirtualNetworkId,
+    ) -> Vec<FabricLinkId> {
+        self.fabric_lane_activities
+            .iter()
+            .filter(|activity| activity.virtual_network() == virtual_network)
+            .map(|activity| activity.link().clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     pub fn active_fabric_virtual_network_count(&self) -> usize {

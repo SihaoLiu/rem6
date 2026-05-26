@@ -1,5 +1,6 @@
 use std::fmt;
 
+use rem6_fabric::FabricLinkId;
 use rem6_kernel::Tick;
 
 use super::WorkloadError;
@@ -192,6 +193,15 @@ pub(super) fn format_fabric_activity_error(
                 virtual_network.get()
             )
         }
+        WorkloadError::DuplicateExpectedFabricVirtualNetworkActivityCoverageLink {
+            virtual_network,
+            link,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity coverage link {} is already declared",
+            virtual_network.get(),
+            link.as_str()
+        ),
         WorkloadError::InvalidExpectedFabricVirtualNetworkActivityWindow {
             virtual_network,
             first_tick,
@@ -233,6 +243,15 @@ pub(super) fn format_fabric_activity_error(
             virtual_network.get(),
             format_optional_tick(required_first_tick),
             format_optional_tick(required_last_tick)
+        ),
+        WorkloadError::MissingFabricVirtualNetworkLinkCoverage {
+            virtual_network,
+            required_links,
+        } => write!(
+            formatter,
+            "missing fabric lane summary for expected fabric virtual network {} link coverage {}",
+            virtual_network.get(),
+            format_links(required_links)
         ),
         WorkloadError::ExpectedFabricVirtualNetworkActivityBelowMinimum {
             virtual_network,
@@ -277,10 +296,32 @@ pub(super) fn format_fabric_activity_error(
             "expected fabric virtual network {} activity to stay within {maximum_active_lane_count} active lanes and {maximum_contended_lane_count} contended lanes, got {actual_active_lane_count} active lanes and {actual_contended_lane_count} contended lanes",
             virtual_network.get()
         ),
+        WorkloadError::ExpectedFabricVirtualNetworkLinkCoverageMissing {
+            virtual_network,
+            required_links,
+            actual_links,
+            missing_links,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity to cover links {}, got links {}, missing links {}",
+            virtual_network.get(),
+            format_links(required_links),
+            format_links(actual_links),
+            format_links(missing_links)
+        ),
         _ => unreachable!("fabric activity formatter called for non-fabric activity error"),
     }
 }
 
 fn format_optional_tick(tick: &Option<Tick>) -> String {
     tick.map_or_else(|| "none".to_owned(), |tick| tick.to_string())
+}
+
+fn format_links(links: &[FabricLinkId]) -> String {
+    let names = links
+        .iter()
+        .map(|link| link.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{names}]")
 }

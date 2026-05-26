@@ -1263,6 +1263,10 @@ pub enum WorkloadError {
     DuplicateExpectedFabricVirtualNetworkActivity {
         virtual_network: VirtualNetworkId,
     },
+    DuplicateExpectedFabricVirtualNetworkActivityCoverageLink {
+        virtual_network: VirtualNetworkId,
+        link: FabricLinkId,
+    },
     InvalidExpectedFabricVirtualNetworkActivityWindow {
         virtual_network: VirtualNetworkId,
         first_tick: Tick,
@@ -1286,6 +1290,10 @@ pub enum WorkloadError {
         minimum_contended_lane_count: usize,
         required_first_tick: Option<Tick>,
         required_last_tick: Option<Tick>,
+    },
+    MissingFabricVirtualNetworkLinkCoverage {
+        virtual_network: VirtualNetworkId,
+        required_links: Vec<FabricLinkId>,
     },
     ExpectedFabricVirtualNetworkActivityBelowMinimum {
         virtual_network: VirtualNetworkId,
@@ -1315,6 +1323,12 @@ pub enum WorkloadError {
         actual_active_lane_count: usize,
         maximum_contended_lane_count: usize,
         actual_contended_lane_count: usize,
+    },
+    ExpectedFabricVirtualNetworkLinkCoverageMissing {
+        virtual_network: VirtualNetworkId,
+        required_links: Vec<FabricLinkId>,
+        actual_links: Vec<FabricLinkId>,
+        missing_links: Vec<FabricLinkId>,
     },
     MissingParallelDiagnosticSummary {
         scope: WorkloadParallelDiagnosticScope,

@@ -1218,14 +1218,14 @@ pub(crate) fn verify_expected_fabric_virtual_network_activity(
         return Ok(());
     }
     let Some(summary) = result.parallel_execution_summary() else {
-        let expected = expected_activity[0];
+        let expected = &expected_activity[0];
         return Err(missing_fabric_virtual_network_activity_summary(expected));
     };
 
     for expected in expected_activity {
         let Some(actual) = summary.fabric_virtual_network_activity(expected.virtual_network())
         else {
-            return Err(missing_fabric_virtual_network_activity_summary(*expected));
+            return Err(missing_fabric_virtual_network_activity_summary(expected));
         };
         if expected.below_minimum(&actual) {
             return Err(
@@ -1276,12 +1276,38 @@ pub(crate) fn verify_expected_fabric_virtual_network_activity(
                 );
             }
         }
+        if !expected.required_links().is_empty() {
+            let actual_links = summary.fabric_virtual_network_links(expected.virtual_network());
+            if actual_links.is_empty() {
+                return Err(WorkloadError::MissingFabricVirtualNetworkLinkCoverage {
+                    virtual_network: expected.virtual_network(),
+                    required_links: expected.required_links().to_vec(),
+                });
+            }
+            let actual_link_set = actual_links.iter().collect::<BTreeSet<_>>();
+            let missing_links = expected
+                .required_links()
+                .iter()
+                .filter(|link| !actual_link_set.contains(link))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing_links.is_empty() {
+                return Err(
+                    WorkloadError::ExpectedFabricVirtualNetworkLinkCoverageMissing {
+                        virtual_network: expected.virtual_network(),
+                        required_links: expected.required_links().to_vec(),
+                        actual_links,
+                        missing_links,
+                    },
+                );
+            }
+        }
     }
     Ok(())
 }
 
 fn missing_fabric_virtual_network_activity_summary(
-    expected: crate::WorkloadExpectedFabricVirtualNetworkActivity,
+    expected: &crate::WorkloadExpectedFabricVirtualNetworkActivity,
 ) -> WorkloadError {
     WorkloadError::MissingFabricVirtualNetworkActivitySummary {
         virtual_network: expected.virtual_network(),

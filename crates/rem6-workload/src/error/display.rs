@@ -1601,13 +1601,16 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedFabricLinkActivityAboveMaximum { .. }
             | Self::ZeroExpectedFabricVirtualNetworkActivity { .. }
             | Self::DuplicateExpectedFabricVirtualNetworkActivity { .. }
+            | Self::DuplicateExpectedFabricVirtualNetworkActivityCoverageLink { .. }
             | Self::InvalidExpectedFabricVirtualNetworkActivityWindow { .. }
             | Self::InvalidExpectedFabricVirtualNetworkActivityQueueDelayBudget { .. }
             | Self::InvalidExpectedFabricVirtualNetworkActivityLaneBudget { .. }
             | Self::MissingFabricVirtualNetworkActivitySummary { .. }
+            | Self::MissingFabricVirtualNetworkLinkCoverage { .. }
             | Self::ExpectedFabricVirtualNetworkActivityBelowMinimum { .. }
             | Self::ExpectedFabricVirtualNetworkActivityAboveMaximum { .. }
-            | Self::ExpectedFabricVirtualNetworkActivityAboveLaneBudget { .. } => {
+            | Self::ExpectedFabricVirtualNetworkActivityAboveLaneBudget { .. }
+            | Self::ExpectedFabricVirtualNetworkLinkCoverageMissing { .. } => {
                 format_fabric_activity_error(self, formatter)
             }
             Self::MissingParallelDiagnosticSummary { scope } => write!(
