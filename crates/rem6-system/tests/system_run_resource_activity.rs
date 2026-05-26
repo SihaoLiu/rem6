@@ -13,6 +13,7 @@ use rem6_isa_riscv::Register;
 use rem6_kernel::{
     ClockDomain, ParallelRunProfile, PartitionId, PartitionedScheduler,
     RecordedConservativeRunSummary, WaitForEdgeKind, WaitForGraph, WaitForNode,
+    WaitForTargetNodeWindow,
 };
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId};
 use rem6_stats::StatsRegistry;
@@ -582,7 +583,7 @@ fn system_run_aggregates_fabric_wait_for_diagnostics() {
         .record_wait(packet.clone(), credit.clone(), WaitForEdgeKind::Credit, 8)
         .unwrap();
     graph
-        .record_wait(packet, lane, WaitForEdgeKind::Queue, 10)
+        .record_wait(packet, lane.clone(), WaitForEdgeKind::Queue, 10)
         .unwrap();
 
     let run = RiscvSystemRun::new(
@@ -597,6 +598,17 @@ fn system_run_aggregates_fabric_wait_for_diagnostics() {
     assert_eq!(run.fabric_wait_for_edge_count(), 2);
     assert_eq!(run.fabric_wait_for_edges().len(), 2);
     assert_eq!(run.fabric_wait_for_blocked_nodes().len(), 1);
+    assert_eq!(
+        run.fabric_wait_for_target_nodes(),
+        vec![credit.clone(), lane.clone()],
+    );
+    assert_eq!(
+        run.fabric_wait_for_target_node_windows(),
+        vec![
+            WaitForTargetNodeWindow::new(credit, 1, 6, 8),
+            WaitForTargetNodeWindow::new(lane, 1, 10, 10),
+        ],
+    );
     assert_eq!(
         run.fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Credit),
         1,
@@ -902,6 +914,18 @@ fn system_run_reports_cross_subsystem_wait_for_deadlocks() {
     assert_eq!(run.resource_wait_for_edge_count(), 1);
     assert_eq!(run.full_system_wait_for_edge_count(), 2);
     assert!(run.has_full_system_wait_for_edges());
+    assert_eq!(run.resource_wait_for_target_nodes(), vec![line.clone()]);
+    assert_eq!(
+        run.full_system_wait_for_target_nodes(),
+        vec![line.clone(), packet.clone()],
+    );
+    assert_eq!(
+        run.full_system_wait_for_target_node_windows(),
+        vec![
+            WaitForTargetNodeWindow::new(line.clone(), 1, 5, 5),
+            WaitForTargetNodeWindow::new(packet.clone(), 1, 7, 7),
+        ],
+    );
     assert_eq!(
         run.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
         1,

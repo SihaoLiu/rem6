@@ -57,7 +57,10 @@ isolated bugs:
   so merged resource or full-system diagnostics can identify which partition,
   component, resource, or transaction was blocked, how many distinct
   dependencies contributed to that block, and the observed tick window without
-  rebuilding ad hoc sets in each subsystem.
+  rebuilding ad hoc sets in each subsystem. Target-node observation windows use
+  the same kernel semantics for the resources, queues, transactions, or
+  components being waited on, so parallel runs can identify shared contention
+  hotspots without scanning raw edges after the run.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -381,7 +384,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   graph tests cover checkpoint barrier nodes, barrier wait edges, repeated
   observations, resource-scoped barrier release, kernel-owned edge-kind
   observation windows, kernel-owned blocked-node observation windows, and
-  full-system preservation of the barrier edge kind in wait-for summaries.
+  kernel-owned target-node observation windows. Full-system tests preserve the
+  barrier edge kind in wait-for summaries and expose target-node windows across
+  merged resource and full-system wait-for graphs.
   Progress-monitor tests cover typed livelock diagnostics for
   repeated progress-free transitions, transition-kind accounting, snapshots,
   and useful-work reset of active livelock windows. Scheduler progress tests

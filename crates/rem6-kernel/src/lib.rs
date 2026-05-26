@@ -22,6 +22,7 @@ pub use scheduler::{
 pub use wait_for::{
     DeadlockDiagnostic, WaitForBlockedNodeWindow, WaitForEdge, WaitForEdgeKind,
     WaitForEdgeKindWindow, WaitForGraph, WaitForGraphError, WaitForGraphSnapshot, WaitForNode,
+    WaitForTargetNodeWindow,
 };
 
 pub type Tick = u64;

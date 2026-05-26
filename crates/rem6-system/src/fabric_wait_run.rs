@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
     DeadlockDiagnostic, Tick, WaitForBlockedNodeWindow, WaitForEdge, WaitForEdgeKind, WaitForGraph,
-    WaitForNode,
+    WaitForNode, WaitForTargetNodeWindow,
 };
 
 use crate::RiscvSystemRun;
@@ -32,6 +32,14 @@ impl RiscvSystemRun {
 
     pub fn fabric_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
         self.fabric_wait_for.blocked_nodes()
+    }
+
+    pub fn fabric_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
+        target_nodes_from_windows(self.fabric_wait_for_target_node_windows())
+    }
+
+    pub fn fabric_wait_for_target_node_windows(&self) -> Vec<WaitForTargetNodeWindow> {
+        self.fabric_wait_for.target_node_windows()
     }
 
     pub fn fabric_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
@@ -113,6 +121,14 @@ impl RiscvSystemRun {
 
     pub fn dram_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
         self.dram_wait_for.blocked_nodes()
+    }
+
+    pub fn dram_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
+        target_nodes_from_windows(self.dram_wait_for_target_node_windows())
+    }
+
+    pub fn dram_wait_for_target_node_windows(&self) -> Vec<WaitForTargetNodeWindow> {
+        self.dram_wait_for.target_node_windows()
     }
 
     pub fn dram_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
@@ -198,6 +214,14 @@ impl RiscvSystemRun {
         blocked_nodes_from_edges(self.resource_wait_for_edges())
     }
 
+    pub fn resource_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
+        target_nodes_from_windows(self.resource_wait_for_target_node_windows())
+    }
+
+    pub fn resource_wait_for_target_node_windows(&self) -> Vec<WaitForTargetNodeWindow> {
+        WaitForTargetNodeWindow::from_edges(self.resource_wait_for_edges())
+    }
+
     pub fn resource_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
         wait_for_edge_kind_counts(self.resource_wait_for_edges())
     }
@@ -237,6 +261,14 @@ impl RiscvSystemRun {
 
     pub fn full_system_wait_for_blocked_nodes(&self) -> Vec<WaitForNode> {
         blocked_nodes_from_edges(self.full_system_wait_for_edges())
+    }
+
+    pub fn full_system_wait_for_target_nodes(&self) -> Vec<WaitForNode> {
+        target_nodes_from_windows(self.full_system_wait_for_target_node_windows())
+    }
+
+    pub fn full_system_wait_for_target_node_windows(&self) -> Vec<WaitForTargetNodeWindow> {
+        WaitForTargetNodeWindow::from_edges(self.full_system_wait_for_edges())
     }
 
     pub fn full_system_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
@@ -291,6 +323,13 @@ fn newest_edge(edges: Vec<WaitForEdge>) -> Option<WaitForEdge> {
 
 fn blocked_nodes_from_edges(edges: Vec<WaitForEdge>) -> Vec<WaitForNode> {
     WaitForBlockedNodeWindow::from_edges(edges)
+        .into_iter()
+        .map(|window| window.node().clone())
+        .collect()
+}
+
+fn target_nodes_from_windows(windows: Vec<WaitForTargetNodeWindow>) -> Vec<WaitForNode> {
+    windows
         .into_iter()
         .map(|window| window.node().clone())
         .collect()
