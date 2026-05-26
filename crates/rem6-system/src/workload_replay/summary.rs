@@ -194,6 +194,7 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_wait_for_edge_count(),
             run.data_cache_deadlock_diagnostic_count(),
         )
+        .with_data_cache_wait_for_edge_kind_counts(run.data_cache_wait_for_edge_kind_counts())
         .with_fabric_activity(
             fabric.active_lane_count(),
             fabric.transfer_count(),
@@ -242,6 +243,10 @@ pub(super) fn parallel_execution_summary(
             run.dram_wait_for_edge_count(),
             run.dram_deadlock_diagnostic_count(),
         )
+        .with_resource_wait_for_edge_kind_counts(
+            run.fabric_wait_for_edge_kind_counts(),
+            run.dram_wait_for_edge_kind_counts(),
+        )
         .with_merged_resource_deadlock_diagnostics(run.resource_deadlock_diagnostic_count())
         .with_merged_full_system_deadlock_diagnostics(run.full_system_deadlock_diagnostic_count())
         .with_gpu_compute_counts(
@@ -253,6 +258,9 @@ pub(super) fn parallel_execution_summary(
         .with_gpu_compute_diagnostics(
             activities.gpu.wait_for_edge_count,
             activities.gpu.deadlock_diagnostic_count,
+        )
+        .with_gpu_compute_wait_for_edge_kind_counts(
+            activities.gpu.wait_for_edge_kind_counts.clone(),
         )
         .with_gpu_dma_counts(
             activities.gpu_dma.copy_count,
@@ -298,6 +306,9 @@ pub(super) fn parallel_execution_summary(
             activities.gpu_dma.wait_for_edge_count,
             activities.gpu_dma.deadlock_diagnostic_count,
         )
+        .with_gpu_dma_wait_for_edge_kind_counts(
+            activities.gpu_dma.wait_for_edge_kind_counts.clone(),
+        )
         .with_accelerator_compute_counts(
             activities.accelerator.command_count,
             activities.accelerator.trace_event_count,
@@ -317,6 +328,9 @@ pub(super) fn parallel_execution_summary(
         .with_accelerator_compute_diagnostics(
             activities.accelerator.wait_for_edge_count,
             activities.accelerator.deadlock_diagnostic_count,
+        )
+        .with_accelerator_compute_wait_for_edge_kind_counts(
+            activities.accelerator.wait_for_edge_kind_counts.clone(),
         )
         .with_accelerator_dma_counts(
             activities.accelerator_dma.copy_count,
@@ -379,6 +393,9 @@ pub(super) fn parallel_execution_summary(
         .with_accelerator_dma_diagnostics(
             activities.accelerator_dma.wait_for_edge_count,
             activities.accelerator_dma.deadlock_diagnostic_count,
+        )
+        .with_accelerator_dma_wait_for_edge_kind_counts(
+            activities.accelerator_dma.wait_for_edge_kind_counts.clone(),
         )
 }
 
@@ -1279,8 +1296,106 @@ mod tests {
         assert_eq!(summary.resource_deadlock_diagnostic_count(), 0);
         assert_eq!(summary.data_cache_deadlock_diagnostic_count(), 0);
         assert_eq!(summary.full_system_wait_for_edge_count(), 2);
+        assert_eq!(
+            summary.fabric_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+            1,
+        );
+        assert_eq!(
+            summary.data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+            1,
+        );
+        assert_eq!(
+            summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Queue),
+            1,
+        );
+        assert_eq!(
+            summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+            1,
+        );
         assert_eq!(summary.full_system_deadlock_diagnostic_count(), 1);
         assert!(summary.has_full_system_diagnostics());
+    }
+
+    #[test]
+    fn parallel_execution_summary_preserves_compute_and_dma_wait_for_edge_kinds() {
+        let mut gpu_wait_for = WaitForGraph::new();
+        gpu_wait_for
+            .record_wait(
+                transaction_wait_node("gpu.workgroup.0"),
+                resource_wait_node("gpu.compute.slot.0"),
+                WaitForEdgeKind::Resource,
+                3,
+            )
+            .unwrap();
+        let mut accelerator_wait_for = WaitForGraph::new();
+        accelerator_wait_for
+            .record_wait(
+                transaction_wait_node("npu.inference.0"),
+                component_wait_node("host.command.portal"),
+                WaitForEdgeKind::HostAction,
+                5,
+            )
+            .unwrap();
+        let mut gpu_dma_wait_for = WaitForGraph::new();
+        gpu_dma_wait_for
+            .record_wait(
+                transaction_wait_node("gpu.dma.0"),
+                component_wait_node("fabric.route.0"),
+                WaitForEdgeKind::Message,
+                7,
+            )
+            .unwrap();
+        let run = RiscvSystemRun::new(
+            Vec::new(),
+            Vec::new(),
+            RiscvSystemRunStopReason::Idle { tick: 9 },
+        );
+        let topology = WorkloadTopology::new(
+            1,
+            1,
+            1,
+            rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+        )
+        .unwrap();
+        let gpu = WorkloadGpuActivity::default().with_wait_for_graph(gpu_wait_for);
+        let gpu_dma = WorkloadGpuDmaActivity::default().with_wait_for_graph(gpu_dma_wait_for);
+        let accelerator =
+            WorkloadAcceleratorActivity::default().with_wait_for_graph(accelerator_wait_for);
+        let accelerator_dma = WorkloadAcceleratorDmaActivity {
+            wait_for_edge_count: 1,
+            wait_for_edge_kind_counts: [(WaitForEdgeKind::Credit, 1)].into(),
+            ..WorkloadAcceleratorDmaActivity::default()
+        };
+
+        let summary = parallel_execution_summary(
+            &run,
+            &topology,
+            WorkloadReplayActivityRefs {
+                gpu: &gpu,
+                gpu_dma: &gpu_dma,
+                accelerator: &accelerator,
+                accelerator_dma: &accelerator_dma,
+            },
+            None,
+        );
+
+        assert_eq!(
+            summary.compute_wait_for_edge_count_by_kind(WaitForEdgeKind::Resource),
+            1,
+        );
+        assert_eq!(
+            summary.compute_wait_for_edge_count_by_kind(WaitForEdgeKind::HostAction),
+            1,
+        );
+        assert_eq!(
+            summary.dma_wait_for_edge_count_by_kind(WaitForEdgeKind::Message),
+            1,
+        );
+        assert_eq!(
+            summary.dma_wait_for_edge_count_by_kind(WaitForEdgeKind::Credit),
+            1,
+        );
+        assert_eq!(summary.full_system_wait_for_edge_count(), 4);
     }
 
     #[test]

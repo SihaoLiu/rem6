@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use rem6_kernel::{
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
+    WaitForEdgeKind,
 };
 
 use crate::parallel_batch::{
@@ -14,7 +15,12 @@ use crate::result_collect::{
     parallel_remote_flow_evidence_count, parallel_remote_send_count,
 };
 
-use super::WorkloadParallelExecutionSummary;
+use super::{
+    wait_for_diagnostics::{
+        merge_wait_for_edge_kind_counts, wait_for_edge_kind_count, wait_for_edge_kind_count_sum,
+    },
+    WorkloadParallelExecutionSummary,
+};
 
 impl WorkloadParallelExecutionSummary {
     pub fn with_gpu_dma_scheduler_counts(
@@ -160,16 +166,28 @@ impl WorkloadParallelExecutionSummary {
             || self.gpu_workgroup_completion_count != 0
     }
 
-    pub const fn gpu_compute_wait_for_edge_count(&self) -> usize {
+    pub fn gpu_compute_wait_for_edge_count(&self) -> usize {
         self.gpu_compute_wait_for_edge_count
+            .max(wait_for_edge_kind_count_sum(
+                &self.gpu_compute_wait_for_edge_kind_counts,
+            ))
+    }
+
+    pub fn gpu_compute_wait_for_edge_kind_counts(&self) -> &BTreeMap<WaitForEdgeKind, usize> {
+        &self.gpu_compute_wait_for_edge_kind_counts
+    }
+
+    pub fn gpu_compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        wait_for_edge_kind_count(&self.gpu_compute_wait_for_edge_kind_counts, kind)
     }
 
     pub const fn gpu_compute_deadlock_diagnostic_count(&self) -> usize {
         self.gpu_compute_deadlock_diagnostic_count
     }
 
-    pub const fn has_gpu_compute_diagnostics(&self) -> bool {
-        self.gpu_compute_wait_for_edge_count != 0 || self.gpu_compute_deadlock_diagnostic_count != 0
+    pub fn has_gpu_compute_diagnostics(&self) -> bool {
+        self.gpu_compute_wait_for_edge_count() != 0
+            || self.gpu_compute_deadlock_diagnostic_count != 0
     }
 
     pub const fn gpu_dma_copy_count(&self) -> usize {
@@ -328,16 +346,27 @@ impl WorkloadParallelExecutionSummary {
             || self.gpu_dma_scheduler_batch_count != 0
     }
 
-    pub const fn gpu_dma_wait_for_edge_count(&self) -> usize {
+    pub fn gpu_dma_wait_for_edge_count(&self) -> usize {
         self.gpu_dma_wait_for_edge_count
+            .max(wait_for_edge_kind_count_sum(
+                &self.gpu_dma_wait_for_edge_kind_counts,
+            ))
+    }
+
+    pub fn gpu_dma_wait_for_edge_kind_counts(&self) -> &BTreeMap<WaitForEdgeKind, usize> {
+        &self.gpu_dma_wait_for_edge_kind_counts
+    }
+
+    pub fn gpu_dma_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        wait_for_edge_kind_count(&self.gpu_dma_wait_for_edge_kind_counts, kind)
     }
 
     pub const fn gpu_dma_deadlock_diagnostic_count(&self) -> usize {
         self.gpu_dma_deadlock_diagnostic_count
     }
 
-    pub const fn has_gpu_dma_diagnostics(&self) -> bool {
-        self.gpu_dma_wait_for_edge_count != 0 || self.gpu_dma_deadlock_diagnostic_count != 0
+    pub fn has_gpu_dma_diagnostics(&self) -> bool {
+        self.gpu_dma_wait_for_edge_count() != 0 || self.gpu_dma_deadlock_diagnostic_count != 0
     }
 
     pub const fn accelerator_command_count(&self) -> usize {
@@ -397,21 +426,46 @@ impl WorkloadParallelExecutionSummary {
             || self.accelerator_npu_inference_completion_count != 0
     }
 
-    pub const fn accelerator_compute_wait_for_edge_count(&self) -> usize {
+    pub fn accelerator_compute_wait_for_edge_count(&self) -> usize {
         self.accelerator_compute_wait_for_edge_count
+            .max(wait_for_edge_kind_count_sum(
+                &self.accelerator_compute_wait_for_edge_kind_counts,
+            ))
+    }
+
+    pub fn accelerator_compute_wait_for_edge_kind_counts(
+        &self,
+    ) -> &BTreeMap<WaitForEdgeKind, usize> {
+        &self.accelerator_compute_wait_for_edge_kind_counts
+    }
+
+    pub fn accelerator_compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        wait_for_edge_kind_count(&self.accelerator_compute_wait_for_edge_kind_counts, kind)
     }
 
     pub const fn accelerator_compute_deadlock_diagnostic_count(&self) -> usize {
         self.accelerator_compute_deadlock_diagnostic_count
     }
 
-    pub const fn has_accelerator_compute_diagnostics(&self) -> bool {
-        self.accelerator_compute_wait_for_edge_count != 0
+    pub fn has_accelerator_compute_diagnostics(&self) -> bool {
+        self.accelerator_compute_wait_for_edge_count() != 0
             || self.accelerator_compute_deadlock_diagnostic_count != 0
     }
 
-    pub const fn compute_wait_for_edge_count(&self) -> usize {
-        self.gpu_compute_wait_for_edge_count + self.accelerator_compute_wait_for_edge_count
+    pub fn compute_wait_for_edge_count(&self) -> usize {
+        self.gpu_compute_wait_for_edge_count() + self.accelerator_compute_wait_for_edge_count()
+    }
+
+    pub fn compute_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        merge_wait_for_edge_kind_counts([
+            self.gpu_compute_wait_for_edge_kind_counts(),
+            self.accelerator_compute_wait_for_edge_kind_counts(),
+        ])
+    }
+
+    pub fn compute_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.gpu_compute_wait_for_edge_count_by_kind(kind)
+            + self.accelerator_compute_wait_for_edge_count_by_kind(kind)
     }
 
     pub const fn compute_deadlock_diagnostic_count(&self) -> usize {
@@ -419,7 +473,7 @@ impl WorkloadParallelExecutionSummary {
             + self.accelerator_compute_deadlock_diagnostic_count
     }
 
-    pub const fn has_compute_diagnostics(&self) -> bool {
+    pub fn has_compute_diagnostics(&self) -> bool {
         self.has_gpu_compute_diagnostics() || self.has_accelerator_compute_diagnostics()
     }
 
@@ -598,16 +652,27 @@ impl WorkloadParallelExecutionSummary {
             || self.accelerator_dma_scheduler_batch_count != 0
     }
 
-    pub const fn accelerator_dma_wait_for_edge_count(&self) -> usize {
+    pub fn accelerator_dma_wait_for_edge_count(&self) -> usize {
         self.accelerator_dma_wait_for_edge_count
+            .max(wait_for_edge_kind_count_sum(
+                &self.accelerator_dma_wait_for_edge_kind_counts,
+            ))
+    }
+
+    pub fn accelerator_dma_wait_for_edge_kind_counts(&self) -> &BTreeMap<WaitForEdgeKind, usize> {
+        &self.accelerator_dma_wait_for_edge_kind_counts
+    }
+
+    pub fn accelerator_dma_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        wait_for_edge_kind_count(&self.accelerator_dma_wait_for_edge_kind_counts, kind)
     }
 
     pub const fn accelerator_dma_deadlock_diagnostic_count(&self) -> usize {
         self.accelerator_dma_deadlock_diagnostic_count
     }
 
-    pub const fn has_accelerator_dma_diagnostics(&self) -> bool {
-        self.accelerator_dma_wait_for_edge_count != 0
+    pub fn has_accelerator_dma_diagnostics(&self) -> bool {
+        self.accelerator_dma_wait_for_edge_count() != 0
             || self.accelerator_dma_deadlock_diagnostic_count != 0
     }
 
@@ -775,15 +840,27 @@ impl WorkloadParallelExecutionSummary {
             || self.has_accelerator_dma_scheduler_remote_sends()
     }
 
-    pub const fn dma_wait_for_edge_count(&self) -> usize {
-        self.gpu_dma_wait_for_edge_count + self.accelerator_dma_wait_for_edge_count
+    pub fn dma_wait_for_edge_count(&self) -> usize {
+        self.gpu_dma_wait_for_edge_count() + self.accelerator_dma_wait_for_edge_count()
+    }
+
+    pub fn dma_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        merge_wait_for_edge_kind_counts([
+            self.gpu_dma_wait_for_edge_kind_counts(),
+            self.accelerator_dma_wait_for_edge_kind_counts(),
+        ])
+    }
+
+    pub fn dma_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
+        self.gpu_dma_wait_for_edge_count_by_kind(kind)
+            + self.accelerator_dma_wait_for_edge_count_by_kind(kind)
     }
 
     pub const fn dma_deadlock_diagnostic_count(&self) -> usize {
         self.gpu_dma_deadlock_diagnostic_count + self.accelerator_dma_deadlock_diagnostic_count
     }
 
-    pub const fn has_dma_diagnostics(&self) -> bool {
+    pub fn has_dma_diagnostics(&self) -> bool {
         self.has_gpu_dma_diagnostics() || self.has_accelerator_dma_diagnostics()
     }
 }

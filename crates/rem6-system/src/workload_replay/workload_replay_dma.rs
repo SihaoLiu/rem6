@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use rem6_accelerator::{AcceleratorCommandId, AcceleratorDmaCopy, AcceleratorEngineId};
 use rem6_kernel::{
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionedScheduler,
-    Tick, WaitForGraph,
+    Tick, WaitForEdgeKind, WaitForGraph,
 };
 use rem6_memory::{
     AccessSize, AddressRange, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -46,12 +46,14 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     pub(super) scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     pub(super) wait_for_edge_count: usize,
+    pub(super) wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     pub(super) deadlock_diagnostic_count: usize,
 }
 
 impl WorkloadAcceleratorDmaActivity {
     fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
+        self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
@@ -188,6 +190,7 @@ pub(super) fn run_accelerator_dma_copies(
         scheduler_remote_flows: dma_scheduler_remote_flows(scheduler_evidence.remote_flows),
         scheduler_remote_sends: dma_scheduler_remote_sends(scheduler_evidence.remote_sends),
         wait_for_edge_count: 0,
+        wait_for_edge_kind_counts: BTreeMap::new(),
         deadlock_diagnostic_count: 0,
     }
     .with_wait_for_graph(wait_for))

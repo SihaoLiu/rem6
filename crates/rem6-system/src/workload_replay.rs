@@ -22,7 +22,7 @@ use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualN
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId, GpuError};
 use rem6_kernel::{
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
-    PartitionedScheduler, SchedulerError, Tick, WaitForGraph,
+    PartitionedScheduler, SchedulerError, Tick, WaitForEdgeKind, WaitForGraph,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -99,12 +99,14 @@ struct WorkloadGpuDmaActivity {
     scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     wait_for_edge_count: usize,
+    wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     deadlock_diagnostic_count: usize,
 }
 
 impl WorkloadGpuDmaActivity {
     fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
+        self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
@@ -965,6 +967,7 @@ impl RiscvWorkloadReplay {
             scheduler_remote_flows: dma_scheduler_remote_flows(scheduler_evidence.remote_flows),
             scheduler_remote_sends: dma_scheduler_remote_sends(scheduler_evidence.remote_sends),
             wait_for_edge_count: 0,
+            wait_for_edge_kind_counts: BTreeMap::new(),
             deadlock_diagnostic_count: 0,
         }
         .with_wait_for_graph(wait_for))

@@ -4,6 +4,7 @@ use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
     LivelockDiagnostic, ParallelPartitionActivity, ParallelProgressTransitionRecord,
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
+    WaitForEdgeKind,
 };
 
 use crate::parallel_batch::{
@@ -34,6 +35,7 @@ mod full_system_parallel;
 mod heterogeneous_activity;
 mod progress;
 mod remote_endpoints;
+mod wait_for_diagnostics;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
@@ -201,6 +203,7 @@ pub struct WorkloadParallelExecutionSummary {
     unattributed_data_cache_parallel_run_count: usize,
     data_cache_protocol_counts: Vec<WorkloadDataCacheProtocolCount>,
     data_cache_wait_for_edge_count: usize,
+    data_cache_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
@@ -214,6 +217,7 @@ pub struct WorkloadParallelExecutionSummary {
     fabric_max_queue_delay_ticks: u64,
     contended_fabric_lane_count: usize,
     fabric_wait_for_edge_count: usize,
+    fabric_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     fabric_deadlock_diagnostic_count: usize,
     active_dram_target_count: usize,
     active_dram_port_count: usize,
@@ -233,6 +237,7 @@ pub struct WorkloadParallelExecutionSummary {
     dram_qos_priority_summaries: Vec<WorkloadDramQosPrioritySummary>,
     dram_qos_requestor_summaries: Vec<WorkloadDramQosRequestorSummary>,
     dram_wait_for_edge_count: usize,
+    dram_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     dram_deadlock_diagnostic_count: usize,
     merged_resource_deadlock_diagnostic_count: usize,
     merged_full_system_deadlock_diagnostic_count: usize,
@@ -244,6 +249,7 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_workgroup_completion_count: usize,
     active_gpu_device_count: usize,
     gpu_compute_wait_for_edge_count: usize,
+    gpu_compute_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     gpu_compute_deadlock_diagnostic_count: usize,
     gpu_dma_copy_count: usize,
     gpu_dma_completion_count: usize,
@@ -260,6 +266,7 @@ pub struct WorkloadParallelExecutionSummary {
     gpu_dma_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     gpu_dma_scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     gpu_dma_wait_for_edge_count: usize,
+    gpu_dma_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     gpu_dma_deadlock_diagnostic_count: usize,
     accelerator_command_count: usize,
     accelerator_gpu_kernel_command_count: usize,
@@ -272,6 +279,7 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_command_completion_count: usize,
     active_accelerator_device_count: usize,
     accelerator_compute_wait_for_edge_count: usize,
+    accelerator_compute_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     accelerator_compute_deadlock_diagnostic_count: usize,
     accelerator_dma_copy_count: usize,
     accelerator_dma_completion_count: usize,
@@ -288,6 +296,7 @@ pub struct WorkloadParallelExecutionSummary {
     accelerator_dma_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     accelerator_dma_scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     accelerator_dma_wait_for_edge_count: usize,
+    accelerator_dma_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     accelerator_dma_deadlock_diagnostic_count: usize,
 }
 
@@ -1378,10 +1387,6 @@ impl WorkloadParallelExecutionSummary {
         self.unattributed_data_cache_parallel_run_count != 0
     }
 
-    pub const fn data_cache_wait_for_edge_count(&self) -> usize {
-        self.data_cache_wait_for_edge_count
-    }
-
     pub const fn data_cache_deadlock_diagnostic_count(&self) -> usize {
         self.data_cache_deadlock_diagnostic_count
     }
@@ -1402,10 +1407,6 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_wait_for_edge_count != 0
             || self.data_cache_deadlock_diagnostic_count != 0
             || self.has_data_cache_parallel_scheduler_livelock_diagnostics()
-    }
-
-    pub const fn fabric_wait_for_edge_count(&self) -> usize {
-        self.fabric_wait_for_edge_count
     }
 
     pub const fn fabric_deadlock_diagnostic_count(&self) -> usize {
@@ -1450,10 +1451,6 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn has_fabric_contention(&self) -> bool {
         self.contended_fabric_lane_count != 0
-    }
-
-    pub const fn dram_wait_for_edge_count(&self) -> usize {
-        self.dram_wait_for_edge_count
     }
 
     pub const fn dram_deadlock_diagnostic_count(&self) -> usize {
@@ -1578,10 +1575,6 @@ impl WorkloadParallelExecutionSummary {
         self.dram_row_miss_count != 0
     }
 
-    pub const fn resource_wait_for_edge_count(&self) -> usize {
-        self.fabric_wait_for_edge_count + self.dram_wait_for_edge_count
-    }
-
     pub const fn resource_deadlock_diagnostic_count(&self) -> usize {
         if self.merged_resource_deadlock_diagnostic_count == 0 {
             self.fabric_deadlock_diagnostic_count + self.dram_deadlock_diagnostic_count
@@ -1598,21 +1591,6 @@ impl WorkloadParallelExecutionSummary {
         self.has_fabric_diagnostics()
             || self.has_dram_diagnostics()
             || self.merged_resource_deadlock_diagnostic_count != 0
-    }
-
-    pub const fn resource_activity_count(&self) -> usize {
-        self.fabric_transfer_count + self.dram_access_count + self.resource_wait_for_edge_count()
-    }
-
-    pub const fn has_resource_activity(&self) -> bool {
-        self.resource_activity_count() != 0
-    }
-
-    pub const fn full_system_wait_for_edge_count(&self) -> usize {
-        self.resource_wait_for_edge_count()
-            + self.data_cache_wait_for_edge_count
-            + self.compute_wait_for_edge_count()
-            + self.dma_wait_for_edge_count()
     }
 
     pub const fn full_system_deadlock_diagnostic_count(&self) -> usize {
@@ -1646,7 +1624,7 @@ impl WorkloadParallelExecutionSummary {
         }
     }
 
-    pub const fn has_full_system_diagnostics(&self) -> bool {
+    pub fn has_full_system_diagnostics(&self) -> bool {
         self.has_resource_diagnostics()
             || self.has_data_cache_diagnostics()
             || self.has_compute_diagnostics()

@@ -3,7 +3,7 @@ use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
     LivelockTransitionKind, ParallelPartitionActivity, ParallelProgressTransitionRecord,
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
-    WaitForNode,
+    WaitForEdgeKind, WaitForNode,
 };
 use rem6_memory::Address;
 use rem6_workload::{
@@ -1087,6 +1087,55 @@ fn workload_result_counts_parallel_progress_transition_evidence() {
     assert_eq!(
         summary.full_system_progress_transition_count_by_subject(&data_cache_subject),
         2,
+    );
+}
+
+#[test]
+fn workload_result_preserves_wait_for_edge_kind_counts() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_counts([
+            (WaitForEdgeKind::Protocol, 2),
+            (WaitForEdgeKind::Barrier, 1),
+        ])
+        .with_resource_wait_for_edge_kind_counts(
+            [(WaitForEdgeKind::Queue, 3)],
+            [(WaitForEdgeKind::Barrier, 2), (WaitForEdgeKind::Credit, 1)],
+        )
+        .with_gpu_compute_wait_for_edge_kind_counts([(WaitForEdgeKind::Resource, 5)])
+        .with_accelerator_compute_wait_for_edge_kind_counts([(WaitForEdgeKind::HostAction, 7)])
+        .with_gpu_dma_wait_for_edge_kind_counts([(WaitForEdgeKind::Message, 11)])
+        .with_accelerator_dma_wait_for_edge_kind_counts([(WaitForEdgeKind::Credit, 13)]);
+
+    assert_eq!(
+        summary.data_cache_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+        2,
+    );
+    assert_eq!(
+        summary.resource_wait_for_edge_count_by_kind(WaitForEdgeKind::Barrier),
+        2,
+    );
+    assert_eq!(
+        summary.compute_wait_for_edge_count_by_kind(WaitForEdgeKind::HostAction),
+        7,
+    );
+    assert_eq!(
+        summary.dma_wait_for_edge_count_by_kind(WaitForEdgeKind::Credit),
+        13,
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Credit),
+        14,
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Protocol),
+        2,
+    );
+    assert_eq!(summary.full_system_wait_for_edge_count(), 45);
+    assert_eq!(
+        summary
+            .full_system_wait_for_edge_kind_counts()
+            .get(&WaitForEdgeKind::Barrier),
+        Some(&3),
     );
 }
 

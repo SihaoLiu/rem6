@@ -9,7 +9,7 @@ use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuKernelId, GpuKernelLaunch,
     GpuWaitForMarker,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForGraph};
+use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForGraph};
 use rem6_workload::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadError, WorkloadGpuDevice, WorkloadMemoryRoute, WorkloadTopology,
@@ -41,6 +41,7 @@ pub(crate) struct WorkloadGpuActivity {
     pub(crate) workgroup_completion_count: usize,
     pub(crate) active_device_count: usize,
     pub(crate) wait_for_edge_count: usize,
+    pub(crate) wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     pub(crate) deadlock_diagnostic_count: usize,
 }
 
@@ -76,6 +77,7 @@ impl WorkloadGpuActivity {
 
     pub(crate) fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
+        self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
@@ -115,6 +117,7 @@ pub(crate) struct WorkloadAcceleratorActivity {
     pub(crate) dma_command_completion_count: usize,
     pub(crate) active_device_count: usize,
     pub(crate) wait_for_edge_count: usize,
+    pub(crate) wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     pub(crate) deadlock_diagnostic_count: usize,
 }
 
@@ -167,6 +170,7 @@ impl WorkloadAcceleratorActivity {
 
     pub(crate) fn with_wait_for_graph(mut self, wait_for: WaitForGraph) -> Self {
         self.wait_for_edge_count = wait_for.edge_count();
+        self.wait_for_edge_kind_counts = wait_for.snapshot().edge_kind_counts();
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
