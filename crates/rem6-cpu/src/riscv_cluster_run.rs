@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
-    ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
-    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord,
-    PartitionFrontier, PartitionId, ReadyPartition, RecordedRunSummary, RunSummary,
+    LivelockTransitionKind, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
+    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier, PartitionId, ProgressMonitor,
+    ProgressMonitorError, ProgressMonitorSnapshot, ReadyPartition, RecordedRunSummary, RunSummary,
     ScheduledEventKind, SchedulerDispatchRecord, Tick,
 };
 
@@ -160,6 +161,7 @@ pub struct RiscvClusterSchedulerEpoch {
     final_frontiers: Vec<PartitionFrontier>,
     dispatches: Vec<SchedulerDispatchRecord>,
     batches: Vec<ParallelEpochBatchRecord>,
+    progress_transitions: Vec<ParallelProgressTransitionRecord>,
     batch_worker_counts: Vec<(usize, usize)>,
     batch_worker_count_ticks: Vec<(usize, Tick)>,
     batch_partition_sets: Vec<(Vec<PartitionId>, usize)>,
@@ -173,6 +175,7 @@ impl RiscvClusterSchedulerEpoch {
     pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
         let profile = recorded.profile();
         let partition_activities = recorded.partition_activities();
+        let progress_transitions = recorded.progress_transitions();
         let batch_worker_counts = recorded.batch_worker_count_summaries();
         let batch_worker_count_ticks = recorded.batch_worker_count_tick_summaries();
         let batch_partition_sets = recorded.batch_partition_set_summaries();
@@ -184,6 +187,7 @@ impl RiscvClusterSchedulerEpoch {
             final_frontiers: recorded.final_frontiers().to_vec(),
             dispatches: recorded.dispatches().to_vec(),
             batches: recorded.batches().to_vec(),
+            progress_transitions,
             batch_worker_counts,
             batch_worker_count_ticks,
             batch_partition_sets,
@@ -283,6 +287,28 @@ impl RiscvClusterSchedulerEpoch {
 
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
+    }
+
+    pub fn progress_transition_count(&self) -> usize {
+        self.progress_transitions.len()
+    }
+
+    pub fn progress_transition_count_by_kind(&self, kind: LivelockTransitionKind) -> usize {
+        self.progress_transitions
+            .iter()
+            .filter(|transition| transition.kind() == kind)
+            .count()
+    }
+
+    pub fn progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
+        self.progress_transitions.clone()
+    }
+
+    pub fn progress_monitor_snapshot(
+        &self,
+        threshold: u64,
+    ) -> Result<ProgressMonitorSnapshot, ProgressMonitorError> {
+        progress_monitor_snapshot(threshold, self.progress_transitions())
     }
 
     pub fn batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
@@ -562,6 +588,38 @@ impl RiscvClusterRun {
             .collect()
     }
 
+    pub fn parallel_scheduler_progress_transition_count(&self) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(RiscvClusterSchedulerEpoch::progress_transition_count)
+            .sum()
+    }
+
+    pub fn parallel_scheduler_progress_transition_count_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> usize {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.progress_transition_count_by_kind(kind))
+            .sum()
+    }
+
+    pub fn parallel_scheduler_progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
+        collect_parallel_progress_transitions(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(RiscvClusterSchedulerEpoch::progress_transitions),
+        )
+    }
+
+    pub fn parallel_scheduler_progress_monitor_snapshot(
+        &self,
+        threshold: u64,
+    ) -> Result<ProgressMonitorSnapshot, ProgressMonitorError> {
+        progress_monitor_snapshot(threshold, self.parallel_scheduler_progress_transitions())
+    }
+
     pub fn parallel_scheduler_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
         collect_worker_count_summaries_from_summaries(
             self.parallel_scheduler_epochs()
@@ -795,6 +853,38 @@ fn merge_parallel_partition_activity_maps(
             })
             .or_insert(*activity);
     }
+}
+
+fn collect_parallel_progress_transitions<I>(transitions: I) -> Vec<ParallelProgressTransitionRecord>
+where
+    I: IntoIterator<Item = ParallelProgressTransitionRecord>,
+{
+    let mut transitions = transitions.into_iter().collect::<Vec<_>>();
+    transitions.sort_by_key(|transition| {
+        (
+            transition.tick(),
+            transition.partition(),
+            transition.order(),
+            transition.kind(),
+            transition.subject().clone(),
+        )
+    });
+    transitions
+}
+
+fn progress_monitor_snapshot(
+    threshold: u64,
+    transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
+) -> Result<ProgressMonitorSnapshot, ProgressMonitorError> {
+    let mut monitor = ProgressMonitor::with_transition_threshold(threshold)?;
+    for transition in transitions {
+        monitor.record_transition(
+            transition.subject().clone(),
+            transition.kind(),
+            transition.tick(),
+        )?;
+    }
+    Ok(monitor.snapshot())
 }
 
 fn collect_worker_count_summaries_from_summaries(

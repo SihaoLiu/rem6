@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rem6_cpu::RiscvClusterSchedulerEpoch;
 use rem6_kernel::{
     LivelockDiagnostic, LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId,
     ProgressMonitor, ProgressMonitorError, Tick, WaitForNode,
@@ -15,13 +16,7 @@ impl RiscvSystemRun {
     pub fn parallel_scheduler_progress_transition_count(&self) -> usize {
         self.parallel_scheduler_epochs()
             .into_iter()
-            .map(|epoch| {
-                epoch
-                    .batches()
-                    .iter()
-                    .map(|batch| batch.progress_transition_count())
-                    .sum::<usize>()
-            })
+            .map(RiscvClusterSchedulerEpoch::progress_transition_count)
             .sum()
     }
 
@@ -41,12 +36,7 @@ impl RiscvSystemRun {
         collect_parallel_progress_transitions(
             self.parallel_scheduler_epochs()
                 .into_iter()
-                .flat_map(|epoch| {
-                    epoch
-                        .batches()
-                        .iter()
-                        .flat_map(|batch| batch.progress_transitions().iter().cloned())
-                }),
+                .flat_map(RiscvClusterSchedulerEpoch::progress_transitions),
         )
     }
 
@@ -54,10 +44,10 @@ impl RiscvSystemRun {
         &self,
         kind: LivelockTransitionKind,
     ) -> usize {
-        progress_transition_count(
-            self.parallel_scheduler_progress_transitions(),
-            |transition| transition.kind() == kind,
-        )
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.progress_transition_count_by_kind(kind))
+            .sum()
     }
 
     pub fn parallel_scheduler_progress_transition_records_by_kind(
