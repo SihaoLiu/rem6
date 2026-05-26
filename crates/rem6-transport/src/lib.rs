@@ -4,9 +4,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
-    FabricActivityMarker, FabricActivityProfile, FabricError, FabricLaneActivity, FabricModel,
-    FabricPacket, FabricPacketId, FabricPath, FabricWaitForMarker, QosFixedPriorityPolicy,
-    QosQueueArbiter, VirtualNetworkId,
+    FabricActivityMarker, FabricActivityProfile, FabricError, FabricHopActivity,
+    FabricLaneActivity, FabricModel, FabricPacket, FabricPacketId, FabricPath, FabricWaitForMarker,
+    QosFixedPriorityPolicy, QosQueueArbiter, VirtualNetworkId,
 };
 pub use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -700,6 +700,12 @@ impl MemoryTransport {
             .map(|fabric| fabric.lock().expect("fabric lock").lane_activities())
     }
 
+    pub fn fabric_hop_activities(&self) -> Option<Vec<FabricHopActivity>> {
+        self.fabric
+            .as_ref()
+            .map(|fabric| fabric.lock().expect("fabric lock").hop_activities())
+    }
+
     pub fn fabric_lane_activities_since(
         &self,
         marker: FabricActivityMarker,
@@ -709,6 +715,18 @@ impl MemoryTransport {
                 .lock()
                 .expect("fabric lock")
                 .lane_activities_since(marker)
+        })
+    }
+
+    pub fn fabric_hop_activities_since(
+        &self,
+        marker: FabricActivityMarker,
+    ) -> Option<Vec<FabricHopActivity>> {
+        self.fabric.as_ref().map(|fabric| {
+            fabric
+                .lock()
+                .expect("fabric lock")
+                .hop_activities_since(marker)
         })
     }
 

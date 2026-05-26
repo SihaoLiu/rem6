@@ -1,13 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_fabric::{
-    FabricActivityProfile, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
+    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
     FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 
 use super::WorkloadParallelExecutionSummary;
 
 impl WorkloadParallelExecutionSummary {
+    pub fn with_fabric_hop_activities(
+        mut self,
+        activities: impl IntoIterator<Item = FabricHopActivity>,
+    ) -> Self {
+        self.fabric_hop_activities = activities.into_iter().collect();
+        self
+    }
+
     pub fn with_fabric_lane_activities(
         mut self,
         activities: impl IntoIterator<Item = FabricLaneActivity>,
@@ -47,6 +55,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn fabric_lane_activities(&self) -> &[FabricLaneActivity] {
         &self.fabric_lane_activities
+    }
+
+    pub fn fabric_hop_activities(&self) -> &[FabricHopActivity] {
+        &self.fabric_hop_activities
     }
 
     pub fn fabric_link_activities(&self) -> &[FabricLinkActivity] {

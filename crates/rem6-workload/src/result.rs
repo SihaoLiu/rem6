@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use rem6_fabric::{
-    FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity, QosPriority,
-    QosRequestorId,
+    FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
+    QosPriority, QosRequestorId,
 };
 use rem6_kernel::{
     LivelockDiagnostic, ParallelPartitionActivity, ParallelProgressTransitionRecord,
@@ -286,6 +286,7 @@ pub struct WorkloadParallelExecutionSummary {
     fabric_queue_delay_ticks: u64,
     fabric_max_queue_delay_ticks: u64,
     contended_fabric_lane_count: usize,
+    fabric_hop_activities: Vec<FabricHopActivity>,
     fabric_lane_activities: Vec<FabricLaneActivity>,
     fabric_link_activities: Vec<FabricLinkActivity>,
     fabric_virtual_network_activities: Vec<FabricVirtualNetworkActivity>,

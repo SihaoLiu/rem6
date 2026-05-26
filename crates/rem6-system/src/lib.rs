@@ -11,8 +11,8 @@ use rem6_cpu::{
 };
 use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
 use rem6_fabric::{
-    FabricActivityProfile, FabricLaneActivity, FabricLinkId, FabricVirtualNetworkActivity,
-    VirtualNetworkId,
+    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkId,
+    FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
@@ -303,6 +303,7 @@ pub struct RiscvSystemRun {
     turns: Vec<RiscvClusterTurn>,
     scheduled_traps: Vec<ScheduledRiscvTrap>,
     stop_reason: RiscvSystemRunStopReason,
+    fabric_hop_activity: Vec<FabricHopActivity>,
     fabric_activity: Vec<FabricLaneActivity>,
     pub(crate) fabric_wait_for: WaitForGraph,
     dram_activity: Vec<DramTargetActivity>,
@@ -321,6 +322,7 @@ impl RiscvSystemRun {
             turns,
             scheduled_traps,
             stop_reason,
+            fabric_hop_activity: Vec::new(),
             fabric_activity: Vec::new(),
             fabric_wait_for: WaitForGraph::new(),
             dram_activity: Vec::new(),
@@ -328,6 +330,11 @@ impl RiscvSystemRun {
             data_cache_runs: Vec::new(),
             data_cache_run_protocols: Vec::new(),
         }
+    }
+
+    pub fn with_fabric_hop_activity(mut self, fabric_hop_activity: Vec<FabricHopActivity>) -> Self {
+        self.fabric_hop_activity = fabric_hop_activity;
+        self
     }
 
     pub fn with_fabric_activity(mut self, fabric_activity: Vec<FabricLaneActivity>) -> Self {
@@ -555,6 +562,10 @@ impl RiscvSystemRun {
         &self,
     ) -> BTreeMap<(FabricLinkId, VirtualNetworkId), FabricLaneActivity> {
         collect_run_fabric_activity(&self.fabric_activity)
+    }
+
+    pub fn fabric_hop_activities(&self) -> &[FabricHopActivity] {
+        &self.fabric_hop_activity
     }
 
     pub fn fabric_virtual_network_activity(

@@ -217,6 +217,7 @@ pub(super) fn parallel_execution_summary(
             fabric.contended_lane_count(),
         )
         .with_fabric_lane_activities(run.fabric_activities().into_values())
+        .with_fabric_hop_activities(run.fabric_hop_activities().iter().cloned())
         .with_fabric_virtual_network_activities(
             run.fabric_virtual_network_activities().into_values(),
         )

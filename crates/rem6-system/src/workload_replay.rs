@@ -669,6 +669,13 @@ impl RiscvWorkloadReplay {
                 run = run.with_fabric_activity(fabric_activity);
             }
         }
+        if let Some(fabric_hop_activity) =
+            fabric_activity_start.and_then(|marker| transport.fabric_hop_activities_since(marker))
+        {
+            if !fabric_hop_activity.is_empty() {
+                run = run.with_fabric_hop_activity(fabric_hop_activity);
+            }
+        }
         if let Some(fabric_wait_for) =
             fabric_wait_for_start.and_then(|marker| transport.fabric_wait_for_graph_since(marker))
         {
