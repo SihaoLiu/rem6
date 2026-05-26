@@ -1585,7 +1585,12 @@ impl fmt::Display for WorkloadError {
                 "expected {} resource activity to reach at least {minimum_operation_count} operations and {minimum_active_resource_count} active resources, got {actual_operation_count} operations and {actual_active_resource_count} active resources",
                 scope.as_str()
             ),
-            Self::ZeroExpectedFabricLaneActivity { .. }
+            Self::ZeroExpectedFabricHopActivity { .. }
+            | Self::DuplicateExpectedFabricHopActivity { .. }
+            | Self::InvalidExpectedFabricHopActivityWindow { .. }
+            | Self::MissingFabricHopActivitySummary { .. }
+            | Self::ExpectedFabricHopActivityBelowMinimum { .. }
+            | Self::ZeroExpectedFabricLaneActivity { .. }
             | Self::DuplicateExpectedFabricLaneActivity { .. }
             | Self::InvalidExpectedFabricLaneActivityWindow { .. }
             | Self::InvalidExpectedFabricLaneActivityQueueDelayBudget { .. }

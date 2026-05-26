@@ -11,10 +11,13 @@ use crate::{
     WorkloadParallelExecutionSummary,
 };
 
+mod fabric_hop_activity;
 mod fabric_lane_activity;
 mod fabric_link_activity;
 mod fabric_virtual_network_activity;
 
+pub(crate) use fabric_hop_activity::verify_expected_fabric_hop_activity;
+pub use fabric_hop_activity::WorkloadExpectedFabricHopActivity;
 pub use fabric_lane_activity::WorkloadExpectedFabricLaneActivity;
 pub use fabric_link_activity::WorkloadExpectedFabricLinkActivity;
 pub use fabric_virtual_network_activity::WorkloadExpectedFabricVirtualNetworkActivity;

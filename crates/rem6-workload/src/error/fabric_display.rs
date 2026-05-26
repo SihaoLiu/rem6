@@ -10,6 +10,80 @@ pub(super) fn format_fabric_activity_error(
     formatter: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
     match error {
+        WorkloadError::ZeroExpectedFabricHopActivity {
+            hop_index,
+            link,
+            virtual_network,
+        } => write!(
+            formatter,
+            "expected fabric hop {hop_index} on link {} virtual network {} activity must require a positive transfer, byte, occupancy, or queue delay count",
+            link.as_str(),
+            virtual_network.get()
+        ),
+        WorkloadError::DuplicateExpectedFabricHopActivity {
+            hop_index,
+            link,
+            virtual_network,
+        } => write!(
+            formatter,
+            "expected fabric hop {hop_index} on link {} virtual network {} activity is already declared",
+            link.as_str(),
+            virtual_network.get()
+        ),
+        WorkloadError::InvalidExpectedFabricHopActivityWindow {
+            hop_index,
+            link,
+            virtual_network,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "expected fabric hop {hop_index} on link {} virtual network {} activity window first tick {first_tick} is after last tick {last_tick}",
+            link.as_str(),
+            virtual_network.get()
+        ),
+        WorkloadError::MissingFabricHopActivitySummary {
+            hop_index,
+            link,
+            virtual_network,
+            minimum_transfer_count,
+            minimum_byte_count,
+            minimum_occupied_ticks,
+            minimum_queue_delay_ticks,
+            required_first_tick,
+            required_last_tick,
+        } => write!(
+            formatter,
+            "missing parallel summary for expected fabric hop {hop_index} on link {} virtual network {} activity with at least {minimum_transfer_count} transfers, {minimum_byte_count} bytes, {minimum_occupied_ticks} occupied ticks, {minimum_queue_delay_ticks} queue delay ticks, first tick {}, and last tick {}",
+            link.as_str(),
+            virtual_network.get(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
+        ),
+        WorkloadError::ExpectedFabricHopActivityBelowMinimum {
+            hop_index,
+            link,
+            virtual_network,
+            minimum_transfer_count,
+            actual_transfer_count,
+            minimum_byte_count,
+            actual_byte_count,
+            minimum_occupied_ticks,
+            actual_occupied_ticks,
+            minimum_queue_delay_ticks,
+            actual_queue_delay_ticks,
+            required_first_tick,
+            actual_first_tick,
+            required_last_tick,
+            actual_last_tick,
+        } => write!(
+            formatter,
+            "expected fabric hop {hop_index} on link {} virtual network {} activity to reach at least {minimum_transfer_count} transfers, {minimum_byte_count} bytes, {minimum_occupied_ticks} occupied ticks, {minimum_queue_delay_ticks} queue delay ticks, first tick {}, and last tick {}, got {actual_transfer_count} transfers, {actual_byte_count} bytes, {actual_occupied_ticks} occupied ticks, {actual_queue_delay_ticks} queue delay ticks, first tick {actual_first_tick}, and last tick {actual_last_tick}",
+            link.as_str(),
+            virtual_network.get(),
+            format_optional_tick(required_first_tick),
+            format_optional_tick(required_last_tick)
+        ),
         WorkloadError::ZeroExpectedFabricLaneActivity {
             link,
             virtual_network,

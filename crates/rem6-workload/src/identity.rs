@@ -4,27 +4,28 @@ use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedFabricLaneActivity,
-    WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
-    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
-    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelBatchTimelineRecord,
-    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
-    WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
-    WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedParallelFrontier,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
-    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
-    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedResourceActivity, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
-    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedFabricHopActivity,
+    WorkloadExpectedFabricLaneActivity, WorkloadExpectedFabricLinkActivity,
+    WorkloadExpectedFabricVirtualNetworkActivity, WorkloadExpectedParallelBatchActivity,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
+    WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
+    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
+    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
+    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
+    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
+    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -93,6 +94,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelPartitionActivity],
     pub(crate) expected_parallel_frontiers: &'a [WorkloadExpectedParallelFrontier],
     pub(crate) expected_resource_activity: &'a [WorkloadExpectedResourceActivity],
+    pub(crate) expected_fabric_hop_activity: &'a [WorkloadExpectedFabricHopActivity],
     pub(crate) expected_fabric_lane_activity: &'a [WorkloadExpectedFabricLaneActivity],
     pub(crate) expected_fabric_link_activity: &'a [WorkloadExpectedFabricLinkActivity],
     pub(crate) expected_fabric_virtual_network_activity:
@@ -331,6 +333,10 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     hash_u64(&mut hash, input.expected_resource_activity.len() as u64);
     for expected in input.expected_resource_activity {
         hash_expected_resource_activity(&mut hash, *expected);
+    }
+    hash_u64(&mut hash, input.expected_fabric_hop_activity.len() as u64);
+    for expected in input.expected_fabric_hop_activity {
+        hash_expected_fabric_hop_activity(&mut hash, expected);
     }
     hash_u64(&mut hash, input.expected_fabric_lane_activity.len() as u64);
     for expected in input.expected_fabric_lane_activity {
@@ -740,6 +746,18 @@ fn hash_expected_resource_activity(hash: &mut u64, expected: WorkloadExpectedRes
     hash_resource_activity_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_operation_count() as u64);
     hash_u64(hash, expected.minimum_active_resource_count() as u64);
+}
+
+fn hash_expected_fabric_hop_activity(hash: &mut u64, expected: &WorkloadExpectedFabricHopActivity) {
+    hash_u64(hash, expected.hop_index() as u64);
+    hash_str(hash, expected.link().as_str());
+    hash_u64(hash, u64::from(expected.virtual_network().get()));
+    hash_u64(hash, expected.minimum_transfer_count() as u64);
+    hash_u64(hash, expected.minimum_byte_count());
+    hash_u64(hash, expected.minimum_occupied_ticks());
+    hash_u64(hash, expected.minimum_queue_delay_ticks());
+    hash_optional_tick(hash, expected.required_first_tick());
+    hash_optional_tick(hash, expected.required_last_tick());
 }
 
 fn hash_expected_fabric_lane_activity(
