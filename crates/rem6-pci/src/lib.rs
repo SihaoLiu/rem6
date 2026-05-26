@@ -32,7 +32,8 @@ pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};
 pub use msix::{PciMsixCapabilitySpec, PciMsixPort, PciMsixRoute};
 pub use pcie::{
-    PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec, PciExpressLinkCapabilitySpec,
+    PciExpressCapability2Spec, PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec,
+    PciExpressLinkCapabilitySpec, PciExpressRootCapabilitySpec, PciExpressSlotCapabilitySpec,
 };
 pub use pm::PciPowerManagementCapabilitySpec;
 
