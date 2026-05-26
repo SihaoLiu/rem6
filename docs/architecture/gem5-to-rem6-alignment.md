@@ -428,6 +428,10 @@ Implementation evidence on 2026-05-26:
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
   dirty fabric or DRAM deadlocks behind a smaller merged counter.
+- Workload full-system deadlock merge validation rejects explicit merged
+  full-system deadlock counts that are weaker than resource and data-cache
+  scoped evidence. Full-system clean-diagnostic replay therefore cannot hide
+  dirty resource or data-cache deadlocks behind a smaller merged counter.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,

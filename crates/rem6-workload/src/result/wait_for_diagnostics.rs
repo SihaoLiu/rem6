@@ -217,6 +217,12 @@ impl WorkloadParallelExecutionSummary {
                 self.validate_parallel_diagnostic_scope_summary(
                     WorkloadParallelDiagnosticScope::Dma,
                 )?;
+                validate_deadlock_merge_summary(
+                    scope,
+                    self.merged_full_system_deadlock_diagnostic_count,
+                    self.resource_deadlock_diagnostic_count()
+                        .saturating_add(self.data_cache_deadlock_diagnostic_count()),
+                )?;
                 validate_livelock_transition_count_summary(
                     scope,
                     self.parallel_scheduler_progress_transition_count(),
