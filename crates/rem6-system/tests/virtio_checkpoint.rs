@@ -6,21 +6,49 @@ use rem6_memory::Address;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, SystemActionExecutor,
-    SystemActionOutcome, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
+    SystemActionOutcome, SystemError, VirtioSplitQueueCheckpointBank,
+    VirtioSplitQueueCheckpointError, VirtioSplitQueueCheckpointPort,
     VirtioSplitQueueCheckpointRecord,
 };
 use rem6_virtio::VirtioSplitQueue;
 
 fn queue(last_available_index: u16, event_index: bool) -> VirtioSplitQueue {
+    queue_at(0x1000, 0x2000, 0x3000, last_available_index, event_index)
+}
+
+fn queue_at(
+    descriptor_table: u64,
+    available_ring: u64,
+    used_ring: u64,
+    last_available_index: u16,
+    event_index: bool,
+) -> VirtioSplitQueue {
     VirtioSplitQueue::new(
         8,
-        Address::new(0x1000),
-        Address::new(0x2000),
-        Address::new(0x3000),
+        Address::new(descriptor_table),
+        Address::new(available_ring),
+        Address::new(used_ring),
         last_available_index,
     )
     .unwrap()
     .with_event_index(event_index)
+}
+
+fn split_queue_payload(
+    descriptor_table: u64,
+    available_ring: u64,
+    used_ring: u64,
+    last_available_index: u16,
+    event_index: bool,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(8_u16.to_le_bytes());
+    payload.extend(descriptor_table.to_le_bytes());
+    payload.extend(available_ring.to_le_bytes());
+    payload.extend(used_ring.to_le_bytes());
+    payload.extend(last_available_index.to_le_bytes());
+    payload.push(u8::from(event_index));
+    payload
 }
 
 #[test]
@@ -106,4 +134,63 @@ fn system_action_executor_checkpoints_and_restores_virtio_split_queue() {
         }
     );
     assert_eq!(live.lock().unwrap().snapshot(), expected);
+}
+
+#[test]
+fn system_action_executor_rejects_virtio_split_queue_shape_mismatch_without_partial_restore() {
+    let queue0 = Arc::new(Mutex::new(queue_at(0x1000, 0x2000, 0x3000, 0, false)));
+    let queue1 = Arc::new(Mutex::new(queue_at(0x4000, 0x5000, 0x6000, 0, false)));
+    let component0 = CheckpointComponentId::new("virtio.block0.queue0").unwrap();
+    let component1 = CheckpointComponentId::new("virtio.block0.queue1").unwrap();
+    let bank = VirtioSplitQueueCheckpointBank::new([
+        VirtioSplitQueueCheckpointPort::new(component0.clone(), Arc::clone(&queue0)),
+        VirtioSplitQueueCheckpointPort::new(component1.clone(), Arc::clone(&queue1)),
+    ])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor
+        .attach_virtio_split_queue_checkpoint_bank(bank)
+        .unwrap();
+    executor
+        .checkpoints_mut()
+        .write_chunk(
+            &component0,
+            "split-queue",
+            split_queue_payload(0x1000, 0x2000, 0x3000, 5, true),
+        )
+        .unwrap();
+    executor
+        .checkpoints_mut()
+        .write_chunk(
+            &component1,
+            "split-queue",
+            split_queue_payload(0x4000, 0x5000, 0x7000, 7, true),
+        )
+        .unwrap();
+    let manifest = executor.checkpoints().capture("bad-virtio", 31).unwrap();
+    let before0 = queue0.lock().unwrap().snapshot();
+    let before1 = queue1.lock().unwrap().snapshot();
+    let restore = HostActionRecord::new(
+        37,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(3),
+        GuestSourceId::new(9),
+        HostAction::RestoreCheckpoint { manifest },
+    );
+
+    let error = executor.apply(&restore).unwrap_err();
+
+    match error {
+        SystemError::VirtioCheckpoint(VirtioSplitQueueCheckpointError::Virtio {
+            component,
+            error,
+        }) => {
+            assert_eq!(component, component1);
+            assert!(error.to_string().contains("snapshot shape mismatch"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(queue0.lock().unwrap().snapshot(), before0);
+    assert_eq!(queue1.lock().unwrap().snapshot(), before1);
 }

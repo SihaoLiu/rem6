@@ -92,6 +92,15 @@ impl VirtioSplitQueueCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<VirtioSplitQueueCheckpointRecord, VirtioSplitQueueCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<VirtioSplitQueueCheckpointRecord, VirtioSplitQueueCheckpointError> {
         let payload = registry
             .chunk(&self.component, VIRTIO_SPLIT_QUEUE_CHUNK)
             .ok_or_else(|| VirtioSplitQueueCheckpointError::MissingChunk {
@@ -99,18 +108,38 @@ impl VirtioSplitQueueCheckpointPort {
                 name: VIRTIO_SPLIT_QUEUE_CHUNK.to_string(),
             })?;
         let snapshot = decode_split_queue(&self.component, payload)?;
-        self.queue
-            .lock()
-            .expect("VirtIO split queue checkpoint lock")
-            .restore(&snapshot)
-            .map_err(|error| VirtioSplitQueueCheckpointError::Virtio {
-                component: self.component.clone(),
-                error,
-            })?;
         Ok(VirtioSplitQueueCheckpointRecord::new(
             self.component.clone(),
             snapshot,
         ))
+    }
+
+    fn validate_snapshot(
+        &self,
+        snapshot: &VirtioSplitQueueSnapshot,
+    ) -> Result<(), VirtioSplitQueueCheckpointError> {
+        self.queue
+            .lock()
+            .expect("VirtIO split queue checkpoint lock")
+            .validate_snapshot_shape(snapshot)
+            .map_err(|error| VirtioSplitQueueCheckpointError::Virtio {
+                component: self.component.clone(),
+                error,
+            })
+    }
+
+    fn restore_snapshot(
+        &self,
+        snapshot: &VirtioSplitQueueSnapshot,
+    ) -> Result<(), VirtioSplitQueueCheckpointError> {
+        self.queue
+            .lock()
+            .expect("VirtIO split queue checkpoint lock")
+            .restore(snapshot)
+            .map_err(|error| VirtioSplitQueueCheckpointError::Virtio {
+                component: self.component.clone(),
+                error,
+            })
     }
 }
 
@@ -166,10 +195,19 @@ impl VirtioSplitQueueCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<VirtioSplitQueueCheckpointRecord>, VirtioSplitQueueCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            restored.push(record);
+        }
+        Ok(restored)
     }
 }
 

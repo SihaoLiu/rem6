@@ -363,6 +363,16 @@ impl VirtioSplitQueue {
     }
 
     pub fn restore(&mut self, snapshot: &VirtioSplitQueueSnapshot) -> Result<(), VirtioError> {
+        self.validate_snapshot_shape(snapshot)?;
+        self.last_available_index = snapshot.last_available_index;
+        self.event_index = snapshot.event_index;
+        Ok(())
+    }
+
+    pub fn validate_snapshot_shape(
+        &self,
+        snapshot: &VirtioSplitQueueSnapshot,
+    ) -> Result<(), VirtioError> {
         if self.queue_size != snapshot.queue_size
             || self.descriptor_table != snapshot.descriptor_table
             || self.available_ring != snapshot.available_ring
@@ -372,8 +382,6 @@ impl VirtioSplitQueue {
                 message: "VirtIO split queue snapshot shape mismatch".to_string(),
             });
         }
-        self.last_available_index = snapshot.last_available_index;
-        self.event_index = snapshot.event_index;
         Ok(())
     }
 
