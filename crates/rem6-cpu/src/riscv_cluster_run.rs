@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
     ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
@@ -160,6 +160,8 @@ pub struct RiscvClusterSchedulerEpoch {
     final_frontiers: Vec<PartitionFrontier>,
     dispatches: Vec<SchedulerDispatchRecord>,
     batches: Vec<ParallelEpochBatchRecord>,
+    batch_partition_sets: Vec<(Vec<PartitionId>, usize)>,
+    batch_partition_streaks: Vec<(Vec<PartitionId>, usize)>,
     remote_flows: Vec<ParallelRemoteFlowRecord>,
     profile: ParallelRunProfile,
     partition_activities: BTreeMap<PartitionId, ParallelPartitionActivity>,
@@ -169,6 +171,8 @@ impl RiscvClusterSchedulerEpoch {
     pub fn new(plan: ParallelEpochPlan, recorded: RecordedRunSummary) -> Self {
         let profile = recorded.profile();
         let partition_activities = recorded.partition_activities();
+        let batch_partition_sets = recorded.batch_partition_set_summaries();
+        let batch_partition_streaks = recorded.batch_partition_streak_summaries();
         let remote_flows = recorded.remote_flows();
         Self {
             plan,
@@ -176,6 +180,8 @@ impl RiscvClusterSchedulerEpoch {
             final_frontiers: recorded.final_frontiers().to_vec(),
             dispatches: recorded.dispatches().to_vec(),
             batches: recorded.batches().to_vec(),
+            batch_partition_sets,
+            batch_partition_streaks,
             remote_flows,
             profile,
             partition_activities,
@@ -271,6 +277,36 @@ impl RiscvClusterSchedulerEpoch {
 
     pub fn batch_count(&self) -> usize {
         self.profile.batch_count()
+    }
+
+    pub fn batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
+        self.batch_partition_sets.clone()
+    }
+
+    pub fn batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let expected = normalize_partition_set(partitions);
+        self.batch_partition_sets
+            .iter()
+            .find_map(|(partitions, count)| (partitions == &expected).then_some(*count))
+            .unwrap_or(0)
+    }
+
+    pub fn batch_partition_streak_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
+        self.batch_partition_streaks.clone()
+    }
+
+    pub fn max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let expected = normalize_partition_set(partitions);
+        self.batch_partition_streaks
+            .iter()
+            .find_map(|(partitions, count)| (partitions == &expected).then_some(*count))
+            .unwrap_or(0)
     }
 
     pub fn empty_epoch_count(&self) -> usize {
@@ -471,6 +507,43 @@ impl RiscvClusterRun {
             .collect()
     }
 
+    pub fn parallel_scheduler_batch_partition_set_summaries(
+        &self,
+    ) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_partition_set_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(RiscvClusterSchedulerEpoch::batch_partition_set_summaries),
+        )
+    }
+
+    pub fn parallel_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let partitions = normalize_partition_set(partitions);
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_count_for_partition_set(partitions.iter().copied()))
+            .sum()
+    }
+
+    pub fn parallel_scheduler_batch_partition_streak_summaries(
+        &self,
+    ) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_batch_partition_streak_summaries(self.parallel_scheduler_batches())
+    }
+
+    pub fn parallel_scheduler_max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        max_consecutive_batch_count_for_partition_set(
+            self.parallel_scheduler_batch_partition_streak_summaries(),
+            partitions,
+        )
+    }
+
     pub fn parallel_scheduler_workers(&self) -> Vec<ParallelWorkerRecord> {
         self.parallel_scheduler_epochs()
             .into_iter()
@@ -606,6 +679,76 @@ fn merge_parallel_partition_activity_maps(
             })
             .or_insert(*activity);
     }
+}
+
+fn collect_partition_set_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (Vec<PartitionId>, usize)>,
+) -> Vec<(Vec<PartitionId>, usize)> {
+    let mut collected = BTreeMap::<Vec<PartitionId>, usize>::new();
+    for (partitions, count) in summaries {
+        if !partitions.is_empty() && count != 0 {
+            *collected.entry(partitions).or_default() += count;
+        }
+    }
+    collected.into_iter().collect()
+}
+
+fn collect_batch_partition_streak_summaries(
+    batches: impl IntoIterator<Item = ParallelEpochBatchRecord>,
+) -> Vec<(Vec<PartitionId>, usize)> {
+    let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
+    let mut current: Option<(Vec<PartitionId>, usize)> = None;
+    for batch in batches {
+        let partitions = batch.partition_set();
+        if partitions.is_empty() {
+            continue;
+        }
+        match current.as_mut() {
+            Some((current_partitions, count)) if current_partitions == &partitions => {
+                *count += 1;
+            }
+            Some(_) => {
+                flush_partition_streak(&mut summaries, current.take());
+                current = Some((partitions, 1));
+            }
+            None => {
+                current = Some((partitions, 1));
+            }
+        }
+    }
+    flush_partition_streak(&mut summaries, current);
+    summaries.into_iter().collect()
+}
+
+fn max_consecutive_batch_count_for_partition_set(
+    streaks: impl IntoIterator<Item = (Vec<PartitionId>, usize)>,
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> usize {
+    let expected = normalize_partition_set(partitions);
+    streaks
+        .into_iter()
+        .find_map(|(partitions, count)| (partitions == expected).then_some(count))
+        .unwrap_or(0)
+}
+
+fn flush_partition_streak(
+    summaries: &mut BTreeMap<Vec<PartitionId>, usize>,
+    streak: Option<(Vec<PartitionId>, usize)>,
+) {
+    if let Some((partitions, count)) = streak {
+        summaries
+            .entry(partitions)
+            .and_modify(|stored| *stored = (*stored).max(count))
+            .or_insert(count);
+    }
+}
+
+fn normalize_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {
+    partitions
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

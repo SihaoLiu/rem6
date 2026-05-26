@@ -300,7 +300,11 @@ impl RiscvSystemRun {
     pub fn parallel_scheduler_batch_partition_set_summaries(
         &self,
     ) -> Vec<(Vec<PartitionId>, usize)> {
-        collect_batch_partition_set_summaries(self.parallel_scheduler_batches())
+        collect_partition_set_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| epoch.batch_partition_set_summaries()),
+        )
     }
 
     pub fn data_cache_parallel_scheduler_batch_partition_set_summaries(
@@ -312,14 +316,22 @@ impl RiscvSystemRun {
     pub fn full_system_parallel_scheduler_batch_partition_set_summaries(
         &self,
     ) -> Vec<(Vec<PartitionId>, usize)> {
-        collect_batch_partition_set_summaries(self.full_system_parallel_scheduler_batches())
+        collect_partition_set_summaries_from_summaries(
+            self.parallel_scheduler_batch_partition_set_summaries()
+                .into_iter()
+                .chain(self.data_cache_parallel_scheduler_batch_partition_set_summaries()),
+        )
     }
 
     pub fn parallel_scheduler_batch_count_for_partition_set(
         &self,
         partitions: impl IntoIterator<Item = PartitionId>,
     ) -> usize {
-        batch_count_for_partition_set(self.parallel_scheduler_batches(), partitions)
+        let partitions = normalize_partition_set(partitions);
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_count_for_partition_set(partitions.iter().copied()))
+            .sum()
     }
 
     pub fn data_cache_parallel_scheduler_batch_count_for_partition_set(
@@ -555,6 +567,18 @@ fn collect_batch_partition_set_summaries(
         }
     }
     summaries.into_iter().collect()
+}
+
+fn collect_partition_set_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (Vec<PartitionId>, usize)>,
+) -> Vec<(Vec<PartitionId>, usize)> {
+    let mut collected = BTreeMap::<Vec<PartitionId>, usize>::new();
+    for (partitions, count) in summaries {
+        if !partitions.is_empty() && count != 0 {
+            *collected.entry(partitions).or_default() += count;
+        }
+    }
+    collected.into_iter().collect()
 }
 
 fn batch_count_for_partition_set(
