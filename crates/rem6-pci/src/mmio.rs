@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
-use rem6_memory::AddressRange;
+use rem6_memory::{Address, AddressRange};
 use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse};
 
-use crate::{PciError, PciHostBridge};
+use crate::{PciError, PciHostBarRange, PciHostBridge};
 
 #[derive(Clone, Debug)]
 pub struct PciConfigMmioDevice {
@@ -50,6 +50,96 @@ impl MmioDevice for PciConfigMmioDevice {
     ) -> Result<MmioResponse, MmioError> {
         let mut host = self.host.lock().expect("PCI config host lock");
         respond_config_mmio(&mut host, request)
+    }
+}
+
+pub struct PciBarMmioDevice<D> {
+    host_bar_range: PciHostBarRange,
+    local_range: AddressRange,
+    inner: D,
+}
+
+impl<D> PciBarMmioDevice<D> {
+    pub fn new(host_bar_range: PciHostBarRange, inner: D) -> Self {
+        let local_range = AddressRange::new(Address::new(0), host_bar_range.host_range().size())
+            .expect("PCI BAR local range mirrors an existing host BAR range");
+        Self {
+            host_bar_range,
+            local_range,
+            inner,
+        }
+    }
+
+    pub const fn host_bar_range(&self) -> &PciHostBarRange {
+        &self.host_bar_range
+    }
+
+    pub const fn host_range(&self) -> AddressRange {
+        self.host_bar_range.host_range()
+    }
+
+    pub const fn local_range(&self) -> AddressRange {
+        self.local_range
+    }
+}
+
+impl<D> MmioDevice for PciBarMmioDevice<D>
+where
+    D: MmioDevice,
+{
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        let local_request = self.local_request(request)?;
+        self.inner.respond(context, &local_request)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        let local_request = self.local_request(request)?;
+        self.inner.respond_parallel(context, &local_request)
+    }
+}
+
+impl<D> PciBarMmioDevice<D> {
+    fn local_request(&self, request: &MmioRequest) -> Result<MmioRequest, MmioError> {
+        let host_range = self.host_range();
+        let requested = request.range();
+        if !host_range.contains_range(requested) {
+            return Err(MmioError::DeviceBoundaryCrossed {
+                request: request.id(),
+                device_start: host_range.start(),
+                device_end: host_range.end(),
+                requested_start: requested.start(),
+                requested_end: requested.end(),
+            });
+        }
+
+        let offset = requested.start().get() - host_range.start().get();
+        let local_address = Address::new(offset);
+        match request.operation() {
+            MmioOperation::Read => MmioRequest::read(request.id(), local_address, request.size()),
+            MmioOperation::Write => {
+                let data = request
+                    .data()
+                    .ok_or(MmioError::MissingWriteData {
+                        request: request.id(),
+                    })?
+                    .to_vec();
+                let byte_mask = request
+                    .byte_mask()
+                    .ok_or(MmioError::MissingByteMask {
+                        request: request.id(),
+                    })?
+                    .clone();
+                MmioRequest::write(request.id(), local_address, data, byte_mask)
+            }
+        }
     }
 }
 
