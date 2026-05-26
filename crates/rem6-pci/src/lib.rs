@@ -271,6 +271,110 @@ impl PciBarRange {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PciHostAddressSpace {
+    Io,
+    Memory,
+    PrefetchableMemory,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PciHostAddressBases {
+    io_base: Address,
+    memory_base: Address,
+    prefetchable_memory_base: Address,
+}
+
+impl PciHostAddressBases {
+    pub const fn new(
+        io_base: Address,
+        memory_base: Address,
+        prefetchable_memory_base: Address,
+    ) -> Self {
+        Self {
+            io_base,
+            memory_base,
+            prefetchable_memory_base,
+        }
+    }
+
+    pub const fn zero() -> Self {
+        Self {
+            io_base: Address::new(0),
+            memory_base: Address::new(0),
+            prefetchable_memory_base: Address::new(0),
+        }
+    }
+
+    pub const fn io_base(self) -> Address {
+        self.io_base
+    }
+
+    pub const fn memory_base(self) -> Address {
+        self.memory_base
+    }
+
+    pub const fn prefetchable_memory_base(self) -> Address {
+        self.prefetchable_memory_base
+    }
+
+    const fn base_for_space(self, space: PciHostAddressSpace) -> Address {
+        match space {
+            PciHostAddressSpace::Io => self.io_base,
+            PciHostAddressSpace::Memory => self.memory_base,
+            PciHostAddressSpace::PrefetchableMemory => self.prefetchable_memory_base,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciHostBarRange {
+    function: PciFunctionAddress,
+    bar: PciBarIndex,
+    space: PciHostAddressSpace,
+    pci_range: AddressRange,
+    host_range: AddressRange,
+}
+
+impl PciHostBarRange {
+    pub fn new(
+        function: PciFunctionAddress,
+        bar: PciBarIndex,
+        space: PciHostAddressSpace,
+        pci_base: Address,
+        host_base: Address,
+        size: AccessSize,
+    ) -> Result<Self, PciError> {
+        Ok(Self {
+            function,
+            bar,
+            space,
+            pci_range: AddressRange::new(pci_base, size).map_err(PciError::Memory)?,
+            host_range: AddressRange::new(host_base, size).map_err(PciError::Memory)?,
+        })
+    }
+
+    pub const fn function(&self) -> PciFunctionAddress {
+        self.function
+    }
+
+    pub const fn bar(&self) -> PciBarIndex {
+        self.bar
+    }
+
+    pub const fn space(&self) -> PciHostAddressSpace {
+        self.space
+    }
+
+    pub const fn pci_range(&self) -> AddressRange {
+        self.pci_range
+    }
+
+    pub const fn host_range(&self) -> AddressRange {
+        self.host_range
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciEndpointConfig {
     function: PciFunctionAddress,
@@ -643,19 +747,32 @@ impl PciDecodedConfigAddress {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciHostBridge {
     aperture: PciConfigAperture,
+    address_bases: PciHostAddressBases,
     endpoints: BTreeMap<PciFunctionAddress, PciEndpointConfig>,
 }
 
 impl PciHostBridge {
     pub fn new(aperture: PciConfigAperture) -> Self {
+        Self::with_address_bases(aperture, PciHostAddressBases::zero())
+    }
+
+    pub fn with_address_bases(
+        aperture: PciConfigAperture,
+        address_bases: PciHostAddressBases,
+    ) -> Self {
         Self {
             aperture,
+            address_bases,
             endpoints: BTreeMap::new(),
         }
     }
 
     pub const fn aperture(&self) -> PciConfigAperture {
         self.aperture
+    }
+
+    pub const fn address_bases(&self) -> PciHostAddressBases {
+        self.address_bases
     }
 
     pub fn endpoint(&self, function: PciFunctionAddress) -> Option<&PciEndpointConfig> {
@@ -700,6 +817,40 @@ impl PciHostBridge {
             return Ok(());
         };
         endpoint.write_config(decoded.offset(), data)
+    }
+
+    pub fn active_host_bar_ranges(&self) -> Result<Vec<PciHostBarRange>, PciError> {
+        let mut ranges = Vec::new();
+        for (function, endpoint) in &self.endpoints {
+            for range in endpoint.active_bar_ranges() {
+                let space = host_address_space(range.kind());
+                let host_base = checked_base_plus_offset(
+                    self.address_bases.base_for_space(space),
+                    range.range().start(),
+                )?;
+                let host_range = PciHostBarRange::new(
+                    *function,
+                    range.index(),
+                    space,
+                    range.range().start(),
+                    host_base,
+                    range.range().size(),
+                )?;
+                if let Some(existing) = ranges.iter().find(|existing: &&PciHostBarRange| {
+                    existing.space() == host_range.space()
+                        && existing.host_range().overlaps(host_range.host_range())
+                }) {
+                    return Err(PciError::OverlappingHostBarRange {
+                        existing_function: existing.function(),
+                        existing_bar: existing.bar(),
+                        requested_function: host_range.function(),
+                        requested_bar: host_range.bar(),
+                    });
+                }
+                ranges.push(host_range);
+            }
+        }
+        Ok(ranges)
     }
 }
 
@@ -785,6 +936,16 @@ pub enum PciError {
     },
     DuplicateFunction {
         function: PciFunctionAddress,
+    },
+    HostAddressOverflow {
+        base: Address,
+        offset: Address,
+    },
+    OverlappingHostBarRange {
+        existing_function: PciFunctionAddress,
+        existing_bar: PciBarIndex,
+        requested_function: PciFunctionAddress,
+        requested_bar: PciBarIndex,
     },
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
@@ -892,6 +1053,25 @@ impl fmt::Display for PciError {
             Self::DuplicateFunction { function } => {
                 write!(f, "PCI function {:?} is already registered", function)
             }
+            Self::HostAddressOverflow { base, offset } => write!(
+                f,
+                "PCI host address base {:#x} plus PCI offset {:#x} overflows",
+                base.get(),
+                offset.get()
+            ),
+            Self::OverlappingHostBarRange {
+                existing_function,
+                existing_bar,
+                requested_function,
+                requested_bar,
+            } => write!(
+                f,
+                "PCI host BAR range for {:?} BAR {} overlaps {:?} BAR {}",
+                requested_function,
+                requested_bar.get(),
+                existing_function,
+                existing_bar.get()
+            ),
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,
                 "PCI config write at {:#x} for {} bytes targets read-only state",
@@ -996,6 +1176,23 @@ fn bar_index_for_offset(offset: PciConfigOffset) -> Option<PciBarIndex> {
         return None;
     }
     PciBarIndex::new(((offset - PCI_BAR0_OFFSET) / 4) as u8).ok()
+}
+
+const fn host_address_space(kind: PciBarKind) -> PciHostAddressSpace {
+    match kind {
+        PciBarKind::Memory32 { prefetchable: true } => PciHostAddressSpace::PrefetchableMemory,
+        PciBarKind::Memory32 {
+            prefetchable: false,
+        } => PciHostAddressSpace::Memory,
+        PciBarKind::Io => PciHostAddressSpace::Io,
+    }
+}
+
+fn checked_base_plus_offset(base: Address, offset: Address) -> Result<Address, PciError> {
+    base.get()
+        .checked_add(offset.get())
+        .map(Address::new)
+        .ok_or(PciError::HostAddressOverflow { base, offset })
 }
 
 fn write_u16_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u16) {

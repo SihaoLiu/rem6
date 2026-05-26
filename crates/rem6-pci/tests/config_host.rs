@@ -2,7 +2,7 @@ use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciClassCode, PciConfigAperture,
     PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciError, PciFunctionAddress,
-    PciHostBridge,
+    PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge,
 };
 
 fn storage_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
@@ -19,6 +19,31 @@ fn storage_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
                     prefetchable: false,
                 },
                 AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+}
+
+fn multi_bar_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
+    let mut endpoint = storage_endpoint(function);
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(1).unwrap(),
+                PciBarKind::Memory32 { prefetchable: true },
+                AccessSize::new(0x4000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(2).unwrap(),
+                PciBarKind::Io,
+                AccessSize::new(0x100).unwrap(),
             )
             .unwrap(),
         )
@@ -61,6 +86,116 @@ fn pci_host_ecam_routes_config_accesses_to_registered_endpoint() {
             AccessSize::new(0x2000).unwrap(),
         )
         .unwrap()]
+    );
+}
+
+#[test]
+fn pci_host_maps_active_bar_ranges_into_host_address_spaces() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 1).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+    let function = PciFunctionAddress::new(0, 3, 0).unwrap();
+    host.register_endpoint(multi_bar_endpoint(function))
+        .unwrap();
+
+    let config_range = host.endpoint_config_range(function).unwrap();
+    host.write_config_address(
+        Address::new(config_range.start().get() + 0x10),
+        &0x0000_2000_u32.to_le_bytes(),
+    )
+    .unwrap();
+    host.write_config_address(
+        Address::new(config_range.start().get() + 0x14),
+        &0x0001_0000_u32.to_le_bytes(),
+    )
+    .unwrap();
+    host.write_config_address(
+        Address::new(config_range.start().get() + 0x18),
+        &0x0000_0181_u32.to_le_bytes(),
+    )
+    .unwrap();
+    host.write_config_address(
+        Address::new(config_range.start().get() + 0x04),
+        &0x0003_u16.to_le_bytes(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        host.active_host_bar_ranges().unwrap(),
+        vec![
+            PciHostBarRange::new(
+                function,
+                PciBarIndex::new(0).unwrap(),
+                PciHostAddressSpace::Memory,
+                Address::new(0x0000_2000),
+                Address::new(0x8000_2000),
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+            PciHostBarRange::new(
+                function,
+                PciBarIndex::new(1).unwrap(),
+                PciHostAddressSpace::PrefetchableMemory,
+                Address::new(0x0001_0000),
+                Address::new(0xa001_0000),
+                AccessSize::new(0x4000).unwrap(),
+            )
+            .unwrap(),
+            PciHostBarRange::new(
+                function,
+                PciBarIndex::new(2).unwrap(),
+                PciHostAddressSpace::Io,
+                Address::new(0x0000_0100),
+                Address::new(0x1000_0100),
+                AccessSize::new(0x100).unwrap(),
+            )
+            .unwrap(),
+        ]
+    );
+}
+
+#[test]
+fn pci_host_rejects_overlapping_active_host_bar_ranges() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 1).unwrap();
+    let mut host = PciHostBridge::with_address_bases(
+        aperture,
+        PciHostAddressBases::new(
+            Address::new(0x1000_0000),
+            Address::new(0x8000_0000),
+            Address::new(0xa000_0000),
+        ),
+    );
+    let first = PciFunctionAddress::new(0, 2, 0).unwrap();
+    let second = PciFunctionAddress::new(0, 3, 0).unwrap();
+    host.register_endpoint(storage_endpoint(first)).unwrap();
+    host.register_endpoint(storage_endpoint(second)).unwrap();
+
+    for function in [first, second] {
+        let config_range = host.endpoint_config_range(function).unwrap();
+        host.write_config_address(
+            Address::new(config_range.start().get() + 0x10),
+            &0x0000_2000_u32.to_le_bytes(),
+        )
+        .unwrap();
+        host.write_config_address(
+            Address::new(config_range.start().get() + 0x04),
+            &0x0002_u16.to_le_bytes(),
+        )
+        .unwrap();
+    }
+
+    assert_eq!(
+        host.active_host_bar_ranges(),
+        Err(PciError::OverlappingHostBarRange {
+            existing_function: first,
+            existing_bar: PciBarIndex::new(0).unwrap(),
+            requested_function: second,
+            requested_bar: PciBarIndex::new(0).unwrap(),
+        })
     );
 }
 
