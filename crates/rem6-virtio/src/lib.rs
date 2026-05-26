@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
+use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
 use rem6_mmio::{
     MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse,
@@ -85,6 +85,366 @@ impl VirtioQueueSpec {
     pub const fn notify_config_data(self) -> u16 {
         self.notify_config_data
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtioQueueNotifySpec {
+    queue: VirtioQueueIndex,
+    notify_offset: u16,
+}
+
+impl VirtioQueueNotifySpec {
+    pub const fn new(queue: VirtioQueueIndex, notify_offset: u16) -> Self {
+        Self {
+            queue,
+            notify_offset,
+        }
+    }
+
+    pub const fn queue(self) -> VirtioQueueIndex {
+        self.queue
+    }
+
+    pub const fn notify_offset(self) -> u16 {
+        self.notify_offset
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtioQueueNotification {
+    tick: Tick,
+    queue: VirtioQueueIndex,
+    value: u16,
+    address: Address,
+}
+
+impl VirtioQueueNotification {
+    pub const fn new(tick: Tick, queue: VirtioQueueIndex, value: u16, address: Address) -> Self {
+        Self {
+            tick,
+            queue,
+            value,
+            address,
+        }
+    }
+
+    pub const fn tick(self) -> Tick {
+        self.tick
+    }
+
+    pub const fn queue(self) -> VirtioQueueIndex {
+        self.queue
+    }
+
+    pub const fn value(self) -> u16 {
+        self.value
+    }
+
+    pub const fn address(self) -> Address {
+        self.address
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtioPciNotifyDevice {
+    range: AddressRange,
+    slots: Arc<Vec<VirtioNotifySlot>>,
+    notifications: Arc<Mutex<Vec<VirtioQueueNotification>>>,
+}
+
+impl VirtioPciNotifyDevice {
+    pub fn new(
+        notify_off_multiplier: u32,
+        queues: impl IntoIterator<Item = VirtioQueueNotifySpec>,
+    ) -> Result<Self, VirtioError> {
+        validate_notify_multiplier(notify_off_multiplier)?;
+        let slots = queues
+            .into_iter()
+            .map(|spec| VirtioNotifySlot::new(notify_off_multiplier, spec))
+            .collect::<Result<Vec<_>, _>>()?;
+        if slots.is_empty() {
+            return Err(VirtioError::NoNotifyQueues);
+        }
+        for (index, slot) in slots.iter().enumerate() {
+            if slots
+                .iter()
+                .skip(index + 1)
+                .any(|other| other.queue == slot.queue)
+            {
+                return Err(VirtioError::DuplicateNotifyQueue {
+                    index: slot.queue.get(),
+                });
+            }
+        }
+
+        let length = slots
+            .iter()
+            .map(|slot| slot.address.get() + 2)
+            .max()
+            .unwrap_or(2);
+        Ok(Self {
+            range: AddressRange::new(Address::new(0), AccessSize::new(length).unwrap()).unwrap(),
+            slots: Arc::new(slots),
+            notifications: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub const fn range(&self) -> AddressRange {
+        self.range
+    }
+
+    pub fn notifications(&self) -> Vec<VirtioQueueNotification> {
+        self.notifications
+            .lock()
+            .expect("virtio notify notification lock")
+            .clone()
+    }
+
+    pub fn snapshot(&self) -> VirtioPciNotifySnapshot {
+        VirtioPciNotifySnapshot {
+            notifications: self.notifications(),
+        }
+    }
+
+    pub fn restore(&self, snapshot: &VirtioPciNotifySnapshot) {
+        *self
+            .notifications
+            .lock()
+            .expect("virtio notify notification lock") = snapshot.notifications.clone();
+    }
+
+    pub fn read_local(&self, address: Address, size: AccessSize) -> Result<Vec<u8>, MmioError> {
+        self.read_at(MmioRequestId::new(0), address, size)
+    }
+
+    pub fn write_local(
+        &self,
+        address: Address,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        tick: Tick,
+    ) -> Result<(), MmioError> {
+        let size = AccessSize::new(data.len() as u64).map_err(MmioError::Memory)?;
+        self.write_at(
+            MmioRequestId::new(0),
+            address,
+            size,
+            &data,
+            &byte_mask,
+            tick,
+        )
+    }
+
+    fn read_at(
+        &self,
+        request: MmioRequestId,
+        address: Address,
+        size: AccessSize,
+    ) -> Result<Vec<u8>, MmioError> {
+        self.validate_access_range(request, address, size)?;
+        Err(MmioError::AccessDenied {
+            request,
+            operation: MmioOperation::Read,
+            access: MmioAccess::WriteOnly,
+        })
+    }
+
+    fn write_at(
+        &self,
+        request: MmioRequestId,
+        address: Address,
+        size: AccessSize,
+        data: &[u8],
+        byte_mask: &ByteMask,
+        tick: Tick,
+    ) -> Result<(), MmioError> {
+        self.validate_access_range(request, address, size)?;
+        if size.bytes() != 2 {
+            return Err(MmioError::AccessSizeMismatch {
+                request,
+                expected: 2,
+                actual: size.bytes(),
+            });
+        }
+        if data.len() as u64 != size.bytes() {
+            return Err(MmioError::PayloadSizeMismatch {
+                request,
+                expected: size.bytes(),
+                actual: data.len() as u64,
+            });
+        }
+        if byte_mask.len() != size.bytes() {
+            return Err(MmioError::ByteMaskSizeMismatch {
+                request,
+                expected: size.bytes(),
+                actual: byte_mask.len(),
+            });
+        }
+        if !byte_mask.bits().iter().any(|bit| *bit) {
+            return Ok(());
+        }
+        if !byte_mask.bits().iter().all(|bit| *bit) {
+            return Err(virtio_device_error(
+                request,
+                VirtioError::PartialNotifyWrite,
+            ));
+        }
+
+        let value = le_u16(data);
+        let matching_address = self
+            .slots
+            .iter()
+            .filter(|slot| slot.address == address)
+            .collect::<Vec<_>>();
+        if matching_address.is_empty() {
+            return Err(virtio_device_error(
+                request,
+                VirtioError::NoQueueForNotifyAddress { address },
+            ));
+        }
+        let Some(slot) = matching_address
+            .iter()
+            .find(|slot| slot.queue.get() == value)
+            .copied()
+        else {
+            return Err(virtio_device_error(
+                request,
+                VirtioError::NotifyValueMismatch { address, value },
+            ));
+        };
+
+        self.notifications
+            .lock()
+            .expect("virtio notify notification lock")
+            .push(VirtioQueueNotification::new(
+                tick, slot.queue, value, address,
+            ));
+        Ok(())
+    }
+
+    fn validate_access_range(
+        &self,
+        request: MmioRequestId,
+        address: Address,
+        size: AccessSize,
+    ) -> Result<(), MmioError> {
+        let requested = AddressRange::new(address, size).map_err(MmioError::Memory)?;
+        if !self.range.contains_range(requested) {
+            return Err(MmioError::DeviceBoundaryCrossed {
+                request,
+                device_start: self.range.start(),
+                device_end: self.range.end(),
+                requested_start: requested.start(),
+                requested_end: requested.end(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl MmioDevice for VirtioPciNotifyDevice {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        match request.operation() {
+            MmioOperation::Read => self
+                .read_at(request.id(), request.range().start(), request.size())
+                .map(|data| MmioResponse::completed(request.id(), Some(data))),
+            MmioOperation::Write => {
+                let data = request.data().ok_or(MmioError::MissingWriteData {
+                    request: request.id(),
+                })?;
+                let mask = request.byte_mask().ok_or(MmioError::MissingByteMask {
+                    request: request.id(),
+                })?;
+                self.write_at(
+                    request.id(),
+                    request.range().start(),
+                    request.size(),
+                    data,
+                    mask,
+                    context.now(),
+                )?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+        }
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        match request.operation() {
+            MmioOperation::Read => self
+                .read_at(request.id(), request.range().start(), request.size())
+                .map(|data| MmioResponse::completed(request.id(), Some(data))),
+            MmioOperation::Write => {
+                let data = request.data().ok_or(MmioError::MissingWriteData {
+                    request: request.id(),
+                })?;
+                let mask = request.byte_mask().ok_or(MmioError::MissingByteMask {
+                    request: request.id(),
+                })?;
+                self.write_at(
+                    request.id(),
+                    request.range().start(),
+                    request.size(),
+                    data,
+                    mask,
+                    context.now(),
+                )?;
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioPciNotifySnapshot {
+    notifications: Vec<VirtioQueueNotification>,
+}
+
+impl VirtioPciNotifySnapshot {
+    pub fn notifications(&self) -> &[VirtioQueueNotification] {
+        &self.notifications
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VirtioNotifySlot {
+    queue: VirtioQueueIndex,
+    address: Address,
+}
+
+impl VirtioNotifySlot {
+    fn new(notify_off_multiplier: u32, spec: VirtioQueueNotifySpec) -> Result<Self, VirtioError> {
+        let address = if notify_off_multiplier == 0 {
+            Address::new(0)
+        } else {
+            let offset = u64::from(spec.notify_offset)
+                .checked_mul(u64::from(notify_off_multiplier))
+                .ok_or(VirtioError::NotifyAddressOverflow {
+                    queue: spec.queue.get(),
+                    notify_offset: spec.notify_offset,
+                    notify_off_multiplier,
+                })?;
+            Address::new(offset)
+        };
+        Ok(Self {
+            queue: spec.queue,
+            address,
+        })
+    }
+}
+
+fn validate_notify_multiplier(multiplier: u32) -> Result<(), VirtioError> {
+    if multiplier == 0 || (multiplier.is_power_of_two() && multiplier.is_multiple_of(2)) {
+        return Ok(());
+    }
+    Err(VirtioError::InvalidNotifyMultiplier { multiplier })
 }
 
 #[derive(Clone, Debug)]
@@ -793,6 +1153,26 @@ pub enum VirtioError {
     UnavailableQueue {
         index: u16,
     },
+    InvalidNotifyMultiplier {
+        multiplier: u32,
+    },
+    NoNotifyQueues,
+    DuplicateNotifyQueue {
+        index: u16,
+    },
+    NotifyAddressOverflow {
+        queue: u16,
+        notify_offset: u16,
+        notify_off_multiplier: u32,
+    },
+    PartialNotifyWrite,
+    NoQueueForNotifyAddress {
+        address: Address,
+    },
+    NotifyValueMismatch {
+        address: Address,
+        value: u16,
+    },
 }
 
 impl fmt::Display for VirtioError {
@@ -825,6 +1205,37 @@ impl fmt::Display for VirtioError {
             Self::UnavailableQueue { index } => {
                 write!(formatter, "VirtIO selected unavailable queue {index}")
             }
+            Self::InvalidNotifyMultiplier { multiplier } => write!(
+                formatter,
+                "VirtIO notify_off_multiplier {multiplier} must be 0 or an even power of two"
+            ),
+            Self::NoNotifyQueues => {
+                write!(formatter, "VirtIO notify device must expose at least one queue")
+            }
+            Self::DuplicateNotifyQueue { index } => {
+                write!(formatter, "VirtIO notify queue {index} is declared more than once")
+            }
+            Self::NotifyAddressOverflow {
+                queue,
+                notify_offset,
+                notify_off_multiplier,
+            } => write!(
+                formatter,
+                "VirtIO notify queue {queue} offset {notify_offset} overflows with notify_off_multiplier {notify_off_multiplier}"
+            ),
+            Self::PartialNotifyWrite => {
+                write!(formatter, "VirtIO notify writes require a full 16-bit byte mask")
+            }
+            Self::NoQueueForNotifyAddress { address } => write!(
+                formatter,
+                "VirtIO notify address {:#x} has no queue",
+                address.get()
+            ),
+            Self::NotifyValueMismatch { address, value } => write!(
+                formatter,
+                "VirtIO notify value {value} does not match any queue at address {:#x}",
+                address.get()
+            ),
         }
     }
 }
