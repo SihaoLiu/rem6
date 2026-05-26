@@ -239,6 +239,39 @@ pub(crate) fn collect_parallel_batch_worker_counts_from_timeline(
     )
 }
 
+pub(crate) fn collect_parallel_batch_worker_counts_from_streaks(
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+) -> Vec<WorkloadParallelBatchWorkerCount> {
+    collect_parallel_batch_worker_counts(streaks.iter().map(|streak| {
+        WorkloadParallelBatchWorkerCount::new(
+            streak.partitions().len(),
+            streak.consecutive_batch_count(),
+        )
+    }))
+}
+
+pub(crate) fn collect_strongest_parallel_batch_worker_counts(
+    left: impl IntoIterator<Item = WorkloadParallelBatchWorkerCount>,
+    right: impl IntoIterator<Item = WorkloadParallelBatchWorkerCount>,
+) -> Vec<WorkloadParallelBatchWorkerCount> {
+    let mut by_worker_count = BTreeMap::<usize, usize>::new();
+    for count in left.into_iter().chain(right) {
+        if !count.is_parallel_evidence() {
+            continue;
+        }
+        by_worker_count
+            .entry(count.worker_count())
+            .and_modify(|stored| *stored = (*stored).max(count.batch_count()))
+            .or_insert(count.batch_count());
+    }
+    by_worker_count
+        .into_iter()
+        .map(|(worker_count, batch_count)| {
+            WorkloadParallelBatchWorkerCount::new(worker_count, batch_count)
+        })
+        .collect()
+}
+
 pub(crate) fn collect_parallel_batch_worker_count_tick_summaries(
     records: &[WorkloadParallelBatchTimelineRecord],
 ) -> Vec<(usize, Tick)> {

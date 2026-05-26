@@ -441,6 +441,10 @@ Implementation evidence on 2026-05-26:
   at least two partitions before they can feed derived worker, batch,
   active-partition, or partition-activity contracts. Direct serial summaries no
   longer satisfy natural-parallelism contracts through aggregate counters.
+- Workload full-system batch worker-count summaries now keep the strongest
+  bucket evidence between scoped worker histograms and explicit full-system
+  partition streaks. Reporting APIs therefore cannot understate worker buckets
+  that replay contracts already accept through full-system streak evidence.
 - Workload direct per-partition activity now normalizes dispatch counts without
   worker evidence to zero while preserving remote send and receive evidence.
   A replay artifact can still prove cross-partition communication, but it

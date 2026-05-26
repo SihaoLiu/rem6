@@ -7,7 +7,8 @@ use rem6_kernel::{
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
-    collect_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
+    collect_parallel_batch_worker_counts, collect_parallel_batch_worker_counts_from_streaks,
+    collect_strongest_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
     normalize_partition_set, parallel_batch_active_partition_count,
     parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
@@ -102,7 +103,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_worker_counts(
         &self,
     ) -> Vec<WorkloadParallelBatchWorkerCount> {
-        collect_parallel_batch_worker_counts(
+        let scoped_counts = collect_parallel_batch_worker_counts(
             self.parallel_scheduler_batch_worker_counts
                 .iter()
                 .copied()
@@ -112,7 +113,11 @@ impl WorkloadParallelExecutionSummary {
                         .copied(),
                 )
                 .chain(self.dma_scheduler_batch_worker_counts()),
-        )
+        );
+        let full_system_counts = collect_parallel_batch_worker_counts_from_streaks(
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        );
+        collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
     }
 
     pub fn full_system_parallel_scheduler_batch_count_at_or_above(
