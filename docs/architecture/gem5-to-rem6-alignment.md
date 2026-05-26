@@ -360,7 +360,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 - Partitioned scheduler tests cover deterministic event order, lookahead,
   conservative parallel epochs, worker limits, wait-for graphs, and scheduler
-  snapshots. Progress-monitor tests cover typed livelock diagnostics for
+  snapshots, including prevalidated scheduler checkpoint-bank restore so
+  truncated chunks cannot partially mutate live scheduler frontiers.
+  Progress-monitor tests cover typed livelock diagnostics for
   repeated progress-free transitions, transition-kind accounting, snapshots,
   and useful-work reset of active livelock windows. Scheduler progress tests
   cover worker-recorded progress-free transitions, deterministic batch and run

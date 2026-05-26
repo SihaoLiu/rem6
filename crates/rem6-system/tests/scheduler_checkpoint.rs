@@ -210,6 +210,52 @@ fn host_checkpoint_preserves_scheduler_progress_transition_order_identity() {
 }
 
 #[test]
+fn host_checkpoint_rejects_scheduler_bank_truncated_payload_without_partial_restore() {
+    let component0 = CheckpointComponentId::new("scheduler0").unwrap();
+    let component1 = CheckpointComponentId::new("scheduler1").unwrap();
+    let scheduler0 = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    let scheduler1 = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    let bank = SchedulerCheckpointBank::new([
+        SchedulerCheckpointPort::new(component0.clone(), Arc::clone(&scheduler0)),
+        SchedulerCheckpointPort::new(component1.clone(), Arc::clone(&scheduler1)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component1, "scheduler", vec![1, 0, 0])
+        .unwrap();
+    {
+        let mut scheduler = scheduler0.lock().unwrap();
+        scheduler
+            .schedule_parallel_at(PartitionId::new(0), 7, |_| {})
+            .unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    {
+        let mut scheduler = scheduler1.lock().unwrap();
+        scheduler
+            .schedule_parallel_at(PartitionId::new(1), 9, |_| {})
+            .unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    let before0 = scheduler0.lock().unwrap().snapshot();
+    let before1 = scheduler1.lock().unwrap().snapshot();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(error.component(), Some(&component1));
+    assert_eq!(scheduler0.lock().unwrap().snapshot(), before0);
+    assert_eq!(scheduler1.lock().unwrap().snapshot(), before1);
+}
+
+#[test]
 fn host_checkpoint_rejects_scheduler_worker_limit_mismatch_on_restore() {
     let source_component = CheckpointComponentId::new("scheduler0").unwrap();
     let source_scheduler = Arc::new(Mutex::new(

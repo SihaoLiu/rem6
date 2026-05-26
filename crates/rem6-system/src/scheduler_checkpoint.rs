@@ -91,6 +91,15 @@ impl SchedulerCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<SchedulerCheckpointRecord, SchedulerCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<SchedulerCheckpointRecord, SchedulerCheckpointError> {
         let payload = registry
             .chunk(&self.component, SCHEDULER_CHUNK)
             .ok_or_else(|| SchedulerCheckpointError::MissingChunk {
@@ -98,18 +107,38 @@ impl SchedulerCheckpointPort {
                 name: SCHEDULER_CHUNK.to_string(),
             })?;
         let snapshot = decode_snapshot(&self.component, payload)?;
-        self.scheduler
-            .lock()
-            .expect("scheduler checkpoint lock")
-            .restore_quiescent(&snapshot)
-            .map_err(|error| SchedulerCheckpointError::Scheduler {
-                component: self.component.clone(),
-                error,
-            })?;
         Ok(SchedulerCheckpointRecord::new(
             self.component.clone(),
             snapshot,
         ))
+    }
+
+    fn validate_snapshot(
+        &self,
+        snapshot: &SchedulerSnapshot,
+    ) -> Result<(), SchedulerCheckpointError> {
+        self.scheduler
+            .lock()
+            .expect("scheduler checkpoint lock")
+            .validate_quiescent_restore(snapshot)
+            .map_err(|error| SchedulerCheckpointError::Scheduler {
+                component: self.component.clone(),
+                error,
+            })
+    }
+
+    fn restore_snapshot(
+        &self,
+        snapshot: &SchedulerSnapshot,
+    ) -> Result<(), SchedulerCheckpointError> {
+        self.scheduler
+            .lock()
+            .expect("scheduler checkpoint lock")
+            .restore_quiescent(snapshot)
+            .map_err(|error| SchedulerCheckpointError::Scheduler {
+                component: self.component.clone(),
+                error,
+            })
     }
 }
 
@@ -166,10 +195,19 @@ impl SchedulerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<SchedulerCheckpointRecord>, SchedulerCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            restored.push(record);
+        }
+        Ok(restored)
     }
 }
 

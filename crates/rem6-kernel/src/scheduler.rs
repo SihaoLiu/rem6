@@ -422,6 +422,20 @@ impl PartitionedScheduler {
         &mut self,
         snapshot: &SchedulerSnapshot,
     ) -> Result<(), SchedulerError> {
+        self.validate_quiescent_restore(snapshot)?;
+
+        self.now = snapshot.now;
+        for (queue, partition) in self.partitions.iter_mut().zip(&snapshot.partitions) {
+            queue.restore_quiescent(partition);
+        }
+
+        Ok(())
+    }
+
+    pub fn validate_quiescent_restore(
+        &self,
+        snapshot: &SchedulerSnapshot,
+    ) -> Result<(), SchedulerError> {
         let snapshot_pending = snapshot.total_pending_events();
         if snapshot_pending != 0 {
             return Err(SchedulerError::SnapshotContainsPendingEvents {
@@ -455,11 +469,6 @@ impl PartitionedScheduler {
                 snapshot_max_parallel_workers: snapshot.max_parallel_workers,
                 scheduler_max_parallel_workers: self.max_parallel_workers,
             });
-        }
-
-        self.now = snapshot.now;
-        for (queue, partition) in self.partitions.iter_mut().zip(&snapshot.partitions) {
-            queue.restore_quiescent(partition);
         }
 
         Ok(())
