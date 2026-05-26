@@ -13,6 +13,7 @@ use crate::{
 
 mod batch_timeline;
 mod remote_traffic;
+mod scheduler_summary;
 
 use batch_timeline::validate_scheduler_scope_batch_timeline_evidence;
 pub(crate) use batch_timeline::{
@@ -25,6 +26,7 @@ pub(crate) use remote_traffic::{
     verify_expected_parallel_remote_flow_timings, verify_expected_parallel_remote_flows,
     verify_expected_parallel_remote_sends, verify_expected_parallel_remote_traffic_consistency,
 };
+use scheduler_summary::validate_scheduler_scope_summary;
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 5] = [
     WorkloadParallelRemoteFlowScope::Scheduler,
@@ -846,6 +848,7 @@ pub(crate) fn verify_expected_parallel_scheduler_progress(
     };
 
     for expected in expected_progress {
+        validate_scheduler_scope_summary(summary, expected.scope())?;
         validate_scheduler_scope_batch_timeline_evidence(summary, expected.scope())?;
         let (actual_epoch_count, actual_dispatch_count) = expected.actual_counts(summary);
         if actual_epoch_count < expected.minimum_epoch_count()
@@ -1154,6 +1157,7 @@ pub(crate) fn verify_expected_parallel_scheduler_idle_bounds(
     };
 
     for expected in expected_bounds {
+        validate_scheduler_scope_summary(summary, expected.scope())?;
         let actual_empty_epoch_count = expected.actual_empty_epoch_count(summary);
         if actual_empty_epoch_count > expected.maximum_empty_epoch_count() {
             return Err(WorkloadError::ExpectedParallelSchedulerIdleAboveMaximum {

@@ -947,6 +947,11 @@ pub enum WorkloadError {
         minimum_dispatch_count: usize,
         actual_dispatch_count: usize,
     },
+    InvalidParallelSchedulerSummary {
+        scope: WorkloadParallelSchedulerScope,
+        epoch_count: usize,
+        empty_epoch_count: usize,
+    },
     ExpectedParallelSchedulerIdleAboveMaximum {
         scope: WorkloadParallelSchedulerScope,
         maximum_empty_epoch_count: usize,

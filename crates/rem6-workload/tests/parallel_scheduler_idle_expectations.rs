@@ -198,6 +198,7 @@ fn workload_replay_plan_checks_dma_scheduler_idle_bounds_directly() {
         .unwrap();
 
     let accepted_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(1, 0, 0, [])
         .with_gpu_dma_scheduler_empty_epoch_count(1)
         .with_accelerator_dma_scheduler_empty_epoch_count(0);
     assert_eq!(accepted_summary.gpu_dma_scheduler_empty_epoch_count(), 1);
@@ -210,6 +211,7 @@ fn workload_replay_plan_checks_dma_scheduler_idle_bounds_directly() {
     plan.verify_result(&accepted).unwrap();
 
     let overidle_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(2, 0, 0, [])
         .with_gpu_dma_scheduler_empty_epoch_count(2)
         .with_accelerator_dma_scheduler_empty_epoch_count(0);
     let overidle = WorkloadResult::new(plan.manifest_identity(), 32)
@@ -220,6 +222,35 @@ fn workload_replay_plan_checks_dma_scheduler_idle_bounds_directly() {
             scope: WorkloadParallelSchedulerScope::GpuDmaScheduler,
             maximum_empty_epoch_count: 1,
             actual_empty_epoch_count: 2,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_inconsistent_scheduler_idle_summary() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_idle_bound(idle_bound(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            10,
+        ))
+        .unwrap();
+
+    let invalid_summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(1, 2, 1, 1)
+        .with_data_cache_parallel_counts(1, 1, 1, 1, 1);
+    assert_eq!(
+        invalid_summary.full_system_parallel_scheduler_empty_epoch_count(),
+        2,
+    );
+    let invalid = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(invalid_summary);
+
+    assert_eq!(
+        plan.verify_result(&invalid).unwrap_err(),
+        WorkloadError::InvalidParallelSchedulerSummary {
+            scope: WorkloadParallelSchedulerScope::Scheduler,
+            epoch_count: 1,
+            empty_epoch_count: 2,
         },
     );
 }

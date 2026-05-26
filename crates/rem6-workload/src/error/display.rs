@@ -957,6 +957,15 @@ impl fmt::Display for WorkloadError {
                 "expected {} scheduler progress to reach at least {minimum_epoch_count} epochs and {minimum_dispatch_count} dispatches, got {actual_epoch_count} epochs and {actual_dispatch_count} dispatches",
                 scope.as_str()
             ),
+            Self::InvalidParallelSchedulerSummary {
+                scope,
+                epoch_count,
+                empty_epoch_count,
+            } => write!(
+                formatter,
+                "{} scheduler summary has {empty_epoch_count} empty epochs but only {epoch_count} total epochs",
+                scope.as_str()
+            ),
             Self::ExpectedParallelSchedulerIdleAboveMaximum {
                 scope,
                 maximum_empty_epoch_count,

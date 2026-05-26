@@ -417,6 +417,31 @@ fn workload_replay_plan_rejects_malformed_timeline_for_scheduler_progress() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inconsistent_scheduler_progress_summary() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::Scheduler,
+            1,
+            1,
+        ))
+        .unwrap();
+
+    let invalid_summary =
+        WorkloadParallelExecutionSummary::default().with_scheduler_counts(1, 2, 1, 1);
+    let invalid = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(invalid_summary);
+
+    assert_eq!(
+        plan.verify_result(&invalid).unwrap_err(),
+        WorkloadError::InvalidParallelSchedulerSummary {
+            scope: WorkloadParallelSchedulerScope::Scheduler,
+            epoch_count: 1,
+            empty_epoch_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_uses_stronger_dispatch_evidence_than_aggregate_counts() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("scheduler-progress-prefers-stronger-evidence"),

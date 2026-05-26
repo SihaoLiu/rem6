@@ -387,6 +387,9 @@ Implementation evidence on 2026-05-26:
 - Workload scheduler-progress replay now validates scoped raw batch timeline
   records before deriving dispatch counts from batch summaries, so scheduler
   liveness contracts cannot pass through malformed batch windows.
+- Workload scheduler progress and idle replay now reject scheduler summaries
+  whose empty-epoch count exceeds the total epoch count before applying liveness
+  or idle thresholds.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,
