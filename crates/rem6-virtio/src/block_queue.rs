@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rem6_interrupt::InterruptSourceId;
+use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     PartitionedMemoryStore,
 };
+use rem6_pci::PciLegacyInterruptPort;
 
 use crate::{
     VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
@@ -14,6 +17,35 @@ use crate::{
 pub const VIRTIO_SPLIT_DESC_F_NEXT: u16 = 1;
 pub const VIRTIO_SPLIT_DESC_F_WRITE: u16 = 2;
 pub const VIRTIO_SPLIT_DESC_F_INDIRECT: u16 = 4;
+
+#[derive(Clone, Copy, Debug)]
+pub struct VirtioBlockIntxCompletionTarget<'a> {
+    isr: &'a VirtioPciIsrDevice,
+    port: &'a PciLegacyInterruptPort,
+    source: InterruptSourceId,
+}
+
+impl<'a> VirtioBlockIntxCompletionTarget<'a> {
+    pub const fn new(
+        isr: &'a VirtioPciIsrDevice,
+        port: &'a PciLegacyInterruptPort,
+        source: InterruptSourceId,
+    ) -> Self {
+        Self { isr, port, source }
+    }
+
+    pub const fn isr(self) -> &'a VirtioPciIsrDevice {
+        self.isr
+    }
+
+    pub const fn port(self) -> &'a PciLegacyInterruptPort {
+        self.port
+    }
+
+    pub const fn source(self) -> InterruptSourceId {
+        self.source
+    }
+}
 
 pub struct VirtioGuestMemory<'a> {
     store: &'a mut PartitionedMemoryStore,
@@ -206,6 +238,40 @@ impl VirtioSplitQueue {
     ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
         let writeback = self.complete_block_request(guest, decoded, completion)?;
         isr.raise_queue_interrupt(completion.tick());
+        Ok(writeback)
+    }
+
+    pub fn complete_block_request_and_post_intx(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+        target: VirtioBlockIntxCompletionTarget<'_>,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        let writeback =
+            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        target
+            .port()
+            .post(context, target.source())
+            .map_err(virtio_pci_error)?;
+        Ok(writeback)
+    }
+
+    pub fn complete_block_request_and_post_intx_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+        target: VirtioBlockIntxCompletionTarget<'_>,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        let writeback =
+            self.complete_block_request_and_raise_isr(guest, decoded, completion, target.isr())?;
+        target
+            .port()
+            .post_parallel(context, target.source())
+            .map_err(virtio_pci_error)?;
         Ok(writeback)
     }
 
@@ -886,5 +952,11 @@ fn add_address(address: Address, offset: u64) -> Result<Address, VirtioError> {
 fn virtio_memory_error(error: rem6_memory::MemoryError) -> VirtioError {
     VirtioError::PciTransportRuntimeConfig {
         message: format!("VirtIO guest memory access failed: {error}"),
+    }
+}
+
+fn virtio_pci_error(error: rem6_pci::PciError) -> VirtioError {
+    VirtioError::PciTransportRuntimeConfig {
+        message: format!("VirtIO PCI interrupt delivery failed: {error}"),
     }
 }
