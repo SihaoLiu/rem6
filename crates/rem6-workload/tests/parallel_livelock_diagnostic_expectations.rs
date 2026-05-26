@@ -1,5 +1,8 @@
 use rem6_boot::BootImage;
-use rem6_kernel::{LivelockDiagnostic, LivelockTransitionKind, ProgressMonitor, WaitForNode};
+use rem6_kernel::{
+    LivelockDiagnostic, LivelockTransitionKind, ParallelProgressTransitionRecord, PartitionId,
+    ProgressMonitor, WaitForNode,
+};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedCleanParallelDiagnostics, WorkloadId,
@@ -37,6 +40,16 @@ fn livelock_diagnostic(
             .unwrap();
     }
     monitor.diagnostic(&subject).unwrap()
+}
+
+fn progress_transition(
+    partition: u32,
+    subject: WaitForNode,
+    kind: LivelockTransitionKind,
+    tick: u64,
+    order: u64,
+) -> ParallelProgressTransitionRecord {
+    ParallelProgressTransitionRecord::new(PartitionId::new(partition), subject, kind, tick, order)
 }
 
 fn kernel_resource() -> WorkloadResource {
@@ -631,6 +644,63 @@ fn workload_replay_plan_rejects_livelock_dirty_parallel_diagnostics() {
                 "component:cache-progress-loop".to_string(),
                 "component:cpu-progress-loop".to_string(),
             ],
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_clean_livelock_threshold_breach_from_transitions() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean_with_livelock_threshold(
+            WorkloadParallelDiagnosticScope::FullSystem,
+            3,
+        ))
+        .unwrap();
+    let dirty_subject = component("full-system-retry-loop");
+    let unrelated_subject = component("single-retry-loop");
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_progress_transitions([
+            progress_transition(
+                0,
+                dirty_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                7,
+                0,
+            ),
+            progress_transition(
+                0,
+                dirty_subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                8,
+                1,
+            ),
+            progress_transition(
+                1,
+                unrelated_subject,
+                LivelockTransitionKind::MessageRetry,
+                8,
+                0,
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_progress_transitions([progress_transition(
+            1,
+            dirty_subject,
+            LivelockTransitionKind::MessageRetry,
+            9,
+            0,
+        )]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            wait_for_edge_count: 0,
+            deadlock_diagnostic_count: 0,
+            livelock_diagnostic_count: 1,
+            livelock_subjects: vec!["component:full-system-retry-loop".to_string()],
         },
     );
 }

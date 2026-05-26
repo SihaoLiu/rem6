@@ -246,18 +246,30 @@ pub(crate) fn verify_expected_clean_parallel_diagnostics(
 
     for expected in expected_diagnostics {
         summary.validate_parallel_diagnostic_scope_summary(expected.scope())?;
-        let (wait_for_edge_count, deadlock_diagnostic_count, livelock_diagnostic_count) =
+        let (wait_for_edge_count, deadlock_diagnostic_count, diagnostic_livelock_count) =
             expected.actual_counts(summary);
+        let diagnostic_subjects = actual_livelock_subject_set(expected.scope(), summary);
+        let threshold_subjects = expected
+            .livelock_transition_threshold()
+            .map(|threshold| {
+                transition_threshold_livelock_subjects(expected.scope(), threshold, summary)
+            })
+            .unwrap_or_default();
+        let threshold_only_subject_count =
+            threshold_subjects.difference(&diagnostic_subjects).count();
+        let livelock_diagnostic_count = diagnostic_livelock_count + threshold_only_subject_count;
         if wait_for_edge_count != 0
             || deadlock_diagnostic_count != 0
             || livelock_diagnostic_count != 0
         {
+            let mut livelock_subjects = diagnostic_subjects;
+            livelock_subjects.extend(threshold_subjects);
             return Err(WorkloadError::ExpectedCleanParallelDiagnosticsViolation {
                 scope: expected.scope(),
                 wait_for_edge_count,
                 deadlock_diagnostic_count,
                 livelock_diagnostic_count,
-                livelock_subjects: actual_livelock_subjects(expected.scope(), summary),
+                livelock_subjects: livelock_subjects.into_iter().collect(),
             });
         }
     }
@@ -428,28 +440,50 @@ pub(crate) fn verify_expected_parallel_wait_for_target_node_windows(
     Ok(())
 }
 
-fn actual_livelock_subjects(
+fn actual_livelock_subject_set(
     scope: WorkloadParallelDiagnosticScope,
     summary: &WorkloadParallelExecutionSummary,
-) -> Vec<String> {
+) -> BTreeSet<String> {
     match scope {
         WorkloadParallelDiagnosticScope::DataCache => summary
             .data_cache_parallel_scheduler_livelock_diagnostics()
             .iter()
             .map(|diagnostic| diagnostic.subject().to_string())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
             .collect(),
         WorkloadParallelDiagnosticScope::FullSystem => summary
             .full_system_livelock_diagnostics()
             .into_iter()
             .map(|diagnostic| diagnostic.subject().to_string())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
             .collect(),
         WorkloadParallelDiagnosticScope::Resource
         | WorkloadParallelDiagnosticScope::Compute
-        | WorkloadParallelDiagnosticScope::Dma => Vec::new(),
+        | WorkloadParallelDiagnosticScope::Dma => BTreeSet::new(),
+    }
+}
+
+fn transition_threshold_livelock_subjects(
+    scope: WorkloadParallelDiagnosticScope,
+    threshold: u64,
+    summary: &WorkloadParallelExecutionSummary,
+) -> BTreeSet<String> {
+    match scope {
+        WorkloadParallelDiagnosticScope::DataCache => summary
+            .data_cache_parallel_scheduler_progress_transition_subject_summaries()
+            .into_iter()
+            .filter_map(|(subject, count, _, _)| {
+                ((count as u64) >= threshold).then(|| subject.to_string())
+            })
+            .collect(),
+        WorkloadParallelDiagnosticScope::FullSystem => summary
+            .full_system_progress_transition_subject_summaries()
+            .into_iter()
+            .filter_map(|(subject, count, _, _)| {
+                ((count as u64) >= threshold).then(|| subject.to_string())
+            })
+            .collect(),
+        WorkloadParallelDiagnosticScope::Resource
+        | WorkloadParallelDiagnosticScope::Compute
+        | WorkloadParallelDiagnosticScope::Dma => BTreeSet::new(),
     }
 }
 

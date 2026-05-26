@@ -407,6 +407,11 @@ Implementation evidence on 2026-05-26:
   without weakening same-kind aggregate counts. Adding exact tick-window
   evidence therefore preserves earlier typed wait-for totals instead of
   replacing them with a narrower diagnostic view.
+- Workload clean parallel diagnostic replay now applies declared livelock
+  transition thresholds to raw scoped progress-free transition records. A
+  result with no materialized livelock diagnostic record is still rejected when
+  scheduler or data-cache transition evidence reaches the manifest threshold
+  for a subject in the checked scope.
 - Workload direct batch summaries now apply the same evidence boundary: worker
   histograms require at least two workers, and partition sets or streaks require
   at least two partitions before they can feed derived worker, batch,
