@@ -810,24 +810,24 @@ pub enum WorkloadError {
         actual_safe_until: Option<Tick>,
     },
     InvalidExpectedParallelBatchWorkerCount {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     ZeroExpectedParallelBatchCount {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     DuplicateExpectedParallelBatchActivity {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
     },
     MissingParallelBatchActivitySummary {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_batch_count: usize,
     },
     ExpectedParallelBatchActivityBelowMinimum {
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,
         minimum_batch_count: usize,
         actual_batch_count: usize,

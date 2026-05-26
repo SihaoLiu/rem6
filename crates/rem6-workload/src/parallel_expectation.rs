@@ -1515,17 +1515,18 @@ impl WorkloadExpectedParallelSchedulerIdleBound {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkloadExpectedParallelBatchActivity {
-    scope: WorkloadParallelRemoteFlowScope,
+    scope: WorkloadParallelBatchWorkerScope,
     minimum_worker_count: usize,
     minimum_batch_count: usize,
 }
 
 impl WorkloadExpectedParallelBatchActivity {
     pub fn new(
-        scope: WorkloadParallelRemoteFlowScope,
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
         minimum_worker_count: usize,
         minimum_batch_count: usize,
     ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
         if minimum_worker_count < 2 {
             return Err(WorkloadError::InvalidExpectedParallelBatchWorkerCount {
                 scope,
@@ -1545,7 +1546,7 @@ impl WorkloadExpectedParallelBatchActivity {
         })
     }
 
-    pub const fn scope(self) -> WorkloadParallelRemoteFlowScope {
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
         self.scope
     }
 
@@ -1563,12 +1564,18 @@ impl WorkloadExpectedParallelBatchActivity {
 
     pub(crate) fn actual_batch_count(self, summary: &WorkloadParallelExecutionSummary) -> usize {
         match self.scope {
-            WorkloadParallelRemoteFlowScope::Scheduler => {
+            WorkloadParallelBatchWorkerScope::Scheduler => {
                 summary.parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count)
             }
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
+            WorkloadParallelBatchWorkerScope::DataCacheScheduler => summary
                 .data_cache_parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count),
-            WorkloadParallelRemoteFlowScope::FullSystem => summary
+            WorkloadParallelBatchWorkerScope::GpuDmaScheduler => {
+                summary.gpu_dma_scheduler_batch_count_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_batch_count_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count),
         }
     }

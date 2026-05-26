@@ -43,9 +43,10 @@ isolated bugs:
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
   overlapped CPU and cache work instead of inferring it from aggregate
   counters. Direct DMA scheduler epoch and dispatch progress,
-  active-partition, worker-count, duration-weighted tick, sustained
-  tick-streak, thresholded worker-tick, exact partition-set, and
-  same-partition-set streak contracts use dedicated manifest scopes. Direct GPU
+  active-partition, worker-count, multi-worker batch-activity,
+  duration-weighted tick, sustained tick-streak, thresholded worker-tick, exact
+  partition-set, and same-partition-set streak contracts use dedicated
+  manifest scopes. Direct GPU
   and accelerator DMA per-partition activity contracts now use the DMA
   timeline-derived sets and streaks, and merged full-system partition checks
   include the same per-partition worker and dispatch activity.
@@ -109,7 +110,7 @@ isolated bugs:
   worker-count, exact partition-set, streak, or per-partition evidence, minimum scheduler epoch progress plus dispatch
   progress from the strongest available aggregate counts, batch-histogram,
   exact partition-set, or per-partition evidence, direct GPU and accelerator
-  DMA scheduler max-worker and total-worker activity contracts, per-partition worker and
+  DMA scheduler max-worker, total-worker activity, and batch-activity contracts, per-partition worker and
   dispatch activity derived from exact partition-set histograms or streaks, and
   non-overcounting same-scope activity evidence merges, maximum scheduler empty
   epochs, minimum multi-worker batch counts, exact partition-set batch counts,
@@ -299,9 +300,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| `src/gpu-compute` | `rem6-gpu` | partial | rem6 has GPU command submission, workgroup completion, DMA, traces, summaries, checkpoints with typed pending-DMA request metadata, DMA write requests that inherit copy read-request ordering at a coarse level, and workload-result GPU DMA scheduler batch, exact timeline, worker-count, max-worker, total-worker, worker-tick, partition-set, same-partition-set streak, and per-partition activity evidence captured from recorded read/write scheduler runs, exposed through dedicated batch-timeline, batch-worker, and batch-partition manifest scopes including direct max-worker and total-worker activity contracts, and included in full-system scheduler and partition aggregates. |
+| `src/gpu-compute` | `rem6-gpu` | partial | rem6 has GPU command submission, workgroup completion, DMA, traces, summaries, checkpoints with typed pending-DMA request metadata, DMA write requests that inherit copy read-request ordering at a coarse level, and workload-result GPU DMA scheduler batch, exact timeline, worker-count, max-worker, total-worker, worker-tick, partition-set, same-partition-set streak, and per-partition activity evidence captured from recorded read/write scheduler runs, exposed through dedicated batch-timeline, batch-worker, and batch-partition manifest scopes including direct max-worker, total-worker, and batch-activity contracts, and included in full-system scheduler and partition aggregates. |
 | `src/dev/amdgpu`, `src/dev/hsa` | `rem6-gpu`, future GPU ISA and runtime modules | planned | Full GPU system support needs richer queues, address spaces, interrupts, and ISA-visible state. |
-| NPU-style accelerators, not a single gem5 subtree | `rem6-accelerator` | partial | rem6 already models accelerator engines, command lanes, DMA, summaries, checkpoints with typed pending-DMA request metadata, DMA write requests that inherit copy read-request ordering, and workload-result accelerator DMA scheduler batch, exact timeline, worker-count, max-worker, total-worker, worker-tick, partition-set, same-partition-set streak, and per-partition activity evidence captured from recorded read/write scheduler runs, exposed through dedicated batch-timeline, batch-worker, and batch-partition manifest scopes including direct max-worker and total-worker activity contracts, and included in full-system scheduler and partition aggregates. |
+| NPU-style accelerators, not a single gem5 subtree | `rem6-accelerator` | partial | rem6 already models accelerator engines, command lanes, DMA, summaries, checkpoints with typed pending-DMA request metadata, DMA write requests that inherit copy read-request ordering, and workload-result accelerator DMA scheduler batch, exact timeline, worker-count, max-worker, total-worker, worker-tick, partition-set, same-partition-set streak, and per-partition activity evidence captured from recorded read/write scheduler runs, exposed through dedicated batch-timeline, batch-worker, and batch-partition manifest scopes including direct max-worker, total-worker, and batch-activity contracts, and included in full-system scheduler and partition aggregates. |
 | `src/dev/pci`, `src/dev/virtio`, `src/dev/storage`, `src/dev/net` | future device crates | planned | PCI, block, network, and virtio devices remain required for full-system breadth. |
 | `src/dev/serial`, `src/dev/riscv`, `src/dev/lupio`, `src/dev/i2c` | `rem6-uart`, `rem6-mmio`, `rem6-interrupt`, `rem6-timer`, future device crates | partial | UART, timer, MMIO, interrupts, and an initial RISC-V CLINT model exist. The CLINT path keeps gem5's `msip`, `mtimecmp`, and read-only `mtime` MMIO layout while replacing direct `System::threads` interrupt mutation with typed interrupt ports and scheduler events, including parallel scheduling. CLINT register, timer-assertion, and RTC-driven `mtime` state can be captured and restored through typed snapshots and a system checkpoint bank, platform declarations now attach CLINT MMIO plus host checkpoints automatically, and reset is explicit through `ClintResetPolicy`: `msip` is cleared, asserted software and timer lines are typed deasserted, stale timer events are invalidated, `mtimecmp` is either preserved or reset to a declared value, and RTC-backed `mtime` resets as explicit device state. The default CLINT timebase remains scheduler ticks for compatibility, while `ClintTimebase::RtcDriven` plus `RiscvRtcSource` models gem5's RTC pulse into CLINT `mtime` without hiding the dependency in global time. Platform declarations can now emit typed RISC-V DTS source nodes and deterministic binary FDT/DTB blobs for CPUs, CPU local interrupt controllers, a `soc` simple bus, CLINT `interrupts-extended`, a generic external interrupt controller, UART interrupt-parent wiring, and Linux `/chosen` bootargs plus `linux,initrd-start` and `linux,initrd-end` metadata without Python object recursion or libfdt mutation. System topology can install the generated RISC-V DTB into store-backed or DRAM-backed guest memory and set each hart's A1 register to the DTB address, replacing gem5's external DTB filename side effect with a typed handoff. Richer wall-clock/BCD RTC behavior and other platform devices remain open. |
 | platform-specific device trees under `src/dev/arm`, `src/dev/x86`, `src/dev/mips`, `src/dev/sparc` | future platform crates | planned | These should arrive with the corresponding ISA and platform support. |
@@ -498,7 +499,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   from the strongest available aggregate counts, batch-histogram, exact
   partition-set, or per-partition evidence, direct GPU and accelerator DMA
   scheduler epoch and dispatch progress, direct GPU and accelerator DMA
-  scheduler max-worker, total-worker activity, and idle-bound contracts,
+  scheduler max-worker, total-worker activity, batch-activity, and idle-bound contracts,
   maximum scheduler idle epochs,
   minimum max-worker use derived from the strongest available aggregate,
   worker-count, exact partition-set, or streak evidence, minimum total-worker activity
@@ -615,7 +616,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   CPU/cache/full-system scheduler progress, direct GPU and accelerator DMA
   scheduler progress, direct GPU and accelerator DMA scheduler idle bounds,
   scheduler idle bounds, max-worker use, total-worker
-  activity, CPU/cache/full-system active-partition, direct GPU and accelerator
+  activity, batch activity, CPU/cache/full-system active-partition, direct GPU and accelerator
   DMA active-partition, CPU/cache/full-system per-partition activity, direct
   GPU and accelerator DMA per-partition activity, data-cache run attribution
   contracts, data-cache run-accounting consistency contracts, data-cache

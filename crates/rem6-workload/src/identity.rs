@@ -482,7 +482,7 @@ fn hash_expected_parallel_batch_activity(
     hash: &mut u64,
     expected: WorkloadExpectedParallelBatchActivity,
 ) {
-    hash_parallel_remote_flow_scope(hash, expected.scope());
+    hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_worker_count() as u64);
     hash_u64(hash, expected.minimum_batch_count() as u64);
 }
