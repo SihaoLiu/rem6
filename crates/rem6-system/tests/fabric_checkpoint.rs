@@ -261,6 +261,53 @@ fn host_checkpoint_rejects_duplicate_fabric_lanes_without_mutating_state() {
 }
 
 #[test]
+fn fabric_checkpoint_bank_rejects_truncated_payload_without_partial_restore() {
+    let component0 = CheckpointComponentId::new("fabric0").unwrap();
+    let component1 = CheckpointComponentId::new("fabric1").unwrap();
+    let path = route();
+    let mut live_fabric0 = FabricModel::new();
+    let mut live_fabric1 = FabricModel::new();
+    live_fabric0
+        .transmit(0, packet(1, 8, 1), path.clone())
+        .unwrap();
+    live_fabric1
+        .transmit(0, packet(2, 8, 1), path.clone())
+        .unwrap();
+    let fabric0 = Arc::new(Mutex::new(live_fabric0));
+    let fabric1 = Arc::new(Mutex::new(live_fabric1));
+    let bank = FabricCheckpointBank::new([
+        FabricCheckpointPort::new(component0.clone(), Arc::clone(&fabric0)),
+        FabricCheckpointPort::new(component1.clone(), Arc::clone(&fabric1)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component1, "fabric", vec![1, 2, 3])
+        .unwrap();
+    fabric0
+        .lock()
+        .unwrap()
+        .transmit(20, packet(10, 8, 1), path.clone())
+        .unwrap();
+    fabric1
+        .lock()
+        .unwrap()
+        .transmit(20, packet(11, 8, 1), path)
+        .unwrap();
+    let before0 = fabric0.lock().unwrap().lane_snapshots();
+    let before1 = fabric1.lock().unwrap().lane_snapshots();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(error.component(), Some(&component1));
+    assert_eq!(fabric0.lock().unwrap().lane_snapshots(), before0);
+    assert_eq!(fabric1.lock().unwrap().lane_snapshots(), before1);
+}
+
+#[test]
 fn fabric_checkpoint_bank_rejects_duplicate_components() {
     let component = CheckpointComponentId::new("fabric0").unwrap();
     let fabric = Arc::new(Mutex::new(FabricModel::new()));

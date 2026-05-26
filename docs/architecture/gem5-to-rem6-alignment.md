@@ -403,10 +403,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   cache-controller tests cover atomic responses that capture old bytes before
   masked writes, and memory checkpoint-bank tests cover prevalidated
   multi-store and DRAM memory restore so truncated payloads cannot partially
-  mutate live memory state. Coherence and RISC-V checkpoint-bank tests cover
-  decode-first multi-bank and multi-core restore so malformed chunks cannot
-  partially rewind another live cache bank, architectural PC, or integer
-  register file. RISC-V
+  mutate live memory state. Fabric, coherence, and RISC-V checkpoint-bank tests
+  cover decode-first multi-bank and multi-core restore so malformed chunks
+  cannot partially rewind another live NoC lane frontier, cache bank,
+  architectural PC, or integer register file. RISC-V
   cluster tests cover peer reservation invalidation after a completed overlapping store so a later
   `SC.D` fails instead of overwriting the peer's data. RISC-V topology tests
   cover MSI data-cache snoop invalidation before the peer store response reaches

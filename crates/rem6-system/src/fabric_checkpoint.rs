@@ -73,6 +73,15 @@ impl FabricCheckpointPort {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<FabricCheckpointRecord, FabricCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_lanes(record.lanes())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<FabricCheckpointRecord, FabricCheckpointError> {
         let payload = registry
             .chunk(&self.component, FABRIC_CHUNK)
             .ok_or_else(|| FabricCheckpointError::MissingChunk {
@@ -80,15 +89,28 @@ impl FabricCheckpointPort {
                 name: FABRIC_CHUNK.to_string(),
             })?;
         let lanes = decode_lanes(&self.component, payload)?;
-        self.fabric
-            .lock()
-            .expect("fabric checkpoint lock")
-            .restore_lane_snapshots(lanes.clone())
+        Ok(FabricCheckpointRecord::new(self.component.clone(), lanes))
+    }
+
+    fn validate_lanes(&self, lanes: &[FabricLaneSnapshot]) -> Result<(), FabricCheckpointError> {
+        let mut fabric = self.fabric.lock().expect("fabric checkpoint lock").clone();
+        fabric
+            .restore_lane_snapshots(lanes.iter().cloned())
             .map_err(|error| FabricCheckpointError::Fabric {
                 component: self.component.clone(),
                 error,
-            })?;
-        Ok(FabricCheckpointRecord::new(self.component.clone(), lanes))
+            })
+    }
+
+    fn restore_lanes(&self, lanes: &[FabricLaneSnapshot]) -> Result<(), FabricCheckpointError> {
+        self.fabric
+            .lock()
+            .expect("fabric checkpoint lock")
+            .restore_lane_snapshots(lanes.iter().cloned())
+            .map_err(|error| FabricCheckpointError::Fabric {
+                component: self.component.clone(),
+                error,
+            })
     }
 }
 
@@ -145,10 +167,19 @@ impl FabricCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<FabricCheckpointRecord>, FabricCheckpointError> {
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_lanes(record.lanes())?;
+            decoded.push((port, record));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_lanes(record.lanes())?;
+            restored.push(record);
+        }
+        Ok(restored)
     }
 }
 
