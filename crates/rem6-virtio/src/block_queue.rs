@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
     PartitionedMemoryStore,
 };
 
@@ -72,6 +72,32 @@ impl<'a> VirtioGuestMemory<'a> {
     fn read_u16(&mut self, address: Address) -> Result<u16, VirtioError> {
         let bytes = self.read_exact(address, 2)?;
         Ok(u16::from_le_bytes(bytes.as_slice().try_into().unwrap()))
+    }
+
+    fn write_exact(&mut self, address: Address, bytes: &[u8]) -> Result<(), VirtioError> {
+        let mut cursor = address;
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            let line_remaining = self.line_layout.bytes() - self.line_layout.line_offset(cursor);
+            let chunk = remaining.len().min(line_remaining as usize);
+            let request = MemoryRequest::write(
+                self.next_request_id(),
+                cursor,
+                AccessSize::new(chunk as u64).map_err(virtio_memory_error)?,
+                remaining[..chunk].to_vec(),
+                ByteMask::from_bits(vec![true; chunk]).map_err(virtio_memory_error)?,
+                self.line_layout,
+            )
+            .map_err(virtio_memory_error)?;
+            self.store.respond(&request).map_err(virtio_memory_error)?;
+            cursor = add_address(cursor, chunk as u64)?;
+            remaining = &remaining[chunk..];
+        }
+        Ok(())
+    }
+
+    fn write_u16(&mut self, address: Address, value: u16) -> Result<(), VirtioError> {
+        self.write_exact(address, &value.to_le_bytes())
     }
 
     fn next_request_id(&mut self) -> MemoryRequestId {
@@ -150,6 +176,46 @@ impl VirtioSplitQueue {
         Ok(Some(decoded))
     }
 
+    pub fn complete_block_request(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioBlockDecodedRequest,
+        completion: &VirtioBlockCompletion,
+    ) -> Result<VirtioBlockQueueCompletionWrite, VirtioError> {
+        let used_index = guest.read_u16(add_address(self.used_ring, 2)?)?;
+        let mut used_ring = VirtioSplitUsedRing::new(self.queue_size, used_index)?;
+        let writeback = used_ring.complete_block_request(decoded, completion)?;
+        for write in writeback.data_writes() {
+            self.write_descriptor(guest, write)?;
+        }
+        self.write_descriptor(guest, writeback.status_write())?;
+        guest.write_exact(
+            add_address(self.used_ring, 4 + u64::from(writeback.used_slot()) * 8)?,
+            &writeback.used_element().to_le_bytes(),
+        )?;
+        guest.write_u16(add_address(self.used_ring, 2)?, writeback.used_index())?;
+        Ok(writeback)
+    }
+
+    fn write_descriptor(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        write: &VirtioBlockDescriptorWrite,
+    ) -> Result<(), VirtioError> {
+        let address = write
+            .address()
+            .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+                message: format!(
+                    "VirtIO split descriptor {} has no guest address for writeback",
+                    write.descriptor()
+                ),
+            })?;
+        guest.write_exact(
+            add_address(address, u64::from(write.offset()))?,
+            write.bytes(),
+        )
+    }
+
     fn load_descriptor_chain(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
@@ -197,10 +263,24 @@ impl VirtioSplitQueue {
         }
         let next = (flags & VIRTIO_SPLIT_DESC_F_NEXT != 0).then_some(next);
         if flags & VIRTIO_SPLIT_DESC_F_WRITE != 0 {
-            return Ok(VirtioSplitDescriptor::device_writable(index, length, next));
+            return Ok(VirtioSplitDescriptor {
+                index,
+                address: Some(address),
+                bytes: Vec::new(),
+                length,
+                writable: true,
+                next,
+            });
         }
         let data = guest.read_exact(address, u64::from(length))?;
-        Ok(VirtioSplitDescriptor::device_readable(index, data, next))
+        Ok(VirtioSplitDescriptor {
+            index,
+            address: Some(address),
+            length: data.len() as u32,
+            bytes: data,
+            writable: false,
+            next,
+        })
     }
 }
 
@@ -209,6 +289,7 @@ const VIRTIO_SPLIT_DESCRIPTOR_SIZE: u64 = 16;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VirtioSplitDescriptor {
     index: u16,
+    address: Option<Address>,
     bytes: Vec<u8>,
     length: u32,
     writable: bool,
@@ -219,6 +300,7 @@ impl VirtioSplitDescriptor {
     pub fn device_readable(index: u16, bytes: Vec<u8>, next: Option<u16>) -> Self {
         Self {
             index,
+            address: None,
             length: bytes.len() as u32,
             bytes,
             writable: false,
@@ -229,6 +311,7 @@ impl VirtioSplitDescriptor {
     pub const fn device_writable(index: u16, length: u32, next: Option<u16>) -> Self {
         Self {
             index,
+            address: None,
             bytes: Vec::new(),
             length,
             writable: true,
@@ -238,6 +321,10 @@ impl VirtioSplitDescriptor {
 
     pub const fn index(&self) -> u16 {
         self.index
+    }
+
+    pub const fn address(&self) -> Option<Address> {
+        self.address
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -380,6 +467,7 @@ impl VirtioSplitDescriptorChain {
         Ok(VirtioBlockDecodedRequest {
             request,
             status_descriptor: status.index(),
+            status_descriptor_address: status.address(),
             writable_data_descriptors,
             writable_data_bytes,
             used_length,
@@ -486,6 +574,7 @@ impl VirtioSplitDescriptorChain {
             }
             targets.push(VirtioBlockWritableDescriptor {
                 index: descriptor.index(),
+                address: descriptor.address(),
                 length: descriptor.length(),
             });
         }
@@ -527,6 +616,7 @@ impl VirtioSplitDescriptorChain {
 pub struct VirtioBlockDecodedRequest {
     request: VirtioBlockRequest,
     status_descriptor: u16,
+    status_descriptor_address: Option<Address>,
     writable_data_descriptors: Vec<VirtioBlockWritableDescriptor>,
     writable_data_bytes: u64,
     used_length: u32,
@@ -539,6 +629,10 @@ impl VirtioBlockDecodedRequest {
 
     pub const fn status_descriptor(&self) -> u16 {
         self.status_descriptor
+    }
+
+    pub const fn status_descriptor_address(&self) -> Option<Address> {
+        self.status_descriptor_address
     }
 
     pub const fn writable_data_bytes(&self) -> u64 {
@@ -568,6 +662,7 @@ impl VirtioBlockDecodedRequest {
             let bytes = cursor.len().min(target.length() as usize);
             writes.push(VirtioBlockDescriptorWrite {
                 descriptor: target.index(),
+                address: target.address(),
                 offset: 0,
                 bytes: cursor[..bytes].to_vec(),
             });
@@ -585,12 +680,17 @@ impl VirtioBlockDecodedRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VirtioBlockWritableDescriptor {
     index: u16,
+    address: Option<Address>,
     length: u32,
 }
 
 impl VirtioBlockWritableDescriptor {
     const fn index(self) -> u16 {
         self.index
+    }
+
+    const fn address(self) -> Option<Address> {
+        self.address
     }
 
     const fn length(self) -> u32 {
@@ -601,6 +701,7 @@ impl VirtioBlockWritableDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VirtioBlockDescriptorWrite {
     descriptor: u16,
+    address: Option<Address>,
     offset: u32,
     bytes: Vec<u8>,
 }
@@ -608,6 +709,10 @@ pub struct VirtioBlockDescriptorWrite {
 impl VirtioBlockDescriptorWrite {
     pub const fn descriptor(&self) -> u16 {
         self.descriptor
+    }
+
+    pub const fn address(&self) -> Option<Address> {
+        self.address
     }
 
     pub const fn offset(&self) -> u32 {
@@ -727,6 +832,7 @@ impl VirtioSplitUsedRing {
         let data_writes = decoded.data_writes(completion.data().unwrap_or(&[]))?;
         let status_write = VirtioBlockDescriptorWrite {
             descriptor: decoded.status_descriptor(),
+            address: decoded.status_descriptor_address(),
             offset: 0,
             bytes: vec![completion.status_byte()],
         };
