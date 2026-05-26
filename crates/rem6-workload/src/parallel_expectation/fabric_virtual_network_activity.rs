@@ -12,6 +12,8 @@ pub struct WorkloadExpectedFabricVirtualNetworkActivity {
     minimum_contended_lane_count: usize,
     maximum_queue_delay_ticks: Option<Tick>,
     maximum_max_queue_delay_ticks: Option<Tick>,
+    maximum_active_lane_count: Option<usize>,
+    maximum_contended_lane_count: Option<usize>,
     required_first_tick: Option<Tick>,
     required_last_tick: Option<Tick>,
 }
@@ -41,6 +43,8 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
             minimum_contended_lane_count,
             maximum_queue_delay_ticks: None,
             maximum_max_queue_delay_ticks: None,
+            maximum_active_lane_count: None,
+            maximum_contended_lane_count: None,
             required_first_tick: None,
             required_last_tick: None,
         })
@@ -62,6 +66,25 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
         }
         self.maximum_queue_delay_ticks = Some(maximum_queue_delay_ticks);
         self.maximum_max_queue_delay_ticks = Some(maximum_max_queue_delay_ticks);
+        Ok(self)
+    }
+
+    pub fn with_lane_budget(
+        mut self,
+        maximum_active_lane_count: usize,
+        maximum_contended_lane_count: usize,
+    ) -> Result<Self, WorkloadError> {
+        if maximum_contended_lane_count > maximum_active_lane_count {
+            return Err(
+                WorkloadError::InvalidExpectedFabricVirtualNetworkActivityLaneBudget {
+                    virtual_network: self.virtual_network,
+                    maximum_active_lane_count,
+                    maximum_contended_lane_count,
+                },
+            );
+        }
+        self.maximum_active_lane_count = Some(maximum_active_lane_count);
+        self.maximum_contended_lane_count = Some(maximum_contended_lane_count);
         Ok(self)
     }
 
@@ -124,6 +147,26 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
         self.maximum_max_queue_delay_ticks
     }
 
+    pub const fn lane_budget(self) -> Option<(usize, usize)> {
+        match (
+            self.maximum_active_lane_count,
+            self.maximum_contended_lane_count,
+        ) {
+            (Some(active_lane_count), Some(contended_lane_count)) => {
+                Some((active_lane_count, contended_lane_count))
+            }
+            _ => None,
+        }
+    }
+
+    pub const fn maximum_active_lane_count(self) -> Option<usize> {
+        self.maximum_active_lane_count
+    }
+
+    pub const fn maximum_contended_lane_count(self) -> Option<usize> {
+        self.maximum_contended_lane_count
+    }
+
     pub const fn required_tick_window(self) -> Option<(Tick, Tick)> {
         match (self.required_first_tick, self.required_last_tick) {
             (Some(first_tick), Some(last_tick)) => Some((first_tick, last_tick)),
@@ -162,5 +205,13 @@ impl WorkloadExpectedFabricVirtualNetworkActivity {
             || self
                 .maximum_max_queue_delay_ticks
                 .is_some_and(|maximum| activity.max_queue_delay_ticks() > maximum)
+    }
+
+    pub(crate) fn above_lane_budget(self, activity: &FabricVirtualNetworkActivity) -> bool {
+        self.maximum_active_lane_count
+            .is_some_and(|maximum| activity.active_lane_count() > maximum)
+            || self
+                .maximum_contended_lane_count
+                .is_some_and(|maximum| activity.contended_lane_count() > maximum)
     }
 }

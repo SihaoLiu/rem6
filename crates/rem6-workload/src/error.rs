@@ -1273,6 +1273,11 @@ pub enum WorkloadError {
         maximum_queue_delay_ticks: Tick,
         maximum_max_queue_delay_ticks: Tick,
     },
+    InvalidExpectedFabricVirtualNetworkActivityLaneBudget {
+        virtual_network: VirtualNetworkId,
+        maximum_active_lane_count: usize,
+        maximum_contended_lane_count: usize,
+    },
     MissingFabricVirtualNetworkActivitySummary {
         virtual_network: VirtualNetworkId,
         minimum_transfer_count: usize,
@@ -1303,6 +1308,13 @@ pub enum WorkloadError {
         actual_queue_delay_ticks: Tick,
         maximum_max_queue_delay_ticks: Tick,
         actual_max_queue_delay_ticks: Tick,
+    },
+    ExpectedFabricVirtualNetworkActivityAboveLaneBudget {
+        virtual_network: VirtualNetworkId,
+        maximum_active_lane_count: usize,
+        actual_active_lane_count: usize,
+        maximum_contended_lane_count: usize,
+        actual_contended_lane_count: usize,
     },
     MissingParallelDiagnosticSummary {
         scope: WorkloadParallelDiagnosticScope,

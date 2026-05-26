@@ -358,6 +358,61 @@ fn workload_replay_plan_rejects_overbudget_fabric_virtual_network_queue_delay() 
 }
 
 #[test]
+fn workload_replay_plan_rejects_overbudget_fabric_virtual_network_lane_budget() {
+    let expected = expected_virtual_network_activity(1, 4, 2, 6, 1)
+        .with_lane_budget(2, 1)
+        .unwrap();
+    assert_eq!(expected.lane_budget(), Some((2, 1)));
+    assert_eq!(expected.maximum_active_lane_count(), Some(2));
+    assert_eq!(expected.maximum_contended_lane_count(), Some(1));
+    let plan = replay_plan()
+        .add_expected_fabric_virtual_network_activity(expected)
+        .unwrap();
+
+    let satisfied_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 9, 5, 1, 3, 18,
+        )]);
+    let satisfied = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(satisfied_summary);
+    plan.verify_result(&satisfied).unwrap();
+
+    let over_active_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 3, 5, 160, 15, 9, 5, 1, 3, 18,
+        )]);
+    let over_active = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(over_active_summary);
+    assert_eq!(
+        plan.verify_result(&over_active).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityAboveLaneBudget {
+            virtual_network: vn(1),
+            maximum_active_lane_count: 2,
+            actual_active_lane_count: 3,
+            maximum_contended_lane_count: 1,
+            actual_contended_lane_count: 1,
+        },
+    );
+
+    let over_contended_summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_virtual_network_activities([virtual_network_activity(
+            1, 2, 5, 160, 15, 9, 5, 2, 3, 18,
+        )]);
+    let over_contended = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(over_contended_summary);
+    assert_eq!(
+        plan.verify_result(&over_contended).unwrap_err(),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityAboveLaneBudget {
+            virtual_network: vn(1),
+            maximum_active_lane_count: 2,
+            actual_active_lane_count: 2,
+            maximum_contended_lane_count: 1,
+            actual_contended_lane_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_fabric_virtual_network_queue_budget() {
     let base = rem6_workload::WorkloadManifest::builder(
         id("identity-fabric-virtual-network-budget"),
@@ -395,6 +450,54 @@ fn workload_manifest_identity_changes_with_fabric_virtual_network_queue_budget()
     .add_expected_fabric_virtual_network_activity(
         expected_virtual_network_activity(1, 4, 2, 6, 1)
             .with_queue_delay_budget(8, 5)
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(base.identity(), budgeted.identity());
+    assert_ne!(budgeted.identity(), tighter.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_fabric_virtual_network_lane_budget() {
+    let base = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-lane-budget"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(expected_virtual_network_activity(1, 4, 2, 6, 1))
+    .unwrap()
+    .build()
+    .unwrap();
+    let budgeted = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-lane-budget"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_lane_budget(2, 1)
+            .unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    let tighter = rem6_workload::WorkloadManifest::builder(
+        id("identity-fabric-virtual-network-lane-budget"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_fabric_virtual_network_activity(
+        expected_virtual_network_activity(1, 4, 2, 6, 1)
+            .with_lane_budget(2, 0)
             .unwrap(),
     )
     .unwrap()
@@ -472,6 +575,18 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_fabric_virtual_network_acti
             virtual_network: vn(1),
             first_tick: 9,
             last_tick: 7,
+        },
+    );
+
+    let invalid_lane_budget = expected_virtual_network_activity(1, 1, 1, 0, 0)
+        .with_lane_budget(1, 2)
+        .unwrap_err();
+    assert_eq!(
+        invalid_lane_budget,
+        WorkloadError::InvalidExpectedFabricVirtualNetworkActivityLaneBudget {
+            virtual_network: vn(1),
+            maximum_active_lane_count: 1,
+            maximum_contended_lane_count: 2,
         },
     );
 

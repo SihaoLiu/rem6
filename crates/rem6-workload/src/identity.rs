@@ -769,6 +769,16 @@ fn hash_optional_tick(hash: &mut u64, tick: Option<Tick>) {
     }
 }
 
+fn hash_optional_usize(hash: &mut u64, value: Option<usize>) {
+    match value {
+        Some(value) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, value as u64);
+        }
+        None => hash_u64(hash, 0),
+    }
+}
+
 fn hash_expected_fabric_link_activity(
     hash: &mut u64,
     expected: &WorkloadExpectedFabricLinkActivity,
@@ -798,6 +808,8 @@ fn hash_expected_fabric_virtual_network_activity(
     hash_u64(hash, expected.minimum_contended_lane_count() as u64);
     hash_optional_tick(hash, expected.maximum_queue_delay_ticks());
     hash_optional_tick(hash, expected.maximum_max_queue_delay_ticks());
+    hash_optional_usize(hash, expected.maximum_active_lane_count());
+    hash_optional_usize(hash, expected.maximum_contended_lane_count());
     hash_optional_tick(hash, expected.required_first_tick());
     hash_optional_tick(hash, expected.required_last_tick());
 }

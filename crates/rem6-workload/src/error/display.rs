@@ -1603,9 +1603,11 @@ impl fmt::Display for WorkloadError {
             | Self::DuplicateExpectedFabricVirtualNetworkActivity { .. }
             | Self::InvalidExpectedFabricVirtualNetworkActivityWindow { .. }
             | Self::InvalidExpectedFabricVirtualNetworkActivityQueueDelayBudget { .. }
+            | Self::InvalidExpectedFabricVirtualNetworkActivityLaneBudget { .. }
             | Self::MissingFabricVirtualNetworkActivitySummary { .. }
             | Self::ExpectedFabricVirtualNetworkActivityBelowMinimum { .. }
-            | Self::ExpectedFabricVirtualNetworkActivityAboveMaximum { .. } => {
+            | Self::ExpectedFabricVirtualNetworkActivityAboveMaximum { .. }
+            | Self::ExpectedFabricVirtualNetworkActivityAboveLaneBudget { .. } => {
                 format_fabric_activity_error(self, formatter)
             }
             Self::MissingParallelDiagnosticSummary { scope } => write!(

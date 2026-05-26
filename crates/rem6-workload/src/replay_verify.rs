@@ -1261,6 +1261,21 @@ pub(crate) fn verify_expected_fabric_virtual_network_activity(
                 );
             }
         }
+        if let Some((maximum_active_lane_count, maximum_contended_lane_count)) =
+            expected.lane_budget()
+        {
+            if expected.above_lane_budget(&actual) {
+                return Err(
+                    WorkloadError::ExpectedFabricVirtualNetworkActivityAboveLaneBudget {
+                        virtual_network: expected.virtual_network(),
+                        maximum_active_lane_count,
+                        actual_active_lane_count: actual.active_lane_count(),
+                        maximum_contended_lane_count,
+                        actual_contended_lane_count: actual.contended_lane_count(),
+                    },
+                );
+            }
+        }
     }
     Ok(())
 }

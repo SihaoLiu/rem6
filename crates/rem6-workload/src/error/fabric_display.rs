@@ -210,6 +210,15 @@ pub(super) fn format_fabric_activity_error(
             "expected fabric virtual network {} activity queue-delay budget peak {maximum_max_queue_delay_ticks} is above total {maximum_queue_delay_ticks}",
             virtual_network.get()
         ),
+        WorkloadError::InvalidExpectedFabricVirtualNetworkActivityLaneBudget {
+            virtual_network,
+            maximum_active_lane_count,
+            maximum_contended_lane_count,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity lane budget contended lane count {maximum_contended_lane_count} is above active lane count {maximum_active_lane_count}",
+            virtual_network.get()
+        ),
         WorkloadError::MissingFabricVirtualNetworkActivitySummary {
             virtual_network,
             minimum_transfer_count,
@@ -255,6 +264,17 @@ pub(super) fn format_fabric_activity_error(
         } => write!(
             formatter,
             "expected fabric virtual network {} activity to stay within {maximum_queue_delay_ticks} queue delay ticks and {maximum_max_queue_delay_ticks} maximum queue delay ticks, got {actual_queue_delay_ticks} queue delay ticks and {actual_max_queue_delay_ticks} maximum queue delay ticks",
+            virtual_network.get()
+        ),
+        WorkloadError::ExpectedFabricVirtualNetworkActivityAboveLaneBudget {
+            virtual_network,
+            maximum_active_lane_count,
+            actual_active_lane_count,
+            maximum_contended_lane_count,
+            actual_contended_lane_count,
+        } => write!(
+            formatter,
+            "expected fabric virtual network {} activity to stay within {maximum_active_lane_count} active lanes and {maximum_contended_lane_count} contended lanes, got {actual_active_lane_count} active lanes and {actual_contended_lane_count} contended lanes",
             virtual_network.get()
         ),
         _ => unreachable!("fabric activity formatter called for non-fabric activity error"),
