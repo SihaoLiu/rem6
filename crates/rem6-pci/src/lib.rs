@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -16,6 +17,7 @@ const PCI_TYPE0_HEADER_TYPE: u8 = 0x00;
 const PCI_COMMAND_IO_SPACE: u16 = 0x0001;
 const PCI_COMMAND_MEMORY_SPACE: u16 = 0x0002;
 const PCI_BAR_COUNT: usize = 6;
+const PCI_CONFIG_FUNCTIONS_PER_BUS: u64 = 256;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PciFunctionAddress {
@@ -483,6 +485,224 @@ impl PciEndpointConfigSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PciConfigAperture {
+    base: Address,
+    bus_count: u8,
+    device_bits: u8,
+    range: AddressRange,
+}
+
+impl PciConfigAperture {
+    pub fn cam(base: Address, bus_count: u8) -> Result<Self, PciError> {
+        Self::new(base, bus_count, 8)
+    }
+
+    pub fn ecam(base: Address, bus_count: u8) -> Result<Self, PciError> {
+        Self::new(base, bus_count, 12)
+    }
+
+    pub fn new(base: Address, bus_count: u8, device_bits: u8) -> Result<Self, PciError> {
+        if bus_count == 0 {
+            return Err(PciError::ZeroConfigBuses);
+        }
+        if !(8..=12).contains(&device_bits) {
+            return Err(PciError::InvalidConfigDeviceBits { device_bits });
+        }
+
+        let slot_size = 1_u64 << device_bits;
+        let bytes = (bus_count as u64)
+            .checked_mul(PCI_CONFIG_FUNCTIONS_PER_BUS)
+            .and_then(|slots| slots.checked_mul(slot_size))
+            .ok_or(PciError::ConfigApertureSizeOverflow {
+                bus_count,
+                device_bits,
+            })?;
+        let size = AccessSize::new(bytes).map_err(PciError::Memory)?;
+        let range = AddressRange::new(base, size).map_err(PciError::Memory)?;
+        Ok(Self {
+            base,
+            bus_count,
+            device_bits,
+            range,
+        })
+    }
+
+    pub const fn base(self) -> Address {
+        self.base
+    }
+
+    pub const fn bus_count(self) -> u8 {
+        self.bus_count
+    }
+
+    pub const fn device_bits(self) -> u8 {
+        self.device_bits
+    }
+
+    pub const fn range(self) -> AddressRange {
+        self.range
+    }
+
+    pub fn endpoint_config_range(
+        self,
+        function: PciFunctionAddress,
+    ) -> Result<AddressRange, PciError> {
+        self.validate_function(function)?;
+        AddressRange::new(
+            Address::new(self.function_base(function)?),
+            AccessSize::new(1_u64 << self.device_bits).map_err(PciError::Memory)?,
+        )
+        .map_err(PciError::Memory)
+    }
+
+    pub fn config_address(
+        self,
+        function: PciFunctionAddress,
+        offset: PciConfigOffset,
+    ) -> Result<Address, PciError> {
+        self.validate_function(function)?;
+        self.function_base(function)?
+            .checked_add(offset.get() as u64)
+            .map(Address::new)
+            .ok_or(PciError::ConfigApertureSizeOverflow {
+                bus_count: self.bus_count,
+                device_bits: self.device_bits,
+            })
+    }
+
+    pub fn decode(self, address: Address) -> Result<PciDecodedConfigAddress, PciError> {
+        if !self.range.contains(address) {
+            return Err(PciError::ConfigAddressOutsideAperture {
+                address,
+                range: self.range,
+            });
+        }
+
+        let relative = address.get() - self.base.get();
+        let slot_offset_mask = (1_u64 << self.device_bits) - 1;
+        let raw_offset = relative & slot_offset_mask;
+        if raw_offset >= PCI_CONFIG_SPACE_SIZE as u64 {
+            return Err(PciError::UnsupportedConfigAddressOffset {
+                address,
+                raw_offset,
+                device_bits: self.device_bits,
+            });
+        }
+
+        let slot = relative >> self.device_bits;
+        let bus = (slot >> 8) as u8;
+        let device = ((slot >> 3) & 0x1f) as u8;
+        let function = (slot & 0x7) as u8;
+        Ok(PciDecodedConfigAddress {
+            function: PciFunctionAddress::new(bus, device, function)
+                .expect("decoded PCI function address"),
+            offset: PciConfigOffset::new(raw_offset as u16).expect("decoded PCI config offset"),
+        })
+    }
+
+    fn validate_function(self, function: PciFunctionAddress) -> Result<(), PciError> {
+        if function.bus() >= self.bus_count {
+            return Err(PciError::FunctionOutsideAperture {
+                function,
+                bus_count: self.bus_count,
+            });
+        }
+        Ok(())
+    }
+
+    fn function_base(self, function: PciFunctionAddress) -> Result<u64, PciError> {
+        let slot = ((function.bus() as u64) << 8)
+            | ((function.device() as u64) << 3)
+            | function.function() as u64;
+        self.base.get().checked_add(slot << self.device_bits).ok_or(
+            PciError::ConfigApertureSizeOverflow {
+                bus_count: self.bus_count,
+                device_bits: self.device_bits,
+            },
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PciDecodedConfigAddress {
+    function: PciFunctionAddress,
+    offset: PciConfigOffset,
+}
+
+impl PciDecodedConfigAddress {
+    pub const fn function(self) -> PciFunctionAddress {
+        self.function
+    }
+
+    pub const fn offset(self) -> PciConfigOffset {
+        self.offset
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciHostBridge {
+    aperture: PciConfigAperture,
+    endpoints: BTreeMap<PciFunctionAddress, PciEndpointConfig>,
+}
+
+impl PciHostBridge {
+    pub fn new(aperture: PciConfigAperture) -> Self {
+        Self {
+            aperture,
+            endpoints: BTreeMap::new(),
+        }
+    }
+
+    pub const fn aperture(&self) -> PciConfigAperture {
+        self.aperture
+    }
+
+    pub fn endpoint(&self, function: PciFunctionAddress) -> Option<&PciEndpointConfig> {
+        self.endpoints.get(&function)
+    }
+
+    pub fn endpoint_config_range(
+        &self,
+        function: PciFunctionAddress,
+    ) -> Result<AddressRange, PciError> {
+        self.aperture.endpoint_config_range(function)
+    }
+
+    pub fn register_endpoint(&mut self, endpoint: PciEndpointConfig) -> Result<(), PciError> {
+        let function = endpoint.function();
+        self.aperture.validate_function(function)?;
+        if self.endpoints.contains_key(&function) {
+            return Err(PciError::DuplicateFunction { function });
+        }
+        self.endpoints.insert(function, endpoint);
+        Ok(())
+    }
+
+    pub fn read_config_address(
+        &self,
+        address: Address,
+        size: AccessSize,
+    ) -> Result<Vec<u8>, PciError> {
+        let decoded = self.aperture.decode(address)?;
+        config_span(decoded.offset(), size)?;
+        let Some(endpoint) = self.endpoint(decoded.function()) else {
+            return Ok(vec![0xff; size.bytes() as usize]);
+        };
+        endpoint.read_config(decoded.offset(), size)
+    }
+
+    pub fn write_config_address(&mut self, address: Address, data: &[u8]) -> Result<(), PciError> {
+        let decoded = self.aperture.decode(address)?;
+        let size = access_size_from_len(data.len())?;
+        config_span(decoded.offset(), size)?;
+        let Some(endpoint) = self.endpoints.get_mut(&decoded.function()) else {
+            return Ok(());
+        };
+        endpoint.write_config(decoded.offset(), data)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PciBarState {
     spec: PciBarSpec,
@@ -541,6 +761,30 @@ pub enum PciError {
     ConfigAccessOutOfRange {
         offset: PciConfigOffset,
         size: AccessSize,
+    },
+    ZeroConfigBuses,
+    InvalidConfigDeviceBits {
+        device_bits: u8,
+    },
+    ConfigApertureSizeOverflow {
+        bus_count: u8,
+        device_bits: u8,
+    },
+    FunctionOutsideAperture {
+        function: PciFunctionAddress,
+        bus_count: u8,
+    },
+    ConfigAddressOutsideAperture {
+        address: Address,
+        range: AddressRange,
+    },
+    UnsupportedConfigAddressOffset {
+        address: Address,
+        raw_offset: u64,
+        device_bits: u8,
+    },
+    DuplicateFunction {
+        function: PciFunctionAddress,
     },
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
@@ -607,6 +851,47 @@ impl fmt::Display for PciError {
                 offset.get(),
                 size.bytes()
             ),
+            Self::ZeroConfigBuses => write!(f, "PCI config aperture must cover at least one bus"),
+            Self::InvalidConfigDeviceBits { device_bits } => write!(
+                f,
+                "PCI config aperture device bits {device_bits} are outside 8..=12"
+            ),
+            Self::ConfigApertureSizeOverflow {
+                bus_count,
+                device_bits,
+            } => write!(
+                f,
+                "PCI config aperture for {bus_count} buses and {device_bits} device bits overflows"
+            ),
+            Self::FunctionOutsideAperture {
+                function,
+                bus_count,
+            } => write!(
+                f,
+                "PCI function {:?} is outside config aperture bus count {}",
+                function, bus_count
+            ),
+            Self::ConfigAddressOutsideAperture { address, range } => write!(
+                f,
+                "PCI config address {:#x} is outside aperture {:#x}..{:#x}",
+                address.get(),
+                range.start().get(),
+                range.end().get()
+            ),
+            Self::UnsupportedConfigAddressOffset {
+                address,
+                raw_offset,
+                device_bits,
+            } => write!(
+                f,
+                "PCI config address {:#x} decodes to unsupported offset {:#x} with {} device bits",
+                address.get(),
+                raw_offset,
+                device_bits
+            ),
+            Self::DuplicateFunction { function } => {
+                write!(f, "PCI function {:?} is already registered", function)
+            }
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,
                 "PCI config write at {:#x} for {} bytes targets read-only state",
