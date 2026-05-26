@@ -96,8 +96,8 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
         WorkloadParallelBatchScope::DataCacheScheduler,
         4,
         8,
-        [partition(2)],
-        1,
+        [partition(2), partition(3)],
+        2,
     );
     let full_system_scheduler = expected_timeline(
         WorkloadParallelBatchTimelineScope::FullSystem,
@@ -112,8 +112,8 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
         WorkloadParallelBatchScope::DataCacheScheduler,
         4,
         8,
-        [partition(2)],
-        1,
+        [partition(2), partition(3)],
+        2,
     );
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("manifest-batch-timeline"), boot_image())
@@ -167,8 +167,8 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
             WorkloadParallelBatchScope::DataCacheScheduler,
             4,
             8,
-            [partition(2)],
-            1,
+            [partition(2), partition(3)],
+            2,
         )]);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
@@ -190,8 +190,8 @@ fn workload_replay_plan_checks_dma_scheduler_parallel_batch_timelines_directly()
         WorkloadParallelBatchScope::AcceleratorDmaScheduler,
         12,
         18,
-        [partition(5)],
-        1,
+        [partition(5), partition(6)],
+        2,
     );
     let plan = replay_plan()
         .add_expected_parallel_batch_timeline_record(gpu_dma.clone())
@@ -210,8 +210,8 @@ fn workload_replay_plan_checks_dma_scheduler_parallel_batch_timelines_directly()
             WorkloadParallelBatchScope::AcceleratorDmaScheduler,
             12,
             18,
-            [partition(5)],
-            1,
+            [partition(5), partition(6)],
+            2,
         )]);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
@@ -273,8 +273,8 @@ fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations(
                 WorkloadParallelBatchScope::Scheduler,
                 4,
                 8,
-                [partition(0)],
-                1,
+                [partition(0), partition(1)],
+                2,
             ))
             .unwrap()
             .build()
@@ -289,8 +289,8 @@ fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations(
                 WorkloadParallelBatchScope::Scheduler,
                 8,
                 12,
-                [partition(0)],
-                1,
+                [partition(0), partition(1)],
+                2,
             ))
             .unwrap()
             .build()
@@ -308,8 +308,8 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
             WorkloadParallelBatchScope::Scheduler,
             0,
             4,
-            [partition(0)],
-            1,
+            [partition(0), partition(1)],
+            2,
         ))
         .unwrap();
 
@@ -321,8 +321,8 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
-            partitions: vec![0],
-            worker_count: 1,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 
@@ -331,8 +331,8 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
             WorkloadParallelBatchScope::Scheduler,
             4,
             8,
-            [partition(0)],
-            1,
+            [partition(0), partition(1)],
+            2,
         )]);
     let wrong = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_parallel_execution_summary(wrong_timeline);
@@ -343,8 +343,8 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
-            partitions: vec![0],
-            worker_count: 1,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 
@@ -354,8 +354,8 @@ fn workload_replay_plan_rejects_missing_or_unexpected_parallel_batch_timeline_re
                 WorkloadParallelBatchScope::Scheduler,
                 0,
                 4,
-                [partition(0)],
-                1,
+                [partition(0), partition(1)],
+                2,
             ),
             timeline_record(
                 WorkloadParallelBatchScope::Scheduler,
@@ -388,8 +388,8 @@ fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records
             WorkloadParallelBatchScope::Scheduler,
             0,
             4,
-            [partition(0)],
-            1,
+            [partition(0), partition(1)],
+            2,
         ))
         .unwrap();
     let duplicate_timeline = WorkloadParallelExecutionSummary::default()
@@ -398,15 +398,15 @@ fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records
                 WorkloadParallelBatchScope::Scheduler,
                 0,
                 4,
-                [partition(0)],
-                1,
+                [partition(0), partition(1)],
+                2,
             ),
             timeline_record(
                 WorkloadParallelBatchScope::Scheduler,
                 0,
                 4,
-                [partition(0)],
-                1,
+                [partition(0), partition(1)],
+                2,
             ),
         ]);
     let duplicate = WorkloadResult::new(plan.manifest_identity(), 32)
@@ -419,8 +419,8 @@ fn workload_replay_plan_rejects_duplicate_actual_parallel_batch_timeline_records
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
-            partitions: vec![0],
-            worker_count: 1,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 }
@@ -447,13 +447,53 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_rec
         },
     );
 
-    let expected = expected_timeline(
+    let one_worker = WorkloadExpectedParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchTimelineScope::Scheduler,
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        1,
+    );
+    assert_eq!(
+        one_worker.unwrap_err(),
+        WorkloadError::InvalidExpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 0,
+            horizon: 4,
+            partitions: vec![0, 1],
+            worker_count: 1,
+        },
+    );
+
+    let one_partition = WorkloadExpectedParallelBatchTimelineRecord::new(
         WorkloadParallelBatchTimelineScope::Scheduler,
         WorkloadParallelBatchScope::Scheduler,
         0,
         4,
         [partition(0)],
-        1,
+        2,
+    );
+    assert_eq!(
+        one_partition.unwrap_err(),
+        WorkloadError::InvalidExpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::Scheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 0,
+            horizon: 4,
+            partitions: vec![0],
+            worker_count: 2,
+        },
+    );
+
+    let expected = expected_timeline(
+        WorkloadParallelBatchTimelineScope::Scheduler,
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
     );
     assert_eq!(
         replay_plan()
@@ -466,8 +506,8 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_timeline_rec
             batch_scope: WorkloadParallelBatchScope::Scheduler,
             start_tick: 0,
             horizon: 4,
-            partitions: vec![0],
-            worker_count: 1,
+            partitions: vec![0, 1],
+            worker_count: 2,
         },
     );
 }

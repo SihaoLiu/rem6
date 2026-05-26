@@ -42,7 +42,9 @@ isolated bugs:
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
   overlapped CPU and cache work instead of inferring it from aggregate
-  counters. Direct DMA scheduler epoch and dispatch progress,
+  counters. Manifest-declared exact batch timeline expectations reject
+  one-worker or one-partition records, so timeline evidence cannot be satisfied
+  by serial occupancy. Direct DMA scheduler epoch and dispatch progress,
   active-partition, worker-count, multi-worker batch-activity,
   initial/final frontier, duration-weighted tick, sustained tick-streak,
   thresholded worker-tick, exact partition-set, and same-partition-set streak
@@ -338,6 +340,10 @@ Implementation evidence on 2026-05-26:
 - Workload parallel partition-use expectations now reject one-partition
   thresholds, so a declared active-partition contract must prove at least two
   independently active scheduler partitions.
+- Workload parallel batch timeline expectations now reject one-worker or
+  one-partition records. Exact timeline contracts must prove at least two
+  workers spanning at least two scheduler partitions before replay accepts them
+  as parallel evidence.
 - `rem6-cpu` RISC-V cluster scheduler epochs and runs now expose
   kernel-recorded progress-free transition records, transition-kind counts, and
   progress-monitor snapshots at CPU scheduler scope. `rem6-system` consumes
