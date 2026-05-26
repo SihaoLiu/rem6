@@ -24,8 +24,8 @@ use crate::parallel_batch::{
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flow_evidence,
     collect_parallel_remote_flows, collect_parallel_remote_sends, collect_partition_frontiers,
-    collect_priority_summaries, collect_requestor_summaries, parallel_remote_flow_evidence_count,
-    parallel_remote_send_count,
+    collect_priority_summaries, collect_requestor_summaries, is_parallel_remote_send_evidence,
+    parallel_remote_flow_evidence_count, parallel_remote_send_count,
 };
 use crate::result_partition_activity::{
     merge_parallel_partition_activity_evidence_options, parallel_active_partition_count,
@@ -964,7 +964,10 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn has_parallel_scheduler_remote_sends(&self) -> bool {
-        !self.parallel_scheduler_remote_sends.is_empty()
+        self.parallel_scheduler_remote_sends
+            .iter()
+            .copied()
+            .any(is_parallel_remote_send_evidence)
     }
 
     pub fn parallel_scheduler_initial_frontiers(&self) -> &[PartitionFrontier] {

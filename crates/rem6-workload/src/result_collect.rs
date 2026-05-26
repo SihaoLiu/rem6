@@ -44,13 +44,21 @@ pub(crate) fn collect_parallel_remote_flows(
     by_route.into_values().collect()
 }
 
+pub(crate) fn is_parallel_remote_flow_evidence(flow: ParallelRemoteFlowRecord) -> bool {
+    flow.send_count() != 0 && flow.source() != flow.target()
+}
+
+pub(crate) fn is_parallel_remote_send_evidence(send: ParallelRemoteSendRecord) -> bool {
+    send.source() != send.target()
+}
+
 pub(crate) fn collect_parallel_remote_flow_evidence(
     flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
     sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
 ) -> Vec<ParallelRemoteFlowRecord> {
     let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
     for flow in flows {
-        if flow.send_count() == 0 {
+        if !is_parallel_remote_flow_evidence(flow) {
             continue;
         }
         let route = (flow.source(), flow.target());
@@ -61,6 +69,9 @@ pub(crate) fn collect_parallel_remote_flow_evidence(
     }
     let mut send_flows = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
     for send in sends {
+        if !is_parallel_remote_send_evidence(send) {
+            continue;
+        }
         let route = (send.source(), send.target());
         let flow = parallel_remote_flow_from_send(send);
         send_flows
@@ -212,7 +223,11 @@ pub(crate) fn parallel_remote_send_count(
 ) -> usize {
     sends
         .iter()
-        .filter(|send| send.source() == source && send.target() == target)
+        .filter(|send| {
+            is_parallel_remote_send_evidence(**send)
+                && send.source() == source
+                && send.target() == target
+        })
         .count()
 }
 
@@ -222,12 +237,14 @@ pub(crate) fn collect_parallel_remote_source_partitions(
 ) -> Vec<PartitionId> {
     let mut partitions = BTreeSet::new();
     for flow in flows {
-        if flow.send_count() != 0 {
+        if is_parallel_remote_flow_evidence(flow) {
             partitions.insert(flow.source());
         }
     }
     for send in sends {
-        partitions.insert(send.source());
+        if is_parallel_remote_send_evidence(send) {
+            partitions.insert(send.source());
+        }
     }
     partitions.into_iter().collect()
 }
@@ -238,12 +255,14 @@ pub(crate) fn collect_parallel_remote_target_partitions(
 ) -> Vec<PartitionId> {
     let mut partitions = BTreeSet::new();
     for flow in flows {
-        if flow.send_count() != 0 {
+        if is_parallel_remote_flow_evidence(flow) {
             partitions.insert(flow.target());
         }
     }
     for send in sends {
-        partitions.insert(send.target());
+        if is_parallel_remote_send_evidence(send) {
+            partitions.insert(send.target());
+        }
     }
     partitions.into_iter().collect()
 }

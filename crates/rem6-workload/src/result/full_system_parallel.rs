@@ -17,8 +17,9 @@ use crate::parallel_batch::{
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
-    collect_parallel_remote_flows, collect_parallel_remote_sends,
-    parallel_remote_flow_evidence_count, parallel_remote_send_count,
+    collect_parallel_remote_flows, collect_parallel_remote_sends, is_parallel_remote_flow_evidence,
+    is_parallel_remote_send_evidence, parallel_remote_flow_evidence_count,
+    parallel_remote_send_count,
 };
 use crate::result_partition_activity::{
     combined_parallel_active_partition_count, merge_parallel_partition_activity_evidence_options,
@@ -405,12 +406,16 @@ impl WorkloadParallelExecutionSummary {
                 .map(|(partition, _)| *partition),
         );
         for flow in self.full_system_parallel_scheduler_remote_flows() {
-            partitions.insert(flow.source());
-            partitions.insert(flow.target());
+            if is_parallel_remote_flow_evidence(flow) {
+                partitions.insert(flow.source());
+                partitions.insert(flow.target());
+            }
         }
         for send in self.full_system_parallel_scheduler_remote_sends() {
-            partitions.insert(send.source());
-            partitions.insert(send.target());
+            if is_parallel_remote_send_evidence(send) {
+                partitions.insert(send.source());
+                partitions.insert(send.target());
+            }
         }
         partitions.len()
     }

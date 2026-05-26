@@ -12,7 +12,8 @@ use crate::parallel_batch::{
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_remote_flow_evidence,
     collect_parallel_remote_flows, collect_parallel_remote_sends, collect_partition_frontiers,
-    parallel_remote_flow_evidence_count, parallel_remote_send_count,
+    is_parallel_remote_send_evidence, parallel_remote_flow_evidence_count,
+    parallel_remote_send_count,
 };
 
 use super::{
@@ -364,7 +365,10 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn has_gpu_dma_scheduler_remote_sends(&self) -> bool {
-        !self.gpu_dma_scheduler_remote_sends.is_empty()
+        self.gpu_dma_scheduler_remote_sends
+            .iter()
+            .copied()
+            .any(is_parallel_remote_send_evidence)
     }
 
     pub const fn has_gpu_dma_activity(&self) -> bool {
@@ -740,7 +744,10 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn has_accelerator_dma_scheduler_remote_sends(&self) -> bool {
-        !self.accelerator_dma_scheduler_remote_sends.is_empty()
+        self.accelerator_dma_scheduler_remote_sends
+            .iter()
+            .copied()
+            .any(is_parallel_remote_send_evidence)
     }
 
     pub const fn has_accelerator_dma_activity(&self) -> bool {

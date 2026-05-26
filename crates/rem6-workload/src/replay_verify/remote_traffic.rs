@@ -422,6 +422,10 @@ fn validate_remote_flow_scope_evidence(
     scope: WorkloadParallelRemoteFlowScope,
 ) -> Result<(), WorkloadError> {
     validate_remote_send_scope_evidence(summary, scope)?;
+    let explicit_flows = explicit_parallel_remote_flows_for_scope(summary, scope);
+    for flow in explicit_flows {
+        validate_remote_traffic_flow_evidence(scope, flow)?;
+    }
     let flows = actual_parallel_remote_flows_for_scope(summary, scope);
     for flow in flows {
         validate_remote_traffic_flow_evidence(scope, flow)?;

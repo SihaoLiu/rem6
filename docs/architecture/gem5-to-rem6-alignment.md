@@ -398,6 +398,12 @@ Implementation evidence on 2026-05-26:
   aggregate remote-flow evidence too. A replayed aggregate remote flow must
   cross partitions, must have an ordered first/last tick window, and must not
   report inverted delay bounds.
+- Workload result summaries keep raw same-partition remote traffic available
+  for replay validation, but exclude it from derived remote-flow evidence,
+  remote-send counts, endpoint sets, active-partition counts, per-partition
+  activity, and work flags. Local records therefore remain auditable invalid
+  actual evidence without satisfying natural parallelism through secondary
+  summaries.
 - Workload exact remote-send, exact remote-flow, flow-timing, endpoint, and
   remote-delay verifier paths now apply the same actual remote evidence
   structural checks before matching or deriving observations, so malformed

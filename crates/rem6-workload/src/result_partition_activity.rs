@@ -4,6 +4,8 @@ use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId,
 };
 
+use crate::result_collect::{is_parallel_remote_flow_evidence, is_parallel_remote_send_evidence};
+
 pub(crate) fn parallel_active_partition_count(
     activities: &[(PartitionId, ParallelPartitionActivity)],
     flows: &[ParallelRemoteFlowRecord],
@@ -111,12 +113,16 @@ fn collect_active_partitions(
 ) {
     partitions.extend(activities.iter().map(|(partition, _)| *partition));
     for flow in flows {
-        partitions.insert(flow.source());
-        partitions.insert(flow.target());
+        if is_parallel_remote_flow_evidence(*flow) {
+            partitions.insert(flow.source());
+            partitions.insert(flow.target());
+        }
     }
     for send in sends {
-        partitions.insert(send.source());
-        partitions.insert(send.target());
+        if is_parallel_remote_send_evidence(*send) {
+            partitions.insert(send.source());
+            partitions.insert(send.target());
+        }
     }
 }
 
@@ -126,12 +132,12 @@ fn parallel_remote_flow_partition_activity(
 ) -> Option<ParallelPartitionActivity> {
     let remote_send_count: usize = flows
         .iter()
-        .filter(|flow| flow.source() == partition)
+        .filter(|flow| is_parallel_remote_flow_evidence(**flow) && flow.source() == partition)
         .map(|flow| flow.send_count())
         .sum();
     let remote_receive_count: usize = flows
         .iter()
-        .filter(|flow| flow.target() == partition)
+        .filter(|flow| is_parallel_remote_flow_evidence(**flow) && flow.target() == partition)
         .map(|flow| flow.send_count())
         .sum();
     if remote_send_count == 0 && remote_receive_count == 0 {
@@ -152,11 +158,11 @@ fn parallel_remote_send_partition_activity(
 ) -> Option<ParallelPartitionActivity> {
     let remote_send_count = sends
         .iter()
-        .filter(|send| send.source() == partition)
+        .filter(|send| is_parallel_remote_send_evidence(**send) && send.source() == partition)
         .count();
     let remote_receive_count = sends
         .iter()
-        .filter(|send| send.target() == partition)
+        .filter(|send| is_parallel_remote_send_evidence(**send) && send.target() == partition)
         .count();
     if remote_send_count == 0 && remote_receive_count == 0 {
         return None;
