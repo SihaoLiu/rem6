@@ -9,6 +9,13 @@ use rem6_mmio::{
     MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse,
 };
 
+mod isr;
+
+pub use isr::{
+    VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
+    VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,
+};
+
 pub const VIRTIO_PCI_COMMON_CONFIG_SIZE: u64 = 0x40;
 pub const VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET: u64 = 0x00;
 pub const VIRTIO_PCI_DEVICE_FEATURE_OFFSET: u64 = 0x04;
