@@ -382,6 +382,10 @@ Implementation evidence on 2026-05-26:
   worker/tick summaries can use a run-produced occupancy view directly instead
   of requiring every full-system window to be reconstructed from scoped CPU,
   data-cache, GPU DMA, and accelerator DMA timelines.
+- Explicit full-system batch timelines must preserve scoped scheduler,
+  data-cache, GPU DMA, and accelerator DMA records before replay accepts exact
+  full-system timeline contracts. A merged execution timeline can no longer
+  hide device-local batch evidence behind a smaller global record set.
 - Workload parallel max-worker and total-worker replay now validate scoped raw
   batch timeline records before deriving upper-level worker evidence from
   batch histograms or timelines.

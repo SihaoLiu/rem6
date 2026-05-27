@@ -413,8 +413,18 @@ fn workload_replay_plan_uses_explicit_full_system_batch_timeline_evidence() {
         [cpu, cache, dma],
         3,
     );
+    let expected_scoped = expected_timeline(
+        WorkloadParallelBatchTimelineScope::FullSystem,
+        WorkloadParallelBatchScope::Scheduler,
+        10,
+        14,
+        [cpu, cache],
+        2,
+    );
     let plan = replay_plan()
         .add_expected_parallel_batch_timeline_record(expected)
+        .unwrap()
+        .add_expected_parallel_batch_timeline_record(expected_scoped)
         .unwrap();
     let scoped_scheduler = timeline_record(
         WorkloadParallelBatchScope::Scheduler,
@@ -431,16 +441,65 @@ fn workload_replay_plan_uses_explicit_full_system_batch_timeline_evidence() {
         3,
     );
     let summary = WorkloadParallelExecutionSummary::default()
-        .with_parallel_scheduler_batch_timeline([scoped_scheduler])
-        .with_full_system_parallel_scheduler_batch_timeline([global.clone()]);
+        .with_parallel_scheduler_batch_timeline([scoped_scheduler.clone()])
+        .with_full_system_parallel_scheduler_batch_timeline([
+            global.clone(),
+            scoped_scheduler.clone(),
+        ]);
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_timeline(),
-        vec![global],
+        vec![global, scoped_scheduler],
     );
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
 
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_explicit_full_system_batch_timeline() {
+    let cpu = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        4,
+        8,
+        [partition(2), partition(3)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(expected_timeline(
+            WorkloadParallelBatchTimelineScope::FullSystem,
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([cpu.clone()])
+        .with_gpu_dma_scheduler_batch_timeline([gpu])
+        .with_full_system_parallel_scheduler_batch_timeline([cpu]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelBatchTimelineMergeSummary {
+            scope: WorkloadParallelBatchTimelineScope::FullSystem,
+            batch_scope: WorkloadParallelBatchScope::GpuDmaScheduler,
+            start_tick: 4,
+            horizon: 8,
+            partitions: vec![2, 3],
+            worker_count: 2,
+        },
+    );
 }
 
 #[test]
