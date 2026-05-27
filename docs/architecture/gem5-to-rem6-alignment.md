@@ -456,6 +456,10 @@ Implementation evidence on 2026-05-26:
 - Workload full-system dispatch reporting now treats explicit full-system
   partition streaks as aggregate dispatch evidence, using them as a merged
   lower bound instead of adding them to scoped scheduler counts again.
+- Workload full-system batch worker-count reporting now derives worker buckets
+  from scoped partition-set and partition-streak evidence before merging any
+  explicit full-system streaks, so replay checks and result summaries expose
+  the same worker-bucket evidence.
 - Workload direct per-partition activity now normalizes dispatch counts without
   worker evidence to zero while preserving remote send and receive evidence.
   A replay artifact can still prove cross-partition communication, but it

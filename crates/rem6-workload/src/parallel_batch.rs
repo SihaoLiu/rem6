@@ -239,6 +239,14 @@ pub(crate) fn collect_parallel_batch_worker_counts_from_timeline(
     )
 }
 
+pub(crate) fn collect_parallel_batch_worker_counts_from_partition_sets(
+    sets: &[WorkloadParallelBatchPartitionSet],
+) -> Vec<WorkloadParallelBatchWorkerCount> {
+    collect_parallel_batch_worker_counts(sets.iter().map(|set| {
+        WorkloadParallelBatchWorkerCount::new(set.partitions().len(), set.batch_count())
+    }))
+}
+
 pub(crate) fn collect_parallel_batch_worker_counts_from_streaks(
     streaks: &[WorkloadParallelBatchPartitionStreak],
 ) -> Vec<WorkloadParallelBatchWorkerCount> {

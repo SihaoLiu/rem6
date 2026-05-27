@@ -544,7 +544,7 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_counts(),
         vec![
-            WorkloadParallelBatchWorkerCount::new(2, 7),
+            WorkloadParallelBatchWorkerCount::new(2, 9),
             WorkloadParallelBatchWorkerCount::new(3, 9),
         ],
     );
@@ -792,7 +792,7 @@ fn workload_result_records_scoped_parallel_batch_timeline() {
     assert_eq!(
         summary.full_system_parallel_scheduler_batch_worker_counts(),
         vec![
-            WorkloadParallelBatchWorkerCount::new(2, 2),
+            WorkloadParallelBatchWorkerCount::new(2, 4),
             WorkloadParallelBatchWorkerCount::new(3, 2),
             WorkloadParallelBatchWorkerCount::new(4, 1),
         ],
@@ -1743,6 +1743,37 @@ fn workload_result_batch_worker_counts_use_full_system_streak_evidence() {
         vec![
             WorkloadParallelBatchWorkerCount::new(2, 4),
             WorkloadParallelBatchWorkerCount::new(3, 2),
+        ],
+    );
+}
+
+#[test]
+fn workload_result_batch_worker_counts_use_scoped_partition_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [cpu, cache],
+            4,
+        )])
+        .with_data_cache_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache, dma], 3),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(2),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(3),
+        3,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(3, 3),
         ],
     );
 }

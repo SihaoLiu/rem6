@@ -8,6 +8,7 @@ use rem6_kernel::{
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_sets_from_streaks,
     collect_parallel_batch_partition_streaks, collect_parallel_batch_worker_counts,
+    collect_parallel_batch_worker_counts_from_partition_sets,
     collect_parallel_batch_worker_counts_from_streaks,
     collect_strongest_parallel_batch_partition_sets,
     collect_strongest_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
@@ -110,16 +111,44 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_worker_counts(
         &self,
     ) -> Vec<WorkloadParallelBatchWorkerCount> {
-        let scoped_counts = collect_parallel_batch_worker_counts(
-            self.parallel_scheduler_batch_worker_counts
+        let scheduler_counts = collect_strongest_parallel_batch_worker_counts(
+            self.parallel_scheduler_batch_worker_counts.iter().copied(),
+            collect_strongest_parallel_batch_worker_counts(
+                collect_parallel_batch_worker_counts_from_partition_sets(
+                    &self.parallel_scheduler_batch_partition_sets,
+                ),
+                collect_parallel_batch_worker_counts_from_streaks(
+                    &self.parallel_scheduler_batch_partition_streaks,
+                ),
+            ),
+        );
+        let data_cache_counts = collect_strongest_parallel_batch_worker_counts(
+            self.data_cache_parallel_scheduler_batch_worker_counts
                 .iter()
-                .copied()
-                .chain(
-                    self.data_cache_parallel_scheduler_batch_worker_counts
-                        .iter()
-                        .copied(),
-                )
-                .chain(self.dma_scheduler_batch_worker_counts()),
+                .copied(),
+            collect_strongest_parallel_batch_worker_counts(
+                collect_parallel_batch_worker_counts_from_partition_sets(
+                    &self.data_cache_parallel_scheduler_batch_partition_sets,
+                ),
+                collect_parallel_batch_worker_counts_from_streaks(
+                    &self.data_cache_parallel_scheduler_batch_partition_streaks,
+                ),
+            ),
+        );
+        let dma_partition_sets = self.dma_scheduler_batch_partition_sets();
+        let dma_partition_streaks = self.dma_scheduler_batch_partition_streaks();
+        let dma_counts = collect_strongest_parallel_batch_worker_counts(
+            self.dma_scheduler_batch_worker_counts(),
+            collect_strongest_parallel_batch_worker_counts(
+                collect_parallel_batch_worker_counts_from_partition_sets(&dma_partition_sets),
+                collect_parallel_batch_worker_counts_from_streaks(&dma_partition_streaks),
+            ),
+        );
+        let scoped_counts = collect_parallel_batch_worker_counts(
+            scheduler_counts
+                .into_iter()
+                .chain(data_cache_counts)
+                .chain(dma_counts),
         );
         let full_system_counts = collect_parallel_batch_worker_counts_from_streaks(
             &self.full_system_parallel_scheduler_batch_partition_streaks,
