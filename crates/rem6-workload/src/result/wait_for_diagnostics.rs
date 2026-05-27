@@ -945,7 +945,15 @@ impl WorkloadParallelExecutionSummary {
             || self.contended_fabric_lane_count != 0
     }
 
-    pub const fn has_dram_activity(&self) -> bool {
+    pub fn has_dram_qos_activity(&self) -> bool {
+        self.dram_qos_access_count != 0
+            || self.dram_qos_byte_count != 0
+            || self.dram_qos_escalated_access_count != 0
+            || !self.dram_qos_priority_summaries.is_empty()
+            || !self.dram_qos_requestor_summaries.is_empty()
+    }
+
+    pub fn has_dram_activity(&self) -> bool {
         self.dram_access_count != 0
             || self.dram_read_count != 0
             || self.dram_write_count != 0
@@ -955,6 +963,7 @@ impl WorkloadParallelExecutionSummary {
             || self.dram_turnaround_count != 0
             || self.dram_total_ready_latency_cycles != 0
             || self.dram_max_ready_latency_cycles != 0
+            || self.has_dram_qos_activity()
     }
 
     pub fn has_resource_activity(&self) -> bool {

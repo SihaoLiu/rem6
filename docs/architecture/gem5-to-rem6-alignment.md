@@ -482,6 +482,10 @@ Implementation evidence on 2026-05-26:
   delay, contention, and DRAM row, command, turnaround, and latency counters as
   activity evidence. Resource activity presence therefore cannot hide dynamic
   NoC or memory-controller evidence behind transfer/access aggregate counts.
+- Workload DRAM QoS activity checks now treat priority and requestor breakdown
+  summaries as QoS activity evidence. Per-class memory-controller accounting
+  therefore cannot remain queryable while hidden from DRAM and resource
+  activity presence.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence

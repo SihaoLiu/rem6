@@ -1842,6 +1842,37 @@ fn workload_result_marks_resource_metric_evidence_as_activity() {
 }
 
 #[test]
+fn workload_result_marks_dram_qos_breakdown_evidence_as_activity() {
+    let qos_breakdowns = WorkloadParallelExecutionSummary::default().with_dram_qos_activity(
+        0,
+        0,
+        0,
+        [WorkloadDramQosPrioritySummary::new(
+            QosPriority::new(2),
+            0,
+            64,
+        )],
+        [WorkloadDramQosRequestorSummary::new(
+            QosRequestorId::new(9),
+            3,
+            0,
+        )],
+    );
+
+    assert_eq!(
+        qos_breakdowns.dram_qos_priority_byte_count(QosPriority::new(2)),
+        64,
+    );
+    assert_eq!(
+        qos_breakdowns.dram_qos_requestor_access_count(QosRequestorId::new(9)),
+        3,
+    );
+    assert!(qos_breakdowns.has_dram_qos_activity());
+    assert!(qos_breakdowns.has_dram_activity());
+    assert!(qos_breakdowns.has_resource_activity());
+}
+
+#[test]
 fn workload_result_full_system_frontiers_merge_partitions_conservatively() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_frontiers(

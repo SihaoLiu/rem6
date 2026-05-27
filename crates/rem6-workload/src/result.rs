@@ -1225,12 +1225,6 @@ impl WorkloadParallelExecutionSummary {
             .unwrap_or(0)
     }
 
-    pub const fn has_dram_qos_activity(&self) -> bool {
-        self.dram_qos_access_count != 0
-            || self.dram_qos_byte_count != 0
-            || self.dram_qos_escalated_access_count != 0
-    }
-
     pub const fn has_dram_row_misses(&self) -> bool {
         self.dram_row_miss_count != 0
     }
