@@ -957,7 +957,7 @@ fn probe_registry_records_typed_events_and_listener_state() {
 
     assert_eq!(
         probes.snapshot(),
-        ProbeSnapshot::new(
+        ProbeSnapshot::with_cursors(
             vec![
                 ("cpu0".to_string(), "commit".to_string(), committed),
                 ("l1d".to_string(), "miss".to_string(), miss),
@@ -971,6 +971,9 @@ fn probe_registry_records_typed_events_and_listener_state() {
                 ProbeEvent::new(10, 0, committed, 2, ProbePayload::Counter { amount: 4 }),
                 ProbeEvent::new(11, 1, committed, 1, ProbePayload::Unit),
             ],
+            2,
+            2,
+            2,
         )
     );
 
@@ -978,4 +981,143 @@ fn probe_registry_records_typed_events_and_listener_state() {
         probes.events()[0].payload(),
         &ProbePayload::Counter { amount: 4 }
     );
+}
+
+#[test]
+fn probe_registry_restores_snapshot_cursors_without_reusing_removed_listener_ids() {
+    let mut probes = ProbeRegistry::new();
+    let committed = probes.register_point("cpu0", "commit").unwrap();
+    let miss = probes.register_point("l1d", "miss").unwrap();
+    probes.add_listener(committed, "commit_counter").unwrap();
+    let removed = probes.add_listener(committed, "commit_trace").unwrap();
+    probes
+        .emit(10, committed, ProbePayload::Counter { amount: 4 })
+        .unwrap();
+    probes.remove_listener(committed, removed).unwrap();
+    probes.emit(11, committed, ProbePayload::Unit).unwrap();
+
+    let snapshot = probes.snapshot();
+    assert_eq!(snapshot.next_point(), 2);
+    assert_eq!(snapshot.next_listener(), 2);
+    assert_eq!(snapshot.next_sequence(), 2);
+
+    let mut restored = ProbeRegistry::from_snapshot(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(
+        restored.register_point("l2", "evict").unwrap(),
+        ProbePointId::new(2)
+    );
+    assert_eq!(
+        restored.add_listener(miss, "miss_counter").unwrap(),
+        ProbeListenerId::new(2)
+    );
+    assert_eq!(
+        restored
+            .emit(12, miss, ProbePayload::Counter { amount: 1 })
+            .unwrap()
+            .sequence(),
+        2
+    );
+}
+
+#[test]
+fn probe_registry_rejects_malformed_snapshots_without_mutating_live_registry() {
+    let mut probes = ProbeRegistry::new();
+    let point = probes.register_point("cpu0", "commit").unwrap();
+    probes.add_listener(point, "commit_counter").unwrap();
+    probes.emit(10, point, ProbePayload::Unit).unwrap();
+    let original = probes.snapshot();
+
+    let duplicate_point_id = ProbeSnapshot::with_cursors(
+        vec![
+            ("cpu0".to_string(), "commit".to_string(), point),
+            ("cpu1".to_string(), "commit".to_string(), point),
+        ],
+        Vec::new(),
+        Vec::new(),
+        1,
+        0,
+        0,
+    );
+    assert_eq!(
+        probes.restore(&duplicate_point_id).unwrap_err(),
+        StatsError::DuplicateProbePointId { point },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let unknown_listener_point = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        vec![(
+            "commit_counter".to_string(),
+            ProbePointId::new(9),
+            ProbeListenerId::new(0),
+        )],
+        Vec::new(),
+        1,
+        1,
+        0,
+    );
+    assert_eq!(
+        probes.restore(&unknown_listener_point).unwrap_err(),
+        StatsError::UnknownProbePoint {
+            point: ProbePointId::new(9),
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let duplicate_listener_id = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        vec![
+            ("commit_counter".to_string(), point, ProbeListenerId::new(0)),
+            ("commit_trace".to_string(), point, ProbeListenerId::new(0)),
+        ],
+        Vec::new(),
+        1,
+        1,
+        0,
+    );
+    assert_eq!(
+        probes.restore(&duplicate_listener_id).unwrap_err(),
+        StatsError::DuplicateProbeListenerId {
+            listener: ProbeListenerId::new(0),
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let nonmonotonic_events = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        Vec::new(),
+        vec![
+            ProbeEvent::new(10, 1, point, 0, ProbePayload::Unit),
+            ProbeEvent::new(11, 1, point, 0, ProbePayload::Unit),
+        ],
+        1,
+        0,
+        2,
+    );
+    assert_eq!(
+        probes.restore(&nonmonotonic_events).unwrap_err(),
+        StatsError::ProbeEventSequenceNotIncreasing {
+            previous_sequence: 1,
+            current_sequence: 1,
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let stale_point_cursor = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        Vec::new(),
+        Vec::new(),
+        0,
+        0,
+        0,
+    );
+    assert_eq!(
+        probes.restore(&stale_point_cursor).unwrap_err(),
+        StatsError::ProbePointCursorBehind {
+            next_point: 0,
+            highest_point: point,
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
 }

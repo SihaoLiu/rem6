@@ -90,6 +90,9 @@ pub enum StatsError {
         component: String,
         name: String,
     },
+    DuplicateProbePointId {
+        point: ProbePointId,
+    },
     UnknownProbePoint {
         point: ProbePointId,
     },
@@ -98,6 +101,9 @@ pub enum StatsError {
         point: ProbePointId,
         name: String,
     },
+    DuplicateProbeListenerId {
+        listener: ProbeListenerId,
+    },
     UnknownProbeListener {
         listener: ProbeListenerId,
     },
@@ -105,6 +111,24 @@ pub enum StatsError {
         point: ProbePointId,
         listener: ProbeListenerId,
     },
+    ProbePointCursorBehind {
+        next_point: u64,
+        highest_point: ProbePointId,
+    },
+    ProbeListenerCursorBehind {
+        next_listener: u64,
+        highest_listener: ProbeListenerId,
+    },
+    ProbeEventCursorBehind {
+        next_sequence: u64,
+        highest_sequence: u64,
+    },
+    ProbeEventSequenceNotIncreasing {
+        previous_sequence: u64,
+        current_sequence: u64,
+    },
+    ProbePointSequenceOverflow,
+    ProbeListenerSequenceOverflow,
     ProbeSequenceOverflow,
     GroupSequenceOverflow,
     DumpSequenceOverflow,
@@ -211,6 +235,9 @@ impl fmt::Display for StatsError {
             Self::DuplicateProbePoint { component, name } => {
                 write!(formatter, "probe point already exists: {component}.{name}")
             }
+            Self::DuplicateProbePointId { point } => {
+                write!(formatter, "duplicate probe point id {}", point.get())
+            }
             Self::UnknownProbePoint { point } => {
                 write!(formatter, "unknown probe point id {}", point.get())
             }
@@ -222,6 +249,9 @@ impl fmt::Display for StatsError {
                 "probe listener {name} already exists for point {}",
                 point.get()
             ),
+            Self::DuplicateProbeListenerId { listener } => {
+                write!(formatter, "duplicate probe listener id {}", listener.get())
+            }
             Self::UnknownProbeListener { listener } => {
                 write!(formatter, "unknown probe listener id {}", listener.get())
             }
@@ -231,6 +261,42 @@ impl fmt::Display for StatsError {
                 listener.get(),
                 point.get()
             ),
+            Self::ProbePointCursorBehind {
+                next_point,
+                highest_point,
+            } => write!(
+                formatter,
+                "probe point cursor {next_point} does not exceed highest point id {}",
+                highest_point.get()
+            ),
+            Self::ProbeListenerCursorBehind {
+                next_listener,
+                highest_listener,
+            } => write!(
+                formatter,
+                "probe listener cursor {next_listener} does not exceed highest listener id {}",
+                highest_listener.get()
+            ),
+            Self::ProbeEventCursorBehind {
+                next_sequence,
+                highest_sequence,
+            } => write!(
+                formatter,
+                "probe event cursor {next_sequence} does not exceed highest event sequence {highest_sequence}"
+            ),
+            Self::ProbeEventSequenceNotIncreasing {
+                previous_sequence,
+                current_sequence,
+            } => write!(
+                formatter,
+                "probe event sequence {current_sequence} does not exceed previous sequence {previous_sequence}"
+            ),
+            Self::ProbePointSequenceOverflow => {
+                write!(formatter, "probe point sequence overflowed")
+            }
+            Self::ProbeListenerSequenceOverflow => {
+                write!(formatter, "probe listener sequence overflowed")
+            }
             Self::ProbeSequenceOverflow => write!(formatter, "probe event sequence overflowed"),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
