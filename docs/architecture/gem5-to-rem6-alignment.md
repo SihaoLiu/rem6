@@ -450,6 +450,10 @@ Implementation evidence on 2026-05-26:
   bucket evidence between scoped worker histograms and explicit full-system
   partition streaks. Reporting APIs therefore cannot understate worker buckets
   that replay contracts already accept through full-system streak evidence.
+- Workload full-system batch worker-count summaries now also accept explicit
+  merged full-system worker histograms. A global scheduler can report the
+  occupancy buckets it actually executed without forcing those buckets through
+  exact partition-set or timeline evidence.
 - Workload full-system batch partition-set summaries now keep the strongest
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same

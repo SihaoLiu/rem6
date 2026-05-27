@@ -96,7 +96,7 @@ impl WorkloadParallelExecutionSummary {
             .max(self.data_cache_parallel_scheduler_max_workers())
             .max(self.dma_scheduler_max_workers())
             .max(max_parallel_batch_activity_worker_count(
-                &[],
+                &self.full_system_parallel_scheduler_batch_worker_counts,
                 &self.full_system_parallel_scheduler_batch_partition_sets,
                 &self.full_system_parallel_scheduler_batch_partition_streaks,
             ))
@@ -456,15 +456,20 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<WorkloadParallelBatchWorkerCount> {
         collect_strongest_parallel_batch_worker_counts(
-            collect_parallel_batch_worker_counts_from_timeline(
-                &self.full_system_parallel_scheduler_batch_timeline,
-            ),
+            self.full_system_parallel_scheduler_batch_worker_counts
+                .iter()
+                .copied(),
             collect_strongest_parallel_batch_worker_counts(
-                collect_parallel_batch_worker_counts_from_partition_sets(
-                    &self.full_system_parallel_scheduler_batch_partition_sets,
+                collect_parallel_batch_worker_counts_from_timeline(
+                    &self.full_system_parallel_scheduler_batch_timeline,
                 ),
-                collect_parallel_batch_worker_counts_from_streaks(
-                    &self.full_system_parallel_scheduler_batch_partition_streaks,
+                collect_strongest_parallel_batch_worker_counts(
+                    collect_parallel_batch_worker_counts_from_partition_sets(
+                        &self.full_system_parallel_scheduler_batch_partition_sets,
+                    ),
+                    collect_parallel_batch_worker_counts_from_streaks(
+                        &self.full_system_parallel_scheduler_batch_partition_streaks,
+                    ),
                 ),
             ),
         )
@@ -503,6 +508,9 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_full_system_parallel_scheduler_work(&self) -> bool {
         self.active_full_system_parallel_scheduler_partition_count() != 0
+            || !self
+                .full_system_parallel_scheduler_batch_worker_counts
+                .is_empty()
             || self.has_parallel_scheduler_work()
             || self.has_data_cache_parallel_work()
             || self.has_dma_parallel_work()

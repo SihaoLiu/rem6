@@ -1829,6 +1829,53 @@ fn workload_result_batch_worker_counts_use_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_uses_explicit_full_system_batch_worker_counts() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+            WorkloadParallelBatchWorkerCount::new(4, 3),
+        ])
+        .with_full_system_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(1, 9),
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(5, 1),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(1),
+        0,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(2),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(4),
+        3,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(5),
+        1,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(4, 3),
+            WorkloadParallelBatchWorkerCount::new(5, 1),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_at_or_above(2),
+        8,
+    );
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 8);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 5);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 25);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 25);
+}
+
+#[test]
 fn workload_result_batch_worker_counts_use_scoped_partition_evidence() {
     let cpu = PartitionId::new(1);
     let cache = PartitionId::new(2);
