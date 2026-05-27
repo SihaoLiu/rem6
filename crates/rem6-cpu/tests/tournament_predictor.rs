@@ -159,6 +159,40 @@ fn tournament_predictor_squash_repairs_histories_without_training_counters() {
 }
 
 #[test]
+fn tournament_predictor_rejects_stale_history_update_without_mutating_histories() {
+    let mut predictor = tournament(1, 8, 4, 8, 4, 2);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x1000);
+
+    let first = predictor.predict(cpu, pc).unwrap();
+    predictor.update_history(first.history(), true).unwrap();
+
+    assert_eq!(
+        predictor
+            .update_history(first.history(), false)
+            .unwrap_err(),
+        TournamentBranchPredictorError::HistoryUpdateOutOfOrder {
+            cpu,
+            expected_global_history: 1,
+            actual_global_history: 0,
+            expected_local_history: Some(1),
+            actual_local_history: Some(0),
+        },
+    );
+    assert_eq!(predictor.snapshot().threads()[0].global_history(), 1);
+    assert_eq!(predictor.snapshot().local_history_table()[0], 1);
+    assert_eq!(predictor.history_update_count(), 1);
+
+    let current = predictor.predict(cpu, pc).unwrap();
+    let update = predictor.update_history(current.history(), false).unwrap();
+    assert_eq!(update.old_global_history(), 1);
+    assert_eq!(update.new_global_history(), 2);
+    assert_eq!(update.old_local_history(), 1);
+    assert_eq!(update.new_local_history(), 2);
+    assert_eq!(predictor.history_update_count(), 2);
+}
+
+#[test]
 fn tournament_predictor_snapshot_restore_preserves_tables_histories_and_counts() {
     let mut predictor = tournament(2, 8, 4, 8, 4, 2);
     let cpu = CpuId::new(0);

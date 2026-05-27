@@ -42,6 +42,13 @@ pub enum TournamentBranchPredictorError {
     UnknownThread {
         cpu: CpuId,
     },
+    HistoryUpdateOutOfOrder {
+        cpu: CpuId,
+        expected_global_history: u64,
+        actual_global_history: u64,
+        expected_local_history: Option<u64>,
+        actual_local_history: Option<u64>,
+    },
     SnapshotShapeMismatch {
         expected_threads: usize,
         actual_threads: usize,
@@ -109,6 +116,17 @@ impl fmt::Display for TournamentBranchPredictorError {
             Self::UnknownThread { cpu } => write!(
                 formatter,
                 "tournament predictor thread {} is not configured",
+                cpu.get()
+            ),
+            Self::HistoryUpdateOutOfOrder {
+                cpu,
+                expected_global_history,
+                actual_global_history,
+                expected_local_history,
+                actual_local_history,
+            } => write!(
+                formatter,
+                "tournament predictor thread {} global history is {expected_global_history}, but update record starts from {actual_global_history}; local history is {expected_local_history:?}, but update record starts from {actual_local_history:?}",
                 cpu.get()
             ),
             Self::SnapshotShapeMismatch {
@@ -494,14 +512,30 @@ impl TournamentBranchPredictor {
     ) -> Result<TournamentHistoryUpdate, TournamentBranchPredictorError> {
         let thread_index = self.thread_index(history.cpu())?;
         let old_global_history = self.threads[thread_index].global_history();
-        let new_global_history = self.shift_global_history(old_global_history, taken);
-        self.threads[thread_index].global_history = new_global_history;
-
         let old_local_history = if history.local_history_valid() {
             self.local_history_table[history.local_history_index()]
         } else {
             0
         };
+        let expected_local_history = history.local_history_valid().then_some(old_local_history);
+        let actual_local_history = history
+            .local_history_valid()
+            .then_some(history.local_history_before());
+        if old_global_history != history.global_history_before()
+            || expected_local_history != actual_local_history
+        {
+            return Err(TournamentBranchPredictorError::HistoryUpdateOutOfOrder {
+                cpu: history.cpu(),
+                expected_global_history: old_global_history,
+                actual_global_history: history.global_history_before(),
+                expected_local_history,
+                actual_local_history,
+            });
+        }
+
+        let new_global_history = self.shift_global_history(old_global_history, taken);
+        self.threads[thread_index].global_history = new_global_history;
+
         let new_local_history = if history.local_history_valid() {
             let shifted = self.shift_local_history(old_local_history, taken);
             self.local_history_table[history.local_history_index()] = shifted;
