@@ -12,12 +12,12 @@ pub use progress::{
 };
 pub use scheduler::{
     ConservativeRunSummary, EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan,
-    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
-    ParallelRemoteSendRecord, ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord,
-    PartitionEventId, PartitionFrontier, PartitionId, PartitionSnapshot, PartitionedScheduler,
-    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
-    RunSummary, ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord, SchedulerError,
-    SchedulerSnapshot,
+    ParallelEpochPlannedBatch, ParallelPartitionActivity, ParallelProgressTransitionRecord,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile,
+    ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId, PartitionFrontier,
+    PartitionId, PartitionSnapshot, PartitionedScheduler, PendingEventSnapshot, ReadyPartition,
+    RecordedConservativeRunSummary, RecordedRunSummary, RunSummary, ScheduledEventKind,
+    SchedulerContext, SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
 };
 pub use wait_for::{
     DeadlockDiagnostic, WaitForBlockedNodeWindow, WaitForEdge, WaitForEdgeKind,

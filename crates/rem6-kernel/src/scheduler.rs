@@ -11,11 +11,11 @@ use crate::{LivelockTransitionKind, Tick, WaitForNode};
 mod state;
 
 pub use state::{
-    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelPartitionActivity,
-    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot,
-    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
-    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
+    EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan, ParallelEpochPlannedBatch,
+    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
+    ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier,
+    PartitionSnapshot, PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary,
+    RecordedRunSummary, ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -707,6 +707,7 @@ impl PartitionedScheduler {
             ready_partitions,
             frontiers,
             serial_blockers,
+            self.max_parallel_workers,
         )))
     }
 

@@ -491,6 +491,13 @@ Implementation evidence on 2026-05-26:
   partition-streak evidence is derived from the merged DMA batch timeline, so
   contiguous GPU DMA and accelerator DMA batches are validated as one typed DMA
   scheduler stream instead of two unrelated device-local fragments.
+- Kernel parallel epoch planning now exposes the worker-limit-shaped batch plan
+  before dispatch. A plan records the configured worker limit, deterministic
+  ready-partition chunks, per-worker-count batch summaries, partition-set
+  summaries, and maximum planned workers without executing callbacks. The
+  scheduler can therefore prove planned multicore occupancy before spawning
+  worker threads, avoiding gem5-style reliance on post-hoc global event-queue
+  traces to infer parallelism.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
