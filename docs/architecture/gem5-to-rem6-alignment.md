@@ -636,6 +636,11 @@ Implementation evidence on 2026-05-26:
   explicit merged full-system partition activity records. A global scheduler
   can report partition-owned worker, dispatch, and remote activity directly
   while scoped and batch-derived evidence remain lower bounds.
+- Workload full-system per-partition activity replay now rejects explicit
+  merged activity records that are weaker than scoped or batch-derived
+  lower-bound evidence for the same partition. Worker, dispatch, remote-send,
+  remote-receive, and pending-event counts therefore cannot be hidden by
+  lower-bound aggregation after a weak global activity summary is reported.
 - Workload full-system remote-traffic reporting now accepts explicit merged
   full-system remote flow and send records. A global scheduler can report
   cross-partition communication directly while same-route scoped flow evidence

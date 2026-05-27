@@ -505,6 +505,22 @@ pub(super) fn format_parallel_batch_error(
             "expected {} partition {partition} activity to reach workers {minimum_worker_count}, dispatches {minimum_dispatch_count}, remote sends {minimum_remote_send_count}, and remote receives {minimum_remote_receive_count}; got workers {actual_worker_count}, dispatches {actual_dispatch_count}, remote sends {actual_remote_send_count}, and remote receives {actual_remote_receive_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelPartitionActivityMergeSummary(summary) => write!(
+            formatter,
+            "invalid {} partition {} activity merge summary: merged workers {}, dispatches {}, remote sends {}, remote receives {}, and pending events {}; lower-bound workers {}, dispatches {}, remote sends {}, remote receives {}, and pending events {}",
+            summary.scope.as_str(),
+            summary.partition,
+            summary.merged_worker_count,
+            summary.merged_dispatch_count,
+            summary.merged_remote_send_count,
+            summary.merged_remote_receive_count,
+            summary.merged_max_pending_events,
+            summary.lower_bound_worker_count,
+            summary.lower_bound_dispatch_count,
+            summary.lower_bound_remote_send_count,
+            summary.lower_bound_remote_receive_count,
+            summary.lower_bound_max_pending_events
+        ),
         _ => unreachable!("parallel batch display called for unrelated workload error"),
     }
 }

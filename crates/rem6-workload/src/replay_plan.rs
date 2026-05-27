@@ -1027,6 +1027,7 @@ impl WorkloadReplayPlan {
                 summary,
                 expected.scope(),
             )?;
+            replay_verify::validate_partition_scope_activity_evidence(summary, expected.scope())?;
             let actual_active_partitions = expected.actual_active_partitions(summary);
             if actual_active_partitions < expected.minimum_active_partitions() {
                 return Err(WorkloadError::ExpectedParallelPartitionCountBelowMinimum {
@@ -1060,6 +1061,7 @@ impl WorkloadReplayPlan {
                 summary,
                 expected.scope(),
             )?;
+            replay_verify::validate_partition_scope_activity_evidence(summary, expected.scope())?;
             let actual = expected.actual_activity(summary);
             let actual_worker_count = actual.map(|activity| activity.worker_count()).unwrap_or(0);
             let actual_dispatch_count = actual

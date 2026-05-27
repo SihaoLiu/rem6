@@ -520,6 +520,45 @@ impl WorkloadParallelExecutionSummary {
         &self,
         partition: PartitionId,
     ) -> Option<ParallelPartitionActivity> {
+        let lower_bound =
+            self.full_system_parallel_scheduler_partition_activity_lower_bound(partition);
+        let explicit_full_system_activity = parallel_partition_activity_for_partition(
+            &self.full_system_parallel_scheduler_partition_activities,
+            &[],
+            &[],
+            partition,
+        );
+        merge_parallel_partition_activity_evidence_options(
+            lower_bound,
+            explicit_full_system_activity,
+        )
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_partition_activities(
+        &self,
+    ) -> &[(PartitionId, ParallelPartitionActivity)] {
+        &self.full_system_parallel_scheduler_partition_activities
+    }
+
+    pub(crate) fn full_system_parallel_scheduler_partition_activity_lower_bound(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        let scoped_activity =
+            self.scoped_full_system_parallel_scheduler_partition_activity(partition);
+        let batch_partition_sets = self.full_system_parallel_scheduler_batch_partition_sets();
+        let batch_partition_streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
+        let batch_activity = merge_parallel_partition_activity_evidence_options(
+            parallel_batch_partition_activity_for_partition(&batch_partition_sets, partition),
+            parallel_batch_streak_activity_for_partition(&batch_partition_streaks, partition),
+        );
+        merge_parallel_partition_activity_evidence_options(scoped_activity, batch_activity)
+    }
+
+    fn scoped_full_system_parallel_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
         let dma_partition_sets = self.dma_scheduler_batch_partition_sets();
         let dma_partition_streaks = self.dma_scheduler_batch_partition_streaks();
         let dma_activity = merge_parallel_partition_activity_evidence_options(
@@ -532,28 +571,12 @@ impl WorkloadParallelExecutionSummary {
             &self.dma_scheduler_remote_sends(),
             partition,
         );
-        let scoped_activity = merge_parallel_partition_activity_options(
+        merge_parallel_partition_activity_options(
             merge_parallel_partition_activity_options(
                 self.parallel_scheduler_partition_activity(partition),
                 self.data_cache_parallel_scheduler_partition_activity(partition),
             ),
             merge_parallel_partition_activity_evidence_options(dma_activity, dma_remote_activity),
-        );
-        let batch_partition_sets = self.full_system_parallel_scheduler_batch_partition_sets();
-        let batch_partition_streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
-        let batch_activity = merge_parallel_partition_activity_evidence_options(
-            parallel_batch_partition_activity_for_partition(&batch_partition_sets, partition),
-            parallel_batch_streak_activity_for_partition(&batch_partition_streaks, partition),
-        );
-        let explicit_full_system_activity = parallel_partition_activity_for_partition(
-            &self.full_system_parallel_scheduler_partition_activities,
-            &[],
-            &[],
-            partition,
-        );
-        merge_parallel_partition_activity_evidence_options(
-            merge_parallel_partition_activity_evidence_options(scoped_activity, batch_activity),
-            explicit_full_system_activity,
         )
     }
 

@@ -13,6 +13,7 @@ use crate::{
 
 mod batch_timeline;
 mod frontier;
+mod partition_activity;
 mod remote_traffic;
 mod scheduler_summary;
 
@@ -25,6 +26,7 @@ pub(crate) use batch_timeline::{
     validate_partition_scope_batch_timeline_evidence, validate_worker_scope_batch_timeline_evidence,
 };
 pub(crate) use frontier::verify_expected_parallel_frontiers;
+pub(crate) use partition_activity::validate_partition_scope_activity_evidence;
 
 pub(crate) use remote_traffic::{
     validate_remote_partition_scope_evidence, verify_expected_parallel_remote_delay_ceilings,

@@ -17,6 +17,9 @@ use crate::{
 
 mod display;
 mod fabric_display;
+mod parallel_partition;
+
+pub use parallel_partition::WorkloadParallelPartitionActivityMergeSummary;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelRemoteTrafficConsistencyMismatch {
@@ -1309,6 +1312,9 @@ pub enum WorkloadError {
         minimum_remote_receive_count: usize,
         actual_remote_receive_count: usize,
     },
+    InvalidParallelPartitionActivityMergeSummary(
+        Box<WorkloadParallelPartitionActivityMergeSummary>,
+    ),
     DuplicateExpectedCleanParallelDiagnostics {
         scope: WorkloadParallelDiagnosticScope,
     },

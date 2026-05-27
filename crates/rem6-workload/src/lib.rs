@@ -40,7 +40,10 @@ mod workload_result;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
 pub use boot_image::{WorkloadBootImage, WorkloadBootSegment};
-pub use error::{WorkloadError, WorkloadParallelRemoteTrafficConsistencyMismatch};
+pub use error::{
+    WorkloadError, WorkloadParallelPartitionActivityMergeSummary,
+    WorkloadParallelRemoteTrafficConsistencyMismatch,
+};
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
     WorkloadAcceleratorDmaCopy, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
