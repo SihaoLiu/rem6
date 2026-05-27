@@ -1609,6 +1609,16 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
         )]);
     assert!(full_system_transitions.has_full_system_parallel_scheduler_work());
 
+    let scheduler_livelock = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostics(3, 1);
+    assert!(scheduler_livelock.has_parallel_scheduler_work());
+    assert!(scheduler_livelock.has_full_system_parallel_scheduler_work());
+
+    let data_cache_livelock = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_livelock_diagnostics(4, 1);
+    assert!(data_cache_livelock.has_data_cache_parallel_work());
+    assert!(data_cache_livelock.has_full_system_parallel_scheduler_work());
+
     let data_cache_frontier = WorkloadParallelExecutionSummary::default()
         .with_data_cache_parallel_scheduler_frontiers(
             [PartitionFrontier::new(

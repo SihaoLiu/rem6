@@ -474,6 +474,10 @@ Implementation evidence on 2026-05-26:
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence
   boundary used by summary and replay diagnostics.
+- Workload scheduler-work presence checks now treat scoped and merged
+  full-system livelock diagnostic counts as work evidence. Dirty scheduler
+  diagnostics therefore cannot remain visible only to diagnostic queries while
+  disappearing from scheduler-work presence checks.
 - Workload full-system batch partition-set summaries now keep the strongest
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same
