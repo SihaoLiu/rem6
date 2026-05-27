@@ -6,9 +6,20 @@ use rem6_kernel::{
 };
 
 use crate::{
-    result_collect::collect_conservative_partition_frontiers, WorkloadDataCacheProtocol,
-    WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    parallel_batch::{
+        collect_parallel_batch_partition_sets_from_timeline,
+        collect_parallel_batch_partition_streaks_from_timeline,
+        parallel_batch_active_partition_count, parallel_batch_partition_activity_for_partition,
+        parallel_batch_streak_activity_for_partition,
+    },
+    result_collect::collect_conservative_partition_frontiers,
+    WorkloadDataCacheProtocol, WorkloadError, WorkloadParallelBatchPartitionScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelExecutionSummary,
+};
+use crate::{
+    result_partition_activity::merge_parallel_partition_activity_evidence_options,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
 };
 
 mod fabric_hop_activity;
@@ -1602,6 +1613,11 @@ impl WorkloadExpectedParallelPartitionActivity {
             WorkloadParallelBatchPartitionScope::FullSystem => {
                 summary.full_system_parallel_scheduler_partition_activity(self.partition)
             }
+            WorkloadParallelBatchPartitionScope::PlannedScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
+                planned_partition_activity(self.scope, summary, self.partition)
+            }
         }
     }
 }
@@ -1668,6 +1684,67 @@ impl WorkloadExpectedParallelPartitionUse {
             WorkloadParallelBatchPartitionScope::FullSystem => {
                 summary.active_full_system_parallel_scheduler_partition_count()
             }
+            WorkloadParallelBatchPartitionScope::PlannedScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
+                planned_active_partition_count(self.scope, summary)
+            }
         }
+    }
+}
+
+fn planned_partition_activity(
+    scope: WorkloadParallelBatchPartitionScope,
+    summary: &WorkloadParallelExecutionSummary,
+    partition: PartitionId,
+) -> Option<ParallelPartitionActivity> {
+    let sets = planned_partition_sets(scope, summary);
+    let streaks = planned_partition_streaks(scope, summary);
+    merge_parallel_partition_activity_evidence_options(
+        parallel_batch_partition_activity_for_partition(&sets, partition),
+        parallel_batch_streak_activity_for_partition(&streaks, partition),
+    )
+}
+
+fn planned_active_partition_count(
+    scope: WorkloadParallelBatchPartitionScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> usize {
+    let sets = planned_partition_sets(scope, summary);
+    let streaks = planned_partition_streaks(scope, summary);
+    parallel_batch_active_partition_count(&sets, &streaks)
+}
+
+fn planned_partition_sets(
+    scope: WorkloadParallelBatchPartitionScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<WorkloadParallelBatchPartitionSet> {
+    let timeline = planned_partition_batch_timeline(scope, summary);
+    collect_parallel_batch_partition_sets_from_timeline(&timeline)
+}
+
+fn planned_partition_streaks(
+    scope: WorkloadParallelBatchPartitionScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<WorkloadParallelBatchPartitionStreak> {
+    let timeline = planned_partition_batch_timeline(scope, summary);
+    collect_parallel_batch_partition_streaks_from_timeline(&timeline)
+}
+
+fn planned_partition_batch_timeline(
+    scope: WorkloadParallelBatchPartitionScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<WorkloadParallelBatchTimelineRecord> {
+    match scope {
+        WorkloadParallelBatchPartitionScope::PlannedScheduler => {
+            summary.parallel_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler => summary
+            .data_cache_parallel_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
+            summary.full_system_parallel_scheduler_planned_batch_timeline()
+        }
+        _ => Vec::new(),
     }
 }

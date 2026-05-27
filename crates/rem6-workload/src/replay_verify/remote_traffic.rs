@@ -395,31 +395,37 @@ pub(crate) fn validate_remote_partition_scope_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelBatchPartitionScope,
 ) -> Result<(), WorkloadError> {
-    validate_remote_flow_scope_evidence(summary, remote_scope_for_partition_scope(scope))
+    let Some(scope) = remote_scope_for_partition_scope(scope) else {
+        return Ok(());
+    };
+    validate_remote_flow_scope_evidence(summary, scope)
 }
 
 fn remote_scope_for_partition_scope(
     scope: WorkloadParallelBatchPartitionScope,
-) -> WorkloadParallelRemoteFlowScope {
+) -> Option<WorkloadParallelRemoteFlowScope> {
     match scope {
         WorkloadParallelBatchPartitionScope::Scheduler => {
-            WorkloadParallelRemoteFlowScope::Scheduler
+            Some(WorkloadParallelRemoteFlowScope::Scheduler)
         }
         WorkloadParallelBatchPartitionScope::DataCacheScheduler => {
-            WorkloadParallelRemoteFlowScope::DataCacheScheduler
+            Some(WorkloadParallelRemoteFlowScope::DataCacheScheduler)
         }
         WorkloadParallelBatchPartitionScope::GpuDmaScheduler => {
-            WorkloadParallelRemoteFlowScope::GpuDmaScheduler
+            Some(WorkloadParallelRemoteFlowScope::GpuDmaScheduler)
         }
         WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
-            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler
+            Some(WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler)
         }
         WorkloadParallelBatchPartitionScope::DmaScheduler => {
-            WorkloadParallelRemoteFlowScope::DmaScheduler
+            Some(WorkloadParallelRemoteFlowScope::DmaScheduler)
         }
         WorkloadParallelBatchPartitionScope::FullSystem => {
-            WorkloadParallelRemoteFlowScope::FullSystem
+            Some(WorkloadParallelRemoteFlowScope::FullSystem)
         }
+        WorkloadParallelBatchPartitionScope::PlannedScheduler
+        | WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler
+        | WorkloadParallelBatchPartitionScope::PlannedFullSystem => None,
     }
 }
 

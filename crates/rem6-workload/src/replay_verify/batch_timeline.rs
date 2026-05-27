@@ -111,6 +111,15 @@ fn batch_timeline_scope_for_partition_scope(
         WorkloadParallelBatchPartitionScope::FullSystem => {
             WorkloadParallelBatchTimelineScope::FullSystem
         }
+        WorkloadParallelBatchPartitionScope::PlannedScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedScheduler
+        }
+        WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler
+        }
+        WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
+            WorkloadParallelBatchTimelineScope::PlannedFullSystem
+        }
     }
 }
 
