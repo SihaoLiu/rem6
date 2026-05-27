@@ -21,7 +21,10 @@ use rem6_kernel::{
 use super::WorkloadParallelExecutionSummary;
 
 use crate::result_collect::{is_parallel_remote_flow_evidence, is_parallel_remote_send_evidence};
-use crate::result_partition_activity::merge_parallel_partition_activity_evidence_options;
+use crate::result_partition_activity::{
+    merge_parallel_partition_activity_evidence_options,
+    parallel_partition_activity_for_partition as remote_partition_activity_for_partition,
+};
 
 impl WorkloadParallelExecutionSummary {
     pub fn with_parallel_scheduler_batch_timeline(
@@ -321,9 +324,18 @@ impl WorkloadParallelExecutionSummary {
     ) -> Option<ParallelPartitionActivity> {
         let sets = self.gpu_dma_scheduler_batch_partition_sets();
         let streaks = self.gpu_dma_scheduler_batch_partition_streaks();
-        merge_parallel_partition_activity_evidence_options(
+        let batch_activity = merge_parallel_partition_activity_evidence_options(
             parallel_batch_partition_activity_for_partition(&sets, partition),
             parallel_batch_streak_activity_for_partition(&streaks, partition),
+        );
+        merge_parallel_partition_activity_evidence_options(
+            batch_activity,
+            remote_partition_activity_for_partition(
+                &[],
+                &self.gpu_dma_scheduler_remote_flows,
+                &self.gpu_dma_scheduler_remote_sends,
+                partition,
+            ),
         )
     }
 
@@ -333,9 +345,18 @@ impl WorkloadParallelExecutionSummary {
     ) -> Option<ParallelPartitionActivity> {
         let sets = self.accelerator_dma_scheduler_batch_partition_sets();
         let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
-        merge_parallel_partition_activity_evidence_options(
+        let batch_activity = merge_parallel_partition_activity_evidence_options(
             parallel_batch_partition_activity_for_partition(&sets, partition),
             parallel_batch_streak_activity_for_partition(&streaks, partition),
+        );
+        merge_parallel_partition_activity_evidence_options(
+            batch_activity,
+            remote_partition_activity_for_partition(
+                &[],
+                &self.accelerator_dma_scheduler_remote_flows,
+                &self.accelerator_dma_scheduler_remote_sends,
+                partition,
+            ),
         )
     }
 
@@ -345,9 +366,15 @@ impl WorkloadParallelExecutionSummary {
     ) -> Option<ParallelPartitionActivity> {
         let sets = self.dma_scheduler_batch_partition_sets();
         let streaks = self.dma_scheduler_batch_partition_streaks();
-        merge_parallel_partition_activity_evidence_options(
+        let batch_activity = merge_parallel_partition_activity_evidence_options(
             parallel_batch_partition_activity_for_partition(&sets, partition),
             parallel_batch_streak_activity_for_partition(&streaks, partition),
+        );
+        let flows = self.dma_scheduler_remote_flows();
+        let sends = self.dma_scheduler_remote_sends();
+        merge_parallel_partition_activity_evidence_options(
+            batch_activity,
+            remote_partition_activity_for_partition(&[], &flows, &sends, partition),
         )
     }
 

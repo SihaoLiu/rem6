@@ -452,6 +452,90 @@ fn workload_replay_plan_derives_partition_remote_activity_from_flows() {
 }
 
 #[test]
+fn workload_replay_plan_derives_dma_partition_remote_activity() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_activity(expected_dma_activity(
+            WorkloadParallelBatchPartitionScope::GpuDmaScheduler,
+            21,
+            0,
+            0,
+            2,
+            1,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_dma_activity(
+            WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler,
+            31,
+            0,
+            0,
+            0,
+            3,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_dma_activity(
+            WorkloadParallelBatchPartitionScope::DmaScheduler,
+            21,
+            0,
+            0,
+            2,
+            1,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_activity(expected_dma_activity(
+            WorkloadParallelBatchPartitionScope::DmaScheduler,
+            31,
+            0,
+            0,
+            0,
+            3,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(20),
+            PartitionId::new(21),
+            3,
+            9,
+            0,
+        )])
+        .with_gpu_dma_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(21),
+            PartitionId::new(22),
+            2,
+            11,
+            17,
+        )])
+        .with_accelerator_dma_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(30),
+            PartitionId::new(31),
+            3,
+            13,
+            19,
+        )]);
+
+    assert_eq!(
+        summary.gpu_dma_scheduler_partition_activity(PartitionId::new(21)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 2, 1, 0)),
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_partition_activity(PartitionId::new(31)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 0, 3, 0)),
+    );
+    assert_eq!(
+        summary.dma_scheduler_partition_activity(PartitionId::new(21)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 2, 1, 0)),
+    );
+    assert_eq!(
+        summary.dma_scheduler_partition_activity(PartitionId::new(31)),
+        Some(ParallelPartitionActivity::with_remote_counts(0, 0, 0, 3, 0)),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_remote_flow_partition_activity_evidence() {
     let plan = replay_plan()
         .add_expected_parallel_partition_activity(expected_activity(

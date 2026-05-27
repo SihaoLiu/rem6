@@ -62,13 +62,13 @@ isolated bugs:
   initial/final frontier, duration-weighted tick, sustained tick-streak,
   thresholded worker-tick, exact partition-set, and same-partition-set streak
   contracts use dedicated manifest scopes. Direct GPU and accelerator DMA
-  per-partition activity contracts now use the DMA timeline-derived sets and
-  streaks, and merged full-system partition checks include the same
-  per-partition worker and dispatch activity. Direct GPU DMA, accelerator DMA,
-  and combined DMA active-partition contracts now also derive partition use
-  from typed remote-flow and exact remote-send endpoints, so device-side
-  cross-partition traffic remains visible even when no batch timeline was
-  recorded. Remote-flow
+  per-partition activity contracts now use both DMA timeline-derived sets and
+  streaks plus typed remote-flow and exact remote-send endpoints, and merged
+  full-system partition checks include the same per-partition worker, dispatch,
+  send, and receive activity. Direct GPU DMA, accelerator DMA, and combined
+  DMA active-partition contracts now also derive partition use from typed
+  remote-flow and exact remote-send endpoints, so device-side cross-partition
+  traffic remains visible even when no batch timeline was recorded. Remote-flow
   and exact remote-send contracts reject same-partition endpoints, and exact
   remote sends also reject inverted source/delivery ticks, so remote traffic
   evidence cannot be satisfied by local partition traffic or non-causal timing.
