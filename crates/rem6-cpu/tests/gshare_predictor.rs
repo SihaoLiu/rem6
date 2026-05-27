@@ -119,6 +119,35 @@ fn gshare_predictor_squash_repairs_history_without_training_counter() {
 }
 
 #[test]
+fn gshare_predictor_rejects_stale_history_update_without_mutating_thread() {
+    let mut predictor = gshare(1, 8, 2);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x1000);
+
+    let first = predictor.predict(cpu, pc).unwrap();
+    predictor.update_history(first.history(), true).unwrap();
+
+    assert_eq!(
+        predictor
+            .update_history(first.history(), false)
+            .unwrap_err(),
+        GShareBranchPredictorError::HistoryUpdateOutOfOrder {
+            cpu,
+            expected_history: 1,
+            actual_history: 0,
+        },
+    );
+    assert_eq!(predictor.snapshot().threads()[0].global_history(), 1);
+    assert_eq!(predictor.history_update_count(), 1);
+
+    let current = predictor.predict(cpu, pc).unwrap();
+    let update = predictor.update_history(current.history(), false).unwrap();
+    assert_eq!(update.old_history(), 1);
+    assert_eq!(update.new_history(), 2);
+    assert_eq!(predictor.history_update_count(), 2);
+}
+
+#[test]
 fn gshare_predictor_snapshot_restore_preserves_threads_counters_and_counts() {
     let mut predictor = gshare(2, 8, 2);
     let cpu = CpuId::new(0);
