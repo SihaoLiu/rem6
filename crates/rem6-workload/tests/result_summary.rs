@@ -1583,6 +1583,14 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
     let active_partitions =
         WorkloadParallelExecutionSummary::default().with_full_system_parallel_partitions(3);
     assert!(active_partitions.has_full_system_parallel_scheduler_work());
+
+    let full_system_worker_ticks = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_batch_worker_count_tick_summaries([(2, 7)]);
+    assert!(full_system_worker_ticks.has_full_system_parallel_scheduler_work());
+
+    let full_system_worker_tick_streaks = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_batch_worker_tick_streak_summaries([(2, 5)]);
+    assert!(full_system_worker_tick_streaks.has_full_system_parallel_scheduler_work());
 }
 
 #[test]

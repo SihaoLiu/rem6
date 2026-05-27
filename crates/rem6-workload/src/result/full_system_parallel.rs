@@ -620,6 +620,12 @@ impl WorkloadParallelExecutionSummary {
                 .full_system_parallel_scheduler_batch_worker_counts
                 .is_empty()
             || !self
+                .full_system_parallel_scheduler_batch_worker_count_ticks
+                .is_empty()
+            || !self
+                .full_system_parallel_scheduler_batch_worker_tick_streaks
+                .is_empty()
+            || !self
                 .full_system_parallel_scheduler_partition_activities
                 .is_empty()
             || self.has_full_system_parallel_scheduler_remote_flows()

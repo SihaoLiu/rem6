@@ -462,6 +462,10 @@ Implementation evidence on 2026-05-26:
   merged full-system sustained-occupancy records. A global scheduler can
   report longest continuous occupancy windows directly, while scoped exact
   timelines remain lower-bound evidence for the same minimum-worker queries.
+- Workload full-system scheduler-work presence checks now treat explicit
+  merged full-system worker-tick bucket and sustained-occupancy summaries as
+  full-system work evidence. Result presence APIs therefore expose the same
+  direct worker-tick evidence that replay and summary queries already accept.
 - Workload full-system batch partition-set summaries now keep the strongest
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same
