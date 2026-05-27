@@ -155,6 +155,44 @@ fn tage_predictor_repairs_speculative_history_with_actual_outcome() {
 }
 
 #[test]
+fn tage_predictor_rejects_stale_history_update_without_mutating_thread() {
+    let mut predictor = tage(false);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x44);
+
+    let first = predictor.predict(cpu, pc, true).unwrap();
+    predictor
+        .update_history(first.history(), true, Address::new(0))
+        .unwrap();
+
+    assert_eq!(
+        predictor
+            .update_history(first.history(), false, Address::new(0))
+            .unwrap_err(),
+        TageBranchPredictorError::HistoryUpdateOutOfOrder {
+            cpu,
+            expected_path_history: 1,
+            actual_path_history: 0,
+            expected_global_history: 1,
+            actual_global_history: 0,
+        },
+    );
+    assert_eq!(predictor.snapshot().threads()[0].path_history(), 1);
+    assert_eq!(predictor.snapshot().threads()[0].global_history_value(), 1);
+    assert_eq!(predictor.history_update_count(), 1);
+
+    let current = predictor.predict(cpu, pc, true).unwrap();
+    let update = predictor
+        .update_history(current.history(), false, Address::new(0))
+        .unwrap();
+    assert_eq!(update.old_path_history(), 1);
+    assert_eq!(update.new_path_history(), 3);
+    assert_eq!(update.old_global_history(), 1);
+    assert_eq!(update.new_global_history(), 2);
+    assert_eq!(predictor.history_update_count(), 2);
+}
+
+#[test]
 fn tage_predictor_snapshot_restore_preserves_tables_histories_and_counts() {
     let mut predictor = tage(true);
     let cpu = CpuId::new(0);

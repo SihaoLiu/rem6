@@ -49,6 +49,13 @@ pub enum TageBranchPredictorError {
     UnknownThread {
         cpu: CpuId,
     },
+    HistoryUpdateOutOfOrder {
+        cpu: CpuId,
+        expected_path_history: u32,
+        actual_path_history: u32,
+        expected_global_history: u64,
+        actual_global_history: u64,
+    },
     UnknownBank {
         bank: usize,
     },
@@ -128,6 +135,17 @@ impl fmt::Display for TageBranchPredictorError {
             Self::UnknownThread { cpu } => {
                 write!(formatter, "tage thread {} is not configured", cpu.get())
             }
+            Self::HistoryUpdateOutOfOrder {
+                cpu,
+                expected_path_history,
+                actual_path_history,
+                expected_global_history,
+                actual_global_history,
+            } => write!(
+                formatter,
+                "tage thread {} path history is {expected_path_history}, but update record starts from {actual_path_history}; global history is {expected_global_history}, but update record starts from {actual_global_history}",
+                cpu.get()
+            ),
             Self::UnknownBank { bank } => write!(formatter, "tage bank {bank} is not configured"),
             Self::TableIndexOutOfRange {
                 bank,
@@ -839,6 +857,14 @@ impl TageBranchPredictor {
         let old_global_history = self.threads[thread_index].global_history_value();
         if repair {
             self.threads[thread_index].clone_from(history.thread_before());
+        } else if &self.threads[thread_index] != history.thread_before() {
+            return Err(TageBranchPredictorError::HistoryUpdateOutOfOrder {
+                cpu: history.cpu(),
+                expected_path_history: old_path_history,
+                actual_path_history: history.thread_before().path_history(),
+                expected_global_history: old_global_history,
+                actual_global_history: history.thread_before().global_history_value(),
+            });
         }
         let (history_bits, history_bit_count) =
             self.update_path_and_global_history(thread_index, history.pc(), taken, target);
