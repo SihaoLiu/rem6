@@ -981,7 +981,8 @@ impl fmt::Display for WorkloadError {
             Self::ZeroExpectedParallelFrontier { .. }
             | Self::DuplicateExpectedParallelFrontier { .. }
             | Self::MissingParallelFrontierSummary { .. }
-            | Self::ExpectedParallelFrontierBelowMinimum { .. } => {
+            | Self::ExpectedParallelFrontierBelowMinimum { .. }
+            | Self::InvalidParallelFrontierSummary { .. } => {
                 format_parallel_frontier_error(self, formatter)
             }
             Self::InvalidExpectedParallelBatchWorkerCount { .. }

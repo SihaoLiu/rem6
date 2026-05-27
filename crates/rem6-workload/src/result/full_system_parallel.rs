@@ -418,6 +418,18 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub(crate) fn raw_full_system_parallel_scheduler_initial_frontiers(
+        &self,
+    ) -> &[PartitionFrontier] {
+        &self.full_system_parallel_scheduler_initial_frontiers
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_final_frontiers(
+        &self,
+    ) -> &[PartitionFrontier] {
+        &self.full_system_parallel_scheduler_final_frontiers
+    }
+
     pub fn full_system_parallel_scheduler_initial_frontier_count(&self) -> usize {
         self.full_system_parallel_scheduler_initial_frontiers()
             .len()

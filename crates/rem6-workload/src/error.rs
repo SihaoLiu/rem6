@@ -998,6 +998,15 @@ pub enum WorkloadError {
         minimum_safe_until: Tick,
         actual_safe_until: Option<Tick>,
     },
+    InvalidParallelFrontierSummary {
+        scope: WorkloadParallelSchedulerScope,
+        stage: WorkloadParallelFrontierStage,
+        partition: u32,
+        now: Tick,
+        safe_until: Tick,
+        next_tick: Option<Tick>,
+        pending_events: usize,
+    },
     InvalidExpectedParallelBatchWorkerCount {
         scope: WorkloadParallelBatchWorkerScope,
         minimum_worker_count: usize,

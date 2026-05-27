@@ -395,6 +395,12 @@ Implementation evidence on 2026-05-26:
 - Workload scheduler progress, idle, and frontier replay now reject scheduler
   summaries whose empty-epoch count exceeds the total epoch count before
   applying liveness, idle, or frontier thresholds.
+- Workload frontier replay now also rejects raw frontier summaries whose
+  safe-until tick is before the recorded now tick, or whose next event tick is
+  before the recorded now tick. Full-system frontier checks scan scheduler,
+  data-cache, GPU DMA, accelerator DMA, and explicit full-system frontier
+  records before conservative merging, so malformed safe-time evidence cannot
+  disappear behind a valid partition frontier.
 - Workload wait-for diagnostic replay now rejects same-scope summaries whose
   edge-kind aggregate count falls below the exact edge-kind window count before
   applying clean-diagnostic, edge-kind count, edge-kind window, blocked-node

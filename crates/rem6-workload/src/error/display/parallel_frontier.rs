@@ -61,6 +61,25 @@ pub(super) fn format_parallel_frontier_error(
                 stage.as_str()
             )
         }
+        WorkloadError::InvalidParallelFrontierSummary {
+            scope,
+            stage,
+            partition,
+            now,
+            safe_until,
+            next_tick,
+            pending_events,
+        } => {
+            let next_tick = next_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            write!(
+                formatter,
+                "invalid {} {} frontier on partition {partition}: now {now}, safe-until {safe_until}, next tick {next_tick}, pending events {pending_events}",
+                scope.as_str(),
+                stage.as_str()
+            )
+        }
         _ => unreachable!("parallel frontier display called for unrelated workload error"),
     }
 }

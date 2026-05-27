@@ -315,6 +315,85 @@ fn workload_replay_plan_uses_explicit_full_system_frontiers() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_invalid_full_system_frontier_safety_window() {
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            WorkloadParallelFrontierStage::Final,
+            4,
+            21,
+            29,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_frontiers(
+            [PartitionFrontier::new(PartitionId::new(4), 13, 21, None, 0)],
+            [PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0)],
+        )
+        .with_full_system_parallel_scheduler_frontiers(
+            [],
+            [PartitionFrontier::new(
+                PartitionId::new(7),
+                40,
+                39,
+                Some(41),
+                1,
+            )],
+        );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelFrontierSummary {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            stage: WorkloadParallelFrontierStage::Final,
+            partition: 7,
+            now: 40,
+            safe_until: 39,
+            next_tick: Some(41),
+            pending_events: 1,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_data_cache_frontier_next_tick() {
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::DataCacheScheduler,
+            WorkloadParallelFrontierStage::Initial,
+            4,
+            13,
+            21,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_frontiers(
+            [
+                PartitionFrontier::new(PartitionId::new(4), 13, 21, Some(19), 2),
+                PartitionFrontier::new(PartitionId::new(7), 10, 20, Some(9), 1),
+            ],
+            [PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0)],
+        );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelFrontierSummary {
+            scope: WorkloadParallelSchedulerScope::DataCacheScheduler,
+            stage: WorkloadParallelFrontierStage::Initial,
+            partition: 7,
+            now: 10,
+            safe_until: 20,
+            next_tick: Some(9),
+            pending_events: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_checks_dma_scheduler_frontiers_directly() {
     let gpu_initial = PartitionFrontier::new(PartitionId::new(8), 10, 20, Some(14), 1);
     let gpu_final = PartitionFrontier::new(PartitionId::new(8), 18, 28, None, 0);
