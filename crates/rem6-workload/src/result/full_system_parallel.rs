@@ -13,7 +13,7 @@ use crate::parallel_batch::{
     collect_strongest_parallel_batch_partition_sets,
     collect_strongest_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
     normalize_partition_set, parallel_batch_active_partition_count,
-    parallel_batch_activity_count_at_or_above, parallel_batch_count_for_partition_set,
+    parallel_batch_count_at_or_above, parallel_batch_count_for_partition_set,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
     parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
     total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
@@ -160,15 +160,8 @@ impl WorkloadParallelExecutionSummary {
         &self,
         minimum_worker_count: usize,
     ) -> usize {
-        (self.parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
-            + self.data_cache_parallel_scheduler_batch_count_at_or_above(minimum_worker_count)
-            + self.dma_scheduler_batch_count_at_or_above(minimum_worker_count))
-        .max(parallel_batch_activity_count_at_or_above(
-            &[],
-            &[],
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
-            minimum_worker_count,
-        ))
+        let counts = self.full_system_parallel_scheduler_batch_worker_counts();
+        parallel_batch_count_at_or_above(&counts, minimum_worker_count)
     }
 
     pub fn full_system_parallel_scheduler_batch_partition_sets(

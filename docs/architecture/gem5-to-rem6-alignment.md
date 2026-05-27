@@ -463,6 +463,9 @@ Implementation evidence on 2026-05-26:
 - Workload full-system partition-set reporting now derives partition-set
   buckets from scoped partition streaks before merging explicit full-system
   streaks, so per-set queries and summary lists expose the same evidence.
+- Workload full-system minimum-worker batch reporting now sums the already
+  merged worker buckets, so scoped evidence in one bucket and explicit
+  full-system evidence in another bucket are both visible to threshold checks.
 - Workload direct per-partition activity now normalizes dispatch counts without
   worker evidence to zero while preserving remote send and receive evidence.
   A replay artifact can still prove cross-partition communication, but it
