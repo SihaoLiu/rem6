@@ -894,6 +894,15 @@ pub enum PowerError {
         previous_unit: String,
         current_unit: String,
     },
+    PowerStatDescriptionMismatch {
+        stat: rem6_stats::StatId,
+        previous_description: Option<rem6_stats::StatDescription>,
+        current_description: Option<rem6_stats::StatDescription>,
+    },
+    PowerStatGroupCatalogMismatch {
+        previous_groups: Vec<rem6_stats::StatGroupDescriptor>,
+        current_groups: Vec<rem6_stats::StatGroupDescriptor>,
+    },
     PowerStatSnapshotTimeWentBack {
         previous_tick: Tick,
         current_tick: Tick,
@@ -1029,6 +1038,22 @@ impl fmt::Display for PowerError {
                 formatter,
                 "power stat {} descriptor changed from {previous_path} {previous_unit} to {current_path} {current_unit}",
                 stat.get()
+            ),
+            Self::PowerStatDescriptionMismatch {
+                stat,
+                previous_description,
+                current_description,
+            } => write!(
+                formatter,
+                "power stat {} description changed from {previous_description:?} to {current_description:?}",
+                stat.get()
+            ),
+            Self::PowerStatGroupCatalogMismatch {
+                previous_groups,
+                current_groups,
+            } => write!(
+                formatter,
+                "power stat group catalog changed from {previous_groups:?} to {current_groups:?}"
             ),
             Self::PowerStatSnapshotTimeWentBack {
                 previous_tick,

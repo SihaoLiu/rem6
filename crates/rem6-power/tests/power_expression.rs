@@ -3,7 +3,10 @@ use rem6_power::{
     PowerExpressionModelSnapshot, PowerMetricBinding, PowerMetricBindings, PowerMetricId,
     PowerModelMode, PowerResidency, PowerStateExpression, PowerStateKind,
 };
-use rem6_stats::{StatId, StatSample, StatSnapshot, StatsRegistry};
+use rem6_stats::{
+    StatDescription, StatGroupDescriptor, StatGroupId, StatId, StatPath, StatSample, StatScope,
+    StatSnapshot, StatUnit, StatsRegistry,
+};
 
 fn assert_close(actual: f64, expected: f64) {
     assert!(
@@ -441,6 +444,102 @@ fn power_expression_inputs_reject_stats_delta_schema_drift() {
             current_path: "system.cpu0.retired_ops".to_string(),
             previous_unit: "Count".to_string(),
             current_unit: "Count".to_string(),
+        },
+    );
+}
+
+#[test]
+fn power_expression_inputs_reject_stats_delta_description_drift_without_panic() {
+    let stat = StatId::new(7);
+    let metric = PowerMetricId::new(3);
+    let bindings = PowerMetricBindings::new(vec![PowerMetricBinding::new(metric, stat)]).unwrap();
+    let path = StatPath::new(["system", "cpu0"], "committed_ops").unwrap();
+    let previous_description = StatDescription::new("Committed operations").unwrap();
+    let current_description = StatDescription::new("Retired operations").unwrap();
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::from_parts_with_description(
+            stat,
+            path.clone(),
+            StatUnit::count(),
+            Some(previous_description.clone()),
+            12,
+        )],
+    );
+    let current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::from_parts_with_description(
+            stat,
+            path,
+            StatUnit::count(),
+            Some(current_description.clone()),
+            15,
+        )],
+    );
+
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0, 0.7, 2.0, &previous, &current, &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatDescriptionMismatch {
+            stat,
+            previous_description: Some(previous_description),
+            current_description: Some(current_description),
+        },
+    );
+}
+
+#[test]
+fn power_expression_inputs_reject_stats_delta_group_catalog_drift_without_panic() {
+    let stat = StatId::new(7);
+    let group = StatGroupId::new(4);
+    let metric = PowerMetricId::new(3);
+    let bindings = PowerMetricBindings::new(vec![PowerMetricBinding::new(metric, stat)]).unwrap();
+    let previous_group =
+        StatGroupDescriptor::new(group, StatScope::new(["system", "cpu0"]).unwrap());
+    let current_group =
+        StatGroupDescriptor::new(group, StatScope::new(["system", "cpu1"]).unwrap());
+    let path = StatPath::new(["system", "cpu0"], "committed_ops").unwrap();
+    let previous = StatSnapshot::with_groups(
+        10,
+        0,
+        0,
+        vec![previous_group.clone()],
+        vec![StatSample::from_registered_parts(
+            stat,
+            Some(group),
+            path.clone(),
+            StatUnit::count(),
+            12,
+        )],
+    );
+    let current = StatSnapshot::with_groups(
+        20,
+        0,
+        0,
+        vec![current_group.clone()],
+        vec![StatSample::from_registered_parts(
+            stat,
+            Some(group),
+            path,
+            StatUnit::count(),
+            15,
+        )],
+    );
+
+    assert_eq!(
+        PowerExpressionInputs::from_stat_snapshot_delta(
+            45.0, 0.7, 2.0, &previous, &current, &bindings,
+        )
+        .unwrap_err(),
+        PowerError::PowerStatGroupCatalogMismatch {
+            previous_groups: vec![previous_group],
+            current_groups: vec![current_group],
         },
     );
 }

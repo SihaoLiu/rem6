@@ -247,6 +247,22 @@ fn power_error_from_stat_delta(error: StatsError) -> PowerError {
             previous_unit,
             current_unit,
         },
+        StatsError::SnapshotDeltaDescriptionMismatch {
+            stat,
+            previous_description,
+            current_description,
+        } => PowerError::PowerStatDescriptionMismatch {
+            stat,
+            previous_description,
+            current_description,
+        },
+        StatsError::SnapshotDeltaGroupCatalogMismatch {
+            previous_groups,
+            current_groups,
+        } => PowerError::PowerStatGroupCatalogMismatch {
+            previous_groups,
+            current_groups,
+        },
         _ => unreachable!("stat snapshot delta returned a non-delta stats error"),
     }
 }
