@@ -1576,6 +1576,16 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
     assert!(data_cache_epoch_counts.has_data_cache_parallel_work());
     assert!(data_cache_epoch_counts.has_full_system_parallel_scheduler_work());
 
+    let gpu_dma_empty_epochs =
+        WorkloadParallelExecutionSummary::default().with_gpu_dma_scheduler_empty_epoch_count(2);
+    assert!(gpu_dma_empty_epochs.has_dma_parallel_work());
+    assert!(gpu_dma_empty_epochs.has_full_system_parallel_scheduler_work());
+
+    let accelerator_dma_empty_epochs = WorkloadParallelExecutionSummary::default()
+        .with_accelerator_dma_scheduler_empty_epoch_count(3);
+    assert!(accelerator_dma_empty_epochs.has_dma_parallel_work());
+    assert!(accelerator_dma_empty_epochs.has_full_system_parallel_scheduler_work());
+
     let transition_subject = wait_subject("scheduler-retry-loop");
     let scheduler_transitions = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_progress_transitions([progress_transition(

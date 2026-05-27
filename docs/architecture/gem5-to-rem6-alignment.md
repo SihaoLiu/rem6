@@ -470,6 +470,10 @@ Implementation evidence on 2026-05-26:
   data-cache scheduler epoch or empty-epoch counts as work evidence. Idle-only
   scheduler summaries therefore remain visible to scoped and full-system
   presence APIs instead of existing only as raw count queries.
+- Workload scheduler-work presence checks now also treat direct GPU DMA and
+  accelerator DMA empty-epoch counts as DMA work evidence. Heterogeneous DMA
+  idle-bound summaries therefore remain visible to full-system presence APIs
+  instead of existing only as raw DMA count queries.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence

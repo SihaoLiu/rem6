@@ -680,6 +680,7 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_dma_parallel_work(&self) -> bool {
         self.dma_scheduler_epoch_count() != 0
+            || self.dma_scheduler_empty_epoch_count() != 0
             || self.dma_scheduler_dispatch_count() != 0
             || self.dma_scheduler_batch_count() != 0
             || self.dma_scheduler_batch_worker_ticks() != 0
