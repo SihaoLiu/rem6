@@ -936,8 +936,31 @@ impl WorkloadParallelExecutionSummary {
         self.fabric_transfer_count + self.dram_access_count + self.resource_wait_for_edge_count()
     }
 
+    pub const fn has_fabric_activity(&self) -> bool {
+        self.fabric_transfer_count != 0
+            || self.fabric_byte_count != 0
+            || self.fabric_occupied_ticks != 0
+            || self.fabric_queue_delay_ticks != 0
+            || self.fabric_max_queue_delay_ticks != 0
+            || self.contended_fabric_lane_count != 0
+    }
+
+    pub const fn has_dram_activity(&self) -> bool {
+        self.dram_access_count != 0
+            || self.dram_read_count != 0
+            || self.dram_write_count != 0
+            || self.dram_row_hit_count != 0
+            || self.dram_row_miss_count != 0
+            || self.dram_command_count != 0
+            || self.dram_turnaround_count != 0
+            || self.dram_total_ready_latency_cycles != 0
+            || self.dram_max_ready_latency_cycles != 0
+    }
+
     pub fn has_resource_activity(&self) -> bool {
-        self.resource_activity_count() != 0
+        self.has_fabric_activity()
+            || self.has_dram_activity()
+            || self.resource_wait_for_edge_count() != 0
     }
 
     pub fn full_system_wait_for_edge_count(&self) -> usize {

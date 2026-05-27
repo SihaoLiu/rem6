@@ -1827,6 +1827,21 @@ fn workload_result_reports_accelerator_command_kind_counts() {
 }
 
 #[test]
+fn workload_result_marks_resource_metric_evidence_as_activity() {
+    let fabric_metrics =
+        WorkloadParallelExecutionSummary::default().with_fabric_activity(0, 0, 128, 9, 4, 3, 0);
+    assert_eq!(fabric_metrics.fabric_transfer_count(), 0);
+    assert!(fabric_metrics.has_fabric_activity());
+    assert!(fabric_metrics.has_resource_activity());
+
+    let dram_metrics = WorkloadParallelExecutionSummary::default()
+        .with_dram_activity(0, 0, 0, 0, 0, 0, 1, 2, 3, 1, 21, 8);
+    assert_eq!(dram_metrics.dram_access_count(), 0);
+    assert!(dram_metrics.has_dram_activity());
+    assert!(dram_metrics.has_resource_activity());
+}
+
+#[test]
 fn workload_result_full_system_frontiers_merge_partitions_conservatively() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_frontiers(

@@ -478,6 +478,10 @@ Implementation evidence on 2026-05-26:
   direct scheduler evidence boundary, including epoch, empty-epoch, dispatch,
   batch, worker-tick, frontier, and remote-traffic records. Device activity
   summaries therefore cannot hide scheduler-visible DMA work.
+- Workload resource activity checks now treat fabric byte, occupancy, queue
+  delay, contention, and DRAM row, command, turnaround, and latency counters as
+  activity evidence. Resource activity presence therefore cannot hide dynamic
+  NoC or memory-controller evidence behind transfer/access aggregate counts.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence

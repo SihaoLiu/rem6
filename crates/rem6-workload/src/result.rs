@@ -1113,10 +1113,6 @@ impl WorkloadParallelExecutionSummary {
         self.contended_fabric_lane_count
     }
 
-    pub const fn has_fabric_activity(&self) -> bool {
-        self.fabric_transfer_count != 0
-    }
-
     pub const fn has_fabric_contention(&self) -> bool {
         self.contended_fabric_lane_count != 0
     }
@@ -1175,10 +1171,6 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn dram_max_ready_latency_cycles(&self) -> u64 {
         self.dram_max_ready_latency_cycles
-    }
-
-    pub const fn has_dram_activity(&self) -> bool {
-        self.dram_access_count != 0
     }
 
     pub const fn dram_qos_access_count(&self) -> usize {
