@@ -36,6 +36,14 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_full_system_progress_transitions(
+        mut self,
+        transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
+    ) -> Self {
+        self.full_system_progress_transitions = collect_parallel_progress_transitions(transitions);
+        self
+    }
+
     pub fn with_parallel_scheduler_livelock_diagnostic_records(
         mut self,
         progress_transition_count: usize,
@@ -603,16 +611,16 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_progress_transitions(&self) -> Vec<ParallelProgressTransitionRecord> {
-        collect_parallel_progress_transitions(
-            self.parallel_scheduler_progress_transitions
-                .iter()
-                .cloned()
-                .chain(
-                    self.data_cache_parallel_scheduler_progress_transitions
-                        .iter()
-                        .cloned(),
-                ),
-        )
+        collect_parallel_progress_transitions(self.full_system_progress_transition_iter().cloned())
+    }
+
+    pub fn full_system_progress_transition_count(&self) -> usize {
+        if !self.full_system_progress_transitions.is_empty() {
+            self.full_system_progress_transitions.len()
+        } else {
+            self.scheduler_progress_transition_count
+                + self.data_cache_parallel_scheduler_progress_transition_count
+        }
     }
 
     pub fn full_system_progress_transition_count_by_kind(
@@ -743,16 +751,22 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn has_full_system_progress_transitions(&self) -> bool {
-        self.has_parallel_scheduler_progress_transitions()
+        !self.full_system_progress_transitions.is_empty()
+            || self.has_parallel_scheduler_progress_transitions()
             || self.has_data_cache_parallel_scheduler_progress_transitions()
     }
 
     fn full_system_progress_transition_iter(
         &self,
-    ) -> impl Iterator<Item = &ParallelProgressTransitionRecord> {
-        self.parallel_scheduler_progress_transitions.iter().chain(
-            self.data_cache_parallel_scheduler_progress_transitions
-                .iter(),
+    ) -> Box<dyn Iterator<Item = &ParallelProgressTransitionRecord> + '_> {
+        if !self.full_system_progress_transitions.is_empty() {
+            return Box::new(self.full_system_progress_transitions.iter());
+        }
+        Box::new(
+            self.parallel_scheduler_progress_transitions.iter().chain(
+                self.data_cache_parallel_scheduler_progress_transitions
+                    .iter(),
+            ),
         )
     }
 }

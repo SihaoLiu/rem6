@@ -478,6 +478,10 @@ Implementation evidence on 2026-05-26:
   full-system remote flow and send records. A global scheduler can report
   cross-partition communication directly while same-route scoped flow evidence
   stays a lower bound instead of being added to the merged total again.
+- Workload full-system progress-transition reporting now accepts explicit
+  merged full-system transition records. A global scheduler can report exact
+  progress-free transition evidence directly without concatenating scoped
+  exact-record streams into an already-merged full-system record set.
 - Workload full-system frontier reporting now accepts explicit merged
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and

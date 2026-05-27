@@ -250,6 +250,53 @@ fn workload_manifest_identity_changes_with_parallel_progress_transition_expectat
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_progress_transitions() {
+    let global_subject = subject("global-scheduler");
+    let scoped_transition = actual_transition(
+        0,
+        subject("cpu-scheduler"),
+        LivelockTransitionKind::SchedulerEpoch,
+        3,
+        0,
+    );
+    let full_system_transition = actual_transition(
+        6,
+        global_subject.clone(),
+        LivelockTransitionKind::QueueRotation,
+        21,
+        4,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            6,
+            global_subject,
+            LivelockTransitionKind::QueueRotation,
+            21,
+            4,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_progress_transitions([scoped_transition.clone()])
+        .with_full_system_progress_transitions([full_system_transition.clone()]);
+
+    assert_eq!(
+        summary.parallel_scheduler_progress_transitions(),
+        &[scoped_transition],
+    );
+    assert_eq!(
+        summary.full_system_progress_transitions(),
+        vec![full_system_transition],
+    );
+    assert_eq!(summary.full_system_progress_transition_count(), 1);
+    assert!(summary.has_full_system_progress_transitions());
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_missing_parallel_progress_transition() {
     let expected = expected_transition(
         WorkloadParallelRemoteFlowScope::Scheduler,
