@@ -377,6 +377,11 @@ Implementation evidence on 2026-05-26:
 - Workload batch-activity replay now applies the same scoped raw batch
   timeline validation before deriving minimum-worker batch counts, so a valid
   batch cannot hide a malformed raw timeline record in the same scope.
+- Workload full-system batch timeline reporting can now accept an explicit
+  global timeline. Exact full-system replay records and duration-weighted
+  worker/tick summaries can use a run-produced occupancy view directly instead
+  of requiring every full-system window to be reconstructed from scoped CPU,
+  data-cache, GPU DMA, and accelerator DMA timelines.
 - Workload parallel max-worker and total-worker replay now validate scoped raw
   batch timeline records before deriving upper-level worker evidence from
   batch histograms or timelines.

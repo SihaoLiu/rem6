@@ -1,4 +1,7 @@
-use crate::parallel_batch::parallel_batch_activity_count_for_worker_count;
+use crate::parallel_batch::{
+    collect_parallel_batch_worker_counts_from_timeline,
+    parallel_batch_activity_count_for_worker_count,
+};
 use crate::{WorkloadError, WorkloadParallelRemoteFlowScope};
 
 use super::WorkloadParallelExecutionSummary;
@@ -29,11 +32,14 @@ impl WorkloadParallelExecutionSummary {
         &self,
         worker_count: usize,
     ) -> usize {
+        let timeline_counts = collect_parallel_batch_worker_counts_from_timeline(
+            &self.full_system_parallel_scheduler_batch_timeline,
+        );
         (self.parallel_scheduler_batch_count_for_worker_count(worker_count)
             + self.data_cache_parallel_scheduler_batch_count_for_worker_count(worker_count)
             + self.dma_scheduler_batch_count_for_worker_count(worker_count))
         .max(parallel_batch_activity_count_for_worker_count(
-            &[],
+            &timeline_counts,
             &self.full_system_parallel_scheduler_batch_partition_sets,
             &self.full_system_parallel_scheduler_batch_partition_streaks,
             worker_count,

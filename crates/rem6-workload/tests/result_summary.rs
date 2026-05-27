@@ -1083,6 +1083,87 @@ fn workload_result_counts_parallel_progress_transition_evidence() {
 }
 
 #[test]
+fn workload_result_uses_explicit_full_system_batch_timeline_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let scoped_scheduler = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::Scheduler,
+        20,
+        24,
+        [cpu, cache],
+        2,
+    );
+    let full_system_early = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        5,
+        [cpu, cache, dma],
+        3,
+    );
+    let full_system_late = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        7,
+        11,
+        [cpu, dma],
+        2,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([scoped_scheduler])
+        .with_full_system_parallel_scheduler_batch_timeline([
+            full_system_late.clone(),
+            full_system_early.clone(),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_timeline(),
+        vec![full_system_early, full_system_late],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
+        vec![(2, 4), (3, 5)],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(2, 1),
+            WorkloadParallelBatchWorkerCount::new(3, 1),
+        ],
+    );
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 2);
+    assert_eq!(summary.full_system_parallel_scheduler_max_workers(), 3);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 5);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(2),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_for_worker_count(3),
+        5,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_ticks_at_or_above(2),
+        9,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_ticks(),
+        23
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(3),
+        15,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, dma]),
+        1,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache, dma]),
+        1,
+    );
+}
+
+#[test]
 fn workload_result_preserves_wait_for_edge_kind_counts() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_data_cache_wait_for_edge_kind_counts([

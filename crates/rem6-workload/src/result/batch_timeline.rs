@@ -91,6 +91,15 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_full_system_parallel_scheduler_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_batch_timeline =
+            collect_parallel_batch_timeline(records);
+        self
+    }
+
     pub fn parallel_scheduler_batch_timeline(&self) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.parallel_scheduler_batch_timeline
     }
@@ -206,6 +215,9 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_timeline(
         &self,
     ) -> Vec<WorkloadParallelBatchTimelineRecord> {
+        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            return self.full_system_parallel_scheduler_batch_timeline.clone();
+        }
         collect_parallel_batch_timeline(
             self.parallel_scheduler_batch_timeline
                 .iter()
@@ -236,6 +248,9 @@ impl WorkloadParallelExecutionSummary {
     ) -> Vec<(usize, Tick)> {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         let mut summaries = collect_parallel_batch_worker_count_tick_summaries(&timeline);
+        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            return collect_batch_worker_count_tick_summaries(summaries);
+        }
         if !has_parallel_batch_timeline_evidence(&self.gpu_dma_scheduler_batch_timeline) {
             summaries.extend(
                 self.gpu_dma_scheduler_batch_worker_count_tick_summaries()
@@ -391,6 +406,9 @@ impl WorkloadParallelExecutionSummary {
         worker_count: usize,
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            return parallel_batch_ticks_for_worker_count(&timeline, worker_count);
+        }
         parallel_batch_ticks_for_worker_count(&timeline, worker_count)
             .saturating_add(self.dma_scheduler_fallback_batch_ticks_for_worker_count(worker_count))
     }
@@ -400,6 +418,9 @@ impl WorkloadParallelExecutionSummary {
         minimum_worker_count: usize,
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            return parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count);
+        }
         parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count).saturating_add(
             self.dma_scheduler_fallback_batch_ticks_at_or_above(minimum_worker_count),
         )
@@ -407,6 +428,9 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            return parallel_batch_worker_ticks(&timeline);
+        }
         parallel_batch_worker_ticks(&timeline)
             .saturating_add(self.dma_scheduler_fallback_batch_worker_ticks())
     }
@@ -416,6 +440,9 @@ impl WorkloadParallelExecutionSummary {
         minimum_worker_count: usize,
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            return parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count);
+        }
         parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count).saturating_add(
             self.dma_scheduler_fallback_batch_worker_ticks_at_or_above(minimum_worker_count),
         )
@@ -480,6 +507,12 @@ impl WorkloadParallelExecutionSummary {
             self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
             minimum_worker_count,
         ))
+    }
+
+    fn has_explicit_full_system_parallel_scheduler_batch_timeline(&self) -> bool {
+        !self
+            .full_system_parallel_scheduler_batch_timeline
+            .is_empty()
     }
 }
 

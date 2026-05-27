@@ -7,9 +7,11 @@ use rem6_kernel::{
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_sets_from_streaks,
-    collect_parallel_batch_partition_streaks, collect_parallel_batch_worker_counts,
+    collect_parallel_batch_partition_sets_from_timeline, collect_parallel_batch_partition_streaks,
+    collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_worker_counts,
     collect_parallel_batch_worker_counts_from_partition_sets,
     collect_parallel_batch_worker_counts_from_streaks,
+    collect_parallel_batch_worker_counts_from_timeline,
     collect_strongest_parallel_batch_partition_sets,
     collect_strongest_parallel_batch_worker_counts, max_parallel_batch_activity_worker_count,
     normalize_partition_set, parallel_batch_active_partition_count,
@@ -81,6 +83,15 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_max_workers(&self) -> usize {
+        let timeline_counts = collect_parallel_batch_worker_counts_from_timeline(
+            &self.full_system_parallel_scheduler_batch_timeline,
+        );
+        let timeline_sets = collect_parallel_batch_partition_sets_from_timeline(
+            &self.full_system_parallel_scheduler_batch_timeline,
+        );
+        let timeline_streaks = collect_parallel_batch_partition_streaks_from_timeline(
+            &self.full_system_parallel_scheduler_batch_timeline,
+        );
         self.max_parallel_scheduler_workers()
             .max(self.data_cache_parallel_scheduler_max_workers())
             .max(self.dma_scheduler_max_workers())
@@ -88,6 +99,11 @@ impl WorkloadParallelExecutionSummary {
                 &[],
                 &self.full_system_parallel_scheduler_batch_partition_sets,
                 &self.full_system_parallel_scheduler_batch_partition_streaks,
+            ))
+            .max(max_parallel_batch_activity_worker_count(
+                &timeline_counts,
+                &timeline_sets,
+                &timeline_streaks,
             ))
     }
 
@@ -118,14 +134,7 @@ impl WorkloadParallelExecutionSummary {
                 .chain(data_cache_counts)
                 .chain(self.dma_scheduler_batch_worker_counts()),
         );
-        let full_system_counts = collect_strongest_parallel_batch_worker_counts(
-            collect_parallel_batch_worker_counts_from_partition_sets(
-                &self.full_system_parallel_scheduler_batch_partition_sets,
-            ),
-            collect_parallel_batch_worker_counts_from_streaks(
-                &self.full_system_parallel_scheduler_batch_partition_streaks,
-            ),
-        );
+        let full_system_counts = self.explicit_full_system_parallel_scheduler_batch_worker_counts();
         collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
     }
 
@@ -171,14 +180,7 @@ impl WorkloadParallelExecutionSummary {
                 .chain(data_cache_counts)
                 .chain(dma_counts),
         );
-        let full_system_counts = collect_strongest_parallel_batch_worker_counts(
-            collect_parallel_batch_worker_counts_from_partition_sets(
-                &self.full_system_parallel_scheduler_batch_partition_sets,
-            ),
-            collect_parallel_batch_worker_counts_from_streaks(
-                &self.full_system_parallel_scheduler_batch_partition_streaks,
-            ),
-        );
+        let full_system_counts = self.explicit_full_system_parallel_scheduler_batch_worker_counts();
         collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
     }
 
@@ -221,15 +223,7 @@ impl WorkloadParallelExecutionSummary {
             explicit_scoped_sets,
             scoped_streak_sets,
         );
-        let full_system_streak_sets = collect_parallel_batch_partition_sets_from_streaks(
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
-        );
-        let full_system_sets = collect_strongest_parallel_batch_partition_sets(
-            self.full_system_parallel_scheduler_batch_partition_sets
-                .iter()
-                .cloned(),
-            full_system_streak_sets,
-        );
+        let full_system_sets = self.explicit_full_system_parallel_scheduler_batch_partition_sets();
         collect_strongest_parallel_batch_partition_sets(scoped_sets, full_system_sets)
     }
 
@@ -237,9 +231,8 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionStreak> {
         collect_parallel_batch_partition_streaks(
-            self.full_system_parallel_scheduler_batch_partition_streaks
-                .iter()
-                .cloned()
+            self.explicit_full_system_parallel_scheduler_batch_partition_streaks()
+                .into_iter()
                 .chain(
                     self.parallel_scheduler_batch_partition_streaks
                         .iter()
@@ -272,8 +265,8 @@ impl WorkloadParallelExecutionSummary {
             ),
         )
         .max(parallel_batch_count_for_partition_set(
-            &self.full_system_parallel_scheduler_batch_partition_sets,
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
+            &self.explicit_full_system_parallel_scheduler_batch_partition_sets(),
+            &self.explicit_full_system_parallel_scheduler_batch_partition_streaks(),
             partitions.iter().copied(),
         ))
     }
@@ -457,6 +450,55 @@ impl WorkloadParallelExecutionSummary {
         self.has_parallel_scheduler_remote_sends()
             || self.has_data_cache_parallel_scheduler_remote_sends()
             || self.has_dma_scheduler_remote_sends()
+    }
+
+    fn explicit_full_system_parallel_scheduler_batch_worker_counts(
+        &self,
+    ) -> Vec<WorkloadParallelBatchWorkerCount> {
+        collect_strongest_parallel_batch_worker_counts(
+            collect_parallel_batch_worker_counts_from_timeline(
+                &self.full_system_parallel_scheduler_batch_timeline,
+            ),
+            collect_strongest_parallel_batch_worker_counts(
+                collect_parallel_batch_worker_counts_from_partition_sets(
+                    &self.full_system_parallel_scheduler_batch_partition_sets,
+                ),
+                collect_parallel_batch_worker_counts_from_streaks(
+                    &self.full_system_parallel_scheduler_batch_partition_streaks,
+                ),
+            ),
+        )
+    }
+
+    fn explicit_full_system_parallel_scheduler_batch_partition_sets(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionSet> {
+        let timeline_sets = collect_parallel_batch_partition_sets_from_timeline(
+            &self.full_system_parallel_scheduler_batch_timeline,
+        );
+        let full_system_sets = collect_strongest_parallel_batch_partition_sets(
+            self.full_system_parallel_scheduler_batch_partition_sets
+                .iter()
+                .cloned(),
+            timeline_sets,
+        );
+        let streak_sets = collect_parallel_batch_partition_sets_from_streaks(
+            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        );
+        collect_strongest_parallel_batch_partition_sets(full_system_sets, streak_sets)
+    }
+
+    fn explicit_full_system_parallel_scheduler_batch_partition_streaks(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionStreak> {
+        collect_parallel_batch_partition_streaks(
+            self.full_system_parallel_scheduler_batch_partition_streaks
+                .iter()
+                .cloned()
+                .chain(collect_parallel_batch_partition_streaks_from_timeline(
+                    &self.full_system_parallel_scheduler_batch_timeline,
+                )),
+        )
     }
 
     pub fn has_full_system_parallel_scheduler_work(&self) -> bool {

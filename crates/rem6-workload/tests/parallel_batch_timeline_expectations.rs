@@ -255,6 +255,49 @@ fn workload_replay_plan_checks_dma_scheduler_parallel_batch_timelines_directly()
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_batch_timeline_evidence() {
+    let cpu = partition(0);
+    let cache = partition(1);
+    let dma = partition(2);
+    let expected = expected_timeline(
+        WorkloadParallelBatchTimelineScope::FullSystem,
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        6,
+        [cpu, cache, dma],
+        3,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(expected)
+        .unwrap();
+    let scoped_scheduler = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        10,
+        14,
+        [cpu, cache],
+        2,
+    );
+    let global = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        6,
+        [cpu, cache, dma],
+        3,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([scoped_scheduler])
+        .with_full_system_parallel_scheduler_batch_timeline([global.clone()]);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_timeline(),
+        vec![global],
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-batch-timeline"), boot_image())
