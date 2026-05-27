@@ -1658,6 +1658,40 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
 }
 
 #[test]
+fn workload_result_marks_dma_scheduler_evidence_as_dma_activity() {
+    let gpu_empty_epochs =
+        WorkloadParallelExecutionSummary::default().with_gpu_dma_scheduler_empty_epoch_count(2);
+    assert!(gpu_empty_epochs.has_gpu_dma_activity());
+
+    let gpu_remote_send = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            3,
+            11,
+            0,
+        )]);
+    assert!(gpu_remote_send.has_gpu_dma_activity());
+
+    let accelerator_empty_epochs = WorkloadParallelExecutionSummary::default()
+        .with_accelerator_dma_scheduler_empty_epoch_count(3);
+    assert!(accelerator_empty_epochs.has_accelerator_dma_activity());
+
+    let accelerator_frontier = WorkloadParallelExecutionSummary::default()
+        .with_accelerator_dma_scheduler_frontiers(
+            [PartitionFrontier::new(
+                PartitionId::new(2),
+                5,
+                13,
+                Some(8),
+                1,
+            )],
+            [PartitionFrontier::new(PartitionId::new(2), 13, 21, None, 0)],
+        );
+    assert!(accelerator_frontier.has_accelerator_dma_activity());
+}
+
+#[test]
 fn workload_result_ignores_local_remote_traffic_as_parallel_evidence() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(

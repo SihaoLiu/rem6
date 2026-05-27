@@ -474,6 +474,10 @@ Implementation evidence on 2026-05-26:
   accelerator DMA empty-epoch counts as DMA work evidence. Heterogeneous DMA
   idle-bound summaries therefore remain visible to full-system presence APIs
   instead of existing only as raw DMA count queries.
+- Workload scoped GPU DMA and accelerator DMA activity checks now use the same
+  direct scheduler evidence boundary, including epoch, empty-epoch, dispatch,
+  batch, worker-tick, frontier, and remote-traffic records. Device activity
+  summaries therefore cannot hide scheduler-visible DMA work.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence

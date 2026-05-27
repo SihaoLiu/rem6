@@ -371,10 +371,18 @@ impl WorkloadParallelExecutionSummary {
             .any(is_parallel_remote_send_evidence)
     }
 
-    pub const fn has_gpu_dma_activity(&self) -> bool {
+    pub fn has_gpu_dma_activity(&self) -> bool {
         self.gpu_dma_copy_count != 0
             || self.gpu_dma_completion_count != 0
+            || self.gpu_dma_scheduler_epoch_count != 0
+            || self.gpu_dma_scheduler_empty_epoch_count != 0
+            || self.gpu_dma_scheduler_dispatch_count != 0
             || self.gpu_dma_scheduler_batch_count != 0
+            || !self.gpu_dma_scheduler_batch_worker_counts.is_empty()
+            || !self.gpu_dma_scheduler_batch_worker_count_ticks.is_empty()
+            || self.has_gpu_dma_scheduler_frontiers()
+            || self.has_gpu_dma_scheduler_remote_flows()
+            || self.has_gpu_dma_scheduler_remote_sends()
     }
 
     pub fn gpu_dma_wait_for_edge_count(&self) -> usize {
@@ -750,10 +758,22 @@ impl WorkloadParallelExecutionSummary {
             .any(is_parallel_remote_send_evidence)
     }
 
-    pub const fn has_accelerator_dma_activity(&self) -> bool {
+    pub fn has_accelerator_dma_activity(&self) -> bool {
         self.accelerator_dma_copy_count != 0
             || self.accelerator_dma_completion_count != 0
+            || self.accelerator_dma_scheduler_epoch_count != 0
+            || self.accelerator_dma_scheduler_empty_epoch_count != 0
+            || self.accelerator_dma_scheduler_dispatch_count != 0
             || self.accelerator_dma_scheduler_batch_count != 0
+            || !self
+                .accelerator_dma_scheduler_batch_worker_counts
+                .is_empty()
+            || !self
+                .accelerator_dma_scheduler_batch_worker_count_ticks
+                .is_empty()
+            || self.has_accelerator_dma_scheduler_frontiers()
+            || self.has_accelerator_dma_scheduler_remote_flows()
+            || self.has_accelerator_dma_scheduler_remote_sends()
     }
 
     pub fn accelerator_dma_wait_for_edge_count(&self) -> usize {
