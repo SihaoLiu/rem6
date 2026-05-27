@@ -44,7 +44,8 @@ isolated bugs:
   aggregate cannot hide available parallelism. The same lower-bound rule now
   covers full-system batch worker-tick buckets, thresholded batch tick
   activity, thresholded batch worker-ticks, and longest minimum-worker tick
-  streaks recorded through explicit merged summaries.
+  streaks recorded through explicit merged summaries, along with exact
+  full-system partition-set batch counts and same-partition-set streak counts.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -1177,7 +1178,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   evidence with explicit full-system threshold totals checked against scoped
   lower bounds, minimum-worker duration-weighted tick and worker-tick activity
   with explicit full-system summaries checked against scoped lower bounds,
-  exact batch partition-set activity derived from exact histograms or streak counts,
+  exact batch partition-set activity derived from exact histograms or streak counts
+  with explicit full-system summaries checked against scoped lower bounds,
   sustained same-batch partition-set streak activity, minimum active partition
   counts derived from aggregate, exact partition-set, streak, activity,
   dedicated GPU or accelerator DMA timeline scopes, remote-send, or

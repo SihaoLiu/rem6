@@ -11,6 +11,7 @@ use crate::{
     WorkloadReplayPlan, WorkloadResult,
 };
 
+mod batch_partition;
 mod batch_timeline;
 mod batch_worker_count;
 mod batch_worker_ticks;
@@ -19,6 +20,10 @@ mod partition_activity;
 mod remote_traffic;
 mod scheduler_summary;
 
+pub(crate) use batch_partition::{
+    validate_partition_scope_batch_partition_set_evidence,
+    validate_partition_scope_batch_partition_streak_evidence,
+};
 use batch_timeline::{
     validate_full_system_batch_timeline_merge_summary,
     validate_planned_full_system_batch_timeline_merge_summary,
@@ -1084,6 +1089,11 @@ pub(crate) fn verify_expected_parallel_batch_partition_sets(
 
     for expected in expected_sets {
         validate_partition_scope_batch_timeline_evidence(summary, expected.scope())?;
+        validate_partition_scope_batch_partition_set_evidence(
+            summary,
+            expected.scope(),
+            expected.partitions(),
+        )?;
         let actual_batch_count = expected.actual_batch_count(summary);
         if actual_batch_count < expected.minimum_batch_count() {
             return Err(
@@ -1118,6 +1128,11 @@ pub(crate) fn verify_expected_parallel_batch_partition_streaks(
 
     for expected in expected_streaks {
         validate_partition_scope_batch_timeline_evidence(summary, expected.scope())?;
+        validate_partition_scope_batch_partition_streak_evidence(
+            summary,
+            expected.scope(),
+            expected.partitions(),
+        )?;
         let actual_consecutive_batch_count = expected.actual_consecutive_batch_count(summary);
         if actual_consecutive_batch_count < expected.minimum_consecutive_batch_count() {
             return Err(

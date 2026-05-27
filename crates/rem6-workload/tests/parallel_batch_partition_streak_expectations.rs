@@ -407,6 +407,44 @@ fn workload_replay_plan_rejects_missing_or_short_parallel_batch_partition_streak
 }
 
 #[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_batch_partition_streak() {
+    let cpu = partition(0);
+    let cache = partition(2);
+    let plan = replay_plan()
+        .add_expected_parallel_batch_partition_streak(expected_streak(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            [cpu, cache],
+            4,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 4),
+        ])
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 1),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set([
+            cpu, cache
+        ]),
+        4,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchPartitionStreakBelowMinimum {
+            scope: WorkloadParallelBatchPartitionScope::FullSystem,
+            partitions: vec![0, 2],
+            minimum_consecutive_batch_count: 4,
+            actual_consecutive_batch_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_malformed_timeline_for_batch_partition_streaks() {
     let plan = replay_plan()
         .add_expected_parallel_batch_partition_streak(expected_streak(

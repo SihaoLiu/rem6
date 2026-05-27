@@ -328,6 +328,46 @@ fn workload_replay_plan_uses_explicit_full_system_partition_set_evidence() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_partition_set_evidence() {
+    let cpu = partition(0);
+    let cache = partition(2);
+    let plan = replay_plan()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            [cpu, cache],
+            5,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [cpu, cache],
+            3,
+        )])
+        .with_data_cache_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 2),
+        ])
+        .with_full_system_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 1),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache]),
+        5,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchPartitionSetBelowMinimum {
+            scope: WorkloadParallelBatchPartitionScope::FullSystem,
+            partitions: vec![0, 2],
+            minimum_batch_count: 5,
+            actual_batch_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_batch_partition_sets() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-batch-partitions"), boot_image())

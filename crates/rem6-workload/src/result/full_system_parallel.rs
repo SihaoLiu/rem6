@@ -254,34 +254,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_partition_sets(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionSet> {
-        let explicit_scoped_sets = collect_parallel_batch_partition_sets(
-            self.parallel_scheduler_batch_partition_sets
-                .iter()
-                .cloned()
-                .chain(
-                    self.data_cache_parallel_scheduler_batch_partition_sets
-                        .iter()
-                        .cloned(),
-                )
-                .chain(self.dma_scheduler_batch_partition_sets()),
-        );
-        let scoped_streaks = collect_parallel_batch_partition_streaks(
-            self.parallel_scheduler_batch_partition_streaks
-                .iter()
-                .cloned()
-                .chain(
-                    self.data_cache_parallel_scheduler_batch_partition_streaks
-                        .iter()
-                        .cloned(),
-                )
-                .chain(self.dma_scheduler_batch_partition_streaks()),
-        );
-        let scoped_streak_sets =
-            collect_parallel_batch_partition_sets_from_streaks(&scoped_streaks);
-        let scoped_sets = collect_strongest_parallel_batch_partition_sets(
-            explicit_scoped_sets,
-            scoped_streak_sets,
-        );
+        let scoped_sets = self.scoped_full_system_parallel_scheduler_batch_partition_sets();
         let full_system_sets = self.explicit_full_system_parallel_scheduler_batch_partition_sets();
         collect_strongest_parallel_batch_partition_sets(scoped_sets, full_system_sets)
     }
@@ -292,17 +265,7 @@ impl WorkloadParallelExecutionSummary {
         collect_parallel_batch_partition_streaks(
             self.explicit_full_system_parallel_scheduler_batch_partition_streaks()
                 .into_iter()
-                .chain(
-                    self.parallel_scheduler_batch_partition_streaks
-                        .iter()
-                        .cloned(),
-                )
-                .chain(
-                    self.data_cache_parallel_scheduler_batch_partition_streaks
-                        .iter()
-                        .cloned(),
-                )
-                .chain(self.dma_scheduler_batch_partition_streaks()),
+                .chain(self.scoped_full_system_parallel_scheduler_batch_partition_streaks()),
         )
     }
 
@@ -330,11 +293,57 @@ impl WorkloadParallelExecutionSummary {
         ))
     }
 
+    pub(crate) fn scoped_full_system_parallel_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let partitions = normalize_partition_set(partitions);
+        (self.parallel_scheduler_batch_count_for_partition_set(partitions.iter().copied())
+            + self.data_cache_parallel_scheduler_batch_count_for_partition_set(
+                partitions.iter().copied(),
+            ))
+        .saturating_add(
+            self.gpu_dma_scheduler_batch_count_for_partition_set(partitions.iter().copied()),
+        )
+        .saturating_add(
+            self.accelerator_dma_scheduler_batch_count_for_partition_set(
+                partitions.iter().copied(),
+            ),
+        )
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        parallel_batch_count_for_partition_set(
+            &self.explicit_full_system_parallel_scheduler_batch_partition_sets(),
+            &self.explicit_full_system_parallel_scheduler_batch_partition_streaks(),
+            partitions,
+        )
+    }
+
     pub fn full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
         &self,
         partitions: impl IntoIterator<Item = PartitionId>,
     ) -> usize {
         let streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
+        parallel_batch_streak_count_for_partition_set(&streaks, partitions)
+    }
+
+    pub(crate) fn scoped_full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let streaks = self.scoped_full_system_parallel_scheduler_batch_partition_streaks();
+        parallel_batch_streak_count_for_partition_set(&streaks, partitions)
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let streaks = self.explicit_full_system_parallel_scheduler_batch_partition_streaks();
         parallel_batch_streak_count_for_partition_set(&streaks, partitions)
     }
 
@@ -667,7 +676,43 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
-    fn explicit_full_system_parallel_scheduler_batch_partition_sets(
+    pub(crate) fn scoped_full_system_parallel_scheduler_batch_partition_sets(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionSet> {
+        let explicit_scoped_sets = collect_parallel_batch_partition_sets(
+            self.parallel_scheduler_batch_partition_sets
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_batch_partition_sets
+                        .iter()
+                        .cloned(),
+                )
+                .chain(self.dma_scheduler_batch_partition_sets()),
+        );
+        let scoped_streaks = self.scoped_full_system_parallel_scheduler_batch_partition_streaks();
+        let scoped_streak_sets =
+            collect_parallel_batch_partition_sets_from_streaks(&scoped_streaks);
+        collect_strongest_parallel_batch_partition_sets(explicit_scoped_sets, scoped_streak_sets)
+    }
+
+    pub(crate) fn scoped_full_system_parallel_scheduler_batch_partition_streaks(
+        &self,
+    ) -> Vec<WorkloadParallelBatchPartitionStreak> {
+        collect_parallel_batch_partition_streaks(
+            self.parallel_scheduler_batch_partition_streaks
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_batch_partition_streaks
+                        .iter()
+                        .cloned(),
+                )
+                .chain(self.dma_scheduler_batch_partition_streaks()),
+        )
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_partition_sets(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionSet> {
         let timeline_sets = collect_parallel_batch_partition_sets_from_timeline(
@@ -685,7 +730,7 @@ impl WorkloadParallelExecutionSummary {
         collect_strongest_parallel_batch_partition_sets(full_system_sets, streak_sets)
     }
 
-    fn explicit_full_system_parallel_scheduler_batch_partition_streaks(
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_partition_streaks(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionStreak> {
         collect_parallel_batch_partition_streaks(
