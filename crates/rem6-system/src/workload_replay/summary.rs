@@ -101,6 +101,11 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
+        .with_parallel_scheduler_planned_batch_timeline(
+            run.parallel_scheduler_planned_batch_timeline()
+                .into_iter()
+                .map(workload_parallel_batch_timeline_record),
+        )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_parallel_scheduler_remote_sends(run.parallel_scheduler_remote_sends())
@@ -154,6 +159,16 @@ pub(super) fn parallel_execution_summary(
         )
         .with_data_cache_parallel_scheduler_batch_timeline(
             run.data_cache_parallel_scheduler_batch_timeline()
+                .into_iter()
+                .map(workload_parallel_batch_timeline_record),
+        )
+        .with_data_cache_parallel_scheduler_planned_batch_timeline(
+            run.data_cache_parallel_scheduler_planned_batch_timeline()
+                .into_iter()
+                .map(workload_parallel_batch_timeline_record),
+        )
+        .with_full_system_parallel_scheduler_planned_batch_timeline(
+            run.full_system_parallel_scheduler_planned_batch_timeline()
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
@@ -532,6 +547,9 @@ fn workload_parallel_batch_scope(
         }
     }
 }
+
+#[cfg(test)]
+mod planned_batch_timeline_tests;
 
 #[cfg(test)]
 mod tests {

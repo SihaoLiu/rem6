@@ -508,6 +508,11 @@ Implementation evidence on 2026-05-26:
   full-system planned timelines are queryable beside actual executed timelines,
   so a remote wakeup that changes the executed batch partition set remains
   distinguishable from the deterministic pre-dispatch plan.
+- Workload-result parallel summaries now retain planned CPU-scheduler,
+  data-cache scheduler, and merged full-system batch timelines separately from
+  actual executed batch timelines. Replay summaries therefore keep the
+  pre-dispatch multicore occupancy plan as auditable workload evidence instead
+  of collapsing it into post-wakeup execution records.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

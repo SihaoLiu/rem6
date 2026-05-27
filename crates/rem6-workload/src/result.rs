@@ -237,6 +237,7 @@ pub struct WorkloadParallelExecutionSummary {
     parallel_scheduler_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     full_system_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     parallel_scheduler_batch_partition_streaks: Vec<WorkloadParallelBatchPartitionStreak>,
@@ -260,6 +261,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_max_workers: usize,
     data_cache_parallel_scheduler_total_workers: usize,
     data_cache_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    data_cache_parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     data_cache_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     data_cache_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     data_cache_parallel_scheduler_batch_partition_streaks:
@@ -273,6 +275,7 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_parallel_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     full_system_parallel_scheduler_batch_worker_tick_streaks: Vec<(usize, Tick)>,
     full_system_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    full_system_parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     full_system_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     full_system_parallel_scheduler_batch_partition_streaks:
         Vec<WorkloadParallelBatchPartitionStreak>,

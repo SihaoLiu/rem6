@@ -37,6 +37,15 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_parallel_scheduler_planned_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        self.parallel_scheduler_planned_batch_timeline =
+            collect_scoped_parallel_batch_timeline(WorkloadParallelBatchScope::Scheduler, records);
+        self
+    }
+
     pub fn with_data_cache_parallel_scheduler_batch_timeline(
         mut self,
         records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
@@ -54,6 +63,18 @@ impl WorkloadParallelExecutionSummary {
         self.data_cache_parallel_scheduler_batch_partition_streaks =
             collect_parallel_batch_partition_streaks_from_timeline(&timeline);
         self.data_cache_parallel_scheduler_batch_timeline = timeline;
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_planned_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        self.data_cache_parallel_scheduler_planned_batch_timeline =
+            collect_scoped_parallel_batch_timeline(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                records,
+            );
         self
     }
 
@@ -100,6 +121,15 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_full_system_parallel_scheduler_planned_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_planned_batch_timeline =
+            collect_parallel_batch_timeline(records);
+        self
+    }
+
     pub fn with_full_system_parallel_scheduler_batch_worker_count_tick_summaries(
         mut self,
         summaries: impl IntoIterator<Item = (usize, Tick)>,
@@ -122,10 +152,22 @@ impl WorkloadParallelExecutionSummary {
         &self.parallel_scheduler_batch_timeline
     }
 
+    pub fn parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.parallel_scheduler_planned_batch_timeline
+    }
+
     pub fn data_cache_parallel_scheduler_batch_timeline(
         &self,
     ) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.data_cache_parallel_scheduler_batch_timeline
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.data_cache_parallel_scheduler_planned_batch_timeline
     }
 
     pub fn gpu_dma_scheduler_batch_timeline(&self) -> &[WorkloadParallelBatchTimelineRecord] {
@@ -261,6 +303,26 @@ impl WorkloadParallelExecutionSummary {
                         .cloned(),
                 )
                 .chain(self.dma_scheduler_batch_timeline()),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> Vec<WorkloadParallelBatchTimelineRecord> {
+        if self.has_explicit_full_system_parallel_scheduler_planned_batch_timeline() {
+            return self
+                .full_system_parallel_scheduler_planned_batch_timeline
+                .clone();
+        }
+        collect_parallel_batch_timeline(
+            self.parallel_scheduler_planned_batch_timeline
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_planned_batch_timeline
+                        .iter()
+                        .cloned(),
+                ),
         )
     }
 
@@ -517,6 +579,12 @@ impl WorkloadParallelExecutionSummary {
     fn has_explicit_full_system_parallel_scheduler_batch_timeline(&self) -> bool {
         !self
             .full_system_parallel_scheduler_batch_timeline
+            .is_empty()
+    }
+
+    fn has_explicit_full_system_parallel_scheduler_planned_batch_timeline(&self) -> bool {
+        !self
+            .full_system_parallel_scheduler_planned_batch_timeline
             .is_empty()
     }
 }
