@@ -174,7 +174,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_partition_sets(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionSet> {
-        let scoped_sets = collect_parallel_batch_partition_sets(
+        let explicit_scoped_sets = collect_parallel_batch_partition_sets(
             self.parallel_scheduler_batch_partition_sets
                 .iter()
                 .cloned()
@@ -184,6 +184,13 @@ impl WorkloadParallelExecutionSummary {
                         .cloned(),
                 )
                 .chain(self.dma_scheduler_batch_partition_sets()),
+        );
+        let scoped_streak_sets = collect_parallel_batch_partition_sets_from_streaks(
+            &self.full_system_parallel_scheduler_batch_partition_streaks(),
+        );
+        let scoped_sets = collect_strongest_parallel_batch_partition_sets(
+            explicit_scoped_sets,
+            scoped_streak_sets,
         );
         let full_system_sets = collect_parallel_batch_partition_sets_from_streaks(
             &self.full_system_parallel_scheduler_batch_partition_streaks,
