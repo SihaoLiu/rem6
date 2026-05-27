@@ -1027,6 +1027,7 @@ impl WorkloadReplayPlan {
                 summary,
                 expected.scope(),
             )?;
+            replay_verify::validate_partition_scope_count_evidence(summary, expected.scope())?;
             replay_verify::validate_partition_scope_activity_evidence(summary, expected.scope())?;
             let actual_active_partitions = expected.actual_active_partitions(summary);
             if actual_active_partitions < expected.minimum_active_partitions() {

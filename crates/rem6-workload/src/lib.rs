@@ -42,7 +42,7 @@ pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
 pub use boot_image::{WorkloadBootImage, WorkloadBootSegment};
 pub use error::{
     WorkloadError, WorkloadParallelPartitionActivityMergeSummary,
-    WorkloadParallelRemoteTrafficConsistencyMismatch,
+    WorkloadParallelPartitionCountMergeSummary, WorkloadParallelRemoteTrafficConsistencyMismatch,
 };
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,

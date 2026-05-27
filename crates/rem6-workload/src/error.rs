@@ -19,7 +19,9 @@ mod display;
 mod fabric_display;
 mod parallel_partition;
 
-pub use parallel_partition::WorkloadParallelPartitionActivityMergeSummary;
+pub use parallel_partition::{
+    WorkloadParallelPartitionActivityMergeSummary, WorkloadParallelPartitionCountMergeSummary,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelRemoteTrafficConsistencyMismatch {
@@ -1315,6 +1317,7 @@ pub enum WorkloadError {
     InvalidParallelPartitionActivityMergeSummary(
         Box<WorkloadParallelPartitionActivityMergeSummary>,
     ),
+    InvalidParallelPartitionCountMergeSummary(Box<WorkloadParallelPartitionCountMergeSummary>),
     DuplicateExpectedCleanParallelDiagnostics {
         scope: WorkloadParallelDiagnosticScope,
     },

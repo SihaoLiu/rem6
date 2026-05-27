@@ -8,8 +8,9 @@ use rem6_workload::{
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchPartitionSet,
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelExecutionSummary, WorkloadParallelPartitionCountMergeSummary,
+    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -255,6 +256,49 @@ fn workload_replay_plan_derives_full_system_partition_use_from_activity() {
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_partition_count() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_use(expected_partitions(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            3,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([
+            (
+                PartitionId::new(0),
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+            (
+                PartitionId::new(1),
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+        ])
+        .with_data_cache_parallel_scheduler_partition_activities([(
+            PartitionId::new(2),
+            ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+        )])
+        .with_full_system_parallel_partitions(2);
+
+    assert_eq!(
+        summary.active_full_system_parallel_scheduler_partition_count(),
+        3
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelPartitionCountMergeSummary(Box::new(
+            WorkloadParallelPartitionCountMergeSummary {
+                scope: WorkloadParallelBatchPartitionScope::FullSystem,
+                merged_active_partitions: 2,
+                lower_bound_active_partitions: 3,
+            },
+        )),
+    );
 }
 
 #[test]

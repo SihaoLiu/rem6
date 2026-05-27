@@ -2,8 +2,18 @@ use rem6_kernel::ParallelPartitionActivity;
 
 use crate::{
     WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelExecutionSummary,
-    WorkloadParallelPartitionActivityMergeSummary,
+    WorkloadParallelPartitionActivityMergeSummary, WorkloadParallelPartitionCountMergeSummary,
 };
+
+pub(crate) fn validate_partition_scope_count_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelBatchPartitionScope,
+) -> Result<(), WorkloadError> {
+    if scope == WorkloadParallelBatchPartitionScope::FullSystem {
+        validate_full_system_partition_count_merge_summary(summary)?;
+    }
+    Ok(())
+}
 
 pub(crate) fn validate_partition_scope_activity_evidence(
     summary: &WorkloadParallelExecutionSummary,
@@ -13,6 +23,28 @@ pub(crate) fn validate_partition_scope_activity_evidence(
         validate_full_system_partition_activity_merge_summary(summary)?;
     }
     Ok(())
+}
+
+fn validate_full_system_partition_count_merge_summary(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let merged_active_partitions = summary.raw_full_system_parallel_scheduler_partition_count();
+    if merged_active_partitions == 0 {
+        return Ok(());
+    }
+    let lower_bound_active_partitions =
+        summary.full_system_parallel_scheduler_active_partition_count_lower_bound();
+    if merged_active_partitions >= lower_bound_active_partitions {
+        return Ok(());
+    }
+
+    Err(WorkloadError::InvalidParallelPartitionCountMergeSummary(
+        Box::new(WorkloadParallelPartitionCountMergeSummary {
+            scope: WorkloadParallelBatchPartitionScope::FullSystem,
+            merged_active_partitions,
+            lower_bound_active_partitions,
+        }),
+    ))
 }
 
 fn validate_full_system_partition_activity_merge_summary(

@@ -484,6 +484,13 @@ pub(super) fn format_parallel_batch_error(
             "expected {} partition use to reach at least {minimum_active_partitions} active partitions, got {actual_active_partitions}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelPartitionCountMergeSummary(summary) => write!(
+            formatter,
+            "invalid {} partition-count merge summary: merged active partitions {} is below lower-bound active partitions {}",
+            summary.scope.as_str(),
+            summary.merged_active_partitions,
+            summary.lower_bound_active_partitions
+        ),
         WorkloadError::MissingParallelPartitionActivitySummary { scope, partition } => write!(
             formatter,
             "missing parallel summary for expected {} partition {partition} activity",

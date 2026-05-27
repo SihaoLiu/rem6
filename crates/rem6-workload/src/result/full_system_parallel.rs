@@ -106,13 +106,20 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
+        self.active_full_system_parallel_scheduler_partition_count
+            .max(self.full_system_parallel_scheduler_active_partition_count_lower_bound())
+    }
+
+    pub(crate) const fn raw_full_system_parallel_scheduler_partition_count(&self) -> usize {
+        self.active_full_system_parallel_scheduler_partition_count
+    }
+
+    pub(crate) fn full_system_parallel_scheduler_active_partition_count_lower_bound(
+        &self,
+    ) -> usize {
         let batch_partition_sets = self.full_system_parallel_scheduler_batch_partition_sets();
         let batch_partition_streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
-        self.active_full_system_parallel_scheduler_partition_count
-            .max(parallel_batch_active_partition_count(
-                &batch_partition_sets,
-                &batch_partition_streaks,
-            ))
+        parallel_batch_active_partition_count(&batch_partition_sets, &batch_partition_streaks)
             .max(
                 self.full_system_parallel_scheduler_partition_activities()
                     .len(),

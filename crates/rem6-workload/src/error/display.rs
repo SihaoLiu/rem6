@@ -1043,7 +1043,8 @@ impl fmt::Display for WorkloadError {
             | Self::ExpectedParallelPartitionCountBelowMinimum { .. }
             | Self::MissingParallelPartitionActivitySummary { .. }
             | Self::ExpectedParallelPartitionActivityBelowMinimum { .. }
-            | Self::InvalidParallelPartitionActivityMergeSummary(_) => {
+            | Self::InvalidParallelPartitionActivityMergeSummary(_)
+            | Self::InvalidParallelPartitionCountMergeSummary(_) => {
                 format_parallel_batch_error(self, formatter)
             }
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(

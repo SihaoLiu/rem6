@@ -1,6 +1,13 @@
 use crate::WorkloadParallelBatchPartitionScope;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadParallelPartitionCountMergeSummary {
+    pub scope: WorkloadParallelBatchPartitionScope,
+    pub merged_active_partitions: usize,
+    pub lower_bound_active_partitions: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelPartitionActivityMergeSummary {
     pub scope: WorkloadParallelBatchPartitionScope,
     pub partition: u32,

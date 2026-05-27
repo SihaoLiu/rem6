@@ -628,6 +628,11 @@ Implementation evidence on 2026-05-26:
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same
   full-system partition coverage that replay contracts use for set minima.
+- Workload full-system active-partition replay now rejects explicit merged
+  active-partition counts that are below scoped activity, batch-set,
+  batch-streak, per-partition activity, or remote-traffic lower-bound evidence.
+  A global scheduler cannot publish a weak active-partition total while the
+  derived lower-bound evidence proves more active partitions.
 - Workload full-system per-partition activity reporting now treats explicit
   full-system partition streaks as worker and dispatch evidence for every
   partition in the streak. Per-partition reporting therefore cannot drop
