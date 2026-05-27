@@ -13,6 +13,9 @@ pub enum WorkloadParallelBatchTimelineScope {
     AcceleratorDmaScheduler,
     DmaScheduler,
     FullSystem,
+    PlannedScheduler,
+    PlannedDataCacheScheduler,
+    PlannedFullSystem,
 }
 
 impl WorkloadParallelBatchTimelineScope {
@@ -24,6 +27,9 @@ impl WorkloadParallelBatchTimelineScope {
             Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
             Self::DmaScheduler => "dma-scheduler",
             Self::FullSystem => "full-system",
+            Self::PlannedScheduler => "planned-scheduler",
+            Self::PlannedDataCacheScheduler => "planned-data-cache-scheduler",
+            Self::PlannedFullSystem => "planned-full-system",
         }
     }
 
@@ -35,6 +41,9 @@ impl WorkloadParallelBatchTimelineScope {
             Self::AcceleratorDmaScheduler => 3,
             Self::DmaScheduler => 4,
             Self::FullSystem => 5,
+            Self::PlannedScheduler => 6,
+            Self::PlannedDataCacheScheduler => 7,
+            Self::PlannedFullSystem => 8,
         }
     }
 }
@@ -172,6 +181,15 @@ pub(crate) fn actual_parallel_batch_timeline_records(
         WorkloadParallelBatchTimelineScope::DmaScheduler => summary.dma_scheduler_batch_timeline(),
         WorkloadParallelBatchTimelineScope::FullSystem => {
             summary.full_system_parallel_scheduler_batch_timeline()
+        }
+        WorkloadParallelBatchTimelineScope::PlannedScheduler => {
+            summary.parallel_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler => summary
+            .data_cache_parallel_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchTimelineScope::PlannedFullSystem => {
+            summary.full_system_parallel_scheduler_planned_batch_timeline()
         }
     }
 }

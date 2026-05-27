@@ -176,6 +176,107 @@ fn workload_manifest_records_parallel_batch_timeline_expectations() {
 }
 
 #[test]
+fn workload_replay_plan_checks_planned_parallel_batch_timelines_directly() {
+    let scheduler = expected_timeline(
+        WorkloadParallelBatchTimelineScope::PlannedScheduler,
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    let data_cache = expected_timeline(
+        WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler,
+        WorkloadParallelBatchScope::DataCacheScheduler,
+        4,
+        8,
+        [partition(2), partition(3)],
+        2,
+    );
+    let full_system = expected_timeline(
+        WorkloadParallelBatchTimelineScope::PlannedFullSystem,
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    let full_system_data_cache = expected_timeline(
+        WorkloadParallelBatchTimelineScope::PlannedFullSystem,
+        WorkloadParallelBatchScope::DataCacheScheduler,
+        4,
+        8,
+        [partition(2), partition(3)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(full_system_data_cache)
+        .unwrap()
+        .add_expected_parallel_batch_timeline_record(full_system)
+        .unwrap()
+        .add_expected_parallel_batch_timeline_record(data_cache.clone())
+        .unwrap()
+        .add_expected_parallel_batch_timeline_record(scheduler.clone())
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0)],
+            1,
+        )])
+        .with_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            4,
+            8,
+            [partition(2), partition(3)],
+            2,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let actual_only = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            4,
+            8,
+            [partition(2), partition(3)],
+            2,
+        )]);
+    let missing_planned = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(actual_only);
+
+    assert_eq!(
+        plan.verify_result(&missing_planned).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchTimelineRecordMissing {
+            scope: WorkloadParallelBatchTimelineScope::PlannedScheduler,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 0,
+            horizon: 4,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_checks_dma_scheduler_parallel_batch_timelines_directly() {
     let gpu_dma = expected_timeline(
         WorkloadParallelBatchTimelineScope::GpuDmaScheduler,

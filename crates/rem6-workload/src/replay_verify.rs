@@ -39,13 +39,16 @@ const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 6] = [
     WorkloadParallelRemoteFlowScope::FullSystem,
 ];
 
-const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 6] = [
+const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 9] = [
     WorkloadParallelBatchTimelineScope::Scheduler,
     WorkloadParallelBatchTimelineScope::DataCacheScheduler,
     WorkloadParallelBatchTimelineScope::GpuDmaScheduler,
     WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler,
     WorkloadParallelBatchTimelineScope::DmaScheduler,
     WorkloadParallelBatchTimelineScope::FullSystem,
+    WorkloadParallelBatchTimelineScope::PlannedScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedFullSystem,
 ];
 
 pub(crate) fn verify_expected_parallel_batch_timeline_records(
