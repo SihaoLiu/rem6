@@ -124,6 +124,35 @@ fn bimode_predictor_squash_repairs_history_without_training_counters() {
 }
 
 #[test]
+fn bimode_predictor_rejects_stale_history_update_without_mutating_thread() {
+    let mut predictor = bimode(1, 4, 8, 2);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x1000);
+
+    let first = predictor.predict(cpu, pc).unwrap();
+    predictor.update_history(first.history(), true).unwrap();
+
+    assert_eq!(
+        predictor
+            .update_history(first.history(), false)
+            .unwrap_err(),
+        BiModeBranchPredictorError::HistoryUpdateOutOfOrder {
+            cpu,
+            expected_history: 1,
+            actual_history: 0,
+        },
+    );
+    assert_eq!(predictor.snapshot().threads()[0].global_history(), 1);
+    assert_eq!(predictor.history_update_count(), 1);
+
+    let current = predictor.predict(cpu, pc).unwrap();
+    let update = predictor.update_history(current.history(), false).unwrap();
+    assert_eq!(update.old_history(), 1);
+    assert_eq!(update.new_history(), 2);
+    assert_eq!(predictor.history_update_count(), 2);
+}
+
+#[test]
 fn bimode_predictor_snapshot_restore_preserves_threads_counters_and_counts() {
     let mut predictor = bimode(2, 4, 8, 2);
     let cpu = CpuId::new(0);

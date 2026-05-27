@@ -31,6 +31,11 @@ pub enum BiModeBranchPredictorError {
     UnknownThread {
         cpu: CpuId,
     },
+    HistoryUpdateOutOfOrder {
+        cpu: CpuId,
+        expected_history: u64,
+        actual_history: u64,
+    },
     SnapshotShapeMismatch {
         expected_threads: usize,
         actual_threads: usize,
@@ -74,6 +79,15 @@ impl fmt::Display for BiModeBranchPredictorError {
             Self::UnknownThread { cpu } => write!(
                 formatter,
                 "bimode predictor thread {} is not configured",
+                cpu.get()
+            ),
+            Self::HistoryUpdateOutOfOrder {
+                cpu,
+                expected_history,
+                actual_history,
+            } => write!(
+                formatter,
+                "bimode predictor thread {} history is {expected_history}, but update record starts from {actual_history}",
                 cpu.get()
             ),
             Self::SnapshotShapeMismatch {
@@ -360,6 +374,13 @@ impl BiModeBranchPredictor {
     ) -> Result<BiModeHistoryUpdate, BiModeBranchPredictorError> {
         let thread_index = self.thread_index(history.cpu())?;
         let old_history = self.threads[thread_index].global_history();
+        if old_history != history.global_history_before() {
+            return Err(BiModeBranchPredictorError::HistoryUpdateOutOfOrder {
+                cpu: history.cpu(),
+                expected_history: old_history,
+                actual_history: history.global_history_before(),
+            });
+        }
         let new_history = self.shift_history(old_history, taken);
         self.threads[thread_index].global_history = new_history;
         self.history_update_count += 1;
