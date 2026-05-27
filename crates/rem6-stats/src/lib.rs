@@ -5,7 +5,8 @@ mod stats;
 
 pub use error::StatsError;
 pub use probes::{
-    ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
+    ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
+    ProbeSnapshot,
 };
 pub use registry::StatsRegistry;
 pub use stats::{

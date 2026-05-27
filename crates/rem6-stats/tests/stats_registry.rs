@@ -1,10 +1,10 @@
 use rem6_kernel::Tick;
 use rem6_stats::{
-    ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
-    StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
-    StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath, StatPathError,
-    StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError,
-    StatsError, StatsRegistry, StatsResetRecord,
+    ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
+    ProbeSnapshot, StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId,
+    StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath,
+    StatPathError, StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit,
+    StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -931,10 +931,8 @@ fn probe_registry_records_typed_events_and_listener_state() {
 
     assert_eq!(committed, ProbePointId::new(0));
     assert_eq!(miss, ProbePointId::new(1));
-    assert_eq!(
-        probes.add_listener(committed, "commit_counter").unwrap(),
-        ProbeListenerId::new(0)
-    );
+    let counter_listener = probes.add_listener(committed, "commit_counter").unwrap();
+    assert_eq!(counter_listener, ProbeListenerId::new(0));
     let trace_listener = probes.add_listener(committed, "commit_trace").unwrap();
 
     let event = probes
@@ -943,7 +941,16 @@ fn probe_registry_records_typed_events_and_listener_state() {
         .clone();
     assert_eq!(
         event,
-        ProbeEvent::new(10, 0, committed, 2, ProbePayload::Counter { amount: 4 })
+        ProbeEvent::new(
+            10,
+            0,
+            committed,
+            vec![
+                ProbeListenerRef::new(counter_listener, "commit_counter"),
+                ProbeListenerRef::new(trace_listener, "commit_trace"),
+            ],
+            ProbePayload::Counter { amount: 4 },
+        )
     );
 
     probes.remove_listener(committed, trace_listener).unwrap();
@@ -968,8 +975,23 @@ fn probe_registry_records_typed_events_and_listener_state() {
                 ProbeListenerId::new(0)
             )],
             vec![
-                ProbeEvent::new(10, 0, committed, 2, ProbePayload::Counter { amount: 4 }),
-                ProbeEvent::new(11, 1, committed, 1, ProbePayload::Unit),
+                ProbeEvent::new(
+                    10,
+                    0,
+                    committed,
+                    vec![
+                        ProbeListenerRef::new(counter_listener, "commit_counter"),
+                        ProbeListenerRef::new(trace_listener, "commit_trace"),
+                    ],
+                    ProbePayload::Counter { amount: 4 },
+                ),
+                ProbeEvent::new(
+                    11,
+                    1,
+                    committed,
+                    vec![ProbeListenerRef::new(counter_listener, "commit_counter")],
+                    ProbePayload::Unit,
+                ),
             ],
             2,
             2,
@@ -1070,10 +1092,51 @@ fn probe_registry_rejects_time_regressing_events_without_consuming_sequence() {
     assert_eq!(
         probes.events(),
         [
-            ProbeEvent::new(10, 0, committed, 0, ProbePayload::Unit),
-            ProbeEvent::new(10, 1, committed, 0, ProbePayload::Counter { amount: 1 }),
+            ProbeEvent::new(10, 0, committed, Vec::new(), ProbePayload::Unit),
+            ProbeEvent::new(
+                10,
+                1,
+                committed,
+                Vec::new(),
+                ProbePayload::Counter { amount: 1 },
+            ),
         ]
         .as_slice(),
+    );
+}
+
+#[test]
+fn probe_registry_records_listener_refs_for_historical_events() {
+    let mut probes = ProbeRegistry::new();
+    let committed = probes.register_point("cpu0", "commit").unwrap();
+    let counter = probes.add_listener(committed, "commit_counter").unwrap();
+    let trace = probes.add_listener(committed, "commit_trace").unwrap();
+
+    let event = probes.emit(10, committed, ProbePayload::Unit).unwrap();
+    assert_eq!(
+        event.listener_refs(),
+        [
+            ProbeListenerRef::new(counter, "commit_counter"),
+            ProbeListenerRef::new(trace, "commit_trace"),
+        ]
+        .as_slice(),
+    );
+
+    probes.remove_listener(committed, trace).unwrap();
+    let snapshot = probes.snapshot();
+    assert_eq!(
+        snapshot.events()[0].listener_refs(),
+        [
+            ProbeListenerRef::new(counter, "commit_counter"),
+            ProbeListenerRef::new(trace, "commit_trace"),
+        ]
+        .as_slice(),
+    );
+
+    let mut restored = ProbeRegistry::from_snapshot(&snapshot).unwrap();
+    assert_eq!(
+        restored.add_listener(committed, "commit_sample").unwrap(),
+        ProbeListenerId::new(2),
     );
 }
 
@@ -1182,8 +1245,8 @@ fn probe_registry_rejects_malformed_snapshots_without_mutating_live_registry() {
         vec![("cpu0".to_string(), "commit".to_string(), point)],
         Vec::new(),
         vec![
-            ProbeEvent::new(10, 1, point, 0, ProbePayload::Unit),
-            ProbeEvent::new(11, 1, point, 0, ProbePayload::Unit),
+            ProbeEvent::new(10, 1, point, Vec::new(), ProbePayload::Unit),
+            ProbeEvent::new(11, 1, point, Vec::new(), ProbePayload::Unit),
         ],
         1,
         0,
@@ -1202,8 +1265,8 @@ fn probe_registry_rejects_malformed_snapshots_without_mutating_live_registry() {
         vec![("cpu0".to_string(), "commit".to_string(), point)],
         Vec::new(),
         vec![
-            ProbeEvent::new(10, 0, point, 0, ProbePayload::Unit),
-            ProbeEvent::new(9, 1, point, 0, ProbePayload::Unit),
+            ProbeEvent::new(10, 0, point, Vec::new(), ProbePayload::Unit),
+            ProbeEvent::new(9, 1, point, Vec::new(), ProbePayload::Unit),
         ],
         1,
         0,
@@ -1214,6 +1277,57 @@ fn probe_registry_rejects_malformed_snapshots_without_mutating_live_registry() {
         StatsError::ProbeEventTimeWentBack {
             previous_tick: 10,
             current_tick: 9,
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let duplicate_event_listener_id = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        Vec::new(),
+        vec![ProbeEvent::new(
+            10,
+            0,
+            point,
+            vec![
+                ProbeListenerRef::new(ProbeListenerId::new(3), "commit_counter"),
+                ProbeListenerRef::new(ProbeListenerId::new(3), "commit_trace"),
+            ],
+            ProbePayload::Unit,
+        )],
+        1,
+        4,
+        1,
+    );
+    assert_eq!(
+        probes.restore(&duplicate_event_listener_id).unwrap_err(),
+        StatsError::DuplicateProbeListenerId {
+            listener: ProbeListenerId::new(3),
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let stale_event_listener_cursor = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        Vec::new(),
+        vec![ProbeEvent::new(
+            10,
+            0,
+            point,
+            vec![ProbeListenerRef::new(
+                ProbeListenerId::new(3),
+                "commit_counter",
+            )],
+            ProbePayload::Unit,
+        )],
+        1,
+        3,
+        1,
+    );
+    assert_eq!(
+        probes.restore(&stale_event_listener_cursor).unwrap_err(),
+        StatsError::ProbeListenerCursorBehind {
+            next_listener: 3,
+            highest_listener: ProbeListenerId::new(3),
         },
     );
     assert_eq!(probes.snapshot(), original);

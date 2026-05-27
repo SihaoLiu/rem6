@@ -38,27 +38,50 @@ pub enum ProbePayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProbeListenerRef {
+    id: ProbeListenerId,
+    name: String,
+}
+
+impl ProbeListenerRef {
+    pub fn new(id: ProbeListenerId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+        }
+    }
+
+    pub const fn id(&self) -> ProbeListenerId {
+        self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProbeEvent {
     tick: Tick,
     sequence: u64,
     point: ProbePointId,
-    listener_count: usize,
+    listeners: Vec<ProbeListenerRef>,
     payload: ProbePayload,
 }
 
 impl ProbeEvent {
-    pub const fn new(
+    pub fn new(
         tick: Tick,
         sequence: u64,
         point: ProbePointId,
-        listener_count: usize,
+        listeners: Vec<ProbeListenerRef>,
         payload: ProbePayload,
     ) -> Self {
         Self {
             tick,
             sequence,
             point,
-            listener_count,
+            listeners,
             payload,
         }
     }
@@ -75,8 +98,12 @@ impl ProbeEvent {
         self.point
     }
 
-    pub const fn listener_count(&self) -> usize {
-        self.listener_count
+    pub fn listener_count(&self) -> usize {
+        self.listeners.len()
+    }
+
+    pub fn listener_refs(&self) -> &[ProbeListenerRef] {
+        &self.listeners
     }
 
     pub const fn payload(&self) -> &ProbePayload {
@@ -279,14 +306,21 @@ impl ProbeRegistry {
             .next_sequence
             .checked_add(1)
             .ok_or(StatsError::ProbeSequenceOverflow)?;
-        let listener_count = self.point_listeners.get(&point).map_or(0, BTreeSet::len);
-        self.events.push(ProbeEvent::new(
-            tick,
-            sequence,
-            point,
-            listener_count,
-            payload,
-        ));
+        let listeners = self
+            .point_listeners
+            .get(&point)
+            .into_iter()
+            .flatten()
+            .map(|listener| {
+                let record = self
+                    .listeners
+                    .get(listener)
+                    .expect("point listener must have a listener record");
+                ProbeListenerRef::new(*listener, record.name.clone())
+            })
+            .collect();
+        self.events
+            .push(ProbeEvent::new(tick, sequence, point, listeners, payload));
         Ok(self.events.last().expect("probe event was just appended"))
     }
 
@@ -377,8 +411,6 @@ impl ProbeRegistry {
             point_listeners.entry(*point).or_default().insert(*listener);
             highest_listener = max_probe_listener(highest_listener, *listener);
         }
-        validate_probe_listener_cursor(snapshot.next_listener(), highest_listener)?;
-
         let mut previous_sequence = None;
         let mut previous_tick = None;
         let mut highest_sequence = None;
@@ -399,10 +431,15 @@ impl ProbeRegistry {
             if let Some(previous_tick) = previous_tick {
                 validate_probe_event_time(event.tick(), previous_tick)?;
             }
+            validate_probe_event_listener_refs(event.point(), event.listener_refs())?;
+            for listener in event.listener_refs() {
+                highest_listener = max_probe_listener(highest_listener, listener.id());
+            }
             previous_sequence = Some(event.sequence());
             previous_tick = Some(event.tick());
             highest_sequence = Some(event.sequence());
         }
+        validate_probe_listener_cursor(snapshot.next_listener(), highest_listener)?;
         validate_probe_event_cursor(snapshot.next_sequence(), highest_sequence)?;
 
         Ok(Self {
@@ -469,6 +506,29 @@ fn validate_probe_listener_name(name: &str) -> Result<(), StatsError> {
         name: name.to_string(),
         reason,
     })
+}
+
+fn validate_probe_event_listener_refs(
+    point: ProbePointId,
+    listeners: &[ProbeListenerRef],
+) -> Result<(), StatsError> {
+    let mut listener_ids = BTreeSet::new();
+    let mut listener_names = BTreeSet::new();
+    for listener in listeners {
+        validate_probe_listener_name(listener.name())?;
+        if !listener_ids.insert(listener.id()) {
+            return Err(StatsError::DuplicateProbeListenerId {
+                listener: listener.id(),
+            });
+        }
+        if !listener_names.insert(listener.name().to_string()) {
+            return Err(StatsError::DuplicateProbeListener {
+                point,
+                name: listener.name().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_probe_identifier(identifier: &str) -> Result<(), StatPathError> {
