@@ -50,6 +50,34 @@ fn cpu_scheduler_turns_at(
     turns
 }
 
+fn cpu_scheduler_turn_with_remote_wakeup(
+    partitions: u32,
+    worker_limit: usize,
+    source: PartitionId,
+    target: PartitionId,
+    target_delay: u64,
+    scheduled_ticks: &[(PartitionId, u64)],
+) -> RiscvClusterTurn {
+    let mut scheduler =
+        PartitionedScheduler::with_parallel_worker_limit(partitions, target_delay, worker_limit)
+            .unwrap();
+    scheduler
+        .schedule_parallel_at(source, 0, move |context| {
+            context
+                .schedule_remote_after(target, target_delay, |_| {})
+                .unwrap();
+        })
+        .unwrap();
+    for (partition, tick) in scheduled_ticks {
+        scheduler
+            .schedule_parallel_at(*partition, *tick, |_| {})
+            .unwrap();
+    }
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    RiscvClusterTurn::parallel_scheduler(plan, recorded)
+}
+
 fn data_cache_run(
     partitions: u32,
     worker_limit: usize,
@@ -97,6 +125,73 @@ fn data_cache_runs_at_ticks(
         Vec::new(),
         empty_wait_for_graphs(),
     )
+}
+
+#[test]
+fn system_run_preserves_planned_parallel_batches_before_remote_wakeups() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cpu2 = PartitionId::new(2);
+    let memory = PartitionId::new(3);
+    let run = RiscvSystemRun::new(
+        vec![cpu_scheduler_turn_with_remote_wakeup(
+            4,
+            2,
+            cpu0,
+            memory,
+            5,
+            &[(cpu1, 1), (cpu2, 3)],
+        )],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 5 },
+    );
+
+    let planned = run.parallel_scheduler_planned_batch_timeline();
+    assert_eq!(planned.len(), 2);
+    assert_eq!(planned[0].scope(), RiscvSystemParallelBatchScope::Scheduler);
+    assert_eq!(planned[0].start_tick(), 0);
+    assert_eq!(planned[0].horizon(), 5);
+    assert_eq!(planned[0].duration_ticks(), 5);
+    assert_eq!(planned[0].worker_count(), 2);
+    assert_eq!(planned[0].partitions(), &[cpu0, cpu1]);
+    assert_eq!(planned[1].start_tick(), 3);
+    assert_eq!(planned[1].horizon(), 5);
+    assert_eq!(planned[1].duration_ticks(), 2);
+    assert_eq!(planned[1].worker_count(), 1);
+    assert_eq!(planned[1].partitions(), &[cpu2]);
+
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_count_summaries(),
+        vec![(1, 1), (2, 1)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_partition_set_summaries(),
+        vec![(vec![cpu0, cpu1], 1), (vec![cpu2], 1)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_count_for_worker_count(2),
+        1
+    );
+    assert_eq!(run.parallel_scheduler_planned_batch_count_at_or_above(2), 1);
+    assert_eq!(run.parallel_scheduler_planned_batch_worker_count_total(), 3);
+    assert_eq!(run.parallel_scheduler_planned_batch_max_workers(), 2);
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_count_for_partition_set([cpu2]),
+        1,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_timeline(),
+        planned,
+    );
+
+    assert_eq!(
+        run.parallel_scheduler_batch_partition_set_summaries(),
+        vec![(vec![cpu0, cpu1], 1), (vec![cpu2, memory], 1)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_partition_set_summaries(),
+        vec![(vec![cpu0, cpu1], 1), (vec![cpu2, memory], 1)],
+    );
 }
 
 #[test]

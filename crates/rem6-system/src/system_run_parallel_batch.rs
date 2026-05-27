@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::{RiscvClusterParallelBatchTimelineRecord, RiscvClusterSchedulerEpoch};
-use rem6_kernel::{ParallelEpochBatchRecord, PartitionId, Tick};
+use rem6_kernel::{ParallelEpochBatchRecord, ParallelEpochPlannedBatch, PartitionId, Tick};
 
 use crate::RiscvSystemRun;
 
@@ -47,6 +47,19 @@ impl RiscvSystemParallelBatchTimelineRecord {
         }
     }
 
+    pub fn planned(
+        scope: RiscvSystemParallelBatchScope,
+        batch: &ParallelEpochPlannedBatch,
+    ) -> Self {
+        Self {
+            scope,
+            start_tick: planned_batch_start_tick(batch),
+            horizon: batch.horizon(),
+            partitions: batch.partition_set(),
+            worker_count: batch.worker_count(),
+        }
+    }
+
     pub fn from_cluster(
         scope: RiscvSystemParallelBatchScope,
         record: &RiscvClusterParallelBatchTimelineRecord,
@@ -86,6 +99,99 @@ impl RiscvSystemParallelBatchTimelineRecord {
 }
 
 impl RiscvSystemRun {
+    pub fn parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+        let mut timeline = self
+            .parallel_scheduler_epochs()
+            .into_iter()
+            .flat_map(|epoch| epoch.plan().parallel_batches())
+            .map(|batch| {
+                RiscvSystemParallelBatchTimelineRecord::planned(
+                    RiscvSystemParallelBatchScope::Scheduler,
+                    batch,
+                )
+            })
+            .collect::<Vec<_>>();
+        sort_batch_timeline(&mut timeline);
+        timeline
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+        let epochs = self.data_cache_parallel_scheduler_epochs();
+        let mut timeline = epochs
+            .iter()
+            .flat_map(|epoch| epoch.planned_batches())
+            .map(|batch| {
+                RiscvSystemParallelBatchTimelineRecord::planned(
+                    RiscvSystemParallelBatchScope::DataCacheScheduler,
+                    batch,
+                )
+            })
+            .collect::<Vec<_>>();
+        sort_batch_timeline(&mut timeline);
+        timeline
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
+        let mut timeline = self.parallel_scheduler_planned_batch_timeline();
+        timeline.extend(self.data_cache_parallel_scheduler_planned_batch_timeline());
+        sort_batch_timeline(&mut timeline);
+        timeline
+    }
+
+    pub fn parallel_scheduler_planned_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
+        collect_timeline_worker_count_summaries(self.parallel_scheduler_planned_batch_timeline())
+    }
+
+    pub fn parallel_scheduler_planned_batch_count_for_worker_count(
+        &self,
+        worker_count: usize,
+    ) -> usize {
+        timeline_count_for_worker_count(
+            self.parallel_scheduler_planned_batch_timeline(),
+            worker_count,
+        )
+    }
+
+    pub fn parallel_scheduler_planned_batch_count_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> usize {
+        timeline_count_at_or_above(
+            self.parallel_scheduler_planned_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
+    pub fn parallel_scheduler_planned_batch_worker_count_total(&self) -> usize {
+        timeline_worker_count_total(self.parallel_scheduler_planned_batch_timeline())
+    }
+
+    pub fn parallel_scheduler_planned_batch_max_workers(&self) -> usize {
+        timeline_max_workers(self.parallel_scheduler_planned_batch_timeline())
+    }
+
+    pub fn parallel_scheduler_planned_batch_partition_set_summaries(
+        &self,
+    ) -> Vec<(Vec<PartitionId>, usize)> {
+        collect_timeline_partition_set_summaries(self.parallel_scheduler_planned_batch_timeline())
+    }
+
+    pub fn parallel_scheduler_planned_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        timeline_count_for_partition_set(
+            self.parallel_scheduler_planned_batch_timeline(),
+            partitions,
+        )
+    }
+
     pub fn parallel_scheduler_batch_timeline(&self) -> Vec<RiscvSystemParallelBatchTimelineRecord> {
         let mut timeline = self
             .parallel_scheduler_epochs()
@@ -458,6 +564,15 @@ fn collect_batch_timeline(
     timeline
 }
 
+fn planned_batch_start_tick(batch: &ParallelEpochPlannedBatch) -> Tick {
+    batch
+        .ready_partitions()
+        .iter()
+        .map(|ready| ready.next_tick)
+        .min()
+        .unwrap_or_else(|| batch.horizon())
+}
+
 fn sort_batch_timeline(timeline: &mut [RiscvSystemParallelBatchTimelineRecord]) {
     timeline.sort_by_key(|record| {
         (
@@ -478,6 +593,19 @@ fn collect_batch_worker_count_tick_summaries(
         if record.worker_count() != 0 && duration != 0 {
             let ticks = summaries.entry(record.worker_count()).or_default();
             *ticks = ticks.saturating_add(duration);
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+fn collect_timeline_worker_count_summaries(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+) -> Vec<(usize, usize)> {
+    let mut summaries = BTreeMap::<usize, usize>::new();
+    for record in records {
+        let worker_count = record.worker_count();
+        if worker_count != 0 {
+            *summaries.entry(worker_count).or_default() += 1;
         }
     }
     summaries.into_iter().collect()
@@ -568,6 +696,45 @@ fn longest_batch_tick_streak_at_or_above(
     longest
 }
 
+fn timeline_count_for_worker_count(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    worker_count: usize,
+) -> usize {
+    records
+        .into_iter()
+        .filter(|record| record.worker_count() == worker_count)
+        .count()
+}
+
+fn timeline_count_at_or_above(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    minimum_worker_count: usize,
+) -> usize {
+    records
+        .into_iter()
+        .filter(|record| record.worker_count() >= minimum_worker_count)
+        .count()
+}
+
+fn timeline_worker_count_total(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+) -> usize {
+    records
+        .into_iter()
+        .map(|record| record.worker_count())
+        .sum()
+}
+
+fn timeline_max_workers(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+) -> usize {
+    records
+        .into_iter()
+        .map(|record| record.worker_count())
+        .max()
+        .unwrap_or(0)
+}
+
 fn collect_batch_worker_count_summaries(
     batches: impl IntoIterator<Item = ParallelEpochBatchRecord>,
 ) -> Vec<(usize, usize)> {
@@ -639,6 +806,18 @@ fn collect_batch_partition_set_summaries(
     summaries.into_iter().collect()
 }
 
+fn collect_timeline_partition_set_summaries(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+) -> Vec<(Vec<PartitionId>, usize)> {
+    let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
+    for record in records {
+        if !record.partitions().is_empty() {
+            *summaries.entry(record.partitions().to_vec()).or_default() += 1;
+        }
+    }
+    summaries.into_iter().collect()
+}
+
 fn collect_partition_set_summaries_from_summaries(
     summaries: impl IntoIterator<Item = (Vec<PartitionId>, usize)>,
 ) -> Vec<(Vec<PartitionId>, usize)> {
@@ -649,6 +828,17 @@ fn collect_partition_set_summaries_from_summaries(
         }
     }
     collected.into_iter().collect()
+}
+
+fn timeline_count_for_partition_set(
+    records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
+    partitions: impl IntoIterator<Item = PartitionId>,
+) -> usize {
+    let expected = normalize_partition_set(partitions);
+    records
+        .into_iter()
+        .filter(|record| record.partitions() == expected.as_slice())
+        .count()
 }
 
 fn batch_count_for_partition_set(

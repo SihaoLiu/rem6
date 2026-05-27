@@ -503,6 +503,11 @@ Implementation evidence on 2026-05-26:
   histograms, partition-set histograms, total planned workers, maximum planned
   workers, and the configured worker limit, so remote wakeups introduced during
   execution cannot overwrite the pre-dispatch multicore occupancy contract.
+- System run summaries now lift planned scheduler batches into full-system
+  timeline evidence. CPU-scheduler planned timelines and aggregate
+  full-system planned timelines are queryable beside actual executed timelines,
+  so a remote wakeup that changes the executed batch partition set remains
+  distinguishable from the deterministic pre-dispatch plan.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
