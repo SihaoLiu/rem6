@@ -820,6 +820,42 @@ fn stats_registry_records_typed_dump_history() {
 }
 
 #[test]
+fn stats_registry_records_typed_reset_history() {
+    let mut stats = StatsRegistry::new();
+    let cycles = stats.register_counter("cpu0.cycles", "cycles").unwrap();
+    let misses = stats.register_counter("l1d.misses", "count").unwrap();
+
+    stats.increment(cycles, 50).unwrap();
+    stats.increment(misses, 3).unwrap();
+    let first_reset = stats.try_reset(20).unwrap();
+    assert_eq!(
+        first_reset,
+        StatsResetRecord::new(20, 1, vec![(cycles, 50), (misses, 3)])
+    );
+    assert_eq!(stats.reset_records(), std::slice::from_ref(&first_reset));
+
+    stats.increment(cycles, 7).unwrap();
+    assert_eq!(
+        stats.try_reset(19).unwrap_err(),
+        StatsError::ResetBeforeLastReset {
+            tick: 19 as Tick,
+            reset_tick: 20,
+        },
+    );
+    assert_eq!(stats.reset_records(), std::slice::from_ref(&first_reset));
+
+    let second_reset = stats.reset(25);
+    assert_eq!(
+        second_reset,
+        StatsResetRecord::new(25, 2, vec![(cycles, 7), (misses, 0)])
+    );
+    assert_eq!(
+        stats.reset_records(),
+        [first_reset, second_reset].as_slice()
+    );
+}
+
+#[test]
 fn stats_registry_rejects_dump_before_reset_without_recording_history() {
     let mut stats = StatsRegistry::new();
     let insts = stats.register_counter("cpu0.cycles", "cycles").unwrap();

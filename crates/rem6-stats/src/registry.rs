@@ -21,6 +21,7 @@ pub struct StatsRegistry {
     descriptors: BTreeMap<StatId, StatDescriptor>,
     counters: BTreeMap<StatId, u64>,
     dump_records: Vec<StatDumpRecord>,
+    reset_records: Vec<StatsResetRecord>,
 }
 
 impl StatsRegistry {
@@ -37,6 +38,7 @@ impl StatsRegistry {
             descriptors: BTreeMap::new(),
             counters: BTreeMap::new(),
             dump_records: Vec::new(),
+            reset_records: Vec::new(),
         }
     }
 
@@ -339,6 +341,10 @@ impl StatsRegistry {
         &self.dump_records
     }
 
+    pub fn reset_records(&self) -> &[StatsResetRecord] {
+        &self.reset_records
+    }
+
     pub fn reset(&mut self, tick: Tick) -> StatsResetRecord {
         self.try_reset(tick)
             .expect("reset tick must be at or after the last reset")
@@ -359,7 +365,9 @@ impl StatsRegistry {
             previous_values.push((*id, *counter));
             *counter = 0;
         }
-        Ok(StatsResetRecord::new(tick, self.epoch, previous_values))
+        let record = StatsResetRecord::new(tick, self.epoch, previous_values);
+        self.reset_records.push(record.clone());
+        Ok(record)
     }
 }
 
