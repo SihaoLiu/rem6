@@ -361,6 +361,28 @@ impl WorkloadParallelExecutionSummary {
         &self.full_system_parallel_scheduler_remote_flows
     }
 
+    pub(crate) fn scoped_full_system_parallel_scheduler_remote_sends(
+        &self,
+    ) -> Vec<ParallelRemoteSendRecord> {
+        collect_parallel_remote_sends(
+            self.parallel_scheduler_remote_sends
+                .iter()
+                .copied()
+                .chain(
+                    self.data_cache_parallel_scheduler_remote_sends
+                        .iter()
+                        .copied(),
+                )
+                .chain(self.dma_scheduler_remote_sends()),
+        )
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_remote_sends(
+        &self,
+    ) -> &[ParallelRemoteSendRecord] {
+        &self.full_system_parallel_scheduler_remote_sends
+    }
+
     pub fn full_system_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
         collect_parallel_remote_sends(
             self.parallel_scheduler_remote_sends

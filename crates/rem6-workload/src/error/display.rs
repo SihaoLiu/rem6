@@ -784,7 +784,8 @@ impl fmt::Display for WorkloadError {
             | Self::UnexpectedParallelRemoteFlow { .. }
             | Self::MissingParallelRemoteSendSummary { .. }
             | Self::ExpectedParallelRemoteSendMissing { .. }
-            | Self::UnexpectedParallelRemoteSend { .. } => {
+            | Self::UnexpectedParallelRemoteSend { .. }
+            | Self::InvalidParallelRemoteSendMergeSummary { .. } => {
                 format_remote_traffic_error(self, formatter)
             }
             Self::ParallelProgressTransitionExpectation(error) => write!(

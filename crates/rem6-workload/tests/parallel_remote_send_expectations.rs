@@ -220,6 +220,53 @@ fn workload_replay_plan_uses_explicit_full_system_remote_sends() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_remote_sends() {
+    let scoped_send = expected_send(WorkloadParallelRemoteFlowScope::FullSystem, 6, 9, 3, 11, 0);
+    let explicit_send = expected_send(
+        WorkloadParallelRemoteFlowScope::FullSystem,
+        10,
+        12,
+        5,
+        15,
+        1,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(explicit_send)
+        .unwrap()
+        .add_expected_parallel_remote_send(scoped_send)
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(6),
+            PartitionId::new(9),
+            3,
+            11,
+            0,
+        )])
+        .with_full_system_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(10),
+            PartitionId::new(12),
+            5,
+            15,
+            1,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteSendMergeSummary {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            source: 6,
+            target: 9,
+            source_tick: 3,
+            delivery_tick: 11,
+            order: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_remote_send_expectations() {
     let base = rem6_workload::WorkloadManifest::builder(id("identity-remote-send"), boot_image())
         .add_resource(kernel_resource())

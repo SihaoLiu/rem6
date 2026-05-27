@@ -147,6 +147,18 @@ pub(crate) fn format_remote_traffic_error(
             "unexpected {} remote send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelRemoteSendMergeSummary {
+            scope,
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            order,
+        } => write!(
+            formatter,
+            "invalid {} remote-send merge summary: scoped send {source}->{target} from tick {source_tick} to {delivery_tick} with order {order} is missing from explicit merged evidence",
+            scope.as_str()
+        ),
         _ => unreachable!("unsupported remote traffic error"),
     }
 }

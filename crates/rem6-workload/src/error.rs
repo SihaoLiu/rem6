@@ -676,6 +676,14 @@ pub enum WorkloadError {
         delivery_tick: Tick,
         order: u64,
     },
+    InvalidParallelRemoteSendMergeSummary {
+        scope: WorkloadParallelRemoteFlowScope,
+        source: u32,
+        target: u32,
+        source_tick: Tick,
+        delivery_tick: Tick,
+        order: u64,
+    },
     ParallelProgressTransitionExpectation(WorkloadParallelProgressTransitionExpectationError),
     ZeroExpectedParallelRemoteDelayFloor {
         scope: WorkloadParallelRemoteFlowScope,

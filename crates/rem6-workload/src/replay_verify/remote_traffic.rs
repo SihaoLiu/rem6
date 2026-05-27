@@ -388,6 +388,9 @@ fn validate_remote_send_scope_evidence(
     for send in sends {
         validate_remote_traffic_send_evidence(scope, send)?;
     }
+    if scope == WorkloadParallelRemoteFlowScope::FullSystem {
+        validate_full_system_remote_send_merge_summary(summary)?;
+    }
     Ok(())
 }
 
@@ -465,6 +468,30 @@ fn validate_raw_full_system_remote_flow_evidence(
 ) -> Result<(), WorkloadError> {
     for flow in summary.raw_full_system_parallel_scheduler_remote_flows() {
         validate_remote_traffic_flow_evidence(WorkloadParallelRemoteFlowScope::FullSystem, *flow)?;
+    }
+    Ok(())
+}
+
+fn validate_full_system_remote_send_merge_summary(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let explicit_sends = summary.raw_full_system_parallel_scheduler_remote_sends();
+    if explicit_sends.is_empty() {
+        return Ok(());
+    }
+
+    for scoped_send in summary.scoped_full_system_parallel_scheduler_remote_sends() {
+        if explicit_sends.contains(&scoped_send) {
+            continue;
+        }
+        return Err(WorkloadError::InvalidParallelRemoteSendMergeSummary {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            source: scoped_send.source().index(),
+            target: scoped_send.target().index(),
+            source_tick: scoped_send.source_tick(),
+            delivery_tick: scoped_send.delivery_tick(),
+            order: scoped_send.order(),
+        });
     }
     Ok(())
 }

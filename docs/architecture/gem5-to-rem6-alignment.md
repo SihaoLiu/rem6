@@ -646,6 +646,11 @@ Implementation evidence on 2026-05-26:
   window, or delay-bound window. A global remote-flow summary therefore cannot
   narrow away scoped cross-partition traffic while replay checks still pass from
   derived lower-bound evidence.
+- Workload full-system exact remote-send merge validation now rejects explicit
+  full-system send streams that omit scheduler, data-cache, GPU DMA, or
+  accelerator DMA scoped sends. A global exact-send summary therefore cannot
+  drop subsystem cross-partition traffic while the merged full-system getter
+  still finds the scoped record through lower-bound evidence.
 - Workload full-system progress-transition reporting now accepts explicit
   merged full-system transition records. A global scheduler can report exact
   progress-free transition evidence directly without concatenating scoped
