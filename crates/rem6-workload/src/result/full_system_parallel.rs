@@ -37,6 +37,19 @@ use crate::result_partition_activity::{
 use super::WorkloadParallelExecutionSummary;
 
 impl WorkloadParallelExecutionSummary {
+    pub const fn with_full_system_parallel_scheduler_counts(
+        mut self,
+        epoch_count: usize,
+        empty_epoch_count: usize,
+        dispatch_count: usize,
+    ) -> Self {
+        self.has_full_system_parallel_scheduler_counts = true;
+        self.full_system_parallel_scheduler_epoch_count = epoch_count;
+        self.full_system_parallel_scheduler_empty_epoch_count = empty_epoch_count;
+        self.full_system_parallel_scheduler_dispatch_count = dispatch_count;
+        self
+    }
+
     pub fn with_full_system_parallel_scheduler_remote_flows(
         mut self,
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
@@ -54,18 +67,29 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
-        self.scheduler_epoch_count
-            + self.data_cache_parallel_scheduler_epoch_count
-            + self.dma_scheduler_epoch_count()
+        if self.has_full_system_parallel_scheduler_counts {
+            self.full_system_parallel_scheduler_epoch_count
+        } else {
+            self.scheduler_epoch_count
+                + self.data_cache_parallel_scheduler_epoch_count
+                + self.dma_scheduler_epoch_count()
+        }
     }
 
     pub const fn full_system_parallel_scheduler_empty_epoch_count(&self) -> usize {
-        self.scheduler_empty_epoch_count
-            + self.data_cache_parallel_scheduler_empty_epoch_count
-            + self.dma_scheduler_empty_epoch_count()
+        if self.has_full_system_parallel_scheduler_counts {
+            self.full_system_parallel_scheduler_empty_epoch_count
+        } else {
+            self.scheduler_empty_epoch_count
+                + self.data_cache_parallel_scheduler_empty_epoch_count
+                + self.dma_scheduler_empty_epoch_count()
+        }
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
+        if self.has_full_system_parallel_scheduler_counts {
+            return self.full_system_parallel_scheduler_dispatch_count;
+        }
         let scoped_dispatch_count = self.scheduler_dispatch_count()
             + self.data_cache_parallel_scheduler_dispatch_count()
             + self.dma_scheduler_dispatch_count();
@@ -588,6 +612,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_full_system_parallel_scheduler_work(&self) -> bool {
         self.active_full_system_parallel_scheduler_partition_count() != 0
+            || (self.has_full_system_parallel_scheduler_counts
+                && (self.full_system_parallel_scheduler_epoch_count != 0
+                    || self.full_system_parallel_scheduler_empty_epoch_count != 0
+                    || self.full_system_parallel_scheduler_dispatch_count != 0))
             || !self
                 .full_system_parallel_scheduler_batch_worker_counts
                 .is_empty()

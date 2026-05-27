@@ -219,6 +219,32 @@ fn workload_replay_plan_rejects_missing_or_underactive_parallel_scheduler_progre
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_scheduler_counts() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            5,
+            12,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(4, 3, 10, 4)
+        .with_data_cache_parallel_counts(1, 3, 7, 3, 2)
+        .with_data_cache_parallel_empty_epoch_count(2)
+        .with_full_system_parallel_scheduler_counts(5, 1, 12);
+
+    assert_eq!(summary.full_system_parallel_scheduler_epoch_count(), 5);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_empty_epoch_count(),
+        1,
+    );
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 12);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_derives_dispatch_progress_from_partition_activity() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("scheduler-progress-from-partition-activity"),

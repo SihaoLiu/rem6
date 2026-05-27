@@ -260,6 +260,10 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_batch_partition_streaks:
         Vec<WorkloadParallelBatchPartitionStreak>,
     active_full_system_parallel_scheduler_partition_count: usize,
+    has_full_system_parallel_scheduler_counts: bool,
+    full_system_parallel_scheduler_epoch_count: usize,
+    full_system_parallel_scheduler_empty_epoch_count: usize,
+    full_system_parallel_scheduler_dispatch_count: usize,
     full_system_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     full_system_parallel_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     full_system_parallel_scheduler_batch_worker_tick_streaks: Vec<(usize, Tick)>,

@@ -482,6 +482,10 @@ Implementation evidence on 2026-05-26:
   merged full-system transition records. A global scheduler can report exact
   progress-free transition evidence directly without concatenating scoped
   exact-record streams into an already-merged full-system record set.
+- Workload full-system scheduler-count reporting now accepts explicit merged
+  epoch, empty-epoch, and dispatch counts. A global scheduler can report its
+  aggregate progress and idle counts directly instead of forcing replay to sum
+  scoped scheduler counters that may describe concurrent global epochs.
 - Workload full-system frontier reporting now accepts explicit merged
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and
