@@ -12,7 +12,7 @@ use crate::{
     WorkloadParallelSchedulerScope, WorkloadResourceAcquisitionField,
     WorkloadResourceActivityScope, WorkloadResourceConstructionField, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
-    WorkloadSuiteIdentity,
+    WorkloadStatsHistoryExpectationError, WorkloadSuiteIdentity,
 };
 
 mod display;
@@ -474,6 +474,7 @@ pub enum WorkloadError {
         stats_tick: Tick,
         final_tick: Tick,
     },
+    StatsHistoryExpectation(WorkloadStatsHistoryExpectationError),
     ResultStartAfterFinalTick {
         start_tick: Tick,
         final_tick: Tick,

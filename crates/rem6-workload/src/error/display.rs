@@ -704,6 +704,7 @@ impl fmt::Display for WorkloadError {
                 formatter,
                 "stats snapshot tick {stats_tick} is after final tick {final_tick}"
             ),
+            Self::StatsHistoryExpectation(error) => write!(formatter, "{error}"),
             Self::ResultStartAfterFinalTick {
                 start_tick,
                 final_tick,

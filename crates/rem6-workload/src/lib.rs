@@ -34,6 +34,7 @@ mod resource_payload;
 mod result;
 mod result_collect;
 mod result_partition_activity;
+mod stats_history;
 mod suite;
 mod topology;
 mod workload_result;
@@ -115,6 +116,9 @@ pub use result::{
     WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
     WorkloadWaitForTargetNodeWindow,
 };
+pub use stats_history::{
+    WorkloadExpectedStatsHistory, WorkloadStatsHistoryExpectationError, WorkloadStatsHistorySummary,
+};
 pub use suite::{
     WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchLoadExpectation,
     WorkloadSuiteDispatchLoadSummary, WorkloadSuiteDispatchOccupancyWindow,
@@ -173,6 +177,7 @@ pub struct WorkloadManifest {
         Vec<WorkloadExpectedParallelWaitForTargetNodeWindow>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
+    expected_stats_history: Option<WorkloadExpectedStatsHistory>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
@@ -383,6 +388,7 @@ pub struct WorkloadManifestBuilder {
         Vec<WorkloadExpectedParallelWaitForTargetNodeWindow>,
     expected_data_cache_protocol_run_counts: Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
+    expected_stats_history: Option<WorkloadExpectedStatsHistory>,
     expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
@@ -439,6 +445,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_wait_for_target_node_windows: Vec::new(),
             expected_data_cache_protocol_run_counts: Vec::new(),
             expected_data_cache_run_attribution: None,
+            expected_stats_history: None,
             expected_parallel_remote_flows: Vec::new(),
             expected_parallel_remote_endpoints: Vec::new(),
             expected_parallel_remote_delay_floors: Vec::new(),
@@ -908,6 +915,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_wait_for_target_node_windows,
             expected_data_cache_protocol_run_counts: &self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution.as_ref(),
+            expected_stats_history: self.expected_stats_history.as_ref(),
             expected_parallel_remote_flows: &self.expected_parallel_remote_flows,
             expected_parallel_remote_endpoints: &self.expected_parallel_remote_endpoints,
             expected_parallel_remote_delay_floors: &self.expected_parallel_remote_delay_floors,
@@ -972,6 +980,7 @@ impl WorkloadManifestBuilder {
                 .expected_parallel_wait_for_target_node_windows,
             expected_data_cache_protocol_run_counts: self.expected_data_cache_protocol_run_counts,
             expected_data_cache_run_attribution: self.expected_data_cache_run_attribution,
+            expected_stats_history: self.expected_stats_history,
             expected_parallel_remote_flows: self.expected_parallel_remote_flows,
             expected_parallel_remote_endpoints: self.expected_parallel_remote_endpoints,
             expected_parallel_remote_delay_floors: self.expected_parallel_remote_delay_floors,

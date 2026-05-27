@@ -4,6 +4,7 @@ use rem6_stats::{StatHistoryRecord, StatSnapshot};
 use crate::{
     WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadHostActionSummary,
     WorkloadManifest, WorkloadManifestIdentity, WorkloadParallelExecutionSummary,
+    WorkloadStatsHistorySummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -356,6 +357,10 @@ impl WorkloadResult {
 
     pub fn stats_history_records(&self) -> &[StatHistoryRecord] {
         &self.stats_history_records
+    }
+
+    pub fn stats_history_summary(&self) -> WorkloadStatsHistorySummary {
+        WorkloadStatsHistorySummary::from_records(&self.stats_history_records)
     }
 
     pub const fn parallel_execution_summary(&self) -> Option<&WorkloadParallelExecutionSummary> {

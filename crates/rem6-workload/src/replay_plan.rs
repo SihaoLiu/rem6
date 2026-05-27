@@ -27,9 +27,9 @@ use crate::{
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
     WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
     WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadManifestIdentity, WorkloadResource,
-    WorkloadResult, WorkloadTopology,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadLinuxBootHandoff, WorkloadManifest,
+    WorkloadManifestIdentity, WorkloadResource, WorkloadResult, WorkloadTopology,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,6 +56,7 @@ pub struct WorkloadReplayPlan {
     pub(crate) expected_data_cache_protocol_run_counts:
         Vec<WorkloadExpectedDataCacheProtocolRunCount>,
     pub(crate) expected_data_cache_run_attribution: Option<WorkloadExpectedDataCacheRunAttribution>,
+    pub(crate) expected_stats_history: Option<WorkloadExpectedStatsHistory>,
     pub(crate) expected_parallel_remote_flows: Vec<WorkloadExpectedParallelRemoteFlow>,
     pub(crate) expected_parallel_remote_endpoints: Vec<WorkloadExpectedParallelRemoteEndpoints>,
     pub(crate) expected_parallel_remote_delay_floors: Vec<WorkloadExpectedParallelRemoteDelayFloor>,
@@ -142,6 +143,7 @@ impl WorkloadReplayPlan {
             expected_data_cache_run_attribution: manifest
                 .expected_data_cache_run_attribution()
                 .copied(),
+            expected_stats_history: manifest.expected_stats_history().copied(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             expected_parallel_remote_endpoints: manifest
                 .expected_parallel_remote_endpoints()
@@ -614,6 +616,7 @@ impl WorkloadReplayPlan {
         self.verify_checkpoint_restore_component_summaries(result)?;
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
+        self.verify_expected_stats_history(result)?;
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
         replay_verify::verify_expected_parallel_remote_sends(self, result)?;
         replay_verify::verify_expected_parallel_progress_transitions(self, result)?;

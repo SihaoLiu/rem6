@@ -21,12 +21,12 @@ use crate::{
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
     WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
     WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
-    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
-    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
-    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedResourceActivity,
+    WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
+    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -54,6 +54,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedDataCacheProtocolRunCount],
     pub(crate) expected_data_cache_run_attribution:
         Option<&'a WorkloadExpectedDataCacheRunAttribution>,
+    pub(crate) expected_stats_history: Option<&'a WorkloadExpectedStatsHistory>,
     pub(crate) expected_parallel_remote_flows: &'a [WorkloadExpectedParallelRemoteFlow],
     pub(crate) expected_parallel_remote_endpoints: &'a [WorkloadExpectedParallelRemoteEndpoints],
     pub(crate) expected_parallel_remote_delay_floors:
@@ -185,6 +186,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         hash_expected_data_cache_protocol_run_count(&mut hash, *expected);
     }
     hash_expected_data_cache_run_attribution(&mut hash, input.expected_data_cache_run_attribution);
+    hash_expected_stats_history(&mut hash, input.expected_stats_history);
     hash_u64(&mut hash, input.expected_parallel_remote_flows.len() as u64);
     for expected in input.expected_parallel_remote_flows {
         hash_expected_parallel_remote_flow(&mut hash, *expected);
@@ -505,6 +507,25 @@ fn hash_expected_data_cache_run_attribution(
             hash_u64(hash, 1);
             hash_u64(hash, expected.minimum_attributed_run_count() as u64);
             hash_u64(hash, expected.maximum_unattributed_run_count() as u64);
+        }
+        None => hash_u64(hash, 0),
+    }
+}
+
+fn hash_expected_stats_history(hash: &mut u64, expected: Option<&WorkloadExpectedStatsHistory>) {
+    match expected {
+        Some(expected) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, expected.minimum_reset_count() as u64);
+            hash_u64(hash, expected.minimum_dump_count() as u64);
+            match (expected.first_tick(), expected.last_tick()) {
+                (Some(first_tick), Some(last_tick)) => {
+                    hash_u64(hash, 1);
+                    hash_u64(hash, first_tick);
+                    hash_u64(hash, last_tick);
+                }
+                _ => hash_u64(hash, 0),
+            }
         }
         None => hash_u64(hash, 0),
     }
