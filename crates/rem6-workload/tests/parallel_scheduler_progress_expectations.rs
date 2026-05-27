@@ -487,6 +487,63 @@ fn workload_replay_plan_derives_dispatch_progress_from_batch_evidence() {
 }
 
 #[test]
+fn workload_replay_plan_derives_dma_dispatch_progress_from_batch_timelines() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_dma_progress(
+            WorkloadParallelSchedulerScope::GpuDmaScheduler,
+            0,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_dma_progress(
+            WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+            0,
+            3,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_dma_progress(
+            WorkloadParallelSchedulerScope::DmaScheduler,
+            0,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            5,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            0,
+            4,
+            [PartitionId::new(20), PartitionId::new(21)],
+            2,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            4,
+            8,
+            [
+                PartitionId::new(30),
+                PartitionId::new(31),
+                PartitionId::new(32),
+            ],
+            3,
+        )]);
+
+    assert_eq!(summary.gpu_dma_scheduler_dispatch_count(), 2);
+    assert_eq!(summary.accelerator_dma_scheduler_dispatch_count(), 3);
+    assert_eq!(summary.dma_scheduler_dispatch_count(), 5);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 5);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_malformed_timeline_for_scheduler_progress() {
     let plan = replay_plan()
         .add_expected_parallel_scheduler_progress(expected_progress(

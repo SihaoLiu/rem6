@@ -238,8 +238,11 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_dma_scheduler_empty_epoch_count
     }
 
-    pub const fn gpu_dma_scheduler_dispatch_count(&self) -> usize {
+    pub fn gpu_dma_scheduler_dispatch_count(&self) -> usize {
         self.gpu_dma_scheduler_dispatch_count
+            .max(total_parallel_batch_worker_count(
+                &self.gpu_dma_scheduler_batch_worker_counts,
+            ))
     }
 
     pub const fn gpu_dma_scheduler_batch_count(&self) -> usize {
@@ -607,8 +610,11 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_scheduler_empty_epoch_count
     }
 
-    pub const fn accelerator_dma_scheduler_dispatch_count(&self) -> usize {
+    pub fn accelerator_dma_scheduler_dispatch_count(&self) -> usize {
         self.accelerator_dma_scheduler_dispatch_count
+            .max(total_parallel_batch_worker_count(
+                &self.accelerator_dma_scheduler_batch_worker_counts,
+            ))
     }
 
     pub const fn accelerator_dma_scheduler_batch_count(&self) -> usize {
@@ -836,8 +842,9 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_dma_scheduler_empty_epoch_count + self.accelerator_dma_scheduler_empty_epoch_count
     }
 
-    pub const fn dma_scheduler_dispatch_count(&self) -> usize {
-        self.gpu_dma_scheduler_dispatch_count + self.accelerator_dma_scheduler_dispatch_count
+    pub fn dma_scheduler_dispatch_count(&self) -> usize {
+        self.gpu_dma_scheduler_dispatch_count()
+            .saturating_add(self.accelerator_dma_scheduler_dispatch_count())
     }
 
     pub const fn dma_scheduler_batch_count(&self) -> usize {

@@ -51,7 +51,11 @@ isolated bugs:
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
   overlapped CPU and cache work instead of inferring it from aggregate
-  counters. Manifest-declared exact batch timeline expectations reject
+  counters. Direct GPU and accelerator DMA scheduler dispatch progress now
+  treats typed batch worker-count evidence as a lower bound, and combined DMA
+  dispatch progress preserves those direct lower bounds before full-system
+  progress checks consume the merged evidence. Manifest-declared exact batch
+  timeline expectations reject
   one-worker or one-partition records, so timeline evidence cannot be satisfied
   by serial occupancy. Direct DMA scheduler epoch and dispatch progress,
   active-partition, worker-count, multi-worker batch-activity,
