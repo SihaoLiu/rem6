@@ -1,6 +1,7 @@
 use rem6_dram::{
-    DramControllerConfig, DramError, DramGeometry, DramMemoryController, DramMemoryTechnology,
-    DramProfileField, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
+    DramControllerConfig, DramError, DramGeometry, DramMemoryController, DramMemorySnapshot,
+    DramMemoryTargetSnapshot, DramMemoryTechnology, DramProfileField, DramTiming,
+    ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
@@ -58,6 +59,46 @@ fn writeback_dirty(address: u64, sequence: u64) -> MemoryRequest {
         layout(),
     )
     .unwrap()
+}
+
+fn snapshot_for_profile(profile: ExternalMemoryProfile) -> DramMemorySnapshot {
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller.snapshot()
+}
+
+fn snapshot_with_replaced_profile(
+    snapshot: &DramMemorySnapshot,
+    profile: ExternalMemoryProfile,
+) -> DramMemorySnapshot {
+    let target = &snapshot.targets()[0];
+    DramMemorySnapshot::new(
+        snapshot.store().clone(),
+        vec![DramMemoryTargetSnapshot::with_profile(
+            target.target(),
+            target.controller().clone(),
+            profile,
+        )],
+    )
+}
+
+fn assert_restore_error_contains(snapshot: &DramMemorySnapshot, expected: &[&str]) {
+    let error = DramMemoryController::from_snapshot(snapshot)
+        .unwrap_err()
+        .to_string();
+    for text in expected {
+        assert!(
+            error.contains(text),
+            "restore error {error:?} did not contain {text:?}"
+        );
+    }
 }
 
 #[test]
@@ -206,6 +247,82 @@ fn dram_memory_controller_adds_profiled_targets_and_restores_profile_metadata() 
     assert_eq!(
         restored.dram_controller(profile.target()).unwrap().timing(),
         timing(),
+    );
+}
+
+#[test]
+fn dram_memory_controller_rejects_profile_metadata_drift_in_snapshots() {
+    let base_profile =
+        ExternalMemoryProfile::hbm(target(20), layout(), 2, 4, geometry(), timing()).unwrap();
+    let snapshot = snapshot_for_profile(base_profile);
+
+    let wrong_target =
+        ExternalMemoryProfile::hbm(target(21), layout(), 2, 4, geometry(), timing()).unwrap();
+    assert_restore_error_contains(
+        &snapshot_with_replaced_profile(&snapshot, wrong_target),
+        &["DRAM target 20", "profile target", "21"],
+    );
+
+    let wrong_layout = ExternalMemoryProfile::hbm(
+        target(20),
+        CacheLineLayout::new(128).unwrap(),
+        2,
+        4,
+        geometry(),
+        timing(),
+    )
+    .unwrap();
+    assert_restore_error_contains(
+        &snapshot_with_replaced_profile(&snapshot, wrong_layout),
+        &["DRAM target 20", "profile line layout", "128", "64"],
+    );
+
+    let wrong_geometry = ExternalMemoryProfile::hbm(
+        target(20),
+        layout(),
+        2,
+        4,
+        DramGeometry::new(8, 1024, 64).unwrap(),
+        timing(),
+    )
+    .unwrap();
+    assert_restore_error_contains(
+        &snapshot_with_replaced_profile(&snapshot, wrong_geometry),
+        &["DRAM target 20", "profile geometry"],
+    );
+
+    let wrong_timing = ExternalMemoryProfile::hbm(
+        target(20),
+        layout(),
+        2,
+        4,
+        geometry(),
+        DramTiming::new(5, 8, 10, 3, 5).unwrap(),
+    )
+    .unwrap();
+    assert_restore_error_contains(
+        &snapshot_with_replaced_profile(&snapshot, wrong_timing),
+        &["DRAM target 20", "profile timing"],
+    );
+
+    let wrong_ports =
+        ExternalMemoryProfile::hbm(target(20), layout(), 1, 4, geometry(), timing()).unwrap();
+    assert_restore_error_contains(
+        &snapshot_with_replaced_profile(&snapshot, wrong_ports),
+        &["DRAM target 20", "profile parallel ports", "4", "8"],
+    );
+
+    let nvm_media_timing = NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap();
+    let nvm_profile = ExternalMemoryProfile::nvm(target(22), layout(), 2, 8, geometry(), timing())
+        .unwrap()
+        .with_nvm_media_timing(nvm_media_timing)
+        .unwrap();
+    let nvm_snapshot = snapshot_for_profile(nvm_profile);
+    let missing_media =
+        ExternalMemoryProfile::nvm(target(22), layout(), 2, 8, geometry(), timing()).unwrap();
+    assert_restore_error_contains(
+        &snapshot_with_replaced_profile(&nvm_snapshot, missing_media),
+        &["DRAM target 22", "profile NVM media timing"],
     );
 }
 

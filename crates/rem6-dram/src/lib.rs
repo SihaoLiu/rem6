@@ -4,7 +4,9 @@ use std::fmt;
 
 mod activity;
 mod memory_controller;
+mod memory_error;
 mod profile;
+mod profile_snapshot;
 mod qos;
 mod timing;
 
@@ -13,10 +15,12 @@ pub use activity::{
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
+pub use memory_error::DramMemoryError;
 pub use profile::{
     DramMemoryTechnology, DramProfileField, ExternalMemoryProfile, ExternalMemoryTopology,
     NvmMediaTiming, NvmMediaTimingField,
 };
+pub use profile_snapshot::DramProfileSnapshotMismatch;
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
 pub use timing::{DramCommandWindow, DramGeometry, DramTiming, DramTimingField};
 
@@ -195,62 +199,6 @@ impl Error for DramError {
             | Self::RequestCrossesRow { .. }
             | Self::UnsupportedOperation { .. } => None,
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DramMemoryError {
-    Memory(MemoryError),
-    Dram {
-        target: MemoryTargetId,
-        source: DramError,
-    },
-    TargetLineSizeMismatch {
-        target: MemoryTargetId,
-        layout: u64,
-        geometry: u64,
-    },
-    MissingDramTarget {
-        target: MemoryTargetId,
-    },
-}
-
-impl fmt::Display for DramMemoryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Memory(error) => write!(formatter, "{error}"),
-            Self::Dram { target, source } => {
-                write!(formatter, "DRAM target {} rejected request: {source}", target.get())
-            }
-            Self::TargetLineSizeMismatch {
-                target,
-                layout,
-                geometry,
-            } => write!(
-                formatter,
-                "DRAM target {} uses {geometry}-byte geometry lines but memory layout uses {layout}",
-                target.get()
-            ),
-            Self::MissingDramTarget { target } => {
-                write!(formatter, "DRAM target {} is missing timing state", target.get())
-            }
-        }
-    }
-}
-
-impl Error for DramMemoryError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Memory(error) => Some(error),
-            Self::Dram { source, .. } => Some(source),
-            Self::TargetLineSizeMismatch { .. } | Self::MissingDramTarget { .. } => None,
-        }
-    }
-}
-
-impl From<MemoryError> for DramMemoryError {
-    fn from(error: MemoryError) -> Self {
-        Self::Memory(error)
     }
 }
 
@@ -1756,6 +1704,9 @@ impl DramMemoryController {
                     target: target.target(),
                 }));
             }
+            let partition_layout = store
+                .partition_layout(target.target())
+                .map_err(DramMemoryError::Memory)?;
             if dram
                 .insert(
                     target.target(),
@@ -1770,6 +1721,12 @@ impl DramMemoryController {
                 ));
             }
             if let Some(profile) = target.profile().copied() {
+                profile_snapshot::validate_profile_snapshot(
+                    target.target(),
+                    partition_layout,
+                    target.controller(),
+                    profile,
+                )?;
                 profiles.insert(target.target(), profile);
             }
         }

@@ -917,7 +917,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `configs/example` | 81 | `rem6-workload`, `rem6-system` tests | partial | Preserve easy examples, but every example should be reconstructable from a manifest and tested where practical. |
 | `configs/ruby` | 17 | `rem6-coherence`, protocol crates, `rem6-system` | partial | Keep multi-protocol examples while avoiding a separate Ruby-like engine. |
 | `configs/topologies` | 10 | `rem6-topology`, `rem6-fabric`, `rem6-transport` | partial | Topology definitions should be protocol-neutral and reusable across CPU, GPU, DMA, and accelerator traffic. |
-| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, bank-group geometry, timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, manifest identity, checkpoint encoding, and activity metadata. DRAM same-arrival QoS timing batches respect same-agent memory-ordering barriers before priority or turnaround selection. NVM media timing can model separate read-media, write-media, send latency, pending-read buffers, and pending-write queue depth. Profile breadth and fuller media behavior remain open. |
+| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, bank-group geometry, timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, manifest identity, checkpoint encoding, restore-time profile validation, and activity metadata. DRAM same-arrival QoS timing batches respect same-agent memory-ordering barriers before priority or turnaround selection. NVM media timing can model separate read-media, write-media, send latency, pending-read buffers, and pending-write queue depth. Profile breadth and fuller media behavior remain open. |
 | `configs/network` | 2 | `rem6-fabric`, `rem6-transport` | partial | Network configuration must map to NoC lanes, virtual networks, credits, wait-for diagnostics, per-transfer hop activity, per-link activity, per-lane activity, per-virtual-network activity, queue-delay budgets across those scopes, per-virtual-network lane fanout, contention budgets, required-link coverage, and activity-window coverage across those activity scopes. |
 | `configs/boot`, `configs/dist`, `configs/splash2`, `configs/learning_gem5`, `configs/deprecated` | 27 | `rem6-boot`, `rem6-workload`, tests | partial | Boot and benchmark examples should become manifest resources, not external scripts. Linux boot handoff manifests now make device-tree and initrd resources explicit, require matching resource definitions, validate resource kind, validate resolved payload digest and initrd size, include bootargs plus DTB/initrd placement in manifest identity, bind resolved payload sets to that manifest identity, and let replay install resolved DTB/initrd bytes without a script side effect. Deprecated examples are audit input only. |
 
@@ -960,9 +960,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, bank-group geometry, activity, and profiles. External DRAM simulators should be optional adapters. |
-| `configs/nvm`, `src/mem/NVMInterface.py`, `src/mem/nvm_interface.*`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. DRAM activity profiles preserve typed read/write byte counts, and NVM target activity exposes persistent write access, byte counters, max pending NVM reads, max pending persistent writes, profile-level media timing, access-level persistent-ready cycles, checkpointed pending read/write completions, NVM read-buffer/write-queue wait-for diagnostics, and manifest identity for NVM media timing without string stats. Richer NVM-specific bandwidth behavior remains open. |
-| HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists for DDR, HBM, LPDDR, and NVM; a broader library of validated profiles is still needed. |
+| `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, bank-group geometry, activity, and profiles. DRAM snapshot restore rejects profile target, line-layout, geometry, timing, parallel-port, or NVM media-timing drift before rebuilt controller state can expose stale profile evidence. External DRAM simulators should be optional adapters. |
+| `configs/nvm`, `src/mem/NVMInterface.py`, `src/mem/nvm_interface.*`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. DRAM activity profiles preserve typed read/write byte counts, and NVM target activity exposes persistent write access, byte counters, max pending NVM reads, max pending persistent writes, profile-level media timing, access-level persistent-ready cycles, checkpointed pending read/write completions, NVM read-buffer/write-queue wait-for diagnostics, manifest identity for NVM media timing, and restore-time rejection of profile media-timing drift without string stats. Richer NVM-specific bandwidth behavior remains open. |
+| HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists for DDR, HBM, LPDDR, and NVM, and checkpoint restore validates that profile metadata still matches the target, memory layout, controller geometry, timing, and parallel-port shape. A broader library of validated profiles is still needed. |
 
 ### Heterogeneous Devices
 
@@ -1162,10 +1162,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   command-window bandwidth limits across row and data commands. NVM profile tests
   cover typed read/write byte accounting, persistent write counters, NVM media
   timing, pending-read buffer limits, pending-write queue limits, checkpoint
-  round-trip of media/pending state, NVM queue wait-for diagnostics, and
-  manifest identity changes for media timing. Checkpoint and workload identity
-  tests cover command-window timing, bank-group timing, and per-port command
-  history state. Coherence, system, DMA, and
+  round-trip of media/pending state, NVM queue wait-for diagnostics, profile
+  snapshot drift rejection across target, layout, geometry, timing, parallel
+  ports, and NVM media timing, and manifest identity changes for media timing.
+  Checkpoint and workload identity tests cover command-window timing, bank-group
+  timing, and per-port command history state. Coherence, system, DMA, and
   workload-result summary tests cover direct DRAM QoS diagnostics over those
   typed activity profiles, plus workload-level CPU scheduler, data-cache
   scheduler, merged full-system remote-flow records, scheduler epoch,
