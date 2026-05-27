@@ -185,6 +185,41 @@ fn workload_replay_plan_validates_direct_dma_scheduler_remote_sends() {
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_remote_sends() {
+    let full_system_send =
+        expected_send(WorkloadParallelRemoteFlowScope::FullSystem, 6, 9, 3, 11, 0);
+    let plan = replay_plan()
+        .add_expected_parallel_remote_send(full_system_send)
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(6),
+            PartitionId::new(9),
+            3,
+            11,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(plan.expected_parallel_remote_sends(), &[full_system_send]);
+    assert_eq!(
+        result
+            .parallel_execution_summary()
+            .unwrap()
+            .full_system_parallel_scheduler_remote_sends(),
+        vec![ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(6),
+            PartitionId::new(9),
+            3,
+            11,
+            0,
+        )],
+    );
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_remote_send_expectations() {
     let base = rem6_workload::WorkloadManifest::builder(id("identity-remote-send"), boot_image())
         .add_resource(kernel_resource())

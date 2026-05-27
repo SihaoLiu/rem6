@@ -23,9 +23,11 @@ use crate::parallel_batch::{
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
-    collect_parallel_remote_flow_aggregates, collect_parallel_remote_sends,
-    is_parallel_remote_flow_evidence, is_parallel_remote_send_evidence,
-    parallel_remote_flow_evidence_count, parallel_remote_send_count,
+    collect_parallel_remote_flow_aggregates, collect_parallel_remote_flow_evidence,
+    collect_parallel_remote_flows, collect_parallel_remote_sends,
+    collect_strongest_parallel_remote_flow_aggregates, is_parallel_remote_flow_evidence,
+    is_parallel_remote_send_evidence, parallel_remote_flow_evidence_count,
+    parallel_remote_send_count,
 };
 use crate::result_partition_activity::{
     combined_parallel_active_partition_count, merge_parallel_partition_activity_evidence_options,
@@ -35,6 +37,22 @@ use crate::result_partition_activity::{
 use super::WorkloadParallelExecutionSummary;
 
 impl WorkloadParallelExecutionSummary {
+    pub fn with_full_system_parallel_scheduler_remote_flows(
+        mut self,
+        flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self
+    }
+
+    pub fn with_full_system_parallel_scheduler_remote_sends(
+        mut self,
+        sends: impl IntoIterator<Item = ParallelRemoteSendRecord>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_remote_sends = collect_parallel_remote_sends(sends);
+        self
+    }
+
     pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
         self.scheduler_epoch_count
             + self.data_cache_parallel_scheduler_epoch_count
@@ -284,12 +302,21 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
-        collect_parallel_remote_flow_aggregates(
+        let scoped_flows = collect_parallel_remote_flow_aggregates(
             self.parallel_scheduler_remote_flow_evidence()
                 .into_iter()
                 .chain(self.data_cache_parallel_scheduler_remote_flow_evidence())
                 .chain(self.dma_scheduler_remote_flows()),
-        )
+        );
+        let explicit_flows = collect_parallel_remote_flow_evidence(
+            self.full_system_parallel_scheduler_remote_flows
+                .iter()
+                .copied(),
+            self.full_system_parallel_scheduler_remote_sends
+                .iter()
+                .copied(),
+        );
+        collect_strongest_parallel_remote_flow_aggregates(scoped_flows, explicit_flows)
     }
 
     pub fn full_system_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {
@@ -302,7 +329,12 @@ impl WorkloadParallelExecutionSummary {
                         .iter()
                         .copied(),
                 )
-                .chain(self.dma_scheduler_remote_sends()),
+                .chain(self.dma_scheduler_remote_sends())
+                .chain(
+                    self.full_system_parallel_scheduler_remote_sends
+                        .iter()
+                        .copied(),
+                ),
         )
     }
 
@@ -478,12 +510,26 @@ impl WorkloadParallelExecutionSummary {
         self.has_parallel_scheduler_remote_flows()
             || self.has_data_cache_parallel_scheduler_remote_flows()
             || self.has_dma_scheduler_remote_flows()
+            || !collect_parallel_remote_flow_evidence(
+                self.full_system_parallel_scheduler_remote_flows
+                    .iter()
+                    .copied(),
+                self.full_system_parallel_scheduler_remote_sends
+                    .iter()
+                    .copied(),
+            )
+            .is_empty()
     }
 
     pub fn has_full_system_parallel_scheduler_remote_sends(&self) -> bool {
         self.has_parallel_scheduler_remote_sends()
             || self.has_data_cache_parallel_scheduler_remote_sends()
             || self.has_dma_scheduler_remote_sends()
+            || self
+                .full_system_parallel_scheduler_remote_sends
+                .iter()
+                .copied()
+                .any(is_parallel_remote_send_evidence)
     }
 
     fn explicit_full_system_parallel_scheduler_batch_worker_counts(
@@ -548,6 +594,8 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .full_system_parallel_scheduler_partition_activities
                 .is_empty()
+            || self.has_full_system_parallel_scheduler_remote_flows()
+            || self.has_full_system_parallel_scheduler_remote_sends()
             || self.has_full_system_parallel_scheduler_frontiers()
             || self.has_parallel_scheduler_work()
             || self.has_data_cache_parallel_work()

@@ -474,6 +474,10 @@ Implementation evidence on 2026-05-26:
   explicit merged full-system partition activity records. A global scheduler
   can report partition-owned worker, dispatch, and remote activity directly
   while scoped and batch-derived evidence remain lower bounds.
+- Workload full-system remote-traffic reporting now accepts explicit merged
+  full-system remote flow and send records. A global scheduler can report
+  cross-partition communication directly while same-route scoped flow evidence
+  stays a lower bound instead of being added to the merged total again.
 - Workload full-system frontier reporting now accepts explicit merged
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and

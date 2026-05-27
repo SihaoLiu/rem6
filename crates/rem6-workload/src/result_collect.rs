@@ -55,6 +55,26 @@ pub(crate) fn collect_parallel_remote_flow_aggregates(
     by_route.into_values().collect()
 }
 
+pub(crate) fn collect_strongest_parallel_remote_flow_aggregates(
+    lower_bound_flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+    full_system_flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
+) -> Vec<ParallelRemoteFlowRecord> {
+    let lower_bound_flows = collect_parallel_remote_flow_aggregates(lower_bound_flows);
+    let full_system_flows = collect_parallel_remote_flow_aggregates(full_system_flows);
+    let mut by_route = BTreeMap::<(PartitionId, PartitionId), ParallelRemoteFlowRecord>::new();
+    for flow in lower_bound_flows.into_iter().chain(full_system_flows) {
+        if !is_parallel_remote_flow_evidence(flow) {
+            continue;
+        }
+        let route = (flow.source(), flow.target());
+        by_route
+            .entry(route)
+            .and_modify(|stored| *stored = stronger_parallel_remote_flow_evidence(*stored, flow))
+            .or_insert(flow);
+    }
+    by_route.into_values().collect()
+}
+
 fn parallel_remote_flow_sort_key(
     flow: &ParallelRemoteFlowRecord,
 ) -> (

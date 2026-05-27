@@ -231,6 +231,56 @@ fn workload_replay_plan_derives_full_system_remote_flows_from_dma_scheduler_send
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_remote_flows() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            5,
+        ))
+        .unwrap()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            4,
+            5,
+            3,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            2,
+            7,
+            13,
+        )])
+        .with_full_system_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 5, 3, 19),
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 3, 11, 17),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_flow_count(
+            PartitionId::new(0),
+            PartitionId::new(1),
+        ),
+        5,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_remote_flows(),
+        vec![
+            ParallelRemoteFlowRecord::new(PartitionId::new(0), PartitionId::new(1), 5, 3, 19),
+            ParallelRemoteFlowRecord::new(PartitionId::new(4), PartitionId::new(5), 3, 11, 17),
+        ],
+    );
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_prefers_remote_send_flow_evidence_over_weaker_aggregates() {
     let plan = replay_plan()
         .add_expected_parallel_remote_flow(expected(
