@@ -7,6 +7,7 @@ use crate::{
 };
 
 mod batch_evidence;
+mod planned_batch;
 
 use self::batch_evidence::{
     batch_count_at_or_above, batch_count_for_partition_set, batch_count_for_worker_count,
@@ -16,6 +17,9 @@ use self::batch_evidence::{
     collect_batch_worker_count_tick_summaries, max_consecutive_batch_count_for_partition_set,
     normalize_partition_set,
 };
+use self::planned_batch::collect_parallel_epoch_planned_batches;
+
+pub use self::planned_batch::ParallelEpochPlannedBatch;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EpochPlan {
@@ -79,74 +83,6 @@ impl ParallelEpochPlan {
         self.ready_partitions.len()
     }
 
-    pub fn parallel_worker_limit(&self) -> usize {
-        self.parallel_worker_limit
-    }
-
-    pub fn parallel_batches(&self) -> &[ParallelEpochPlannedBatch] {
-        &self.parallel_batches
-    }
-
-    pub fn parallel_batch_count(&self) -> usize {
-        self.parallel_batches.len()
-    }
-
-    pub fn parallel_batch_worker_count_summaries(&self) -> Vec<(usize, usize)> {
-        let mut summaries = BTreeMap::<usize, usize>::new();
-        for batch in &self.parallel_batches {
-            *summaries.entry(batch.worker_count()).or_default() += 1;
-        }
-        summaries.into_iter().collect()
-    }
-
-    pub fn parallel_batch_count_for_worker_count(&self, worker_count: usize) -> usize {
-        self.parallel_batches
-            .iter()
-            .filter(|batch| batch.worker_count() == worker_count)
-            .count()
-    }
-
-    pub fn parallel_batch_count_at_or_above(&self, minimum_worker_count: usize) -> usize {
-        self.parallel_batches
-            .iter()
-            .filter(|batch| batch.worker_count() >= minimum_worker_count)
-            .count()
-    }
-
-    pub fn parallel_batch_worker_count_total(&self) -> usize {
-        self.parallel_batches
-            .iter()
-            .map(ParallelEpochPlannedBatch::worker_count)
-            .sum()
-    }
-
-    pub fn parallel_batch_max_workers(&self) -> usize {
-        self.parallel_batches
-            .iter()
-            .map(ParallelEpochPlannedBatch::worker_count)
-            .max()
-            .unwrap_or(0)
-    }
-
-    pub fn parallel_batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
-        let mut summaries = BTreeMap::<Vec<PartitionId>, usize>::new();
-        for batch in &self.parallel_batches {
-            *summaries.entry(batch.partition_set()).or_default() += 1;
-        }
-        summaries.into_iter().collect()
-    }
-
-    pub fn parallel_batch_count_for_partition_set(
-        &self,
-        partitions: impl IntoIterator<Item = PartitionId>,
-    ) -> usize {
-        let partitions = normalize_partition_set(partitions);
-        self.parallel_batches
-            .iter()
-            .filter(|batch| batch.partition_set() == partitions)
-            .count()
-    }
-
     pub fn frontiers(&self) -> &[PartitionFrontier] {
         &self.frontiers
     }
@@ -177,61 +113,6 @@ impl ParallelEpochPlan {
     pub fn is_parallel_safe(&self) -> bool {
         self.serial_blockers.is_empty()
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParallelEpochPlannedBatch {
-    horizon: Tick,
-    ready_partitions: Vec<ReadyPartition>,
-}
-
-impl ParallelEpochPlannedBatch {
-    pub fn new(horizon: Tick, ready_partitions: Vec<ReadyPartition>) -> Self {
-        Self {
-            horizon,
-            ready_partitions,
-        }
-    }
-
-    pub fn horizon(&self) -> Tick {
-        self.horizon
-    }
-
-    pub fn ready_partitions(&self) -> &[ReadyPartition] {
-        &self.ready_partitions
-    }
-
-    pub fn worker_count(&self) -> usize {
-        self.ready_partitions.len()
-    }
-
-    pub fn worker_partitions(&self) -> Vec<PartitionId> {
-        self.ready_partitions
-            .iter()
-            .map(|ready| ready.partition)
-            .collect()
-    }
-
-    pub fn partition_set(&self) -> Vec<PartitionId> {
-        normalize_partition_set(self.worker_partitions())
-    }
-
-    pub fn contains_worker(&self, partition: PartitionId) -> bool {
-        self.ready_partitions
-            .iter()
-            .any(|ready| ready.partition == partition)
-    }
-}
-
-fn collect_parallel_epoch_planned_batches(
-    horizon: Tick,
-    ready_partitions: &[ReadyPartition],
-    parallel_worker_limit: usize,
-) -> Vec<ParallelEpochPlannedBatch> {
-    ready_partitions
-        .chunks(parallel_worker_limit.max(1))
-        .map(|ready| ParallelEpochPlannedBatch::new(horizon, ready.to_vec()))
-        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1052,6 +933,8 @@ pub struct RecordedRunSummary {
     pub(super) initial_frontiers: Vec<PartitionFrontier>,
     pub(super) final_frontiers: Vec<PartitionFrontier>,
     pub(super) dispatches: Vec<SchedulerDispatchRecord>,
+    pub(super) planned_parallel_worker_limit: usize,
+    pub(super) planned_batches: Vec<ParallelEpochPlannedBatch>,
     pub(super) batches: Vec<ParallelEpochBatchRecord>,
     pub(super) profile: ParallelRunProfile,
 }

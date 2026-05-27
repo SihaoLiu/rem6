@@ -533,12 +533,16 @@ impl PartitionedScheduler {
                 initial_frontiers: Vec::new(),
                 final_frontiers: Vec::new(),
                 dispatches: Vec::new(),
+                planned_parallel_worker_limit: self.max_parallel_workers,
+                planned_batches: Vec::new(),
                 batches: Vec::new(),
                 profile: ParallelRunProfile::default(),
             });
         };
         let horizon = plan.horizon();
         let initial_frontiers = plan.frontiers().to_vec();
+        let planned_parallel_worker_limit = plan.parallel_worker_limit();
+        let planned_batches = plan.parallel_batches().to_vec();
 
         if let Some(blocker) = plan.serial_blockers().first() {
             return Err(SchedulerError::SerialEventInParallelEpoch {
@@ -590,6 +594,8 @@ impl PartitionedScheduler {
             initial_frontiers,
             final_frontiers,
             dispatches,
+            planned_parallel_worker_limit,
+            planned_batches,
             batches,
             profile,
         })

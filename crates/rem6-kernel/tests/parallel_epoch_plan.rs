@@ -65,3 +65,89 @@ fn scheduler_parallel_plan_exposes_worker_limited_batch_shape_without_dispatchin
         );
     }
 }
+
+#[test]
+fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(5, 5, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 0, |context| {
+            context
+                .schedule_remote_after(PartitionId::new(4), 5, |_| {})
+                .unwrap();
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(1), 1, |_| {})
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(2), 3, |_| {})
+        .unwrap();
+
+    let recorded = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let epoch = &recorded.epochs()[0];
+
+    assert_eq!(recorded.epoch_count(), 1);
+    assert_eq!(epoch.planned_parallel_worker_limit(), 2);
+    assert_eq!(epoch.planned_batch_count(), 2);
+    assert_eq!(
+        epoch.planned_batch_worker_count_summaries(),
+        vec![(1, 1), (2, 1)]
+    );
+    assert_eq!(epoch.planned_batch_count_for_worker_count(2), 1);
+    assert_eq!(epoch.planned_batch_count_at_or_above(2), 1);
+    assert_eq!(epoch.planned_batch_worker_count_total(), 3);
+    assert_eq!(epoch.planned_batch_max_workers(), 2);
+    assert_eq!(
+        epoch.planned_batch_partition_set_summaries(),
+        vec![
+            (vec![PartitionId::new(0), PartitionId::new(1)], 1),
+            (vec![PartitionId::new(2)], 1),
+        ],
+    );
+    assert_eq!(
+        epoch.planned_batch_count_for_partition_set([PartitionId::new(2)]),
+        1,
+    );
+    assert_eq!(
+        epoch.planned_batches()[0].ready_partitions(),
+        &[
+            ReadyPartition {
+                partition: PartitionId::new(0),
+                next_tick: 0,
+            },
+            ReadyPartition {
+                partition: PartitionId::new(1),
+                next_tick: 1,
+            },
+        ],
+    );
+
+    assert_eq!(epoch.batch_worker_count_summaries(), vec![(2, 2)]);
+    assert_eq!(
+        epoch.batch_partition_set_summaries(),
+        vec![
+            (vec![PartitionId::new(0), PartitionId::new(1)], 1),
+            (vec![PartitionId::new(2), PartitionId::new(4)], 1),
+        ],
+    );
+
+    assert_eq!(recorded.planned_batch_count(), 2);
+    assert_eq!(
+        recorded.planned_batch_partition_set_summaries(),
+        epoch.planned_batch_partition_set_summaries(),
+    );
+    assert_eq!(
+        recorded.planned_batch_worker_count_summaries(),
+        vec![(1, 1), (2, 1)]
+    );
+    assert_eq!(recorded.planned_batch_count_for_worker_count(2), 1);
+    assert_eq!(recorded.planned_batch_count_at_or_above(2), 1);
+    assert_eq!(recorded.planned_batch_worker_count_total(), 3);
+    assert_eq!(recorded.planned_batch_max_workers(), 2);
+    assert_eq!(
+        recorded.planned_batch_count_for_partition_set([PartitionId::new(2)]),
+        1,
+    );
+    assert_eq!(recorded.batch_worker_count_summaries(), vec![(2, 2)]);
+}

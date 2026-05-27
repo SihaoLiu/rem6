@@ -498,6 +498,11 @@ Implementation evidence on 2026-05-26:
   scheduler can therefore prove planned multicore occupancy before spawning
   worker threads, avoiding gem5-style reliance on post-hoc global event-queue
   traces to infer parallelism.
+- Recorded parallel runs now preserve that planned batch shape alongside the
+  actual executed batches. Epoch and run summaries expose planned worker-count
+  histograms, partition-set histograms, total planned workers, maximum planned
+  workers, and the configured worker limit, so remote wakeups introduced during
+  execution cannot overwrite the pre-dispatch multicore occupancy contract.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
