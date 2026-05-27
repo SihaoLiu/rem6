@@ -39,7 +39,7 @@ const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 6] = [
     WorkloadParallelRemoteFlowScope::FullSystem,
 ];
 
-const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 9] = [
+const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 12] = [
     WorkloadParallelBatchTimelineScope::Scheduler,
     WorkloadParallelBatchTimelineScope::DataCacheScheduler,
     WorkloadParallelBatchTimelineScope::GpuDmaScheduler,
@@ -48,6 +48,9 @@ const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 9] = 
     WorkloadParallelBatchTimelineScope::FullSystem,
     WorkloadParallelBatchTimelineScope::PlannedScheduler,
     WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedGpuDmaScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedAcceleratorDmaScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedDmaScheduler,
     WorkloadParallelBatchTimelineScope::PlannedFullSystem,
 ];
 

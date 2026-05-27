@@ -95,6 +95,17 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_planned_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        self.gpu_dma_scheduler_planned_batch_timeline = collect_scoped_parallel_batch_timeline(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            records,
+        );
+        self
+    }
+
     pub fn with_accelerator_dma_scheduler_batch_timeline(
         mut self,
         records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
@@ -109,6 +120,18 @@ impl WorkloadParallelExecutionSummary {
         self.accelerator_dma_scheduler_batch_worker_count_ticks =
             collect_parallel_batch_worker_count_tick_summaries(&timeline);
         self.accelerator_dma_scheduler_batch_timeline = timeline;
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_planned_batch_timeline(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
+    ) -> Self {
+        self.accelerator_dma_scheduler_planned_batch_timeline =
+            collect_scoped_parallel_batch_timeline(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                records,
+            );
         self
     }
 
@@ -174,10 +197,22 @@ impl WorkloadParallelExecutionSummary {
         &self.gpu_dma_scheduler_batch_timeline
     }
 
+    pub fn gpu_dma_scheduler_planned_batch_timeline(
+        &self,
+    ) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.gpu_dma_scheduler_planned_batch_timeline
+    }
+
     pub fn accelerator_dma_scheduler_batch_timeline(
         &self,
     ) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.accelerator_dma_scheduler_batch_timeline
+    }
+
+    pub fn accelerator_dma_scheduler_planned_batch_timeline(
+        &self,
+    ) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.accelerator_dma_scheduler_planned_batch_timeline
     }
 
     pub fn dma_scheduler_batch_timeline(&self) -> Vec<WorkloadParallelBatchTimelineRecord> {
@@ -187,6 +222,19 @@ impl WorkloadParallelExecutionSummary {
                     .iter()
                     .cloned(),
             ),
+        )
+    }
+
+    pub fn dma_scheduler_planned_batch_timeline(&self) -> Vec<WorkloadParallelBatchTimelineRecord> {
+        collect_parallel_batch_timeline(
+            self.gpu_dma_scheduler_planned_batch_timeline
+                .iter()
+                .cloned()
+                .chain(
+                    self.accelerator_dma_scheduler_planned_batch_timeline
+                        .iter()
+                        .cloned(),
+                ),
         )
     }
 
@@ -322,7 +370,8 @@ impl WorkloadParallelExecutionSummary {
                     self.data_cache_parallel_scheduler_planned_batch_timeline
                         .iter()
                         .cloned(),
-                ),
+                )
+                .chain(self.dma_scheduler_planned_batch_timeline()),
         )
     }
 

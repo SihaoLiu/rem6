@@ -425,6 +425,9 @@ fn remote_scope_for_partition_scope(
         }
         WorkloadParallelBatchPartitionScope::PlannedScheduler
         | WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler
+        | WorkloadParallelBatchPartitionScope::PlannedGpuDmaScheduler
+        | WorkloadParallelBatchPartitionScope::PlannedAcceleratorDmaScheduler
+        | WorkloadParallelBatchPartitionScope::PlannedDmaScheduler
         | WorkloadParallelBatchPartitionScope::PlannedFullSystem => None,
     }
 }

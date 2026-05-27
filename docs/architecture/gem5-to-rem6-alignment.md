@@ -527,6 +527,10 @@ Implementation evidence on 2026-05-26:
   partition-streak, active-partition, and per-partition activity contracts.
   Manifest checks can therefore require which partitions were naturally planned
   to run together, not just how many workers the post-dispatch run used.
+- Planned GPU DMA and accelerator DMA batch timelines are first-class workload
+  evidence, with direct, combined DMA, and merged full-system planned scopes.
+  Heterogeneous device schedulers can now prove pre-dispatch parallel DMA
+  occupancy through exact timeline, worker-bucket, and partition-set contracts.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

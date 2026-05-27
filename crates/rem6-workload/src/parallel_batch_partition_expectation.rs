@@ -20,6 +20,9 @@ pub enum WorkloadParallelBatchPartitionScope {
     FullSystem,
     PlannedScheduler,
     PlannedDataCacheScheduler,
+    PlannedGpuDmaScheduler,
+    PlannedAcceleratorDmaScheduler,
+    PlannedDmaScheduler,
     PlannedFullSystem,
 }
 
@@ -34,6 +37,9 @@ impl WorkloadParallelBatchPartitionScope {
             Self::FullSystem => "full-system",
             Self::PlannedScheduler => "planned-scheduler",
             Self::PlannedDataCacheScheduler => "planned-data-cache-scheduler",
+            Self::PlannedGpuDmaScheduler => "planned-gpu-dma-scheduler",
+            Self::PlannedAcceleratorDmaScheduler => "planned-accelerator-dma-scheduler",
+            Self::PlannedDmaScheduler => "planned-dma-scheduler",
             Self::PlannedFullSystem => "planned-full-system",
         }
     }
@@ -48,7 +54,10 @@ impl WorkloadParallelBatchPartitionScope {
             Self::FullSystem => 5,
             Self::PlannedScheduler => 6,
             Self::PlannedDataCacheScheduler => 7,
-            Self::PlannedFullSystem => 8,
+            Self::PlannedGpuDmaScheduler => 8,
+            Self::PlannedAcceleratorDmaScheduler => 9,
+            Self::PlannedDmaScheduler => 10,
+            Self::PlannedFullSystem => 11,
         }
     }
 }
@@ -145,6 +154,9 @@ impl WorkloadExpectedParallelBatchPartitionSet {
                 ),
             WorkloadParallelBatchPartitionScope::PlannedScheduler
             | WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedDmaScheduler
             | WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
                 planned_batch_count_for_partition_set(
                     self.scope,
@@ -243,6 +255,9 @@ impl WorkloadExpectedParallelBatchPartitionStreak {
                 ),
             WorkloadParallelBatchPartitionScope::PlannedScheduler
             | WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchPartitionScope::PlannedDmaScheduler
             | WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
                 planned_batch_streak_count_for_partition_set(
                     self.scope,
@@ -286,6 +301,15 @@ fn planned_batch_timeline(
         WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler => summary
             .data_cache_parallel_scheduler_planned_batch_timeline()
             .to_vec(),
+        WorkloadParallelBatchPartitionScope::PlannedGpuDmaScheduler => {
+            summary.gpu_dma_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchPartitionScope::PlannedAcceleratorDmaScheduler => summary
+            .accelerator_dma_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchPartitionScope::PlannedDmaScheduler => {
+            summary.dma_scheduler_planned_batch_timeline()
+        }
         WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
             summary.full_system_parallel_scheduler_planned_batch_timeline()
         }

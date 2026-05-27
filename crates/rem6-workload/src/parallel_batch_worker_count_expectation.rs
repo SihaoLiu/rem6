@@ -19,6 +19,9 @@ pub enum WorkloadParallelBatchWorkerScope {
     FullSystem,
     PlannedScheduler,
     PlannedDataCacheScheduler,
+    PlannedGpuDmaScheduler,
+    PlannedAcceleratorDmaScheduler,
+    PlannedDmaScheduler,
     PlannedFullSystem,
 }
 
@@ -33,6 +36,9 @@ impl WorkloadParallelBatchWorkerScope {
             Self::FullSystem => "full-system",
             Self::PlannedScheduler => "planned-scheduler",
             Self::PlannedDataCacheScheduler => "planned-data-cache-scheduler",
+            Self::PlannedGpuDmaScheduler => "planned-gpu-dma-scheduler",
+            Self::PlannedAcceleratorDmaScheduler => "planned-accelerator-dma-scheduler",
+            Self::PlannedDmaScheduler => "planned-dma-scheduler",
             Self::PlannedFullSystem => "planned-full-system",
         }
     }
@@ -47,7 +53,10 @@ impl WorkloadParallelBatchWorkerScope {
             Self::FullSystem => 5,
             Self::PlannedScheduler => 6,
             Self::PlannedDataCacheScheduler => 7,
-            Self::PlannedFullSystem => 8,
+            Self::PlannedGpuDmaScheduler => 8,
+            Self::PlannedAcceleratorDmaScheduler => 9,
+            Self::PlannedDmaScheduler => 10,
+            Self::PlannedFullSystem => 11,
         }
     }
 }
@@ -136,6 +145,9 @@ impl WorkloadExpectedParallelBatchWorkerBucket {
                 .full_system_parallel_scheduler_batch_count_for_worker_count(self.worker_count),
             WorkloadParallelBatchWorkerScope::PlannedScheduler
             | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
             | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
                 planned_batch_count_for_worker_count(self.scope, summary, self.worker_count)
             }
@@ -214,6 +226,9 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
                 .full_system_parallel_scheduler_batch_ticks_for_worker_count(self.worker_count),
             WorkloadParallelBatchWorkerScope::PlannedScheduler
             | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
             | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
                 let timeline = planned_batch_timeline(self.scope, summary);
                 parallel_batch_ticks_for_worker_count(&timeline, self.worker_count)
@@ -293,6 +308,9 @@ impl WorkloadExpectedParallelBatchWorkerTickActivity {
                 .full_system_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
             WorkloadParallelBatchWorkerScope::PlannedScheduler
             | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
             | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
                 let timeline = planned_batch_timeline(self.scope, summary);
                 parallel_batch_ticks_at_or_above(&timeline, self.minimum_worker_count)
@@ -379,6 +397,9 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
                 ),
             WorkloadParallelBatchWorkerScope::PlannedScheduler
             | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
             | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
                 let timeline = planned_batch_timeline(self.scope, summary);
                 parallel_batch_longest_tick_streak_at_or_above(&timeline, self.minimum_worker_count)
@@ -479,6 +500,9 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
                 ),
             WorkloadParallelBatchWorkerScope::PlannedScheduler
             | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
             | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
                 let timeline = planned_batch_timeline(self.scope, summary);
                 parallel_batch_worker_ticks_at_or_above(&timeline, self.minimum_worker_count)
@@ -510,6 +534,15 @@ fn planned_batch_timeline(
         WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => summary
             .data_cache_parallel_scheduler_planned_batch_timeline()
             .to_vec(),
+        WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler => {
+            summary.gpu_dma_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler => summary
+            .accelerator_dma_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchWorkerScope::PlannedDmaScheduler => {
+            summary.dma_scheduler_planned_batch_timeline()
+        }
         WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
             summary.full_system_parallel_scheduler_planned_batch_timeline()
         }

@@ -15,6 +15,9 @@ pub enum WorkloadParallelBatchTimelineScope {
     FullSystem,
     PlannedScheduler,
     PlannedDataCacheScheduler,
+    PlannedGpuDmaScheduler,
+    PlannedAcceleratorDmaScheduler,
+    PlannedDmaScheduler,
     PlannedFullSystem,
 }
 
@@ -29,6 +32,9 @@ impl WorkloadParallelBatchTimelineScope {
             Self::FullSystem => "full-system",
             Self::PlannedScheduler => "planned-scheduler",
             Self::PlannedDataCacheScheduler => "planned-data-cache-scheduler",
+            Self::PlannedGpuDmaScheduler => "planned-gpu-dma-scheduler",
+            Self::PlannedAcceleratorDmaScheduler => "planned-accelerator-dma-scheduler",
+            Self::PlannedDmaScheduler => "planned-dma-scheduler",
             Self::PlannedFullSystem => "planned-full-system",
         }
     }
@@ -43,7 +49,10 @@ impl WorkloadParallelBatchTimelineScope {
             Self::FullSystem => 5,
             Self::PlannedScheduler => 6,
             Self::PlannedDataCacheScheduler => 7,
-            Self::PlannedFullSystem => 8,
+            Self::PlannedGpuDmaScheduler => 8,
+            Self::PlannedAcceleratorDmaScheduler => 9,
+            Self::PlannedDmaScheduler => 10,
+            Self::PlannedFullSystem => 11,
         }
     }
 }
@@ -188,6 +197,15 @@ pub(crate) fn actual_parallel_batch_timeline_records(
         WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler => summary
             .data_cache_parallel_scheduler_planned_batch_timeline()
             .to_vec(),
+        WorkloadParallelBatchTimelineScope::PlannedGpuDmaScheduler => {
+            summary.gpu_dma_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchTimelineScope::PlannedAcceleratorDmaScheduler => summary
+            .accelerator_dma_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchTimelineScope::PlannedDmaScheduler => {
+            summary.dma_scheduler_planned_batch_timeline()
+        }
         WorkloadParallelBatchTimelineScope::PlannedFullSystem => {
             summary.full_system_parallel_scheduler_planned_batch_timeline()
         }

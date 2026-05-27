@@ -83,6 +83,15 @@ fn batch_timeline_scope_for_worker_scope(
         WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => {
             WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler
         }
+        WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedGpuDmaScheduler
+        }
+        WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedAcceleratorDmaScheduler
+        }
+        WorkloadParallelBatchWorkerScope::PlannedDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedDmaScheduler
+        }
         WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
             WorkloadParallelBatchTimelineScope::PlannedFullSystem
         }
@@ -116,6 +125,15 @@ fn batch_timeline_scope_for_partition_scope(
         }
         WorkloadParallelBatchPartitionScope::PlannedDataCacheScheduler => {
             WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler
+        }
+        WorkloadParallelBatchPartitionScope::PlannedGpuDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedGpuDmaScheduler
+        }
+        WorkloadParallelBatchPartitionScope::PlannedAcceleratorDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedAcceleratorDmaScheduler
+        }
+        WorkloadParallelBatchPartitionScope::PlannedDmaScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedDmaScheduler
         }
         WorkloadParallelBatchPartitionScope::PlannedFullSystem => {
             WorkloadParallelBatchTimelineScope::PlannedFullSystem
