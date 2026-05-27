@@ -37,7 +37,11 @@ isolated bugs:
   tick activity, sustained minimum-worker tick streak activity, sustained
   same-batch streak activity, and manifest-verifiable batch worker-ticks
   computed as `worker_count * duration_ticks` under a declared minimum
-  worker-count threshold as core kernel contracts.
+  worker-count threshold as core kernel contracts. When a full-system merged
+  worker-count summary is explicitly present, replay verification also rejects
+  thresholded batch-activity totals that are weaker than the same-scope CPU,
+  cache, GPU DMA, and accelerator DMA lower-bound evidence, so a hand-written
+  aggregate cannot hide available parallelism.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -1167,7 +1171,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   derived from the strongest available aggregate, worker-count, exact
   partition-set, streak, or multi-worker per-partition evidence, minimum multi-worker batch activity
   derived from the strongest available worker-count, exact partition-set, or streak
-  evidence, exact batch partition-set activity derived from exact histograms or streak counts,
+  evidence with explicit full-system threshold totals checked against scoped
+  lower bounds, exact batch partition-set activity derived from exact histograms or streak counts,
   sustained same-batch partition-set streak activity, minimum active partition
   counts derived from aggregate, exact partition-set, streak, activity,
   dedicated GPU or accelerator DMA timeline scopes, remote-send, or
