@@ -458,6 +458,10 @@ Implementation evidence on 2026-05-26:
   full-system duration-weighted worker histograms. A global scheduler can
   report occupancy time directly while same-bucket scoped timeline evidence
   remains a lower bound instead of being added again.
+- Workload full-system worker-count tick-streak summaries now accept explicit
+  merged full-system sustained-occupancy records. A global scheduler can
+  report longest continuous occupancy windows directly, while scoped exact
+  timelines remain lower-bound evidence for the same minimum-worker queries.
 - Workload full-system batch partition-set summaries now keep the strongest
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same

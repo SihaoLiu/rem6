@@ -109,6 +109,15 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_full_system_parallel_scheduler_batch_worker_tick_streak_summaries(
+        mut self,
+        summaries: impl IntoIterator<Item = (usize, Tick)>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_batch_worker_tick_streaks =
+            collect_batch_worker_tick_streak_summaries(summaries);
+        self
+    }
+
     pub fn parallel_scheduler_batch_timeline(&self) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.parallel_scheduler_batch_timeline
     }
@@ -283,6 +292,16 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn full_system_parallel_scheduler_batch_worker_tick_streak_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        collect_strongest_batch_worker_tick_streak_summaries(
+            &self.full_system_parallel_scheduler_batch_worker_tick_streaks,
+            &collect_parallel_batch_worker_tick_streak_summaries(&timeline),
+        )
+    }
+
     pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
         parallel_batch_ticks_for_worker_count(&self.parallel_scheduler_batch_timeline, worker_count)
     }
@@ -449,8 +468,8 @@ impl WorkloadParallelExecutionSummary {
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        parallel_batch_longest_tick_streak_at_or_above(&timeline, minimum_worker_count)
+        let summaries = self.full_system_parallel_scheduler_batch_worker_tick_streak_summaries();
+        batch_worker_tick_streak_at_or_above(&summaries, minimum_worker_count)
     }
 
     fn has_explicit_full_system_parallel_scheduler_batch_timeline(&self) -> bool {
@@ -489,7 +508,59 @@ fn collect_batch_worker_count_tick_summaries(
     by_worker_count.into_iter().collect()
 }
 
+fn collect_batch_worker_tick_streak_summaries(
+    summaries: impl IntoIterator<Item = (usize, Tick)>,
+) -> Vec<(usize, Tick)> {
+    let mut by_worker_count = BTreeMap::<usize, Tick>::new();
+    for (worker_count, ticks) in summaries {
+        if worker_count < 2 || ticks == 0 {
+            continue;
+        }
+        by_worker_count
+            .entry(worker_count)
+            .and_modify(|stored| *stored = (*stored).max(ticks))
+            .or_insert(ticks);
+    }
+    by_worker_count.into_iter().collect()
+}
+
 fn collect_strongest_batch_worker_count_tick_summaries(
+    left: &[(usize, Tick)],
+    right: &[(usize, Tick)],
+) -> Vec<(usize, Tick)> {
+    let mut by_worker_count = BTreeMap::<usize, Tick>::new();
+    for (worker_count, ticks) in left.iter().chain(right.iter()).copied() {
+        if worker_count < 2 || ticks == 0 {
+            continue;
+        }
+        by_worker_count
+            .entry(worker_count)
+            .and_modify(|stored| *stored = (*stored).max(ticks))
+            .or_insert(ticks);
+    }
+    by_worker_count.into_iter().collect()
+}
+
+fn collect_parallel_batch_worker_tick_streak_summaries(
+    timeline: &[WorkloadParallelBatchTimelineRecord],
+) -> Vec<(usize, Tick)> {
+    let mut by_worker_count = BTreeMap::<usize, Tick>::new();
+    for record in timeline {
+        if !record.is_parallel_evidence() {
+            continue;
+        }
+        by_worker_count.entry(record.worker_count()).or_default();
+    }
+    by_worker_count
+        .into_keys()
+        .filter_map(|worker_count| {
+            let ticks = parallel_batch_longest_tick_streak_at_or_above(timeline, worker_count);
+            (ticks != 0).then_some((worker_count, ticks))
+        })
+        .collect()
+}
+
+fn collect_strongest_batch_worker_tick_streak_summaries(
     left: &[(usize, Tick)],
     right: &[(usize, Tick)],
 ) -> Vec<(usize, Tick)> {
@@ -538,6 +609,18 @@ fn batch_worker_ticks_at_or_above(
         .filter(|(count, _)| *count >= minimum_worker_count)
         .map(|(count, ticks)| ticks.saturating_mul(*count as Tick))
         .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_tick_streak_at_or_above(
+    summaries: &[(usize, Tick)],
+    minimum_worker_count: usize,
+) -> Tick {
+    summaries
+        .iter()
+        .filter(|(worker_count, _)| *worker_count >= minimum_worker_count)
+        .map(|(_, ticks)| *ticks)
+        .max()
+        .unwrap_or(0)
 }
 
 fn valid_batch_timeline_record_count(timeline: &[WorkloadParallelBatchTimelineRecord]) -> usize {

@@ -1221,6 +1221,47 @@ fn workload_result_uses_explicit_full_system_batch_worker_tick_summaries() {
 }
 
 #[test]
+fn workload_result_uses_explicit_full_system_batch_worker_tick_streak_summaries() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let scoped_scheduler = WorkloadParallelBatchTimelineRecord::new(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [cpu, cache],
+        2,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([scoped_scheduler])
+        .with_full_system_parallel_scheduler_batch_worker_tick_streak_summaries([
+            (1, 100),
+            (2, 7),
+            (3, 9),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_tick_streak_summaries(),
+        vec![(2, 7), (3, 9)],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(1),
+        9,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(2),
+        9,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(3),
+        9,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(4),
+        0,
+    );
+}
+
+#[test]
 fn workload_result_preserves_wait_for_edge_kind_counts() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_data_cache_wait_for_edge_kind_counts([

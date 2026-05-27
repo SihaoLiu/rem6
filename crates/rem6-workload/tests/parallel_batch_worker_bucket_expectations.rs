@@ -1284,6 +1284,44 @@ fn workload_replay_plan_rejects_missing_or_underfilled_parallel_batch_worker_tic
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_batch_worker_tick_streak_summaries() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            3,
+            9,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_worker_tick_streak(expected_tick_streak(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            9,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_full_system_parallel_scheduler_batch_worker_tick_streak_summaries([
+            (1, 100),
+            (2, 7),
+            (3, 9),
+        ]);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_tick_streak_summaries(),
+        vec![(2, 7), (3, 9)],
+    );
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_batch_worker_tick_streaks() {
     assert_eq!(
         WorkloadExpectedParallelBatchWorkerTickStreak::new(
