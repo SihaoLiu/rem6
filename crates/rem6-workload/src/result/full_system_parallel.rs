@@ -86,7 +86,7 @@ impl WorkloadParallelExecutionSummary {
             .max(self.dma_scheduler_max_workers())
             .max(max_parallel_batch_activity_worker_count(
                 &[],
-                &[],
+                &self.full_system_parallel_scheduler_batch_partition_sets,
                 &self.full_system_parallel_scheduler_batch_partition_streaks,
             ))
     }
@@ -118,8 +118,13 @@ impl WorkloadParallelExecutionSummary {
                 .chain(data_cache_counts)
                 .chain(self.dma_scheduler_batch_worker_counts()),
         );
-        let full_system_counts = collect_parallel_batch_worker_counts_from_streaks(
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        let full_system_counts = collect_strongest_parallel_batch_worker_counts(
+            collect_parallel_batch_worker_counts_from_partition_sets(
+                &self.full_system_parallel_scheduler_batch_partition_sets,
+            ),
+            collect_parallel_batch_worker_counts_from_streaks(
+                &self.full_system_parallel_scheduler_batch_partition_streaks,
+            ),
         );
         collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
     }
@@ -166,8 +171,13 @@ impl WorkloadParallelExecutionSummary {
                 .chain(data_cache_counts)
                 .chain(dma_counts),
         );
-        let full_system_counts = collect_parallel_batch_worker_counts_from_streaks(
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
+        let full_system_counts = collect_strongest_parallel_batch_worker_counts(
+            collect_parallel_batch_worker_counts_from_partition_sets(
+                &self.full_system_parallel_scheduler_batch_partition_sets,
+            ),
+            collect_parallel_batch_worker_counts_from_streaks(
+                &self.full_system_parallel_scheduler_batch_partition_streaks,
+            ),
         );
         collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
     }
@@ -194,15 +204,31 @@ impl WorkloadParallelExecutionSummary {
                 )
                 .chain(self.dma_scheduler_batch_partition_sets()),
         );
-        let scoped_streak_sets = collect_parallel_batch_partition_sets_from_streaks(
-            &self.full_system_parallel_scheduler_batch_partition_streaks(),
+        let scoped_streaks = collect_parallel_batch_partition_streaks(
+            self.parallel_scheduler_batch_partition_streaks
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_batch_partition_streaks
+                        .iter()
+                        .cloned(),
+                )
+                .chain(self.dma_scheduler_batch_partition_streaks()),
         );
+        let scoped_streak_sets =
+            collect_parallel_batch_partition_sets_from_streaks(&scoped_streaks);
         let scoped_sets = collect_strongest_parallel_batch_partition_sets(
             explicit_scoped_sets,
             scoped_streak_sets,
         );
-        let full_system_sets = collect_parallel_batch_partition_sets_from_streaks(
+        let full_system_streak_sets = collect_parallel_batch_partition_sets_from_streaks(
             &self.full_system_parallel_scheduler_batch_partition_streaks,
+        );
+        let full_system_sets = collect_strongest_parallel_batch_partition_sets(
+            self.full_system_parallel_scheduler_batch_partition_sets
+                .iter()
+                .cloned(),
+            full_system_streak_sets,
         );
         collect_strongest_parallel_batch_partition_sets(scoped_sets, full_system_sets)
     }
@@ -246,7 +272,7 @@ impl WorkloadParallelExecutionSummary {
             ),
         )
         .max(parallel_batch_count_for_partition_set(
-            &[],
+            &self.full_system_parallel_scheduler_batch_partition_sets,
             &self.full_system_parallel_scheduler_batch_partition_streaks,
             partitions.iter().copied(),
         ))

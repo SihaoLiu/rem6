@@ -463,6 +463,11 @@ Implementation evidence on 2026-05-26:
 - Workload full-system partition-set reporting now derives partition-set
   buckets from scoped partition streaks before merging explicit full-system
   streaks, so per-set queries and summary lists expose the same evidence.
+- Workload full-system partition-set reporting now also accepts explicit
+  merged full-system partition-set histograms. A run that already records
+  global non-consecutive batch sets can feed result summaries and replay
+  partition-set contracts without pretending that exact set counts are
+  consecutive streaks.
 - Workload full-system minimum-worker batch reporting now sums the already
   merged worker buckets, so scoped evidence in one bucket and explicit
   full-system evidence in another bucket are both visible to threshold checks.

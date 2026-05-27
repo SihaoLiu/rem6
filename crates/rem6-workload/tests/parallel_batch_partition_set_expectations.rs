@@ -234,6 +234,57 @@ fn workload_manifest_records_parallel_batch_partition_set_expectations() {
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_partition_set_evidence() {
+    let cpu = partition(0);
+    let cache = partition(2);
+    let dma = partition(3);
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-batch-partitions-full-system-sets"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            [cpu, cache],
+            4,
+        ))
+        .unwrap()
+        .add_expected_parallel_batch_partition_set(expected_set(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            [cpu, cache, dma],
+            2,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [cpu, cache],
+            1,
+        )])
+        .with_full_system_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 4),
+            WorkloadParallelBatchPartitionSet::new([cpu, cache, dma], 2),
+        ]);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 4),
+            WorkloadParallelBatchPartitionSet::new([cpu, cache, dma], 2),
+        ],
+    );
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_batch_partition_sets() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-batch-partitions"), boot_image())

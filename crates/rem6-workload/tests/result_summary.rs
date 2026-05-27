@@ -1920,6 +1920,55 @@ fn workload_result_partition_sets_use_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_partition_sets_use_explicit_full_system_set_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_partition_sets([WorkloadParallelBatchPartitionSet::new(
+            [cpu, cache],
+            3,
+        )])
+        .with_full_system_parallel_scheduler_batch_partition_sets([
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 4),
+            WorkloadParallelBatchPartitionSet::new([cpu, cache, dma], 2),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache]),
+        4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_partition_set([cpu, cache, dma]),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(2, 4),
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+        ],
+    );
+    assert_eq!(summary.full_system_parallel_scheduler_batch_count(), 6);
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 14);
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 4),
+            WorkloadParallelBatchPartitionSet::new([cpu, cache, dma], 2),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cpu),
+        Some(ParallelPartitionActivity::with_remote_counts(6, 6, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(dma),
+        Some(ParallelPartitionActivity::with_remote_counts(2, 2, 0, 0, 0)),
+    );
+}
+
+#[test]
 fn workload_result_partition_sets_use_scoped_streak_evidence() {
     let cpu = PartitionId::new(1);
     let cache = PartitionId::new(2);

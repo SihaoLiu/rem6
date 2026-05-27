@@ -34,7 +34,7 @@ impl WorkloadParallelExecutionSummary {
             + self.dma_scheduler_batch_count_for_worker_count(worker_count))
         .max(parallel_batch_activity_count_for_worker_count(
             &[],
-            &[],
+            &self.full_system_parallel_scheduler_batch_partition_sets,
             &self.full_system_parallel_scheduler_batch_partition_streaks,
             worker_count,
         ))
