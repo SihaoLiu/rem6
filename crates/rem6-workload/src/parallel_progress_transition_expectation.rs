@@ -177,8 +177,22 @@ impl WorkloadExpectedParallelProgressTransition {
                     self,
                 )
             }
-            WorkloadParallelRemoteFlowScope::GpuDmaScheduler
-            | WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => None,
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler => find_parallel_progress_transition(
+                summary
+                    .gpu_dma_scheduler_progress_transitions()
+                    .iter()
+                    .cloned(),
+                self,
+            ),
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
+                find_parallel_progress_transition(
+                    summary
+                        .accelerator_dma_scheduler_progress_transitions()
+                        .iter()
+                        .cloned(),
+                    self,
+                )
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 find_parallel_progress_transition(summary.full_system_progress_transitions(), self)
             }

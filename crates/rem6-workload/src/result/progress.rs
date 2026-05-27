@@ -37,6 +37,24 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_progress_transitions(
+        mut self,
+        transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
+    ) -> Self {
+        self.gpu_dma_scheduler_progress_transitions =
+            collect_parallel_progress_transitions(transitions);
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_progress_transitions(
+        mut self,
+        transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
+    ) -> Self {
+        self.accelerator_dma_scheduler_progress_transitions =
+            collect_parallel_progress_transitions(transitions);
+        self
+    }
+
     pub fn with_full_system_progress_transitions(
         mut self,
         transitions: impl IntoIterator<Item = ParallelProgressTransitionRecord>,
@@ -476,6 +494,16 @@ impl WorkloadParallelExecutionSummary {
         &self.data_cache_parallel_scheduler_progress_transitions
     }
 
+    pub fn gpu_dma_scheduler_progress_transitions(&self) -> &[ParallelProgressTransitionRecord] {
+        &self.gpu_dma_scheduler_progress_transitions
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transitions(
+        &self,
+    ) -> &[ParallelProgressTransitionRecord] {
+        &self.accelerator_dma_scheduler_progress_transitions
+    }
+
     pub fn data_cache_parallel_scheduler_progress_transition_count_by_kind(
         &self,
         kind: LivelockTransitionKind,
@@ -621,6 +649,8 @@ impl WorkloadParallelExecutionSummary {
         } else {
             self.scheduler_progress_transition_count
                 + self.data_cache_parallel_scheduler_progress_transition_count
+                + self.gpu_dma_scheduler_progress_transitions.len()
+                + self.accelerator_dma_scheduler_progress_transitions.len()
         }
     }
 
@@ -755,6 +785,10 @@ impl WorkloadParallelExecutionSummary {
         !self.full_system_progress_transitions.is_empty()
             || self.has_parallel_scheduler_progress_transitions()
             || self.has_data_cache_parallel_scheduler_progress_transitions()
+            || !self.gpu_dma_scheduler_progress_transitions.is_empty()
+            || !self
+                .accelerator_dma_scheduler_progress_transitions
+                .is_empty()
     }
 
     pub(crate) fn validate_full_system_progress_transition_merge_summary(
@@ -766,7 +800,9 @@ impl WorkloadParallelExecutionSummary {
 
         let scoped_transition_count = self
             .scheduler_progress_transition_count
-            .saturating_add(self.data_cache_parallel_scheduler_progress_transition_count);
+            .saturating_add(self.data_cache_parallel_scheduler_progress_transition_count)
+            .saturating_add(self.gpu_dma_scheduler_progress_transitions.len())
+            .saturating_add(self.accelerator_dma_scheduler_progress_transitions.len());
         let merged_transition_count = self.full_system_progress_transitions.len();
         if merged_transition_count < scoped_transition_count {
             return Err(
@@ -778,44 +814,50 @@ impl WorkloadParallelExecutionSummary {
             );
         }
 
-        let scoped_transitions = self.parallel_scheduler_progress_transitions.iter().chain(
-            self.data_cache_parallel_scheduler_progress_transitions
-                .iter(),
-        );
         validate_progress_transition_subject_merge_summary(
             &collect_progress_transition_summaries(
                 self.full_system_progress_transitions.iter(),
                 |transition| transition.subject().clone(),
             ),
-            &collect_progress_transition_summaries(scoped_transitions, |transition| {
-                transition.subject().clone()
-            }),
+            &collect_progress_transition_summaries(
+                self.scoped_progress_transition_iter(),
+                |transition| transition.subject().clone(),
+            ),
         )?;
-        let scoped_transitions = self.parallel_scheduler_progress_transitions.iter().chain(
-            self.data_cache_parallel_scheduler_progress_transitions
-                .iter(),
-        );
         validate_progress_transition_kind_merge_summary(
             &collect_progress_transition_summaries(
                 self.full_system_progress_transitions.iter(),
                 |transition| transition.kind(),
             ),
-            &collect_progress_transition_summaries(scoped_transitions, |transition| {
-                transition.kind()
-            }),
+            &collect_progress_transition_summaries(
+                self.scoped_progress_transition_iter(),
+                |transition| transition.kind(),
+            ),
         )?;
-        let scoped_transitions = self.parallel_scheduler_progress_transitions.iter().chain(
-            self.data_cache_parallel_scheduler_progress_transitions
-                .iter(),
-        );
         validate_progress_transition_partition_merge_summary(
             &collect_progress_transition_summaries(
                 self.full_system_progress_transitions.iter(),
                 |transition| transition.partition(),
             ),
-            &collect_progress_transition_summaries(scoped_transitions, |transition| {
-                transition.partition()
-            }),
+            &collect_progress_transition_summaries(
+                self.scoped_progress_transition_iter(),
+                |transition| transition.partition(),
+            ),
+        )
+    }
+
+    fn scoped_progress_transition_iter(
+        &self,
+    ) -> Box<dyn Iterator<Item = &ParallelProgressTransitionRecord> + '_> {
+        Box::new(
+            self.parallel_scheduler_progress_transitions
+                .iter()
+                .chain(
+                    self.data_cache_parallel_scheduler_progress_transitions
+                        .iter(),
+                )
+                .chain(self.gpu_dma_scheduler_progress_transitions.iter())
+                .chain(self.accelerator_dma_scheduler_progress_transitions.iter()),
         )
     }
 
@@ -825,12 +867,7 @@ impl WorkloadParallelExecutionSummary {
         if !self.full_system_progress_transitions.is_empty() {
             return Box::new(self.full_system_progress_transitions.iter());
         }
-        Box::new(
-            self.parallel_scheduler_progress_transitions.iter().chain(
-                self.data_cache_parallel_scheduler_progress_transitions
-                    .iter(),
-            ),
-        )
+        self.scoped_progress_transition_iter()
     }
 }
 

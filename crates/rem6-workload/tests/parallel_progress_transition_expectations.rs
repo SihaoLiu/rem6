@@ -297,6 +297,94 @@ fn workload_replay_plan_uses_explicit_full_system_progress_transitions() {
 }
 
 #[test]
+fn workload_replay_plan_checks_dma_scheduler_progress_transitions_directly() {
+    let gpu_subject = subject("gpu-dma-progress");
+    let accelerator_subject = subject("accelerator-dma-progress");
+    let plan = replay_plan()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::GpuDmaScheduler,
+            8,
+            gpu_subject.clone(),
+            LivelockTransitionKind::QueueRotation,
+            13,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler,
+            11,
+            accelerator_subject.clone(),
+            LivelockTransitionKind::ProtocolRetry,
+            17,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_progress_transitions([actual_transition(
+            8,
+            gpu_subject,
+            LivelockTransitionKind::QueueRotation,
+            13,
+            0,
+        )])
+        .with_accelerator_dma_scheduler_progress_transitions([actual_transition(
+            11,
+            accelerator_subject,
+            LivelockTransitionKind::ProtocolRetry,
+            17,
+            1,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_derives_full_system_progress_transitions_from_dma_schedulers() {
+    let gpu_subject = subject("gpu-dma-global-progress");
+    let accelerator_subject = subject("accelerator-dma-global-progress");
+    let plan = replay_plan()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            8,
+            gpu_subject.clone(),
+            LivelockTransitionKind::QueueRotation,
+            13,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            11,
+            accelerator_subject.clone(),
+            LivelockTransitionKind::ProtocolRetry,
+            17,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_progress_transitions([actual_transition(
+            8,
+            gpu_subject,
+            LivelockTransitionKind::QueueRotation,
+            13,
+            0,
+        )])
+        .with_accelerator_dma_scheduler_progress_transitions([actual_transition(
+            11,
+            accelerator_subject,
+            LivelockTransitionKind::ProtocolRetry,
+            17,
+            1,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_missing_parallel_progress_transition() {
     let expected = expected_transition(
         WorkloadParallelRemoteFlowScope::Scheduler,

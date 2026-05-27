@@ -22,6 +22,8 @@ fn workload_result_lists_parallel_progress_transition_dimensions() {
     let cpu_scheduler = subject("cpu-scheduler");
     let shared_retry = subject("shared-retry-loop");
     let data_cache_scheduler = subject("data-cache-scheduler");
+    let gpu_dma_scheduler = subject("gpu-dma-scheduler");
+    let accelerator_dma_scheduler = subject("accelerator-dma-scheduler");
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_progress_transitions([
             transition(
@@ -61,7 +63,21 @@ fn workload_result_lists_parallel_progress_transition_dimensions() {
                 14,
                 1,
             ),
-        ]);
+        ])
+        .with_gpu_dma_scheduler_progress_transitions([transition(
+            9,
+            gpu_dma_scheduler.clone(),
+            LivelockTransitionKind::MessageRetry,
+            19,
+            0,
+        )])
+        .with_accelerator_dma_scheduler_progress_transitions([transition(
+            11,
+            accelerator_dma_scheduler.clone(),
+            LivelockTransitionKind::QueueRotation,
+            23,
+            0,
+        )]);
 
     assert_eq!(
         summary.parallel_scheduler_progress_transition_kinds(),
@@ -83,6 +99,7 @@ fn workload_result_lists_parallel_progress_transition_dimensions() {
             LivelockTransitionKind::SchedulerEpoch,
             LivelockTransitionKind::ProtocolRetry,
             LivelockTransitionKind::QueueRotation,
+            LivelockTransitionKind::MessageRetry,
         ],
     );
 
@@ -99,7 +116,9 @@ fn workload_result_lists_parallel_progress_transition_dimensions() {
         vec![
             PartitionId::new(1),
             PartitionId::new(3),
-            PartitionId::new(7)
+            PartitionId::new(7),
+            PartitionId::new(9),
+            PartitionId::new(11)
         ],
     );
 
@@ -113,7 +132,13 @@ fn workload_result_lists_parallel_progress_transition_dimensions() {
     );
     assert_eq!(
         summary.full_system_progress_transition_subjects(),
-        vec![cpu_scheduler, data_cache_scheduler, shared_retry],
+        vec![
+            accelerator_dma_scheduler,
+            cpu_scheduler,
+            data_cache_scheduler,
+            gpu_dma_scheduler,
+            shared_retry
+        ],
     );
 }
 

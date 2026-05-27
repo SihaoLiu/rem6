@@ -469,6 +469,12 @@ Implementation evidence on 2026-05-26:
   kind, or partition tick window. Clean-diagnostic livelock thresholds therefore
   cannot be satisfied by a global transition stream that drops scoped retry-loop
   evidence.
+- Workload progress-transition replay now accepts GPU DMA and accelerator DMA
+  scheduler transition records directly, and full-system progress-transition
+  evidence derives from those DMA schedulers when no explicit merged record set
+  is provided. Explicit merged full-system transition streams must also cover
+  DMA scoped transition counts and windows, so heterogeneous device scheduler
+  livelock evidence cannot disappear behind a CPU/cache-only summary.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

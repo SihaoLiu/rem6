@@ -717,6 +717,10 @@ impl WorkloadParallelExecutionSummary {
             || self.has_dma_scheduler_frontiers()
             || self.has_dma_scheduler_remote_flows()
             || self.has_dma_scheduler_remote_sends()
+            || !self.gpu_dma_scheduler_progress_transitions.is_empty()
+            || !self
+                .accelerator_dma_scheduler_progress_transitions
+                .is_empty()
     }
 }
 

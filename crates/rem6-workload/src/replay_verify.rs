@@ -192,8 +192,12 @@ fn actual_parallel_progress_transitions_for_scope(
         WorkloadParallelRemoteFlowScope::DataCacheScheduler => summary
             .data_cache_parallel_scheduler_progress_transitions()
             .to_vec(),
-        WorkloadParallelRemoteFlowScope::GpuDmaScheduler
-        | WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => Vec::new(),
+        WorkloadParallelRemoteFlowScope::GpuDmaScheduler => {
+            summary.gpu_dma_scheduler_progress_transitions().to_vec()
+        }
+        WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => summary
+            .accelerator_dma_scheduler_progress_transitions()
+            .to_vec(),
         WorkloadParallelRemoteFlowScope::FullSystem => summary.full_system_progress_transitions(),
     }
 }

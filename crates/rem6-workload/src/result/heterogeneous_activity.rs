@@ -383,6 +383,7 @@ impl WorkloadParallelExecutionSummary {
             || self.has_gpu_dma_scheduler_frontiers()
             || self.has_gpu_dma_scheduler_remote_flows()
             || self.has_gpu_dma_scheduler_remote_sends()
+            || !self.gpu_dma_scheduler_progress_transitions.is_empty()
     }
 
     pub fn gpu_dma_wait_for_edge_count(&self) -> usize {
@@ -774,6 +775,9 @@ impl WorkloadParallelExecutionSummary {
             || self.has_accelerator_dma_scheduler_frontiers()
             || self.has_accelerator_dma_scheduler_remote_flows()
             || self.has_accelerator_dma_scheduler_remote_sends()
+            || !self
+                .accelerator_dma_scheduler_progress_transitions
+                .is_empty()
     }
 
     pub fn accelerator_dma_wait_for_edge_count(&self) -> usize {

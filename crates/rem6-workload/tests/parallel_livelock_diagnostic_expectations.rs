@@ -1031,6 +1031,51 @@ fn workload_replay_plan_rejects_full_system_progress_transition_merge_below_scop
 }
 
 #[test]
+fn workload_replay_plan_rejects_full_system_progress_transition_merge_below_dma_count() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_progress_transitions([
+            progress_transition(
+                8,
+                component("gpu-dma-progress-loop"),
+                LivelockTransitionKind::QueueRotation,
+                4,
+                0,
+            ),
+            progress_transition(
+                8,
+                component("gpu-dma-progress-loop"),
+                LivelockTransitionKind::QueueRotation,
+                6,
+                1,
+            ),
+        ])
+        .with_full_system_progress_transitions([progress_transition(
+            7,
+            component("global-progress-loop"),
+            LivelockTransitionKind::ProtocolRetry,
+            4,
+            0,
+        )]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelProgressTransitionMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            merged_transition_count: 1,
+            scoped_transition_count: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_weaker_full_system_progress_transition_kind_window() {
     let plan = replay_plan()
         .add_expected_clean_parallel_diagnostics(expected_clean_with_livelock_threshold(
