@@ -426,6 +426,69 @@ fn workload_replay_plan_derives_active_partitions_from_remote_sends() {
 }
 
 #[test]
+fn workload_replay_plan_derives_dma_active_partitions_from_remote_traffic() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("parallel-partitions-from-dma-remote-traffic"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_dma_partitions(
+            WorkloadParallelBatchPartitionScope::GpuDmaScheduler,
+            3,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_dma_partitions(
+            WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler,
+            2,
+        ))
+        .unwrap()
+        .add_expected_parallel_partition_use(expected_dma_partitions(
+            WorkloadParallelBatchPartitionScope::DmaScheduler,
+            5,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(20),
+            PartitionId::new(21),
+            3,
+            9,
+            0,
+        )])
+        .with_gpu_dma_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(21),
+            PartitionId::new(22),
+            2,
+            11,
+            17,
+        )])
+        .with_accelerator_dma_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(30),
+            PartitionId::new(31),
+            1,
+            13,
+            19,
+        )]);
+
+    assert_eq!(summary.active_gpu_dma_scheduler_partition_count(), 3);
+    assert_eq!(
+        summary.active_accelerator_dma_scheduler_partition_count(),
+        2,
+    );
+    assert_eq!(summary.active_dma_scheduler_partition_count(), 5);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_remote_send_partition_use_evidence() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("parallel-partitions-invalid-remote-send"),

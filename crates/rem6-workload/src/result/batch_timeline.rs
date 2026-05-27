@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets_from_timeline,
     collect_parallel_batch_partition_streaks_from_timeline, collect_parallel_batch_timeline,
     collect_parallel_batch_worker_count_tick_summaries,
-    collect_parallel_batch_worker_counts_from_timeline, parallel_batch_active_partition_count,
-    parallel_batch_count_for_partition_set, parallel_batch_longest_tick_streak_at_or_above,
+    collect_parallel_batch_worker_counts_from_timeline, parallel_batch_count_for_partition_set,
+    parallel_batch_longest_tick_streak_at_or_above,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
     parallel_batch_streak_count_for_partition_set, parallel_batch_ticks_at_or_above,
     parallel_batch_ticks_for_worker_count, parallel_batch_worker_ticks,
@@ -13,10 +13,14 @@ use crate::parallel_batch::{
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord,
 };
-use rem6_kernel::{ParallelPartitionActivity, PartitionId, Tick};
+use rem6_kernel::{
+    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId,
+    Tick,
+};
 
 use super::WorkloadParallelExecutionSummary;
 
+use crate::result_collect::{is_parallel_remote_flow_evidence, is_parallel_remote_send_evidence};
 use crate::result_partition_activity::merge_parallel_partition_activity_evidence_options;
 
 impl WorkloadParallelExecutionSummary {
@@ -284,19 +288,31 @@ impl WorkloadParallelExecutionSummary {
     pub fn active_gpu_dma_scheduler_partition_count(&self) -> usize {
         let sets = self.gpu_dma_scheduler_batch_partition_sets();
         let streaks = self.gpu_dma_scheduler_batch_partition_streaks();
-        parallel_batch_active_partition_count(&sets, &streaks)
+        batch_and_remote_active_partition_count(
+            &sets,
+            &streaks,
+            &self.gpu_dma_scheduler_remote_flows,
+            &self.gpu_dma_scheduler_remote_sends,
+        )
     }
 
     pub fn active_accelerator_dma_scheduler_partition_count(&self) -> usize {
         let sets = self.accelerator_dma_scheduler_batch_partition_sets();
         let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
-        parallel_batch_active_partition_count(&sets, &streaks)
+        batch_and_remote_active_partition_count(
+            &sets,
+            &streaks,
+            &self.accelerator_dma_scheduler_remote_flows,
+            &self.accelerator_dma_scheduler_remote_sends,
+        )
     }
 
     pub fn active_dma_scheduler_partition_count(&self) -> usize {
         let sets = self.dma_scheduler_batch_partition_sets();
         let streaks = self.dma_scheduler_batch_partition_streaks();
-        parallel_batch_active_partition_count(&sets, &streaks)
+        let flows = self.dma_scheduler_remote_flows();
+        let sends = self.dma_scheduler_remote_sends();
+        batch_and_remote_active_partition_count(&sets, &streaks, &flows, &sends)
     }
 
     pub fn gpu_dma_scheduler_partition_activity(
@@ -686,6 +702,38 @@ fn collect_scoped_parallel_batch_timeline(
             record.worker_count(),
         )
     }))
+}
+
+fn batch_and_remote_active_partition_count(
+    sets: &[WorkloadParallelBatchPartitionSet],
+    streaks: &[WorkloadParallelBatchPartitionStreak],
+    flows: &[ParallelRemoteFlowRecord],
+    sends: &[ParallelRemoteSendRecord],
+) -> usize {
+    let mut partitions = BTreeSet::new();
+    for set in sets {
+        if set.is_parallel_evidence() {
+            partitions.extend(set.partitions().iter().copied());
+        }
+    }
+    for streak in streaks {
+        if streak.is_parallel_evidence() {
+            partitions.extend(streak.partitions().iter().copied());
+        }
+    }
+    for flow in flows {
+        if is_parallel_remote_flow_evidence(*flow) {
+            partitions.insert(flow.source());
+            partitions.insert(flow.target());
+        }
+    }
+    for send in sends {
+        if is_parallel_remote_send_evidence(*send) {
+            partitions.insert(send.source());
+            partitions.insert(send.target());
+        }
+    }
+    partitions.len()
 }
 
 fn collect_batch_worker_count_tick_summaries(
