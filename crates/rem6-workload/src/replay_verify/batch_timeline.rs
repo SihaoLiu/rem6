@@ -71,6 +71,9 @@ fn batch_timeline_scope_for_worker_scope(
         WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
             WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler
         }
+        WorkloadParallelBatchWorkerScope::DmaScheduler => {
+            WorkloadParallelBatchTimelineScope::DmaScheduler
+        }
         WorkloadParallelBatchWorkerScope::FullSystem => {
             WorkloadParallelBatchTimelineScope::FullSystem
         }
@@ -93,6 +96,9 @@ fn batch_timeline_scope_for_partition_scope(
         WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
             WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler
         }
+        WorkloadParallelBatchPartitionScope::DmaScheduler => {
+            WorkloadParallelBatchTimelineScope::DmaScheduler
+        }
         WorkloadParallelBatchPartitionScope::FullSystem => {
             WorkloadParallelBatchTimelineScope::FullSystem
         }
@@ -112,6 +118,9 @@ fn batch_timeline_scope_for_scheduler_scope(
         }
         WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => {
             WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler
+        }
+        WorkloadParallelSchedulerScope::DmaScheduler => {
+            WorkloadParallelBatchTimelineScope::DmaScheduler
         }
         WorkloadParallelSchedulerScope::FullSystem => {
             WorkloadParallelBatchTimelineScope::FullSystem

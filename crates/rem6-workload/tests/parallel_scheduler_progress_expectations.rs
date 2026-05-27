@@ -548,6 +548,43 @@ fn workload_replay_plan_checks_dma_scheduler_progress_directly() {
 }
 
 #[test]
+fn workload_replay_plan_checks_combined_dma_scheduler_progress_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_dma_progress(
+            WorkloadParallelSchedulerScope::DmaScheduler,
+            5,
+            12,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(2, 5, 3, [(2, 8)])
+        .with_accelerator_dma_scheduler_counts(3, 7, 4, [(3, 9)]);
+    assert_eq!(summary.dma_scheduler_epoch_count(), 5);
+    assert_eq!(summary.dma_scheduler_dispatch_count(), 12);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let underactive_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(2, 5, 3, [(2, 8)])
+        .with_accelerator_dma_scheduler_counts(2, 6, 4, [(3, 9)]);
+    let underactive = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive_summary);
+    assert_eq!(
+        plan.verify_result(&underactive).unwrap_err(),
+        WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+            scope: WorkloadParallelSchedulerScope::DmaScheduler,
+            minimum_epoch_count: 5,
+            actual_epoch_count: 4,
+            minimum_dispatch_count: 12,
+            actual_dispatch_count: 11,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_parallel_scheduler_progress() {
     let zero = WorkloadExpectedParallelSchedulerProgress::new(
         WorkloadParallelRemoteFlowScope::Scheduler,

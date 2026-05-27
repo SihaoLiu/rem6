@@ -107,6 +107,28 @@ impl WorkloadParallelExecutionSummary {
             .len()
     }
 
+    pub fn dma_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
+        collect_parallel_remote_source_partitions(
+            self.dma_scheduler_remote_flows(),
+            self.dma_scheduler_remote_sends(),
+        )
+    }
+
+    pub fn dma_scheduler_remote_source_partition_count(&self) -> usize {
+        self.dma_scheduler_remote_source_partitions().len()
+    }
+
+    pub fn dma_scheduler_remote_target_partitions(&self) -> Vec<PartitionId> {
+        collect_parallel_remote_target_partitions(
+            self.dma_scheduler_remote_flows(),
+            self.dma_scheduler_remote_sends(),
+        )
+    }
+
+    pub fn dma_scheduler_remote_target_partition_count(&self) -> usize {
+        self.dma_scheduler_remote_target_partitions().len()
+    }
+
     pub fn full_system_parallel_scheduler_remote_source_partitions(&self) -> Vec<PartitionId> {
         collect_parallel_remote_source_partitions(
             self.full_system_parallel_scheduler_remote_flows(),

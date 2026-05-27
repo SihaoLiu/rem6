@@ -280,6 +280,47 @@ fn workload_replay_plan_checks_dma_scheduler_batch_activity_directly() {
 }
 
 #[test]
+fn workload_replay_plan_checks_combined_dma_scheduler_batch_activity_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_activity(expected_dma_activity(
+            WorkloadParallelBatchWorkerScope::DmaScheduler,
+            3,
+            3,
+        ))
+        .unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+            WorkloadParallelBatchWorkerCount::new(3, 1),
+        ])
+        .with_accelerator_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(3, 2),
+        ]);
+    assert_eq!(summary.dma_scheduler_batch_count_at_or_above(3), 3);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+
+    let underactive_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_worker_counts([WorkloadParallelBatchWorkerCount::new(3, 1)])
+        .with_accelerator_dma_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+        ]);
+    let underactive = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive_summary);
+    assert_eq!(
+        plan.verify_result(&underactive).unwrap_err(),
+        WorkloadError::ExpectedParallelBatchActivityBelowMinimum {
+            scope: WorkloadParallelBatchWorkerScope::DmaScheduler,
+            minimum_worker_count: 3,
+            minimum_batch_count: 3,
+            actual_batch_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_derives_batch_activity_from_partition_sets() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("parallel-batch-activity-from-partitions"),

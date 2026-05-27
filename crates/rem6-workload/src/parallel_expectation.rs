@@ -28,6 +28,7 @@ pub enum WorkloadParallelRemoteFlowScope {
     DataCacheScheduler,
     GpuDmaScheduler,
     AcceleratorDmaScheduler,
+    DmaScheduler,
     FullSystem,
 }
 
@@ -38,6 +39,7 @@ impl WorkloadParallelRemoteFlowScope {
             Self::DataCacheScheduler => "data-cache-scheduler",
             Self::GpuDmaScheduler => "gpu-dma-scheduler",
             Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::DmaScheduler => "dma-scheduler",
             Self::FullSystem => "full-system",
         }
     }
@@ -48,7 +50,8 @@ impl WorkloadParallelRemoteFlowScope {
             Self::DataCacheScheduler => 1,
             Self::GpuDmaScheduler => 2,
             Self::AcceleratorDmaScheduler => 3,
-            Self::FullSystem => 4,
+            Self::DmaScheduler => 4,
+            Self::FullSystem => 5,
         }
     }
 }
@@ -59,6 +62,7 @@ pub enum WorkloadParallelSchedulerScope {
     DataCacheScheduler,
     GpuDmaScheduler,
     AcceleratorDmaScheduler,
+    DmaScheduler,
     FullSystem,
 }
 
@@ -69,6 +73,7 @@ impl WorkloadParallelSchedulerScope {
             Self::DataCacheScheduler => "data-cache-scheduler",
             Self::GpuDmaScheduler => "gpu-dma-scheduler",
             Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::DmaScheduler => "dma-scheduler",
             Self::FullSystem => "full-system",
         }
     }
@@ -79,7 +84,8 @@ impl WorkloadParallelSchedulerScope {
             Self::DataCacheScheduler => 1,
             Self::GpuDmaScheduler => 2,
             Self::AcceleratorDmaScheduler => 3,
-            Self::FullSystem => 4,
+            Self::DmaScheduler => 4,
+            Self::FullSystem => 5,
         }
     }
 }
@@ -93,6 +99,7 @@ impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelSchedulerScope {
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 Self::AcceleratorDmaScheduler
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => Self::DmaScheduler,
             WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
         }
     }
@@ -284,6 +291,14 @@ impl WorkloadExpectedParallelFrontier {
                     .copied(),
                 self.partition,
             ),
+            (
+                WorkloadParallelSchedulerScope::DmaScheduler,
+                WorkloadParallelFrontierStage::Initial,
+            ) => find_frontier(summary.dma_scheduler_initial_frontiers(), self.partition),
+            (
+                WorkloadParallelSchedulerScope::DmaScheduler,
+                WorkloadParallelFrontierStage::Final,
+            ) => find_frontier(summary.dma_scheduler_final_frontiers(), self.partition),
             (
                 WorkloadParallelSchedulerScope::FullSystem,
                 WorkloadParallelFrontierStage::Initial,
@@ -518,6 +533,9 @@ impl WorkloadExpectedParallelRemoteFlow {
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_remote_flow_count(self.source, self.target)
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => {
+                summary.dma_scheduler_remote_flow_count(self.source, self.target)
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_remote_flow_count(self.source, self.target)
             }
@@ -612,6 +630,9 @@ impl WorkloadExpectedParallelRemoteEndpoints {
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_remote_source_partitions()
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => {
+                summary.dma_scheduler_remote_source_partitions()
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_remote_source_partitions()
             }
@@ -634,6 +655,9 @@ impl WorkloadExpectedParallelRemoteEndpoints {
             }
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_remote_target_partitions()
+            }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => {
+                summary.dma_scheduler_remote_target_partitions()
             }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 summary.full_system_parallel_scheduler_remote_target_partitions()
@@ -841,6 +865,9 @@ impl WorkloadExpectedParallelRemoteSend {
                     .copied(),
                 self,
             ),
+            WorkloadParallelRemoteFlowScope::DmaScheduler => {
+                find_parallel_remote_send(summary.dma_scheduler_remote_sends(), self)
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => find_parallel_remote_send(
                 summary.full_system_parallel_scheduler_remote_sends(),
                 self,
@@ -1025,6 +1052,11 @@ impl WorkloadExpectedParallelRemoteFlowTiming {
                 self.source,
                 self.target,
             ),
+            WorkloadParallelRemoteFlowScope::DmaScheduler => find_parallel_remote_flow(
+                summary.dma_scheduler_remote_flows(),
+                self.source,
+                self.target,
+            ),
             WorkloadParallelRemoteFlowScope::FullSystem => find_parallel_remote_flow(
                 summary.full_system_parallel_scheduler_remote_flows(),
                 self.source,
@@ -1143,6 +1175,7 @@ impl WorkloadExpectedParallelWorkerUse {
             WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_max_workers()
             }
+            WorkloadParallelBatchWorkerScope::DmaScheduler => summary.dma_scheduler_max_workers(),
             WorkloadParallelBatchWorkerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_max_workers()
             }
@@ -1203,6 +1236,7 @@ impl WorkloadExpectedParallelWorkerActivity {
             WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_total_workers()
             }
+            WorkloadParallelBatchWorkerScope::DmaScheduler => summary.dma_scheduler_total_workers(),
             WorkloadParallelBatchWorkerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_total_workers()
             }
@@ -1271,6 +1305,10 @@ impl WorkloadExpectedParallelSchedulerProgress {
                 summary.accelerator_dma_scheduler_epoch_count(),
                 summary.accelerator_dma_scheduler_dispatch_count(),
             ),
+            WorkloadParallelSchedulerScope::DmaScheduler => (
+                summary.dma_scheduler_epoch_count(),
+                summary.dma_scheduler_dispatch_count(),
+            ),
             WorkloadParallelSchedulerScope::FullSystem => (
                 summary.full_system_parallel_scheduler_epoch_count(),
                 summary.full_system_parallel_scheduler_dispatch_count(),
@@ -1323,6 +1361,9 @@ impl WorkloadExpectedParallelSchedulerIdleBound {
             }
             WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_empty_epoch_count()
+            }
+            WorkloadParallelSchedulerScope::DmaScheduler => {
+                summary.dma_scheduler_empty_epoch_count()
             }
             WorkloadParallelSchedulerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_empty_epoch_count()
@@ -1392,6 +1433,9 @@ impl WorkloadExpectedParallelBatchActivity {
             }
             WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_batch_count_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::DmaScheduler => {
+                summary.dma_scheduler_batch_count_at_or_above(self.minimum_worker_count)
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count),
@@ -1484,6 +1528,9 @@ impl WorkloadExpectedParallelPartitionActivity {
             WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_partition_activity(self.partition)
             }
+            WorkloadParallelBatchPartitionScope::DmaScheduler => {
+                summary.dma_scheduler_partition_activity(self.partition)
+            }
             WorkloadParallelBatchPartitionScope::FullSystem => {
                 summary.full_system_parallel_scheduler_partition_activity(self.partition)
             }
@@ -1546,6 +1593,9 @@ impl WorkloadExpectedParallelPartitionUse {
             }
             WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
                 summary.active_accelerator_dma_scheduler_partition_count()
+            }
+            WorkloadParallelBatchPartitionScope::DmaScheduler => {
+                summary.active_dma_scheduler_partition_count()
             }
             WorkloadParallelBatchPartitionScope::FullSystem => {
                 summary.active_full_system_parallel_scheduler_partition_count()

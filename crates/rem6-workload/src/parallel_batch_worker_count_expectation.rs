@@ -11,6 +11,7 @@ pub enum WorkloadParallelBatchWorkerScope {
     DataCacheScheduler,
     GpuDmaScheduler,
     AcceleratorDmaScheduler,
+    DmaScheduler,
     FullSystem,
 }
 
@@ -21,6 +22,7 @@ impl WorkloadParallelBatchWorkerScope {
             Self::DataCacheScheduler => "data-cache-scheduler",
             Self::GpuDmaScheduler => "gpu-dma-scheduler",
             Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::DmaScheduler => "dma-scheduler",
             Self::FullSystem => "full-system",
         }
     }
@@ -31,7 +33,8 @@ impl WorkloadParallelBatchWorkerScope {
             Self::DataCacheScheduler => 1,
             Self::GpuDmaScheduler => 2,
             Self::AcceleratorDmaScheduler => 3,
-            Self::FullSystem => 4,
+            Self::DmaScheduler => 4,
+            Self::FullSystem => 5,
         }
     }
 }
@@ -45,6 +48,7 @@ impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelBatchWorkerScope 
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 Self::AcceleratorDmaScheduler
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => Self::DmaScheduler,
             WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
         }
     }
@@ -111,6 +115,9 @@ impl WorkloadExpectedParallelBatchWorkerBucket {
             }
             WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_batch_count_for_worker_count(self.worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::DmaScheduler => {
+                summary.dma_scheduler_batch_count_for_worker_count(self.worker_count)
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_for_worker_count(self.worker_count),
@@ -182,6 +189,9 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
             WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_batch_ticks_for_worker_count(self.worker_count)
             }
+            WorkloadParallelBatchWorkerScope::DmaScheduler => {
+                summary.dma_scheduler_batch_ticks_for_worker_count(self.worker_count)
+            }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_ticks_for_worker_count(self.worker_count),
         }
@@ -251,6 +261,9 @@ impl WorkloadExpectedParallelBatchWorkerTickActivity {
             }
             WorkloadParallelBatchWorkerScope::AcceleratorDmaScheduler => {
                 summary.accelerator_dma_scheduler_batch_ticks_at_or_above(self.minimum_worker_count)
+            }
+            WorkloadParallelBatchWorkerScope::DmaScheduler => {
+                summary.dma_scheduler_batch_ticks_at_or_above(self.minimum_worker_count)
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
@@ -328,6 +341,8 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
                 .accelerator_dma_scheduler_longest_batch_tick_streak_at_or_above(
                     self.minimum_worker_count,
                 ),
+            WorkloadParallelBatchWorkerScope::DmaScheduler => summary
+                .dma_scheduler_longest_batch_tick_streak_at_or_above(self.minimum_worker_count),
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
                     self.minimum_worker_count,
@@ -419,6 +434,9 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
                 .accelerator_dma_scheduler_batch_worker_ticks_at_or_above(
                     self.minimum_worker_count,
                 ),
+            WorkloadParallelBatchWorkerScope::DmaScheduler => {
+                summary.dma_scheduler_batch_worker_ticks_at_or_above(self.minimum_worker_count)
+            }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
                     self.minimum_worker_count,

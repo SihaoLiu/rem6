@@ -193,6 +193,10 @@ impl WorkloadExpectedParallelProgressTransition {
                     self,
                 )
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => find_parallel_progress_transition(
+                summary.dma_scheduler_progress_transitions(),
+                self,
+            ),
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 find_parallel_progress_transition(summary.full_system_progress_transitions(), self)
             }

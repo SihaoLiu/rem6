@@ -71,6 +71,9 @@ impl WorkloadParallelExecutionSummary {
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 self.accelerator_dma_scheduler_batch_count_for_worker_count(worker_count)
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => {
+                self.dma_scheduler_batch_count_for_worker_count(worker_count)
+            }
             WorkloadParallelRemoteFlowScope::FullSystem => {
                 self.full_system_parallel_scheduler_batch_count_for_worker_count(worker_count)
             }

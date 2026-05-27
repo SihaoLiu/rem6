@@ -484,6 +484,13 @@ Implementation evidence on 2026-05-26:
   GPU-DMA-plus-accelerator-DMA view with the same dimension queries, matching
   the existing combined DMA batch, frontier, and remote-traffic evidence
   surfaces.
+- Workload manifests and replay plans now treat `dma-scheduler` as a
+  first-class combined scope for scheduler progress, scheduler idle bounds,
+  batch worker activity, exact batch timeline checks, partition-set and
+  partition-streak checks, and remote endpoint coverage. Combined DMA
+  partition-streak evidence is derived from the merged DMA batch timeline, so
+  contiguous GPU DMA and accelerator DMA batches are validated as one typed DMA
+  scheduler stream instead of two unrelated device-local fragments.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

@@ -57,7 +57,8 @@ fn validate_frontier_scope_summary(
         WorkloadParallelSchedulerScope::Scheduler
         | WorkloadParallelSchedulerScope::DataCacheScheduler
         | WorkloadParallelSchedulerScope::GpuDmaScheduler
-        | WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => {
+        | WorkloadParallelSchedulerScope::AcceleratorDmaScheduler
+        | WorkloadParallelSchedulerScope::DmaScheduler => {
             validate_frontiers(scope, stage, frontier_records(summary, scope, stage))
         }
         WorkloadParallelSchedulerScope::FullSystem => {
@@ -66,6 +67,7 @@ fn validate_frontier_scope_summary(
                 WorkloadParallelSchedulerScope::DataCacheScheduler,
                 WorkloadParallelSchedulerScope::GpuDmaScheduler,
                 WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
+                WorkloadParallelSchedulerScope::DmaScheduler,
                 WorkloadParallelSchedulerScope::FullSystem,
             ] {
                 validate_frontiers(scope, stage, frontier_records(summary, scoped, stage))?;
@@ -79,42 +81,58 @@ fn frontier_records(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelSchedulerScope,
     stage: WorkloadParallelFrontierStage,
-) -> &[PartitionFrontier] {
+) -> Vec<PartitionFrontier> {
     match (scope, stage) {
         (WorkloadParallelSchedulerScope::Scheduler, WorkloadParallelFrontierStage::Initial) => {
-            summary.parallel_scheduler_initial_frontiers()
+            summary.parallel_scheduler_initial_frontiers().to_vec()
         }
         (WorkloadParallelSchedulerScope::Scheduler, WorkloadParallelFrontierStage::Final) => {
-            summary.parallel_scheduler_final_frontiers()
+            summary.parallel_scheduler_final_frontiers().to_vec()
         }
         (
             WorkloadParallelSchedulerScope::DataCacheScheduler,
             WorkloadParallelFrontierStage::Initial,
-        ) => summary.data_cache_parallel_scheduler_initial_frontiers(),
+        ) => summary
+            .data_cache_parallel_scheduler_initial_frontiers()
+            .to_vec(),
         (
             WorkloadParallelSchedulerScope::DataCacheScheduler,
             WorkloadParallelFrontierStage::Final,
-        ) => summary.data_cache_parallel_scheduler_final_frontiers(),
+        ) => summary
+            .data_cache_parallel_scheduler_final_frontiers()
+            .to_vec(),
         (
             WorkloadParallelSchedulerScope::GpuDmaScheduler,
             WorkloadParallelFrontierStage::Initial,
-        ) => summary.gpu_dma_scheduler_initial_frontiers(),
+        ) => summary.gpu_dma_scheduler_initial_frontiers().to_vec(),
         (WorkloadParallelSchedulerScope::GpuDmaScheduler, WorkloadParallelFrontierStage::Final) => {
-            summary.gpu_dma_scheduler_final_frontiers()
+            summary.gpu_dma_scheduler_final_frontiers().to_vec()
         }
         (
             WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
             WorkloadParallelFrontierStage::Initial,
-        ) => summary.accelerator_dma_scheduler_initial_frontiers(),
+        ) => summary
+            .accelerator_dma_scheduler_initial_frontiers()
+            .to_vec(),
         (
             WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
             WorkloadParallelFrontierStage::Final,
-        ) => summary.accelerator_dma_scheduler_final_frontiers(),
+        ) => summary.accelerator_dma_scheduler_final_frontiers().to_vec(),
+        (WorkloadParallelSchedulerScope::DmaScheduler, WorkloadParallelFrontierStage::Initial) => {
+            summary.dma_scheduler_initial_frontiers()
+        }
+        (WorkloadParallelSchedulerScope::DmaScheduler, WorkloadParallelFrontierStage::Final) => {
+            summary.dma_scheduler_final_frontiers()
+        }
         (WorkloadParallelSchedulerScope::FullSystem, WorkloadParallelFrontierStage::Initial) => {
-            summary.raw_full_system_parallel_scheduler_initial_frontiers()
+            summary
+                .raw_full_system_parallel_scheduler_initial_frontiers()
+                .to_vec()
         }
         (WorkloadParallelSchedulerScope::FullSystem, WorkloadParallelFrontierStage::Final) => {
-            summary.raw_full_system_parallel_scheduler_final_frontiers()
+            summary
+                .raw_full_system_parallel_scheduler_final_frontiers()
+                .to_vec()
         }
     }
 }
@@ -122,7 +140,7 @@ fn frontier_records(
 fn validate_frontiers(
     scope: WorkloadParallelSchedulerScope,
     stage: WorkloadParallelFrontierStage,
-    frontiers: &[PartitionFrontier],
+    frontiers: impl IntoIterator<Item = PartitionFrontier>,
 ) -> Result<(), WorkloadError> {
     for frontier in frontiers {
         if frontier.safe_until() < frontier.now()

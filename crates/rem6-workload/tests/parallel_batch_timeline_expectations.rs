@@ -255,6 +255,51 @@ fn workload_replay_plan_checks_dma_scheduler_parallel_batch_timelines_directly()
 }
 
 #[test]
+fn workload_replay_plan_checks_combined_dma_scheduler_parallel_batch_timelines_directly() {
+    let gpu_dma = expected_timeline(
+        WorkloadParallelBatchTimelineScope::DmaScheduler,
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        8,
+        12,
+        [partition(3), partition(4)],
+        2,
+    );
+    let accelerator_dma = expected_timeline(
+        WorkloadParallelBatchTimelineScope::DmaScheduler,
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+        12,
+        18,
+        [partition(5), partition(6)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_timeline_record(gpu_dma)
+        .unwrap()
+        .add_expected_parallel_batch_timeline_record(accelerator_dma)
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            8,
+            12,
+            [partition(3), partition(4)],
+            2,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            12,
+            18,
+            [partition(5), partition(6)],
+            2,
+        )]);
+    assert_eq!(summary.dma_scheduler_batch_timeline().len(), 2);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_uses_explicit_full_system_batch_timeline_evidence() {
     let cpu = partition(0);
     let cache = partition(1);

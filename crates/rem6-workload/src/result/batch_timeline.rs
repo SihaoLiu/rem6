@@ -187,11 +187,8 @@ impl WorkloadParallelExecutionSummary {
     pub fn dma_scheduler_batch_partition_streaks(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionStreak> {
-        let gpu_streaks = self.gpu_dma_scheduler_batch_partition_streaks();
-        let accelerator_streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
-        crate::parallel_batch::collect_parallel_batch_partition_streaks(
-            gpu_streaks.into_iter().chain(accelerator_streaks),
-        )
+        let timeline = self.dma_scheduler_batch_timeline();
+        collect_parallel_batch_partition_streaks_from_timeline(&timeline)
     }
 
     pub fn active_gpu_dma_scheduler_partition_count(&self) -> usize {
@@ -203,6 +200,12 @@ impl WorkloadParallelExecutionSummary {
     pub fn active_accelerator_dma_scheduler_partition_count(&self) -> usize {
         let sets = self.accelerator_dma_scheduler_batch_partition_sets();
         let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        parallel_batch_active_partition_count(&sets, &streaks)
+    }
+
+    pub fn active_dma_scheduler_partition_count(&self) -> usize {
+        let sets = self.dma_scheduler_batch_partition_sets();
+        let streaks = self.dma_scheduler_batch_partition_streaks();
         parallel_batch_active_partition_count(&sets, &streaks)
     }
 
@@ -224,6 +227,18 @@ impl WorkloadParallelExecutionSummary {
     ) -> Option<ParallelPartitionActivity> {
         let sets = self.accelerator_dma_scheduler_batch_partition_sets();
         let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        merge_parallel_partition_activity_evidence_options(
+            parallel_batch_partition_activity_for_partition(&sets, partition),
+            parallel_batch_streak_activity_for_partition(&streaks, partition),
+        )
+    }
+
+    pub fn dma_scheduler_partition_activity(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelPartitionActivity> {
+        let sets = self.dma_scheduler_batch_partition_sets();
+        let streaks = self.dma_scheduler_batch_partition_streaks();
         merge_parallel_partition_activity_evidence_options(
             parallel_batch_partition_activity_for_partition(&sets, partition),
             parallel_batch_streak_activity_for_partition(&streaks, partition),
@@ -401,6 +416,16 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn dma_scheduler_longest_batch_tick_streak_at_or_above(
+        &self,
+        minimum_worker_count: usize,
+    ) -> Tick {
+        parallel_batch_longest_tick_streak_at_or_above(
+            &self.dma_scheduler_batch_timeline(),
+            minimum_worker_count,
+        )
+    }
+
     pub fn gpu_dma_scheduler_batch_count_for_partition_set(
         &self,
         partitions: impl IntoIterator<Item = PartitionId>,
@@ -419,6 +444,15 @@ impl WorkloadParallelExecutionSummary {
         parallel_batch_count_for_partition_set(&sets, &streaks, partitions)
     }
 
+    pub fn dma_scheduler_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let sets = self.dma_scheduler_batch_partition_sets();
+        let streaks = self.dma_scheduler_batch_partition_streaks();
+        parallel_batch_count_for_partition_set(&sets, &streaks, partitions)
+    }
+
     pub fn gpu_dma_scheduler_max_consecutive_batch_count_for_partition_set(
         &self,
         partitions: impl IntoIterator<Item = PartitionId>,
@@ -432,6 +466,14 @@ impl WorkloadParallelExecutionSummary {
         partitions: impl IntoIterator<Item = PartitionId>,
     ) -> usize {
         let streaks = self.accelerator_dma_scheduler_batch_partition_streaks();
+        parallel_batch_streak_count_for_partition_set(&streaks, partitions)
+    }
+
+    pub fn dma_scheduler_max_consecutive_batch_count_for_partition_set(
+        &self,
+        partitions: impl IntoIterator<Item = PartitionId>,
+    ) -> usize {
+        let streaks = self.dma_scheduler_batch_partition_streaks();
         parallel_batch_streak_count_for_partition_set(&streaks, partitions)
     }
 

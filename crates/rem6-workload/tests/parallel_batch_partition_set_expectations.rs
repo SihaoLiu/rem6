@@ -155,6 +155,49 @@ fn workload_replay_plan_checks_dma_scheduler_batch_partition_sets_directly() {
 }
 
 #[test]
+fn workload_replay_plan_checks_combined_dma_scheduler_batch_partition_sets_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_partition_set(expected_dma_set(
+            WorkloadParallelBatchPartitionScope::DmaScheduler,
+            [partition(3), partition(4)],
+            3,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            8,
+            10,
+            [partition(3), partition(4)],
+            2,
+        )])
+        .with_accelerator_dma_scheduler_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                10,
+                12,
+                [partition(4), partition(3)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                12,
+                14,
+                [partition(3), partition(4)],
+                2,
+            ),
+        ]);
+    assert_eq!(
+        summary.dma_scheduler_batch_count_for_partition_set([partition(3), partition(4)]),
+        3,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_records_parallel_batch_partition_set_expectations() {
     let scheduler_set = expected_set(
         WorkloadParallelRemoteFlowScope::Scheduler,

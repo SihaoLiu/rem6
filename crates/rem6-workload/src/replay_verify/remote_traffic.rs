@@ -98,6 +98,7 @@ fn actual_parallel_remote_sends_for_scope(
         WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
             summary.accelerator_dma_scheduler_remote_sends().to_vec()
         }
+        WorkloadParallelRemoteFlowScope::DmaScheduler => summary.dma_scheduler_remote_sends(),
         WorkloadParallelRemoteFlowScope::FullSystem => {
             summary.full_system_parallel_scheduler_remote_sends()
         }
@@ -199,6 +200,7 @@ fn actual_parallel_remote_flows_for_scope(
         WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
             summary.accelerator_dma_scheduler_remote_flow_evidence()
         }
+        WorkloadParallelRemoteFlowScope::DmaScheduler => summary.dma_scheduler_remote_flows(),
         WorkloadParallelRemoteFlowScope::FullSystem => {
             summary.full_system_parallel_scheduler_remote_flows()
         }
@@ -412,6 +414,9 @@ fn remote_scope_for_partition_scope(
         WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => {
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler
         }
+        WorkloadParallelBatchPartitionScope::DmaScheduler => {
+            WorkloadParallelRemoteFlowScope::DmaScheduler
+        }
         WorkloadParallelBatchPartitionScope::FullSystem => {
             WorkloadParallelRemoteFlowScope::FullSystem
         }
@@ -602,6 +607,18 @@ fn explicit_parallel_remote_flows_for_scope(
         WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
             summary.accelerator_dma_scheduler_remote_flows().to_vec()
         }
+        WorkloadParallelRemoteFlowScope::DmaScheduler => merge_explicit_parallel_remote_flows(
+            summary
+                .gpu_dma_scheduler_remote_flows()
+                .iter()
+                .copied()
+                .chain(
+                    summary
+                        .accelerator_dma_scheduler_remote_flows()
+                        .iter()
+                        .copied(),
+                ),
+        ),
         WorkloadParallelRemoteFlowScope::FullSystem => merge_explicit_parallel_remote_flows(
             summary
                 .parallel_scheduler_remote_flows()
@@ -641,6 +658,17 @@ fn raw_explicit_parallel_remote_flows_for_scope(
         WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
             summary.accelerator_dma_scheduler_remote_flows().to_vec()
         }
+        WorkloadParallelRemoteFlowScope::DmaScheduler => summary
+            .gpu_dma_scheduler_remote_flows()
+            .iter()
+            .copied()
+            .chain(
+                summary
+                    .accelerator_dma_scheduler_remote_flows()
+                    .iter()
+                    .copied(),
+            )
+            .collect(),
         WorkloadParallelRemoteFlowScope::FullSystem => summary
             .parallel_scheduler_remote_flows()
             .iter()

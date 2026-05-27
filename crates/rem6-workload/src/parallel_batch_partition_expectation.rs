@@ -8,6 +8,7 @@ pub enum WorkloadParallelBatchPartitionScope {
     DataCacheScheduler,
     GpuDmaScheduler,
     AcceleratorDmaScheduler,
+    DmaScheduler,
     FullSystem,
 }
 
@@ -18,6 +19,7 @@ impl WorkloadParallelBatchPartitionScope {
             Self::DataCacheScheduler => "data-cache-scheduler",
             Self::GpuDmaScheduler => "gpu-dma-scheduler",
             Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
+            Self::DmaScheduler => "dma-scheduler",
             Self::FullSystem => "full-system",
         }
     }
@@ -28,7 +30,8 @@ impl WorkloadParallelBatchPartitionScope {
             Self::DataCacheScheduler => 1,
             Self::GpuDmaScheduler => 2,
             Self::AcceleratorDmaScheduler => 3,
-            Self::FullSystem => 4,
+            Self::DmaScheduler => 4,
+            Self::FullSystem => 5,
         }
     }
 }
@@ -42,6 +45,7 @@ impl From<WorkloadParallelRemoteFlowScope> for WorkloadParallelBatchPartitionSco
             WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => {
                 Self::AcceleratorDmaScheduler
             }
+            WorkloadParallelRemoteFlowScope::DmaScheduler => Self::DmaScheduler,
             WorkloadParallelRemoteFlowScope::FullSystem => Self::FullSystem,
         }
     }
@@ -115,6 +119,9 @@ impl WorkloadExpectedParallelBatchPartitionSet {
                 .accelerator_dma_scheduler_batch_count_for_partition_set(
                     self.partitions.iter().copied(),
                 ),
+            WorkloadParallelBatchPartitionScope::DmaScheduler => {
+                summary.dma_scheduler_batch_count_for_partition_set(self.partitions.iter().copied())
+            }
             WorkloadParallelBatchPartitionScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_for_partition_set(
                     self.partitions.iter().copied(),
@@ -198,6 +205,10 @@ impl WorkloadExpectedParallelBatchPartitionStreak {
                 ),
             WorkloadParallelBatchPartitionScope::AcceleratorDmaScheduler => summary
                 .accelerator_dma_scheduler_max_consecutive_batch_count_for_partition_set(
+                    self.partitions.iter().copied(),
+                ),
+            WorkloadParallelBatchPartitionScope::DmaScheduler => summary
+                .dma_scheduler_max_consecutive_batch_count_for_partition_set(
                     self.partitions.iter().copied(),
                 ),
             WorkloadParallelBatchPartitionScope::FullSystem => summary

@@ -8,9 +8,8 @@ pub(crate) fn validate_scheduler_scope_summary(
         WorkloadParallelSchedulerScope::Scheduler
         | WorkloadParallelSchedulerScope::DataCacheScheduler
         | WorkloadParallelSchedulerScope::GpuDmaScheduler
-        | WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => {
-            validate_scheduler_counts(summary, scope)
-        }
+        | WorkloadParallelSchedulerScope::AcceleratorDmaScheduler
+        | WorkloadParallelSchedulerScope::DmaScheduler => validate_scheduler_counts(summary, scope),
         WorkloadParallelSchedulerScope::FullSystem => {
             validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::FullSystem)?;
             validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::Scheduler)?;
@@ -19,7 +18,8 @@ pub(crate) fn validate_scheduler_scope_summary(
             validate_scheduler_counts(
                 summary,
                 WorkloadParallelSchedulerScope::AcceleratorDmaScheduler,
-            )
+            )?;
+            validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::DmaScheduler)
         }
     }
 }
@@ -59,6 +59,10 @@ fn scheduler_counts(
         WorkloadParallelSchedulerScope::AcceleratorDmaScheduler => (
             summary.accelerator_dma_scheduler_epoch_count(),
             summary.accelerator_dma_scheduler_empty_epoch_count(),
+        ),
+        WorkloadParallelSchedulerScope::DmaScheduler => (
+            summary.dma_scheduler_epoch_count(),
+            summary.dma_scheduler_empty_epoch_count(),
         ),
         WorkloadParallelSchedulerScope::FullSystem => (
             summary.full_system_parallel_scheduler_epoch_count(),

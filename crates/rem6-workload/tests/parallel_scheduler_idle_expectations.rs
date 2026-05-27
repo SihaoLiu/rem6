@@ -227,6 +227,42 @@ fn workload_replay_plan_checks_dma_scheduler_idle_bounds_directly() {
 }
 
 #[test]
+fn workload_replay_plan_checks_combined_dma_scheduler_idle_bounds_directly() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_idle_bound(direct_idle_bound(
+            WorkloadParallelSchedulerScope::DmaScheduler,
+            2,
+        ))
+        .unwrap();
+
+    let accepted_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(2, 0, 0, [])
+        .with_gpu_dma_scheduler_empty_epoch_count(1)
+        .with_accelerator_dma_scheduler_counts(3, 0, 0, [])
+        .with_accelerator_dma_scheduler_empty_epoch_count(1);
+    assert_eq!(accepted_summary.dma_scheduler_empty_epoch_count(), 2);
+    let accepted = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(accepted_summary);
+    plan.verify_result(&accepted).unwrap();
+
+    let overidle_summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(2, 0, 0, [])
+        .with_gpu_dma_scheduler_empty_epoch_count(2)
+        .with_accelerator_dma_scheduler_counts(3, 0, 0, [])
+        .with_accelerator_dma_scheduler_empty_epoch_count(1);
+    let overidle = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(overidle_summary);
+    assert_eq!(
+        plan.verify_result(&overidle).unwrap_err(),
+        WorkloadError::ExpectedParallelSchedulerIdleAboveMaximum {
+            scope: WorkloadParallelSchedulerScope::DmaScheduler,
+            maximum_empty_epoch_count: 2,
+            actual_empty_epoch_count: 3,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_inconsistent_scheduler_idle_summary() {
     let plan = replay_plan()
         .add_expected_parallel_scheduler_idle_bound(idle_bound(

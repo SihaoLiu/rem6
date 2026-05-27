@@ -30,19 +30,21 @@ pub(crate) use remote_traffic::{
 };
 use scheduler_summary::validate_scheduler_scope_summary;
 
-const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 5] = [
+const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 6] = [
     WorkloadParallelRemoteFlowScope::Scheduler,
     WorkloadParallelRemoteFlowScope::DataCacheScheduler,
     WorkloadParallelRemoteFlowScope::GpuDmaScheduler,
     WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler,
+    WorkloadParallelRemoteFlowScope::DmaScheduler,
     WorkloadParallelRemoteFlowScope::FullSystem,
 ];
 
-const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 5] = [
+const PARALLEL_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 6] = [
     WorkloadParallelBatchTimelineScope::Scheduler,
     WorkloadParallelBatchTimelineScope::DataCacheScheduler,
     WorkloadParallelBatchTimelineScope::GpuDmaScheduler,
     WorkloadParallelBatchTimelineScope::AcceleratorDmaScheduler,
+    WorkloadParallelBatchTimelineScope::DmaScheduler,
     WorkloadParallelBatchTimelineScope::FullSystem,
 ];
 
@@ -198,6 +200,9 @@ fn actual_parallel_progress_transitions_for_scope(
         WorkloadParallelRemoteFlowScope::AcceleratorDmaScheduler => summary
             .accelerator_dma_scheduler_progress_transitions()
             .to_vec(),
+        WorkloadParallelRemoteFlowScope::DmaScheduler => {
+            summary.dma_scheduler_progress_transitions()
+        }
         WorkloadParallelRemoteFlowScope::FullSystem => summary.full_system_progress_transitions(),
     }
 }
