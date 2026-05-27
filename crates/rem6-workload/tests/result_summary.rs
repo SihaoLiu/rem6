@@ -2261,6 +2261,63 @@ fn workload_result_partition_activity_uses_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_uses_explicit_full_system_partition_activities() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([(
+            cpu,
+            ParallelPartitionActivity::with_remote_counts(1, 2, 1, 0, 3),
+        )])
+        .with_data_cache_parallel_scheduler_partition_activities([(
+            dma,
+            ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+        )])
+        .with_full_system_parallel_scheduler_partition_activities([
+            (
+                cpu,
+                ParallelPartitionActivity::with_remote_counts(3, 5, 0, 4, 6),
+            ),
+            (
+                cache,
+                ParallelPartitionActivity::with_remote_counts(2, 7, 1, 0, 2),
+            ),
+        ]);
+
+    assert_eq!(
+        summary.active_full_system_parallel_scheduler_partition_count(),
+        3
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cpu),
+        Some(ParallelPartitionActivity::with_remote_counts(3, 5, 1, 4, 6)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cache),
+        Some(ParallelPartitionActivity::with_remote_counts(2, 7, 1, 0, 2)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activities(),
+        vec![
+            (
+                cpu,
+                ParallelPartitionActivity::with_remote_counts(3, 5, 1, 4, 6),
+            ),
+            (
+                cache,
+                ParallelPartitionActivity::with_remote_counts(2, 7, 1, 0, 2),
+            ),
+            (
+                dma,
+                ParallelPartitionActivity::with_remote_counts(1, 1, 0, 0, 1),
+            ),
+        ],
+    );
+    assert!(summary.has_full_system_parallel_scheduler_work());
+}
+
+#[test]
 fn workload_result_partition_activity_uses_merged_partition_set_evidence() {
     let cpu = PartitionId::new(1);
     let cache = PartitionId::new(2);

@@ -258,6 +258,37 @@ fn workload_replay_plan_rejects_missing_or_underactive_partition_activity() {
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_partition_activities() {
+    let plan = replay_plan()
+        .add_expected_parallel_partition_activity(expected_activity(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            4,
+            3,
+            7,
+            2,
+            5,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_partition_activities([(
+            PartitionId::new(4),
+            ParallelPartitionActivity::with_remote_counts(1, 2, 1, 1, 3),
+        )])
+        .with_full_system_parallel_scheduler_partition_activities([(
+            PartitionId::new(4),
+            ParallelPartitionActivity::with_remote_counts(3, 7, 2, 5, 9),
+        )]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(PartitionId::new(4)),
+        Some(ParallelPartitionActivity::with_remote_counts(3, 7, 2, 5, 9)),
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_ignores_workerless_partition_dispatch_activity() {
     let plan = replay_plan()
         .add_expected_parallel_partition_activity(expected_activity(

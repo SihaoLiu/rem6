@@ -71,6 +71,10 @@ impl WorkloadParallelExecutionSummary {
                 &batch_partition_sets,
                 &batch_partition_streaks,
             ))
+            .max(
+                self.full_system_parallel_scheduler_partition_activities()
+                    .len(),
+            )
             .max(combined_parallel_active_partition_count(
                 &self.parallel_scheduler_partition_activities,
                 &self.parallel_scheduler_remote_flows,
@@ -359,6 +363,11 @@ impl WorkloadParallelExecutionSummary {
                 .iter()
                 .map(|(partition, _)| *partition),
         );
+        partitions.extend(
+            self.full_system_parallel_scheduler_partition_activities
+                .iter()
+                .map(|(partition, _)| *partition),
+        );
         for set in self.full_system_parallel_scheduler_batch_partition_sets() {
             partitions.extend(set.partitions().iter().copied());
         }
@@ -412,7 +421,16 @@ impl WorkloadParallelExecutionSummary {
             parallel_batch_partition_activity_for_partition(&batch_partition_sets, partition),
             parallel_batch_streak_activity_for_partition(&batch_partition_streaks, partition),
         );
-        merge_parallel_partition_activity_evidence_options(scoped_activity, batch_activity)
+        let explicit_full_system_activity = parallel_partition_activity_for_partition(
+            &self.full_system_parallel_scheduler_partition_activities,
+            &[],
+            &[],
+            partition,
+        );
+        merge_parallel_partition_activity_evidence_options(
+            merge_parallel_partition_activity_evidence_options(scoped_activity, batch_activity),
+            explicit_full_system_activity,
+        )
     }
 
     pub fn full_system_parallel_scheduler_remote_flow_count(
@@ -510,6 +528,9 @@ impl WorkloadParallelExecutionSummary {
         self.active_full_system_parallel_scheduler_partition_count() != 0
             || !self
                 .full_system_parallel_scheduler_batch_worker_counts
+                .is_empty()
+            || !self
+                .full_system_parallel_scheduler_partition_activities
                 .is_empty()
             || self.has_parallel_scheduler_work()
             || self.has_data_cache_parallel_work()

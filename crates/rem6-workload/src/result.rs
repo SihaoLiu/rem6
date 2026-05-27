@@ -266,6 +266,8 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     full_system_parallel_scheduler_batch_partition_streaks:
         Vec<WorkloadParallelBatchPartitionStreak>,
+    full_system_parallel_scheduler_partition_activities:
+        Vec<(PartitionId, ParallelPartitionActivity)>,
     data_cache_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
     data_cache_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
@@ -578,6 +580,15 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.full_system_parallel_scheduler_batch_partition_streaks =
             collect_parallel_batch_partition_streaks_from_sequence(sets);
+        self
+    }
+
+    pub fn with_full_system_parallel_scheduler_partition_activities(
+        mut self,
+        activities: impl IntoIterator<Item = (PartitionId, ParallelPartitionActivity)>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_partition_activities =
+            collect_parallel_partition_activities(activities);
         self
     }
 

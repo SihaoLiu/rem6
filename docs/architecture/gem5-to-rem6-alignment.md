@@ -470,6 +470,10 @@ Implementation evidence on 2026-05-26:
   full-system partition streaks as worker and dispatch evidence for every
   partition in the streak. Per-partition reporting therefore cannot drop
   merged full-system batch evidence after active-partition summaries accept it.
+- Workload full-system per-partition activity reporting now also accepts
+  explicit merged full-system partition activity records. A global scheduler
+  can report partition-owned worker, dispatch, and remote activity directly
+  while scoped and batch-derived evidence remain lower bounds.
 - Workload full-system dispatch reporting now treats explicit full-system
   partition streaks as aggregate dispatch evidence, using them as a merged
   lower bound instead of adding them to scoped scheduler counts again.
