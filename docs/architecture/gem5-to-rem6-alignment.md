@@ -466,6 +466,10 @@ Implementation evidence on 2026-05-26:
   merged full-system worker-tick bucket and sustained-occupancy summaries as
   full-system work evidence. Result presence APIs therefore expose the same
   direct worker-tick evidence that replay and summary queries already accept.
+- Workload scheduler-work presence checks now also treat scoped scheduler and
+  data-cache scheduler epoch or empty-epoch counts as work evidence. Idle-only
+  scheduler summaries therefore remain visible to scoped and full-system
+  presence APIs instead of existing only as raw count queries.
 - Workload full-system batch partition-set summaries now keep the strongest
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same

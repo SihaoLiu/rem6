@@ -1565,6 +1565,17 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
     assert!(!scheduler_send.has_data_cache_parallel_work());
     assert!(scheduler_send.has_full_system_parallel_scheduler_work());
 
+    let scheduler_epoch_counts =
+        WorkloadParallelExecutionSummary::default().with_scheduler_counts(3, 2, 0, 0);
+    assert!(scheduler_epoch_counts.has_parallel_scheduler_work());
+    assert!(scheduler_epoch_counts.has_full_system_parallel_scheduler_work());
+
+    let data_cache_epoch_counts = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_counts(0, 3, 0, 0, 0)
+        .with_data_cache_parallel_empty_epoch_count(1);
+    assert!(data_cache_epoch_counts.has_data_cache_parallel_work());
+    assert!(data_cache_epoch_counts.has_full_system_parallel_scheduler_work());
+
     let data_cache_frontier = WorkloadParallelExecutionSummary::default()
         .with_data_cache_parallel_scheduler_frontiers(
             [PartitionFrontier::new(

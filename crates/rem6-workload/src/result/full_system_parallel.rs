@@ -638,6 +638,8 @@ impl WorkloadParallelExecutionSummary {
 
     pub fn has_parallel_scheduler_work(&self) -> bool {
         self.active_scheduler_partition_count() != 0
+            || self.scheduler_epoch_count != 0
+            || self.scheduler_empty_epoch_count != 0
             || self.scheduler_dispatch_count != 0
             || self.scheduler_batch_count != 0
             || self.total_parallel_scheduler_workers != 0
@@ -652,6 +654,8 @@ impl WorkloadParallelExecutionSummary {
     pub fn has_data_cache_parallel_work(&self) -> bool {
         self.data_cache_parallel_run_count != 0
             || self.active_data_cache_parallel_scheduler_partition_count() != 0
+            || self.data_cache_parallel_scheduler_epoch_count != 0
+            || self.data_cache_parallel_scheduler_empty_epoch_count != 0
             || self.data_cache_parallel_scheduler_dispatch_count != 0
             || self.data_cache_parallel_scheduler_total_workers != 0
             || self.data_cache_parallel_scheduler_max_workers != 0
