@@ -1828,6 +1828,29 @@ fn workload_result_batch_count_uses_merged_worker_bucket_evidence() {
 }
 
 #[test]
+fn workload_result_total_workers_use_merged_worker_bucket_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache, dma], 3),
+        ])
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 5),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_worker_counts(),
+        vec![
+            WorkloadParallelBatchWorkerCount::new(2, 5),
+            WorkloadParallelBatchWorkerCount::new(3, 3),
+        ],
+    );
+    assert_eq!(summary.full_system_parallel_scheduler_total_workers(), 19);
+}
+
+#[test]
 fn workload_result_dispatch_count_uses_full_system_streak_evidence() {
     let cpu = PartitionId::new(1);
     let cache = PartitionId::new(2);
