@@ -45,7 +45,8 @@ isolated bugs:
   covers full-system batch worker-tick buckets, thresholded batch tick
   activity, thresholded batch worker-ticks, and longest minimum-worker tick
   streaks recorded through explicit merged summaries, along with exact
-  full-system partition-set batch counts and same-partition-set streak counts.
+  full-system partition-set batch counts, same-partition-set streak counts, and
+  explicit full-system scheduler dispatch counts.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -404,6 +405,10 @@ Implementation evidence on 2026-05-26:
 - Workload scheduler-progress replay now validates scoped raw batch timeline
   records before deriving dispatch counts from batch summaries, so scheduler
   liveness contracts cannot pass through malformed batch windows.
+- Workload full-system scheduler-progress replay also checks explicit merged
+  dispatch counts against scoped CPU, data-cache, GPU DMA, and accelerator DMA
+  lower-bound dispatch evidence. A global scheduler summary can merge epoch
+  accounting without under-reporting worker-owned dispatch progress.
 - Workload scheduler progress, idle, and frontier replay now reject scheduler
   summaries whose empty-epoch count exceeds the total epoch count before
   applying liveness, idle, or frontier thresholds.
@@ -688,11 +693,13 @@ Implementation evidence on 2026-05-26:
 - Workload full-system scheduler-count reporting now accepts explicit merged
   epoch, empty-epoch, and dispatch counts. A global scheduler can report its
   aggregate progress and idle counts directly instead of forcing replay to sum
-  scoped scheduler counters that may describe concurrent global epochs.
+  scoped scheduler counters that may describe concurrent global epochs, while
+  dispatch reporting preserves scoped lower-bound work evidence.
 - Workload full-system scheduler-count validation now checks explicit merged
-  epoch and empty-epoch counts directly before replay accepts idle or progress
-  contracts. A dirty merged full-system summary can no longer hide behind
-  individually valid scoped scheduler summaries.
+  epoch and empty-epoch counts directly and rejects explicit dispatch counts
+  weaker than scoped dispatch lower bounds before replay accepts idle or
+  progress contracts. A dirty merged full-system summary can no longer hide
+  behind individually valid scoped scheduler summaries.
 - Workload full-system frontier reporting now accepts explicit merged
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and

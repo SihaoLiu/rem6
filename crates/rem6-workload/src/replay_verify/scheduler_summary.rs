@@ -24,6 +24,33 @@ pub(crate) fn validate_scheduler_scope_summary(
     }
 }
 
+pub(crate) fn validate_full_system_scheduler_progress_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    scope: WorkloadParallelSchedulerScope,
+    minimum_epoch_count: usize,
+) -> Result<(), WorkloadError> {
+    if scope != WorkloadParallelSchedulerScope::FullSystem
+        || !summary.has_explicit_full_system_parallel_scheduler_counts()
+    {
+        return Ok(());
+    }
+    let minimum_dispatch_count =
+        summary.full_system_parallel_scheduler_dispatch_count_lower_bound();
+    let actual_dispatch_count = summary.raw_full_system_parallel_scheduler_dispatch_count();
+    if actual_dispatch_count < minimum_dispatch_count {
+        return Err(
+            WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+                scope: WorkloadParallelSchedulerScope::FullSystem,
+                minimum_epoch_count,
+                actual_epoch_count: summary.raw_full_system_parallel_scheduler_epoch_count(),
+                minimum_dispatch_count,
+                actual_dispatch_count,
+            },
+        );
+    }
+    Ok(())
+}
+
 fn validate_scheduler_counts(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelSchedulerScope,

@@ -57,7 +57,9 @@ pub(crate) use remote_traffic::{
     verify_expected_parallel_remote_flow_timings, verify_expected_parallel_remote_flows,
     verify_expected_parallel_remote_sends, verify_expected_parallel_remote_traffic_consistency,
 };
-use scheduler_summary::validate_scheduler_scope_summary;
+use scheduler_summary::{
+    validate_full_system_scheduler_progress_evidence, validate_scheduler_scope_summary,
+};
 
 const PARALLEL_REMOTE_FLOW_SCOPES: [WorkloadParallelRemoteFlowScope; 6] = [
     WorkloadParallelRemoteFlowScope::Scheduler,
@@ -976,6 +978,11 @@ pub(crate) fn verify_expected_parallel_scheduler_progress(
     for expected in expected_progress {
         validate_scheduler_scope_summary(summary, expected.scope())?;
         validate_scheduler_scope_batch_timeline_evidence(summary, expected.scope())?;
+        validate_full_system_scheduler_progress_evidence(
+            summary,
+            expected.scope(),
+            expected.minimum_epoch_count(),
+        )?;
         let (actual_epoch_count, actual_dispatch_count) = expected.actual_counts(summary);
         if actual_epoch_count < expected.minimum_epoch_count()
             || actual_dispatch_count < expected.minimum_dispatch_count()

@@ -224,24 +224,53 @@ fn workload_replay_plan_uses_explicit_full_system_scheduler_counts() {
         .add_expected_parallel_scheduler_progress(expected_progress(
             WorkloadParallelRemoteFlowScope::FullSystem,
             5,
-            12,
+            18,
         ))
         .unwrap();
     let summary = WorkloadParallelExecutionSummary::default()
         .with_scheduler_counts(4, 3, 10, 4)
         .with_data_cache_parallel_counts(1, 3, 7, 3, 2)
         .with_data_cache_parallel_empty_epoch_count(2)
-        .with_full_system_parallel_scheduler_counts(5, 1, 12);
+        .with_full_system_parallel_scheduler_counts(5, 1, 18);
 
     assert_eq!(summary.full_system_parallel_scheduler_epoch_count(), 5);
     assert_eq!(
         summary.full_system_parallel_scheduler_empty_epoch_count(),
         1,
     );
-    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 12);
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 18);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_scheduler_dispatch_count() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            12,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(4, 0, 10, 4)
+        .with_data_cache_parallel_counts(1, 3, 7, 3, 2)
+        .with_full_system_parallel_scheduler_counts(5, 1, 12);
+
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(summary.clone());
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            minimum_epoch_count: 0,
+            actual_epoch_count: 5,
+            minimum_dispatch_count: 17,
+            actual_dispatch_count: 12,
+        },
+    );
+    assert_eq!(summary.full_system_parallel_scheduler_dispatch_count(), 17);
 }
 
 #[test]

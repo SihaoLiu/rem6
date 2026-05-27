@@ -87,13 +87,21 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
-        if self.has_full_system_parallel_scheduler_counts {
-            return self.full_system_parallel_scheduler_dispatch_count;
+        let dispatch_count_lower_bound =
+            self.full_system_parallel_scheduler_dispatch_count_lower_bound();
+        if self.has_explicit_full_system_parallel_scheduler_counts() {
+            self.full_system_parallel_scheduler_dispatch_count
+                .max(dispatch_count_lower_bound)
+        } else {
+            dispatch_count_lower_bound
         }
+    }
+
+    pub(crate) fn full_system_parallel_scheduler_dispatch_count_lower_bound(&self) -> usize {
         let scoped_dispatch_count = self.scheduler_dispatch_count()
             + self.data_cache_parallel_scheduler_dispatch_count()
             + self.dma_scheduler_dispatch_count();
-        let counts = self.preferred_full_system_parallel_scheduler_batch_worker_counts();
+        let counts = self.full_system_parallel_scheduler_batch_worker_counts();
         scoped_dispatch_count.max(total_parallel_batch_worker_count(&counts))
     }
 
@@ -112,6 +120,18 @@ impl WorkloadParallelExecutionSummary {
 
     pub(crate) const fn raw_full_system_parallel_scheduler_partition_count(&self) -> usize {
         self.active_full_system_parallel_scheduler_partition_count
+    }
+
+    pub(crate) const fn has_explicit_full_system_parallel_scheduler_counts(&self) -> bool {
+        self.has_full_system_parallel_scheduler_counts
+    }
+
+    pub(crate) const fn raw_full_system_parallel_scheduler_epoch_count(&self) -> usize {
+        self.full_system_parallel_scheduler_epoch_count
+    }
+
+    pub(crate) const fn raw_full_system_parallel_scheduler_dispatch_count(&self) -> usize {
+        self.full_system_parallel_scheduler_dispatch_count
     }
 
     pub(crate) fn full_system_parallel_scheduler_active_partition_count_lower_bound(
