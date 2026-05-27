@@ -217,6 +217,12 @@ impl WorkloadParallelExecutionSummary {
                 self.validate_parallel_diagnostic_scope_summary(
                     WorkloadParallelDiagnosticScope::Dma,
                 )?;
+                let scoped_wait_for_counts = self.scoped_full_system_wait_for_edge_kind_counts();
+                validate_wait_for_edge_kind_count_merge_summary(
+                    scope,
+                    &self.full_system_wait_for_edge_kind_counts,
+                    &scoped_wait_for_counts,
+                )?;
                 validate_deadlock_merge_summary(
                     scope,
                     self.merged_full_system_deadlock_diagnostic_count,
@@ -450,6 +456,14 @@ impl WorkloadParallelExecutionSummary {
                 .max(wait_for_target_node_window_count_sum(
                     &self.dram_wait_for_target_node_windows,
                 ));
+        self
+    }
+
+    pub fn with_full_system_wait_for_edge_kind_counts(
+        mut self,
+        counts: impl IntoIterator<Item = (WaitForEdgeKind, usize)>,
+    ) -> Self {
+        self.full_system_wait_for_edge_kind_counts = collect_wait_for_edge_kind_counts(counts);
         self
     }
 
@@ -1030,27 +1044,41 @@ impl WorkloadParallelExecutionSummary {
             || self.resource_wait_for_edge_count() != 0
     }
 
-    pub fn full_system_wait_for_edge_count(&self) -> usize {
-        self.resource_wait_for_edge_count()
-            + self.data_cache_wait_for_edge_count()
-            + self.compute_wait_for_edge_count()
-            + self.dma_wait_for_edge_count()
-    }
-
-    pub fn full_system_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+    fn scoped_full_system_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        let resource_counts = self.resource_wait_for_edge_kind_counts();
+        let compute_counts = self.compute_wait_for_edge_kind_counts();
+        let dma_counts = self.dma_wait_for_edge_kind_counts();
         merge_wait_for_edge_kind_counts([
-            &self.resource_wait_for_edge_kind_counts(),
+            &resource_counts,
             self.data_cache_wait_for_edge_kind_counts(),
-            &self.compute_wait_for_edge_kind_counts(),
-            &self.dma_wait_for_edge_kind_counts(),
+            &compute_counts,
+            &dma_counts,
         ])
     }
 
+    pub fn full_system_wait_for_edge_count(&self) -> usize {
+        let scoped_edge_count = self.resource_wait_for_edge_count()
+            + self.data_cache_wait_for_edge_count()
+            + self.compute_wait_for_edge_count()
+            + self.dma_wait_for_edge_count();
+        scoped_edge_count.max(wait_for_edge_kind_count_sum(
+            &self.full_system_wait_for_edge_kind_counts(),
+        ))
+    }
+
+    pub fn full_system_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
+        let mut counts = self.scoped_full_system_wait_for_edge_kind_counts();
+        for (kind, count) in &self.full_system_wait_for_edge_kind_counts {
+            counts
+                .entry(*kind)
+                .and_modify(|stored| *stored = (*stored).max(*count))
+                .or_insert(*count);
+        }
+        counts
+    }
+
     pub fn full_system_wait_for_edge_count_by_kind(&self, kind: WaitForEdgeKind) -> usize {
-        self.resource_wait_for_edge_count_by_kind(kind)
-            + self.data_cache_wait_for_edge_count_by_kind(kind)
-            + self.compute_wait_for_edge_count_by_kind(kind)
-            + self.dma_wait_for_edge_count_by_kind(kind)
+        wait_for_edge_kind_count(&self.full_system_wait_for_edge_kind_counts(), kind)
     }
 
     pub fn full_system_wait_for_edge_kind_windows(&self) -> Vec<WorkloadWaitForEdgeKindWindow> {
@@ -1349,6 +1377,29 @@ fn validate_wait_for_edge_kind_window_summary(
                 edge_kind_count,
                 window_edge_count: window.edge_count(),
             });
+        }
+    }
+    Ok(())
+}
+
+fn validate_wait_for_edge_kind_count_merge_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    merged: &BTreeMap<WaitForEdgeKind, usize>,
+    scoped: &BTreeMap<WaitForEdgeKind, usize>,
+) -> Result<(), WorkloadError> {
+    for (kind, scoped_edge_count) in scoped {
+        let Some(merged_edge_count) = merged.get(kind).copied() else {
+            continue;
+        };
+        if merged_edge_count < *scoped_edge_count {
+            return Err(
+                WorkloadError::InvalidParallelWaitForEdgeKindCountMergeSummary {
+                    scope,
+                    kind: *kind,
+                    merged_edge_count,
+                    scoped_edge_count: *scoped_edge_count,
+                },
+            );
         }
     }
     Ok(())

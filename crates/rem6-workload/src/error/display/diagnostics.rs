@@ -62,6 +62,16 @@ pub(super) fn format_diagnostic_error(
             "invalid {} wait-for edge kind {kind:?} summary: kind count {edge_kind_count} is below exact window count {window_edge_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelWaitForEdgeKindCountMergeSummary {
+            scope,
+            kind,
+            merged_edge_count,
+            scoped_edge_count,
+        } => write!(
+            formatter,
+            "invalid {} wait-for edge kind {kind:?} merge summary: merged edge count {merged_edge_count} is below scoped edge count {scoped_edge_count}",
+            scope.as_str()
+        ),
         WorkloadError::InvalidParallelDeadlockMergeSummary {
             scope,
             merged_diagnostic_count,

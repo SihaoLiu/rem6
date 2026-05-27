@@ -412,6 +412,11 @@ Implementation evidence on 2026-05-26:
   without weakening same-kind aggregate counts. Adding exact tick-window
   evidence therefore preserves earlier typed wait-for totals instead of
   replacing them with a narrower diagnostic view.
+- Workload full-system wait-for edge-kind reporting now accepts explicit
+  merged full-system counts from a global scheduler while preserving scoped
+  resource, data-cache, compute, and DMA counts as lower bounds. A merged
+  full-system count that is weaker than same-kind scoped evidence is rejected
+  before replay applies manifest diagnostic expectations.
 - Workload clean parallel diagnostic replay now applies declared livelock
   transition thresholds to raw scoped progress-free transition records. A
   result with no materialized livelock diagnostic record is still rejected when

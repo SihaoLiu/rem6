@@ -291,6 +291,7 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
     data_cache_wait_for_blocked_node_windows: Vec<WorkloadWaitForBlockedNodeWindow>,
     data_cache_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
+    full_system_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,
