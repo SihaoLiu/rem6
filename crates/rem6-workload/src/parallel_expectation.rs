@@ -363,9 +363,7 @@ impl WorkloadExpectedResourceActivity {
                 summary.active_dram_resource_count(),
             ),
             WorkloadResourceActivityScope::Resource => (
-                summary
-                    .fabric_transfer_count()
-                    .saturating_add(summary.dram_operation_count()),
+                summary.resource_activity_count(),
                 summary.active_resource_count(),
             ),
         }

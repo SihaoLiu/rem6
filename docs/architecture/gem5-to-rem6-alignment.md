@@ -498,6 +498,10 @@ Implementation evidence on 2026-05-26:
   diagnostic, and wait-target evidence when explicit active lane or target
   aggregates are absent. Coarse summaries therefore cannot fail active-resource
   contracts merely because the producer omitted a redundant active-count field.
+- Workload aggregate resource activity contracts now use the same resource
+  activity count as workload summaries, including fabric and DRAM wait-for
+  diagnostics. Dirty resource queues therefore cannot be visible to summary
+  APIs while being ignored by manifest-declared aggregate resource minima.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence

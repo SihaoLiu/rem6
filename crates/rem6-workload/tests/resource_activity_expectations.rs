@@ -245,6 +245,25 @@ fn workload_replay_plan_infers_active_resources_from_operation_evidence() {
 }
 
 #[test]
+fn workload_replay_plan_counts_resource_wait_diagnostics_as_resource_activity() {
+    let plan = replay_plan()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Resource,
+            3,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default().with_resource_diagnostics(3, 0, 0, 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    let summary = result.parallel_execution_summary().unwrap();
+    assert_eq!(summary.resource_activity_count(), 3);
+    assert_eq!(summary.active_resource_count(), 1);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_resource_activity() {
     let zero = WorkloadExpectedResourceActivity::new(WorkloadResourceActivityScope::Resource, 0, 0)
         .unwrap_err();
