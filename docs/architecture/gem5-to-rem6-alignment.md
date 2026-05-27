@@ -628,6 +628,12 @@ Implementation evidence on 2026-05-26:
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same
   full-system partition coverage that replay contracts use for set minima.
+- Workload full-system batch worker-count replay now rejects explicit merged
+  worker-count buckets that are below scoped CPU, data-cache, GPU DMA, or
+  accelerator DMA bucket lower bounds for the same worker count. Exact
+  full-system bucket contracts therefore cannot pass only because reporting
+  getters take the strongest scoped bucket after a weak global bucket is
+  present.
 - Workload full-system active-partition replay now rejects explicit merged
   active-partition counts that are below scoped activity, batch-set,
   batch-streak, per-partition activity, or remote-traffic lower-bound evidence.

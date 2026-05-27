@@ -12,6 +12,7 @@ use crate::{
 };
 
 mod batch_timeline;
+mod batch_worker_count;
 mod frontier;
 mod partition_activity;
 mod remote_traffic;
@@ -25,6 +26,7 @@ use batch_timeline::{
 pub(crate) use batch_timeline::{
     validate_partition_scope_batch_timeline_evidence, validate_worker_scope_batch_timeline_evidence,
 };
+pub(crate) use batch_worker_count::validate_worker_scope_batch_worker_count_evidence;
 pub(crate) use frontier::verify_expected_parallel_frontiers;
 pub(crate) use partition_activity::{
     validate_partition_scope_activity_evidence, validate_partition_scope_count_evidence,
@@ -1024,6 +1026,11 @@ pub(crate) fn verify_expected_parallel_batch_worker_buckets(
 
     for expected in expected_buckets {
         validate_worker_scope_batch_timeline_evidence(summary, expected.scope())?;
+        validate_worker_scope_batch_worker_count_evidence(
+            summary,
+            expected.scope(),
+            expected.worker_count(),
+        )?;
         let actual_batch_count = expected.actual_batch_count(summary);
         if actual_batch_count < expected.minimum_batch_count() {
             return Err(

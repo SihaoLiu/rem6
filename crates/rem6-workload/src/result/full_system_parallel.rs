@@ -194,6 +194,14 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_worker_counts(
         &self,
     ) -> Vec<WorkloadParallelBatchWorkerCount> {
+        let scoped_counts = self.scoped_full_system_parallel_scheduler_batch_worker_counts();
+        let full_system_counts = self.explicit_full_system_parallel_scheduler_batch_worker_counts();
+        collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
+    }
+
+    pub(crate) fn scoped_full_system_parallel_scheduler_batch_worker_counts(
+        &self,
+    ) -> Vec<WorkloadParallelBatchWorkerCount> {
         let scheduler_counts = collect_strongest_parallel_batch_worker_counts(
             self.parallel_scheduler_batch_worker_counts.iter().copied(),
             collect_strongest_parallel_batch_worker_counts(
@@ -227,14 +235,12 @@ impl WorkloadParallelExecutionSummary {
                 collect_parallel_batch_worker_counts_from_streaks(&dma_partition_streaks),
             ),
         );
-        let scoped_counts = collect_parallel_batch_worker_counts(
+        collect_parallel_batch_worker_counts(
             scheduler_counts
                 .into_iter()
                 .chain(data_cache_counts)
                 .chain(dma_counts),
-        );
-        let full_system_counts = self.explicit_full_system_parallel_scheduler_batch_worker_counts();
-        collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts)
+        )
     }
 
     pub fn full_system_parallel_scheduler_batch_count_at_or_above(
@@ -638,7 +644,7 @@ impl WorkloadParallelExecutionSummary {
                 .any(is_parallel_remote_send_evidence)
     }
 
-    fn explicit_full_system_parallel_scheduler_batch_worker_counts(
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_worker_counts(
         &self,
     ) -> Vec<WorkloadParallelBatchWorkerCount> {
         collect_strongest_parallel_batch_worker_counts(

@@ -288,6 +288,41 @@ fn workload_replay_plan_checks_dma_scheduler_batch_worker_expectations_directly(
 }
 
 #[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_batch_worker_bucket() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(expected_bucket(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            3,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_worker_counts([WorkloadParallelBatchWorkerCount::new(2, 2)])
+        .with_data_cache_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 1),
+        ])
+        .with_full_system_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 1),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_count_for_worker_count(2),
+        3,
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ParallelBatchWorkerCountBelowMinimum {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            worker_count: 2,
+            minimum_batch_count: 3,
+            actual_batch_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_buckets() {
     let plan = replay_plan()
         .add_expected_parallel_batch_worker_bucket(expected_bucket(
