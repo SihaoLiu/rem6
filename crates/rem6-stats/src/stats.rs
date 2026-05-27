@@ -866,6 +866,35 @@ impl StatDumpRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StatHistoryRecord {
+    Dump(StatDumpRecord),
+    Reset(StatsResetRecord),
+}
+
+impl StatHistoryRecord {
+    pub const fn tick(&self) -> Tick {
+        match self {
+            Self::Dump(record) => record.tick(),
+            Self::Reset(record) => record.tick(),
+        }
+    }
+
+    pub const fn epoch(&self) -> u64 {
+        match self {
+            Self::Dump(record) => record.epoch(),
+            Self::Reset(record) => record.epoch(),
+        }
+    }
+
+    pub const fn reset_tick(&self) -> Tick {
+        match self {
+            Self::Dump(record) => record.reset_tick(),
+            Self::Reset(record) => record.tick(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsResetRecord {
     tick: Tick,
     epoch: u64,

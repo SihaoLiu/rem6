@@ -2,9 +2,9 @@ use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
     StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
-    StatGroupDescriptor, StatGroupId, StatId, StatPath, StatPathError, StatSample, StatScope,
-    StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
-    StatsResetRecord,
+    StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath, StatPathError,
+    StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError,
+    StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -843,6 +843,10 @@ fn stats_registry_records_typed_reset_history() {
         },
     );
     assert_eq!(stats.reset_records(), std::slice::from_ref(&first_reset));
+    assert_eq!(
+        stats.history_records(),
+        [StatHistoryRecord::Reset(first_reset.clone())].as_slice(),
+    );
 
     let second_reset = stats.reset(25);
     assert_eq!(
@@ -856,11 +860,40 @@ fn stats_registry_records_typed_reset_history() {
 }
 
 #[test]
+fn stats_registry_records_interleaved_typed_history() {
+    let mut stats = StatsRegistry::new();
+    let cycles = stats.register_counter("cpu0.cycles", "cycles").unwrap();
+
+    stats.increment(cycles, 8).unwrap();
+    let first_dump = stats.dump(10);
+    stats.increment(cycles, 4).unwrap();
+    let reset = stats.reset(12);
+    stats.increment(cycles, 3).unwrap();
+    let second_dump = stats.dump(14);
+
+    assert_eq!(
+        stats.history_records(),
+        [
+            StatHistoryRecord::Dump(first_dump.clone()),
+            StatHistoryRecord::Reset(reset.clone()),
+            StatHistoryRecord::Dump(second_dump.clone()),
+        ]
+        .as_slice(),
+    );
+    assert_eq!(stats.history_records()[0].tick(), 10);
+    assert_eq!(stats.history_records()[1].tick(), 12);
+    assert_eq!(stats.history_records()[1].epoch(), 1);
+    assert_eq!(stats.history_records()[2].reset_tick(), 12);
+    assert_eq!(stats.dump_records(), [first_dump, second_dump].as_slice());
+    assert_eq!(stats.reset_records(), std::slice::from_ref(&reset));
+}
+
+#[test]
 fn stats_registry_rejects_dump_before_reset_without_recording_history() {
     let mut stats = StatsRegistry::new();
     let insts = stats.register_counter("cpu0.cycles", "cycles").unwrap();
     stats.increment(insts, 7).unwrap();
-    stats.reset(50);
+    let reset = stats.reset(50);
 
     assert_eq!(
         stats.try_dump(49).unwrap_err(),
@@ -870,10 +903,22 @@ fn stats_registry_rejects_dump_before_reset_without_recording_history() {
         },
     );
     assert!(stats.dump_records().is_empty());
+    assert_eq!(
+        stats.history_records(),
+        [StatHistoryRecord::Reset(reset.clone())].as_slice(),
+    );
 
     let valid_dump = stats.dump(50);
     assert_eq!(valid_dump.id(), StatDumpId::new(0));
-    assert_eq!(stats.dump_records(), &[valid_dump]);
+    assert_eq!(stats.dump_records(), std::slice::from_ref(&valid_dump));
+    assert_eq!(
+        stats.history_records(),
+        [
+            StatHistoryRecord::Reset(reset),
+            StatHistoryRecord::Dump(valid_dump),
+        ]
+        .as_slice(),
+    );
 }
 
 #[test]

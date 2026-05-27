@@ -4,8 +4,9 @@ use rem6_kernel::Tick;
 
 use crate::error::StatsError;
 use crate::stats::{
-    StatDescription, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId, StatId,
-    StatPath, StatSample, StatScope, StatSnapshot, StatUnit, StatsResetRecord,
+    StatDescription, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId,
+    StatHistoryRecord, StatId, StatPath, StatSample, StatScope, StatSnapshot, StatUnit,
+    StatsResetRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +23,7 @@ pub struct StatsRegistry {
     counters: BTreeMap<StatId, u64>,
     dump_records: Vec<StatDumpRecord>,
     reset_records: Vec<StatsResetRecord>,
+    history_records: Vec<StatHistoryRecord>,
 }
 
 impl StatsRegistry {
@@ -39,6 +41,7 @@ impl StatsRegistry {
             counters: BTreeMap::new(),
             dump_records: Vec::new(),
             reset_records: Vec::new(),
+            history_records: Vec::new(),
         }
     }
 
@@ -334,6 +337,8 @@ impl StatsRegistry {
             .ok_or(StatsError::DumpSequenceOverflow)?;
         let record = StatDumpRecord::new(id, snapshot);
         self.dump_records.push(record.clone());
+        self.history_records
+            .push(StatHistoryRecord::Dump(record.clone()));
         Ok(record)
     }
 
@@ -343,6 +348,10 @@ impl StatsRegistry {
 
     pub fn reset_records(&self) -> &[StatsResetRecord] {
         &self.reset_records
+    }
+
+    pub fn history_records(&self) -> &[StatHistoryRecord] {
+        &self.history_records
     }
 
     pub fn reset(&mut self, tick: Tick) -> StatsResetRecord {
@@ -367,6 +376,8 @@ impl StatsRegistry {
         }
         let record = StatsResetRecord::new(tick, self.epoch, previous_values);
         self.reset_records.push(record.clone());
+        self.history_records
+            .push(StatHistoryRecord::Reset(record.clone()));
         Ok(record)
     }
 }
