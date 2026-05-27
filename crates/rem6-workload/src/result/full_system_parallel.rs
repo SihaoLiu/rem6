@@ -628,6 +628,7 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .full_system_parallel_scheduler_partition_activities
                 .is_empty()
+            || self.has_full_system_progress_transitions()
             || self.has_full_system_parallel_scheduler_remote_flows()
             || self.has_full_system_parallel_scheduler_remote_sends()
             || self.has_full_system_parallel_scheduler_frontiers()
@@ -647,6 +648,7 @@ impl WorkloadParallelExecutionSummary {
             || !self.parallel_scheduler_batch_worker_counts.is_empty()
             || !self.parallel_scheduler_batch_partition_sets.is_empty()
             || !self.parallel_scheduler_batch_partition_streaks.is_empty()
+            || self.has_parallel_scheduler_progress_transitions()
             || self.has_parallel_scheduler_remote_sends()
             || self.has_parallel_scheduler_frontiers()
     }
@@ -668,6 +670,7 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .data_cache_parallel_scheduler_batch_partition_streaks
                 .is_empty()
+            || self.has_data_cache_parallel_scheduler_progress_transitions()
             || self.has_data_cache_parallel_scheduler_remote_sends()
             || self.has_data_cache_parallel_scheduler_frontiers()
     }

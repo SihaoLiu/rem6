@@ -1576,6 +1576,39 @@ fn workload_result_marks_typed_parallel_evidence_as_work() {
     assert!(data_cache_epoch_counts.has_data_cache_parallel_work());
     assert!(data_cache_epoch_counts.has_full_system_parallel_scheduler_work());
 
+    let transition_subject = wait_subject("scheduler-retry-loop");
+    let scheduler_transitions = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_progress_transitions([progress_transition(
+            0,
+            transition_subject.clone(),
+            LivelockTransitionKind::ProtocolRetry,
+            7,
+            0,
+        )]);
+    assert!(scheduler_transitions.has_parallel_scheduler_work());
+    assert!(scheduler_transitions.has_full_system_parallel_scheduler_work());
+
+    let data_cache_transitions = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_progress_transitions([progress_transition(
+            1,
+            transition_subject.clone(),
+            LivelockTransitionKind::QueueRotation,
+            9,
+            0,
+        )]);
+    assert!(data_cache_transitions.has_data_cache_parallel_work());
+    assert!(data_cache_transitions.has_full_system_parallel_scheduler_work());
+
+    let full_system_transitions = WorkloadParallelExecutionSummary::default()
+        .with_full_system_progress_transitions([progress_transition(
+            2,
+            transition_subject,
+            LivelockTransitionKind::SchedulerEpoch,
+            11,
+            0,
+        )]);
+    assert!(full_system_transitions.has_full_system_parallel_scheduler_work());
+
     let data_cache_frontier = WorkloadParallelExecutionSummary::default()
         .with_data_cache_parallel_scheduler_frontiers(
             [PartitionFrontier::new(

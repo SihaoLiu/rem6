@@ -470,6 +470,10 @@ Implementation evidence on 2026-05-26:
   data-cache scheduler epoch or empty-epoch counts as work evidence. Idle-only
   scheduler summaries therefore remain visible to scoped and full-system
   presence APIs instead of existing only as raw count queries.
+- Workload scheduler-work presence checks now treat scoped and explicit
+  full-system progress-transition records as work evidence. Retry-loop and
+  progress-free transition records therefore stay visible at the same presence
+  boundary used by summary and replay diagnostics.
 - Workload full-system batch partition-set summaries now keep the strongest
   per-set evidence between scoped partition-set histograms and explicit
   full-system partition streaks. Reporting APIs therefore expose the same
