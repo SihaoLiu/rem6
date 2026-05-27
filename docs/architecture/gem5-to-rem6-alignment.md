@@ -41,7 +41,10 @@ isolated bugs:
   worker-count summary is explicitly present, replay verification also rejects
   thresholded batch-activity totals that are weaker than the same-scope CPU,
   cache, GPU DMA, and accelerator DMA lower-bound evidence, so a hand-written
-  aggregate cannot hide available parallelism.
+  aggregate cannot hide available parallelism. The same lower-bound rule now
+  covers full-system batch worker-tick buckets, thresholded batch tick
+  activity, thresholded batch worker-ticks, and longest minimum-worker tick
+  streaks recorded through explicit merged summaries.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -1172,7 +1175,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   partition-set, streak, or multi-worker per-partition evidence, minimum multi-worker batch activity
   derived from the strongest available worker-count, exact partition-set, or streak
   evidence with explicit full-system threshold totals checked against scoped
-  lower bounds, exact batch partition-set activity derived from exact histograms or streak counts,
+  lower bounds, minimum-worker duration-weighted tick and worker-tick activity
+  with explicit full-system summaries checked against scoped lower bounds,
+  exact batch partition-set activity derived from exact histograms or streak counts,
   sustained same-batch partition-set streak activity, minimum active partition
   counts derived from aggregate, exact partition-set, streak, activity,
   dedicated GPU or accelerator DMA timeline scopes, remote-send, or

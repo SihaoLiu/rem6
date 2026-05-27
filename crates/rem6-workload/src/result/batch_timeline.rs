@@ -341,17 +341,7 @@ impl WorkloadParallelExecutionSummary {
         if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
             return self.full_system_parallel_scheduler_batch_timeline.clone();
         }
-        collect_parallel_batch_timeline(
-            self.parallel_scheduler_batch_timeline
-                .iter()
-                .cloned()
-                .chain(
-                    self.data_cache_parallel_scheduler_batch_timeline
-                        .iter()
-                        .cloned(),
-                )
-                .chain(self.dma_scheduler_batch_timeline()),
-        )
+        self.scoped_full_system_parallel_scheduler_batch_timeline()
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_timeline(
@@ -390,14 +380,28 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_batch_worker_count_tick_summaries(
         &self,
     ) -> Vec<(usize, Tick)> {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        collect_strongest_batch_worker_count_tick_summaries(
+            &self.explicit_full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
+            &self.scoped_full_system_parallel_scheduler_batch_worker_count_tick_summaries(),
+        )
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        collect_strongest_batch_worker_count_tick_summaries(
+            &self.full_system_parallel_scheduler_batch_worker_count_ticks,
+            &collect_parallel_batch_worker_count_tick_summaries(
+                &self.full_system_parallel_scheduler_batch_timeline,
+            ),
+        )
+    }
+
+    pub(crate) fn scoped_full_system_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        let timeline = self.scoped_full_system_parallel_scheduler_batch_timeline();
         let mut summaries = collect_parallel_batch_worker_count_tick_summaries(&timeline);
-        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
-            return collect_strongest_batch_worker_count_tick_summaries(
-                &self.full_system_parallel_scheduler_batch_worker_count_ticks,
-                &collect_batch_worker_count_tick_summaries(summaries),
-            );
-        }
         if !has_parallel_batch_timeline_evidence(&self.gpu_dma_scheduler_batch_timeline) {
             summaries.extend(
                 self.gpu_dma_scheduler_batch_worker_count_tick_summaries()
@@ -412,19 +416,34 @@ impl WorkloadParallelExecutionSummary {
                     .copied(),
             );
         }
-        collect_strongest_batch_worker_count_tick_summaries(
-            &self.full_system_parallel_scheduler_batch_worker_count_ticks,
-            &collect_batch_worker_count_tick_summaries(summaries),
-        )
+        collect_batch_worker_count_tick_summaries(summaries)
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_tick_streak_summaries(
         &self,
     ) -> Vec<(usize, Tick)> {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
+        collect_strongest_batch_worker_tick_streak_summaries(
+            &self.explicit_full_system_parallel_scheduler_batch_worker_tick_streak_summaries(),
+            &self.scoped_full_system_parallel_scheduler_batch_worker_tick_streak_summaries(),
+        )
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_worker_tick_streak_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
         collect_strongest_batch_worker_tick_streak_summaries(
             &self.full_system_parallel_scheduler_batch_worker_tick_streaks,
-            &collect_parallel_batch_worker_tick_streak_summaries(&timeline),
+            &collect_parallel_batch_worker_tick_streak_summaries(
+                &self.full_system_parallel_scheduler_batch_timeline,
+            ),
+        )
+    }
+
+    pub(crate) fn scoped_full_system_parallel_scheduler_batch_worker_tick_streak_summaries(
+        &self,
+    ) -> Vec<(usize, Tick)> {
+        collect_parallel_batch_worker_tick_streak_summaries(
+            &self.scoped_full_system_parallel_scheduler_batch_timeline(),
         )
     }
 
@@ -629,6 +648,22 @@ impl WorkloadParallelExecutionSummary {
         !self
             .full_system_parallel_scheduler_batch_timeline
             .is_empty()
+    }
+
+    fn scoped_full_system_parallel_scheduler_batch_timeline(
+        &self,
+    ) -> Vec<WorkloadParallelBatchTimelineRecord> {
+        collect_parallel_batch_timeline(
+            self.parallel_scheduler_batch_timeline
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_batch_timeline
+                        .iter()
+                        .cloned(),
+                )
+                .chain(self.dma_scheduler_batch_timeline()),
+        )
     }
 
     fn has_explicit_full_system_parallel_scheduler_planned_batch_timeline(&self) -> bool {
