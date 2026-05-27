@@ -40,6 +40,7 @@ mod full_system_parallel;
 mod heterogeneous_activity;
 mod livelock_merge;
 mod progress;
+mod progress_dma;
 mod remote_endpoints;
 mod wait_for_diagnostics;
 mod wait_for_node_windows;

@@ -239,6 +239,127 @@ fn workload_result_queries_dma_scheduler_progress_transition_dimensions() {
 }
 
 #[test]
+fn workload_result_merges_dma_scheduler_progress_transition_dimensions() {
+    let gpu_dma_scheduler = subject("gpu-dma-scheduler");
+    let shared_dma_retry = subject("shared-dma-retry");
+    let accelerator_dma_scheduler = subject("accelerator-dma-scheduler");
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_progress_transitions([
+            transition(
+                9,
+                gpu_dma_scheduler.clone(),
+                LivelockTransitionKind::MessageRetry,
+                19,
+                0,
+            ),
+            transition(
+                10,
+                shared_dma_retry.clone(),
+                LivelockTransitionKind::QueueRotation,
+                23,
+                0,
+            ),
+        ])
+        .with_accelerator_dma_scheduler_progress_transitions([
+            transition(
+                11,
+                accelerator_dma_scheduler.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                31,
+                0,
+            ),
+            transition(
+                10,
+                shared_dma_retry.clone(),
+                LivelockTransitionKind::QueueRotation,
+                37,
+                1,
+            ),
+        ]);
+
+    assert_eq!(
+        summary.dma_scheduler_progress_transitions(),
+        vec![
+            transition(
+                9,
+                gpu_dma_scheduler.clone(),
+                LivelockTransitionKind::MessageRetry,
+                19,
+                0,
+            ),
+            transition(
+                10,
+                shared_dma_retry.clone(),
+                LivelockTransitionKind::QueueRotation,
+                23,
+                0,
+            ),
+            transition(
+                10,
+                shared_dma_retry.clone(),
+                LivelockTransitionKind::QueueRotation,
+                37,
+                1,
+            ),
+            transition(
+                11,
+                accelerator_dma_scheduler.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                31,
+                0,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.dma_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::QueueRotation,
+        ),
+        2,
+    );
+    assert_eq!(
+        summary.dma_scheduler_progress_transition_tick_window_by_kind(
+            LivelockTransitionKind::QueueRotation,
+        ),
+        Some((23, 37)),
+    );
+    assert_eq!(
+        summary.dma_scheduler_progress_transition_records_by_subject(&shared_dma_retry),
+        vec![
+            transition(
+                10,
+                shared_dma_retry.clone(),
+                LivelockTransitionKind::QueueRotation,
+                23,
+                0,
+            ),
+            transition(
+                10,
+                shared_dma_retry.clone(),
+                LivelockTransitionKind::QueueRotation,
+                37,
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.dma_scheduler_progress_transition_partition_summaries(),
+        vec![
+            (PartitionId::new(9), 1, 19, 19),
+            (PartitionId::new(10), 2, 23, 37),
+            (PartitionId::new(11), 1, 31, 31),
+        ],
+    );
+    assert_eq!(
+        summary.dma_scheduler_progress_transition_subjects(),
+        vec![
+            accelerator_dma_scheduler,
+            gpu_dma_scheduler,
+            shared_dma_retry,
+        ],
+    );
+}
+
+#[test]
 fn workload_result_reports_parallel_progress_transition_tick_windows() {
     let cpu_scheduler = subject("cpu-scheduler");
     let shared_retry = subject("shared-retry-loop");

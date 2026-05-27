@@ -480,6 +480,10 @@ Implementation evidence on 2026-05-26:
   CPU and data-cache scheduler transitions. Heterogeneous scheduler debugging
   can therefore inspect device-side progress evidence without falling back to
   full-system aggregates.
+- Workload DMA scheduler progress-transition reporting also exposes a combined
+  GPU-DMA-plus-accelerator-DMA view with the same dimension queries, matching
+  the existing combined DMA batch, frontier, and remote-traffic evidence
+  surfaces.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
