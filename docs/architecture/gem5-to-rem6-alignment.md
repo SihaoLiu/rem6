@@ -486,6 +486,10 @@ Implementation evidence on 2026-05-26:
   epoch, empty-epoch, and dispatch counts. A global scheduler can report its
   aggregate progress and idle counts directly instead of forcing replay to sum
   scoped scheduler counters that may describe concurrent global epochs.
+- Workload full-system scheduler-count validation now checks explicit merged
+  epoch and empty-epoch counts directly before replay accepts idle or progress
+  contracts. A dirty merged full-system summary can no longer hide behind
+  individually valid scoped scheduler summaries.
 - Workload full-system frontier reporting now accepts explicit merged
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and

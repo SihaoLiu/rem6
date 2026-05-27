@@ -12,6 +12,7 @@ pub(crate) fn validate_scheduler_scope_summary(
             validate_scheduler_counts(summary, scope)
         }
         WorkloadParallelSchedulerScope::FullSystem => {
+            validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::FullSystem)?;
             validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::Scheduler)?;
             validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::DataCacheScheduler)?;
             validate_scheduler_counts(summary, WorkloadParallelSchedulerScope::GpuDmaScheduler)?;

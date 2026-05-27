@@ -256,6 +256,36 @@ fn workload_replay_plan_rejects_inconsistent_scheduler_idle_summary() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_inconsistent_explicit_full_system_scheduler_idle_summary() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_idle_bound(idle_bound(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            10,
+        ))
+        .unwrap();
+
+    let invalid_summary = WorkloadParallelExecutionSummary::default()
+        .with_scheduler_counts(2, 1, 1, 1)
+        .with_data_cache_parallel_counts(1, 1, 1, 1, 1)
+        .with_full_system_parallel_scheduler_counts(2, 3, 1);
+    assert_eq!(
+        invalid_summary.full_system_parallel_scheduler_empty_epoch_count(),
+        3,
+    );
+    let invalid = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(invalid_summary);
+
+    assert_eq!(
+        plan.verify_result(&invalid).unwrap_err(),
+        WorkloadError::InvalidParallelSchedulerSummary {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            epoch_count: 2,
+            empty_epoch_count: 3,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_duplicate_parallel_scheduler_idle_bounds() {
     let duplicate = replay_plan()
         .add_expected_parallel_scheduler_idle_bound(idle_bound(
