@@ -100,6 +100,15 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_full_system_parallel_scheduler_batch_worker_count_tick_summaries(
+        mut self,
+        summaries: impl IntoIterator<Item = (usize, Tick)>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_batch_worker_count_ticks =
+            collect_batch_worker_count_tick_summaries(summaries);
+        self
+    }
+
     pub fn parallel_scheduler_batch_timeline(&self) -> &[WorkloadParallelBatchTimelineRecord] {
         &self.parallel_scheduler_batch_timeline
     }
@@ -249,7 +258,10 @@ impl WorkloadParallelExecutionSummary {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         let mut summaries = collect_parallel_batch_worker_count_tick_summaries(&timeline);
         if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
-            return collect_batch_worker_count_tick_summaries(summaries);
+            return collect_strongest_batch_worker_count_tick_summaries(
+                &self.full_system_parallel_scheduler_batch_worker_count_ticks,
+                &collect_batch_worker_count_tick_summaries(summaries),
+            );
         }
         if !has_parallel_batch_timeline_evidence(&self.gpu_dma_scheduler_batch_timeline) {
             summaries.extend(
@@ -265,7 +277,10 @@ impl WorkloadParallelExecutionSummary {
                     .copied(),
             );
         }
-        collect_batch_worker_count_tick_summaries(summaries)
+        collect_strongest_batch_worker_count_tick_summaries(
+            &self.full_system_parallel_scheduler_batch_worker_count_ticks,
+            &collect_batch_worker_count_tick_summaries(summaries),
+        )
     }
 
     pub fn parallel_scheduler_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
@@ -405,47 +420,29 @@ impl WorkloadParallelExecutionSummary {
         &self,
         worker_count: usize,
     ) -> Tick {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
-            return parallel_batch_ticks_for_worker_count(&timeline, worker_count);
-        }
-        parallel_batch_ticks_for_worker_count(&timeline, worker_count)
-            .saturating_add(self.dma_scheduler_fallback_batch_ticks_for_worker_count(worker_count))
+        let summaries = self.full_system_parallel_scheduler_batch_worker_count_tick_summaries();
+        batch_ticks_for_worker_count(&summaries, worker_count)
     }
 
     pub fn full_system_parallel_scheduler_batch_ticks_at_or_above(
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
-            return parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count);
-        }
-        parallel_batch_ticks_at_or_above(&timeline, minimum_worker_count).saturating_add(
-            self.dma_scheduler_fallback_batch_ticks_at_or_above(minimum_worker_count),
-        )
+        let summaries = self.full_system_parallel_scheduler_batch_worker_count_tick_summaries();
+        batch_ticks_at_or_above(&summaries, minimum_worker_count)
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks(&self) -> Tick {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
-            return parallel_batch_worker_ticks(&timeline);
-        }
-        parallel_batch_worker_ticks(&timeline)
-            .saturating_add(self.dma_scheduler_fallback_batch_worker_ticks())
+        let summaries = self.full_system_parallel_scheduler_batch_worker_count_tick_summaries();
+        batch_worker_ticks(&summaries)
     }
 
     pub fn full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
         &self,
         minimum_worker_count: usize,
     ) -> Tick {
-        let timeline = self.full_system_parallel_scheduler_batch_timeline();
-        if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
-            return parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count);
-        }
-        parallel_batch_worker_ticks_at_or_above(&timeline, minimum_worker_count).saturating_add(
-            self.dma_scheduler_fallback_batch_worker_ticks_at_or_above(minimum_worker_count),
-        )
+        let summaries = self.full_system_parallel_scheduler_batch_worker_count_tick_summaries();
+        batch_worker_ticks_at_or_above(&summaries, minimum_worker_count)
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -454,59 +451,6 @@ impl WorkloadParallelExecutionSummary {
     ) -> Tick {
         let timeline = self.full_system_parallel_scheduler_batch_timeline();
         parallel_batch_longest_tick_streak_at_or_above(&timeline, minimum_worker_count)
-    }
-
-    fn dma_scheduler_fallback_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
-        fallback_batch_ticks_for_worker_count(
-            &self.gpu_dma_scheduler_batch_timeline,
-            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
-            worker_count,
-        )
-        .saturating_add(fallback_batch_ticks_for_worker_count(
-            &self.accelerator_dma_scheduler_batch_timeline,
-            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
-            worker_count,
-        ))
-    }
-
-    fn dma_scheduler_fallback_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
-        fallback_batch_ticks_at_or_above(
-            &self.gpu_dma_scheduler_batch_timeline,
-            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
-            minimum_worker_count,
-        )
-        .saturating_add(fallback_batch_ticks_at_or_above(
-            &self.accelerator_dma_scheduler_batch_timeline,
-            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
-            minimum_worker_count,
-        ))
-    }
-
-    fn dma_scheduler_fallback_batch_worker_ticks(&self) -> Tick {
-        fallback_batch_worker_ticks(
-            &self.gpu_dma_scheduler_batch_timeline,
-            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
-        )
-        .saturating_add(fallback_batch_worker_ticks(
-            &self.accelerator_dma_scheduler_batch_timeline,
-            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
-        ))
-    }
-
-    fn dma_scheduler_fallback_batch_worker_ticks_at_or_above(
-        &self,
-        minimum_worker_count: usize,
-    ) -> Tick {
-        fallback_batch_worker_ticks_at_or_above(
-            &self.gpu_dma_scheduler_batch_timeline,
-            self.gpu_dma_scheduler_batch_worker_count_tick_summaries(),
-            minimum_worker_count,
-        )
-        .saturating_add(fallback_batch_worker_ticks_at_or_above(
-            &self.accelerator_dma_scheduler_batch_timeline,
-            self.accelerator_dma_scheduler_batch_worker_count_tick_summaries(),
-            minimum_worker_count,
-        ))
     }
 
     fn has_explicit_full_system_parallel_scheduler_batch_timeline(&self) -> bool {
@@ -536,7 +480,7 @@ fn collect_batch_worker_count_tick_summaries(
 ) -> Vec<(usize, Tick)> {
     let mut by_worker_count = BTreeMap::<usize, Tick>::new();
     for (worker_count, ticks) in summaries {
-        if worker_count == 0 || ticks == 0 {
+        if worker_count < 2 || ticks == 0 {
             continue;
         }
         let stored = by_worker_count.entry(worker_count).or_default();
@@ -545,14 +489,24 @@ fn collect_batch_worker_count_tick_summaries(
     by_worker_count.into_iter().collect()
 }
 
-fn fallback_batch_ticks_for_worker_count(
-    timeline: &[WorkloadParallelBatchTimelineRecord],
-    summaries: &[(usize, Tick)],
-    worker_count: usize,
-) -> Tick {
-    if has_parallel_batch_timeline_evidence(timeline) {
-        return 0;
+fn collect_strongest_batch_worker_count_tick_summaries(
+    left: &[(usize, Tick)],
+    right: &[(usize, Tick)],
+) -> Vec<(usize, Tick)> {
+    let mut by_worker_count = BTreeMap::<usize, Tick>::new();
+    for (worker_count, ticks) in left.iter().chain(right.iter()).copied() {
+        if worker_count < 2 || ticks == 0 {
+            continue;
+        }
+        by_worker_count
+            .entry(worker_count)
+            .and_modify(|stored| *stored = (*stored).max(ticks))
+            .or_insert(ticks);
     }
+    by_worker_count.into_iter().collect()
+}
+
+fn batch_ticks_for_worker_count(summaries: &[(usize, Tick)], worker_count: usize) -> Tick {
     summaries
         .iter()
         .filter(|(count, _)| *count == worker_count)
@@ -560,14 +514,7 @@ fn fallback_batch_ticks_for_worker_count(
         .fold(0, Tick::saturating_add)
 }
 
-fn fallback_batch_ticks_at_or_above(
-    timeline: &[WorkloadParallelBatchTimelineRecord],
-    summaries: &[(usize, Tick)],
-    minimum_worker_count: usize,
-) -> Tick {
-    if has_parallel_batch_timeline_evidence(timeline) {
-        return 0;
-    }
+fn batch_ticks_at_or_above(summaries: &[(usize, Tick)], minimum_worker_count: usize) -> Tick {
     summaries
         .iter()
         .filter(|(count, _)| *count >= minimum_worker_count)
@@ -575,27 +522,17 @@ fn fallback_batch_ticks_at_or_above(
         .fold(0, Tick::saturating_add)
 }
 
-fn fallback_batch_worker_ticks(
-    timeline: &[WorkloadParallelBatchTimelineRecord],
-    summaries: &[(usize, Tick)],
-) -> Tick {
-    if has_parallel_batch_timeline_evidence(timeline) {
-        return 0;
-    }
+fn batch_worker_ticks(summaries: &[(usize, Tick)]) -> Tick {
     summaries
         .iter()
         .map(|(count, ticks)| ticks.saturating_mul(*count as Tick))
         .fold(0, Tick::saturating_add)
 }
 
-fn fallback_batch_worker_ticks_at_or_above(
-    timeline: &[WorkloadParallelBatchTimelineRecord],
+fn batch_worker_ticks_at_or_above(
     summaries: &[(usize, Tick)],
     minimum_worker_count: usize,
 ) -> Tick {
-    if has_parallel_batch_timeline_evidence(timeline) {
-        return 0;
-    }
     summaries
         .iter()
         .filter(|(count, _)| *count >= minimum_worker_count)
