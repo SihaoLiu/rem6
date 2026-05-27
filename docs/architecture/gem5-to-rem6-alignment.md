@@ -518,6 +518,11 @@ Implementation evidence on 2026-05-26:
   records. This turns the deterministic pre-dispatch parallel plan into a
   first-class replay contract, so actual execution records alone cannot satisfy
   planned multicore occupancy requirements.
+- Planned scheduler timelines also feed workload max-worker, total-worker,
+  batch-worker bucket, duration, sustained-window, and worker-tick contracts.
+  These planned scopes let manifests require natural multicore occupancy from
+  the pre-dispatch plan, rather than accepting post-execution serial or
+  wakeup-mutated evidence as a substitute.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

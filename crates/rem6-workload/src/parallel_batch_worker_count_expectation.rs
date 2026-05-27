@@ -1,8 +1,12 @@
 use rem6_kernel::Tick;
 
 use crate::{
-    WorkloadError, WorkloadManifest, WorkloadManifestBuilder, WorkloadParallelExecutionSummary,
-    WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
+    parallel_batch::{
+        parallel_batch_longest_tick_streak_at_or_above, parallel_batch_ticks_at_or_above,
+        parallel_batch_ticks_for_worker_count, parallel_batch_worker_ticks_at_or_above,
+    },
+    WorkloadError, WorkloadManifest, WorkloadManifestBuilder, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelExecutionSummary, WorkloadParallelRemoteFlowScope, WorkloadReplayPlan,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -13,6 +17,9 @@ pub enum WorkloadParallelBatchWorkerScope {
     AcceleratorDmaScheduler,
     DmaScheduler,
     FullSystem,
+    PlannedScheduler,
+    PlannedDataCacheScheduler,
+    PlannedFullSystem,
 }
 
 impl WorkloadParallelBatchWorkerScope {
@@ -24,6 +31,9 @@ impl WorkloadParallelBatchWorkerScope {
             Self::AcceleratorDmaScheduler => "accelerator-dma-scheduler",
             Self::DmaScheduler => "dma-scheduler",
             Self::FullSystem => "full-system",
+            Self::PlannedScheduler => "planned-scheduler",
+            Self::PlannedDataCacheScheduler => "planned-data-cache-scheduler",
+            Self::PlannedFullSystem => "planned-full-system",
         }
     }
 
@@ -35,6 +45,9 @@ impl WorkloadParallelBatchWorkerScope {
             Self::AcceleratorDmaScheduler => 3,
             Self::DmaScheduler => 4,
             Self::FullSystem => 5,
+            Self::PlannedScheduler => 6,
+            Self::PlannedDataCacheScheduler => 7,
+            Self::PlannedFullSystem => 8,
         }
     }
 }
@@ -121,6 +134,11 @@ impl WorkloadExpectedParallelBatchWorkerBucket {
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_for_worker_count(self.worker_count),
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                planned_batch_count_for_worker_count(self.scope, summary, self.worker_count)
+            }
         }
     }
 }
@@ -194,6 +212,12 @@ impl WorkloadExpectedParallelBatchWorkerTickBucket {
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_ticks_for_worker_count(self.worker_count),
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                let timeline = planned_batch_timeline(self.scope, summary);
+                parallel_batch_ticks_for_worker_count(&timeline, self.worker_count)
+            }
         }
     }
 }
@@ -267,6 +291,12 @@ impl WorkloadExpectedParallelBatchWorkerTickActivity {
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_ticks_at_or_above(self.minimum_worker_count),
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                let timeline = planned_batch_timeline(self.scope, summary);
+                parallel_batch_ticks_at_or_above(&timeline, self.minimum_worker_count)
+            }
         }
     }
 }
@@ -347,6 +377,12 @@ impl WorkloadExpectedParallelBatchWorkerTickStreak {
                 .full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
                     self.minimum_worker_count,
                 ),
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                let timeline = planned_batch_timeline(self.scope, summary);
+                parallel_batch_longest_tick_streak_at_or_above(&timeline, self.minimum_worker_count)
+            }
         }
     }
 }
@@ -441,7 +477,43 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
                 .full_system_parallel_scheduler_batch_worker_ticks_at_or_above(
                     self.minimum_worker_count,
                 ),
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                let timeline = planned_batch_timeline(self.scope, summary);
+                parallel_batch_worker_ticks_at_or_above(&timeline, self.minimum_worker_count)
+            }
         }
+    }
+}
+
+fn planned_batch_count_for_worker_count(
+    scope: WorkloadParallelBatchWorkerScope,
+    summary: &WorkloadParallelExecutionSummary,
+    worker_count: usize,
+) -> usize {
+    planned_batch_timeline(scope, summary)
+        .into_iter()
+        .filter(WorkloadParallelBatchTimelineRecord::is_parallel_evidence)
+        .filter(|record| record.worker_count() == worker_count)
+        .count()
+}
+
+fn planned_batch_timeline(
+    scope: WorkloadParallelBatchWorkerScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<WorkloadParallelBatchTimelineRecord> {
+    match scope {
+        WorkloadParallelBatchWorkerScope::PlannedScheduler => {
+            summary.parallel_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => summary
+            .data_cache_parallel_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+            summary.full_system_parallel_scheduler_planned_batch_timeline()
+        }
+        _ => Vec::new(),
     }
 }
 

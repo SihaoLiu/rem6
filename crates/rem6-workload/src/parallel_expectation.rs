@@ -7,8 +7,8 @@ use rem6_kernel::{
 
 use crate::{
     result_collect::collect_conservative_partition_frontiers, WorkloadDataCacheProtocol,
-    WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelExecutionSummary,
+    WorkloadError, WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
 };
 
 mod fabric_hop_activity;
@@ -1179,6 +1179,11 @@ impl WorkloadExpectedParallelWorkerUse {
             WorkloadParallelBatchWorkerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_max_workers()
             }
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                planned_batch_max_workers(self.scope, summary)
+            }
         }
     }
 }
@@ -1239,6 +1244,11 @@ impl WorkloadExpectedParallelWorkerActivity {
             WorkloadParallelBatchWorkerScope::DmaScheduler => summary.dma_scheduler_total_workers(),
             WorkloadParallelBatchWorkerScope::FullSystem => {
                 summary.full_system_parallel_scheduler_total_workers()
+            }
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                planned_batch_total_workers(self.scope, summary)
             }
         }
     }
@@ -1439,8 +1449,66 @@ impl WorkloadExpectedParallelBatchActivity {
             }
             WorkloadParallelBatchWorkerScope::FullSystem => summary
                 .full_system_parallel_scheduler_batch_count_at_or_above(self.minimum_worker_count),
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                planned_batch_count_at_or_above(self.scope, summary, self.minimum_worker_count)
+            }
         }
     }
+}
+
+fn planned_batch_worker_timeline(
+    scope: WorkloadParallelBatchWorkerScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<WorkloadParallelBatchTimelineRecord> {
+    match scope {
+        WorkloadParallelBatchWorkerScope::PlannedScheduler => {
+            summary.parallel_scheduler_planned_batch_timeline().to_vec()
+        }
+        WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => summary
+            .data_cache_parallel_scheduler_planned_batch_timeline()
+            .to_vec(),
+        WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+            summary.full_system_parallel_scheduler_planned_batch_timeline()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn planned_batch_max_workers(
+    scope: WorkloadParallelBatchWorkerScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> usize {
+    planned_batch_worker_timeline(scope, summary)
+        .into_iter()
+        .filter(WorkloadParallelBatchTimelineRecord::is_parallel_evidence)
+        .map(|record| record.worker_count())
+        .max()
+        .unwrap_or(0)
+}
+
+fn planned_batch_total_workers(
+    scope: WorkloadParallelBatchWorkerScope,
+    summary: &WorkloadParallelExecutionSummary,
+) -> usize {
+    planned_batch_worker_timeline(scope, summary)
+        .into_iter()
+        .filter(WorkloadParallelBatchTimelineRecord::is_parallel_evidence)
+        .map(|record| record.worker_count())
+        .sum()
+}
+
+fn planned_batch_count_at_or_above(
+    scope: WorkloadParallelBatchWorkerScope,
+    summary: &WorkloadParallelExecutionSummary,
+    minimum_worker_count: usize,
+) -> usize {
+    planned_batch_worker_timeline(scope, summary)
+        .into_iter()
+        .filter(WorkloadParallelBatchTimelineRecord::is_parallel_evidence)
+        .filter(|record| record.worker_count() >= minimum_worker_count)
+        .count()
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

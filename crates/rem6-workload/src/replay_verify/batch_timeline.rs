@@ -77,6 +77,15 @@ fn batch_timeline_scope_for_worker_scope(
         WorkloadParallelBatchWorkerScope::FullSystem => {
             WorkloadParallelBatchTimelineScope::FullSystem
         }
+        WorkloadParallelBatchWorkerScope::PlannedScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedScheduler
+        }
+        WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => {
+            WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler
+        }
+        WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+            WorkloadParallelBatchTimelineScope::PlannedFullSystem
+        }
     }
 }
 
