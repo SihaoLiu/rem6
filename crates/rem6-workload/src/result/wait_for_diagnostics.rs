@@ -4,6 +4,10 @@ use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{WorkloadError, WorkloadParallelDiagnosticScope};
 
+use super::livelock_merge::{
+    merge_livelock_transition_kind_window_summaries, validate_livelock_subject_merge_summary,
+    validate_livelock_transition_kind_merge_summary,
+};
 pub(super) use super::wait_for_node_windows::{
     collect_wait_for_blocked_node_windows, collect_wait_for_target_node_windows,
     merge_wait_for_blocked_node_windows, merge_wait_for_blocked_node_windows_by_strongest,
@@ -169,19 +173,20 @@ impl WorkloadParallelExecutionSummary {
             return Ok(());
         }
 
+        let merged_subject_summaries = self.full_system_livelock_diagnostic_subject_summaries();
         let merged_evidence_count = livelock_summary_evidence_count(
             self.merged_full_system_livelock_diagnostic_count,
-            self.full_system_livelock_diagnostic_subject_summaries(),
+            merged_subject_summaries.clone(),
         );
         let scoped_subject_summaries = self
             .parallel_scheduler_livelock_diagnostic_subject_summaries()
             .into_iter()
             .chain(self.data_cache_parallel_scheduler_livelock_diagnostic_subject_summaries())
-            .collect();
+            .collect::<Vec<_>>();
         let scoped_evidence_count = livelock_summary_evidence_count(
             self.parallel_scheduler_livelock_diagnostic_count()
                 .saturating_add(self.data_cache_parallel_scheduler_livelock_diagnostic_count()),
-            scoped_subject_summaries,
+            scoped_subject_summaries.clone(),
         );
         if merged_evidence_count < scoped_evidence_count {
             return Err(WorkloadError::InvalidParallelLivelockMergeSummary {
@@ -190,6 +195,25 @@ impl WorkloadParallelExecutionSummary {
                 scoped_evidence_count,
             });
         }
+        validate_livelock_subject_merge_summary(
+            WorkloadParallelDiagnosticScope::FullSystem,
+            &merged_subject_summaries,
+            &scoped_subject_summaries,
+        )?;
+        let merged_transition_kind_summaries =
+            self.full_system_livelock_diagnostic_transition_kind_window_summaries();
+        let scoped_transition_kind_summaries = merge_livelock_transition_kind_window_summaries(
+            self.parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries()
+                .into_iter()
+                .chain(
+                    self.data_cache_parallel_scheduler_livelock_diagnostic_transition_kind_window_summaries(),
+                ),
+        );
+        validate_livelock_transition_kind_merge_summary(
+            WorkloadParallelDiagnosticScope::FullSystem,
+            &merged_transition_kind_summaries,
+            &scoped_transition_kind_summaries,
+        )?;
         Ok(())
     }
 

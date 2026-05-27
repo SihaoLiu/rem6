@@ -446,6 +446,17 @@ Implementation evidence on 2026-05-26:
   full-system diagnostic evidence that is weaker than the scheduler or
   data-cache scoped livelock evidence it replaces. Empty or under-covered
   merged full-system records can no longer hide dirty scoped diagnostics.
+- Workload full-system livelock merge validation also preserves scoped
+  diagnostic subjects. Explicit merged full-system records must retain each
+  dirty scoped subject's diagnostic count, transition count, and first/last
+  transition tick coverage before clean-diagnostic replay can use the merged
+  view, so a global scheduler cannot replace a real dirty subject with an
+  unrelated aggregate record.
+- Workload full-system livelock merge validation also preserves scoped
+  transition-kind evidence. Explicit merged full-system records must retain
+  each dirty scoped transition kind's diagnostic count, transition count, and
+  first/last transition tick coverage, so kind summaries and kind-filtered
+  queries cannot be weakened by a global scheduler aggregate.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

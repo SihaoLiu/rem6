@@ -150,6 +150,50 @@ pub(super) fn format_diagnostic_error(
             "invalid {} livelock merge summary: merged evidence count {merged_evidence_count} is below scoped evidence count {scoped_evidence_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelLivelockSubjectMergeSummary {
+            scope,
+            subject,
+            merged_diagnostic_count,
+            scoped_diagnostic_count,
+            merged_transition_count,
+            scoped_transition_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} livelock subject {subject} merge summary: merged diagnostics {merged_diagnostic_count} and transitions {merged_transition_count} from tick {} to {} are weaker than scoped diagnostics {scoped_diagnostic_count} and transitions {scoped_transition_count} from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str(),
+            merged_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            merged_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
+        WorkloadError::InvalidParallelLivelockTransitionKindMergeSummary {
+            scope,
+            kind,
+            merged_diagnostic_count,
+            scoped_diagnostic_count,
+            merged_transition_count,
+            scoped_transition_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} livelock transition kind {kind:?} merge summary: merged diagnostics {merged_diagnostic_count} and transitions {merged_transition_count} from tick {} to {} are weaker than scoped diagnostics {scoped_diagnostic_count} and transitions {scoped_transition_count} from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str(),
+            merged_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            merged_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
         WorkloadError::ExpectedParallelWaitForEdgeKindWindowMismatch {
             scope,
             kind,

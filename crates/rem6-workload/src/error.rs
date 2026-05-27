@@ -1,6 +1,6 @@
 use rem6_boot::BootError;
 use rem6_fabric::{FabricLinkId, QosPriority, QosRequestorId, VirtualNetworkId};
-use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{LivelockTransitionKind, Tick, WaitForEdgeKind, WaitForNode};
 use rem6_memory::MemoryError;
 
 use crate::{
@@ -1634,6 +1634,30 @@ pub enum WorkloadError {
         scope: WorkloadParallelDiagnosticScope,
         merged_evidence_count: u64,
         scoped_evidence_count: u64,
+    },
+    InvalidParallelLivelockSubjectMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        subject: WaitForNode,
+        merged_diagnostic_count: usize,
+        scoped_diagnostic_count: usize,
+        merged_transition_count: u64,
+        scoped_transition_count: u64,
+        merged_first_tick: Option<Tick>,
+        scoped_first_tick: Tick,
+        merged_last_tick: Option<Tick>,
+        scoped_last_tick: Tick,
+    },
+    InvalidParallelLivelockTransitionKindMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: LivelockTransitionKind,
+        merged_diagnostic_count: usize,
+        scoped_diagnostic_count: usize,
+        merged_transition_count: u64,
+        scoped_transition_count: u64,
+        merged_first_tick: Option<Tick>,
+        scoped_first_tick: Tick,
+        merged_last_tick: Option<Tick>,
+        scoped_last_tick: Tick,
     },
     ExpectedParallelWaitForEdgeKindWindowMismatch {
         scope: WorkloadParallelDiagnosticScope,

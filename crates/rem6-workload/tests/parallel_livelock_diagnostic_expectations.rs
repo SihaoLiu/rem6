@@ -680,6 +680,208 @@ fn workload_replay_plan_rejects_incomplete_full_system_livelock_merge() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_full_system_livelock_merge_missing_scoped_subject() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+    let scoped_subject = component("cpu-progress-loop");
+    let unrelated_subject = component("unrelated-progress-loop");
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            2,
+            [livelock_diagnostic(
+                scoped_subject.clone(),
+                2,
+                [
+                    (LivelockTransitionKind::ProtocolRetry, 0),
+                    (LivelockTransitionKind::ProtocolRetry, 4),
+                ],
+            )],
+        )
+        .with_full_system_livelock_diagnostic_records([livelock_diagnostic(
+            unrelated_subject,
+            2,
+            [
+                (LivelockTransitionKind::ProtocolRetry, 0),
+                (LivelockTransitionKind::ProtocolRetry, 4),
+            ],
+        )]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelLivelockSubjectMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            subject: scoped_subject,
+            merged_diagnostic_count: 0,
+            scoped_diagnostic_count: 1,
+            merged_transition_count: 0,
+            scoped_transition_count: 2,
+            merged_first_tick: None,
+            scoped_first_tick: 0,
+            merged_last_tick: None,
+            scoped_last_tick: 4,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_full_system_livelock_subject_window() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+    let subject = component("cpu-progress-loop");
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            3,
+            [livelock_diagnostic(
+                subject.clone(),
+                2,
+                [
+                    (LivelockTransitionKind::ProtocolRetry, 0),
+                    (LivelockTransitionKind::ProtocolRetry, 4),
+                ],
+            )],
+        )
+        .with_full_system_livelock_diagnostic_records([
+            livelock_diagnostic(
+                subject.clone(),
+                1,
+                [(LivelockTransitionKind::ProtocolRetry, 1)],
+            ),
+            livelock_diagnostic(
+                component("unrelated-progress-loop"),
+                1,
+                [(LivelockTransitionKind::MessageRetry, 9)],
+            ),
+        ]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelLivelockSubjectMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            subject,
+            merged_diagnostic_count: 1,
+            scoped_diagnostic_count: 1,
+            merged_transition_count: 1,
+            scoped_transition_count: 2,
+            merged_first_tick: Some(1),
+            scoped_first_tick: 0,
+            merged_last_tick: Some(1),
+            scoped_last_tick: 4,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_full_system_livelock_merge_missing_scoped_transition_kind() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+    let subject = component("cpu-progress-loop");
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            3,
+            [livelock_diagnostic(
+                subject.clone(),
+                2,
+                [
+                    (LivelockTransitionKind::ProtocolRetry, 0),
+                    (LivelockTransitionKind::ProtocolRetry, 4),
+                ],
+            )],
+        )
+        .with_full_system_livelock_diagnostic_records([livelock_diagnostic(
+            subject,
+            2,
+            [
+                (LivelockTransitionKind::MessageRetry, 0),
+                (LivelockTransitionKind::MessageRetry, 4),
+            ],
+        )]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelLivelockTransitionKindMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            kind: LivelockTransitionKind::ProtocolRetry,
+            merged_diagnostic_count: 0,
+            scoped_diagnostic_count: 1,
+            merged_transition_count: 0,
+            scoped_transition_count: 2,
+            merged_first_tick: None,
+            scoped_first_tick: 0,
+            merged_last_tick: None,
+            scoped_last_tick: 4,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_full_system_livelock_transition_kind_window() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+    let subject = component("cpu-progress-loop");
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_livelock_diagnostic_records(
+            3,
+            [livelock_diagnostic(
+                subject.clone(),
+                2,
+                [
+                    (LivelockTransitionKind::ProtocolRetry, 0),
+                    (LivelockTransitionKind::ProtocolRetry, 4),
+                ],
+            )],
+        )
+        .with_full_system_livelock_diagnostic_records([livelock_diagnostic(
+            subject,
+            3,
+            [
+                (LivelockTransitionKind::MessageRetry, 0),
+                (LivelockTransitionKind::ProtocolRetry, 1),
+                (LivelockTransitionKind::MessageRetry, 4),
+            ],
+        )]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelLivelockTransitionKindMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            kind: LivelockTransitionKind::ProtocolRetry,
+            merged_diagnostic_count: 1,
+            scoped_diagnostic_count: 1,
+            merged_transition_count: 1,
+            scoped_transition_count: 2,
+            merged_first_tick: Some(1),
+            scoped_first_tick: 0,
+            merged_last_tick: Some(1),
+            scoped_last_tick: 4,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_clean_livelock_threshold_breach_from_transitions() {
     let plan = replay_plan()
         .add_expected_clean_parallel_diagnostics(expected_clean_with_livelock_threshold(
