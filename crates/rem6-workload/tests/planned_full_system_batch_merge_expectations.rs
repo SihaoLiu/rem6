@@ -215,3 +215,41 @@ fn workload_replay_plan_rejects_weaker_planned_full_system_worker_bucket_merge()
         },
     );
 }
+
+#[test]
+fn workload_replay_plan_rejects_duplicate_planned_full_system_batch_records() {
+    let cpu = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(
+            WorkloadExpectedParallelBatchWorkerBucket::new(
+                WorkloadParallelBatchWorkerScope::PlannedFullSystem,
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([cpu.clone()])
+        .with_full_system_parallel_scheduler_planned_batch_timeline([cpu.clone(), cpu]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::PlannedFullSystem,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 0,
+            horizon: 4,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
+    );
+}

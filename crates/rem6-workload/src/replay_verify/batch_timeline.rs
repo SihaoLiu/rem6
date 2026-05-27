@@ -81,23 +81,32 @@ fn validate_batch_timeline_records_for_scope(
     summary: &WorkloadParallelExecutionSummary,
     timeline_scope: WorkloadParallelBatchTimelineScope,
 ) -> Result<(), WorkloadError> {
+    let mut seen = Vec::new();
     for record in actual_parallel_batch_timeline_records(timeline_scope, summary) {
-        if record.is_empty() {
-            return Err(WorkloadError::UnexpectedParallelBatchTimelineRecord {
-                scope: timeline_scope,
-                batch_scope: record.scope(),
-                start_tick: record.start_tick(),
-                horizon: record.horizon(),
-                partitions: record
-                    .partitions()
-                    .iter()
-                    .map(|partition| partition.index())
-                    .collect(),
-                worker_count: record.worker_count(),
-            });
+        if record.is_empty() || seen.iter().any(|seen_record| seen_record == &record) {
+            return Err(unexpected_batch_timeline_record(timeline_scope, &record));
         }
+        seen.push(record);
     }
     Ok(())
+}
+
+fn unexpected_batch_timeline_record(
+    timeline_scope: WorkloadParallelBatchTimelineScope,
+    record: &crate::WorkloadParallelBatchTimelineRecord,
+) -> WorkloadError {
+    WorkloadError::UnexpectedParallelBatchTimelineRecord {
+        scope: timeline_scope,
+        batch_scope: record.scope(),
+        start_tick: record.start_tick(),
+        horizon: record.horizon(),
+        partitions: record
+            .partitions()
+            .iter()
+            .map(|partition| partition.index())
+            .collect(),
+        worker_count: record.worker_count(),
+    }
 }
 
 fn batch_timeline_scope_for_worker_scope(

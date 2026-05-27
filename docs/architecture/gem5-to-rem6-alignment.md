@@ -536,6 +536,9 @@ Implementation evidence on 2026-05-26:
   accepts exact timeline or derived worker/partition contracts. A global
   pre-dispatch plan therefore cannot hide device-local planned occupancy behind
   a weaker merged timeline.
+- Batch-timeline evidence validation rejects duplicate records at the replay
+  boundary. Replaying the same pre-dispatch batch record twice can no longer
+  inflate planned full-system worker-bucket evidence.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
