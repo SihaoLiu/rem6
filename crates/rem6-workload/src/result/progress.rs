@@ -897,6 +897,18 @@ impl WorkloadParallelExecutionSummary {
         collect_parallel_progress_transitions(self.full_system_progress_transition_iter().cloned())
     }
 
+    pub(crate) fn raw_full_system_progress_transitions(
+        &self,
+    ) -> &[ParallelProgressTransitionRecord] {
+        &self.full_system_progress_transitions
+    }
+
+    pub(crate) fn scoped_full_system_progress_transitions(
+        &self,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_parallel_progress_transitions(self.scoped_progress_transition_iter().cloned())
+    }
+
     pub fn full_system_progress_transition_count(&self) -> usize {
         if !self.full_system_progress_transitions.is_empty() {
             self.full_system_progress_transitions.len()

@@ -1704,6 +1704,14 @@ pub enum WorkloadError {
         merged_transition_count: usize,
         scoped_transition_count: usize,
     },
+    InvalidParallelProgressTransitionRecordMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        partition: PartitionId,
+        subject: WaitForNode,
+        kind: LivelockTransitionKind,
+        tick: Tick,
+        order: u64,
+    },
     InvalidParallelProgressTransitionSubjectMergeSummary {
         scope: WorkloadParallelDiagnosticScope,
         subject: WaitForNode,

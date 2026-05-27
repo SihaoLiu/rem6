@@ -1203,6 +1203,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelLivelockSubjectMergeSummary { .. }
             | Self::InvalidParallelLivelockTransitionKindMergeSummary { .. }
             | Self::InvalidParallelProgressTransitionMergeSummary { .. }
+            | Self::InvalidParallelProgressTransitionRecordMergeSummary { .. }
             | Self::InvalidParallelProgressTransitionSubjectMergeSummary { .. }
             | Self::InvalidParallelProgressTransitionKindMergeSummary { .. }
             | Self::InvalidParallelProgressTransitionPartitionMergeSummary { .. }

@@ -5,7 +5,8 @@ use rem6_kernel::{
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelProgressTransition, WorkloadId,
-    WorkloadParallelExecutionSummary, WorkloadParallelProgressTransitionExpectationError,
+    WorkloadParallelDiagnosticScope, WorkloadParallelExecutionSummary,
+    WorkloadParallelProgressTransitionExpectationError,
     WorkloadParallelProgressTransitionExpectationFailure, WorkloadParallelRemoteFlowScope,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
@@ -269,6 +270,15 @@ fn workload_replay_plan_uses_explicit_full_system_progress_transitions() {
     let plan = replay_plan()
         .add_expected_parallel_progress_transition(expected_transition(
             WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            subject("cpu-scheduler"),
+            LivelockTransitionKind::SchedulerEpoch,
+            3,
+            0,
+        ))
+        .unwrap()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::FullSystem,
             6,
             global_subject,
             LivelockTransitionKind::QueueRotation,
@@ -278,22 +288,70 @@ fn workload_replay_plan_uses_explicit_full_system_progress_transitions() {
         .unwrap();
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_progress_transitions([scoped_transition.clone()])
-        .with_full_system_progress_transitions([full_system_transition.clone()]);
+        .with_full_system_progress_transitions([
+            scoped_transition.clone(),
+            full_system_transition.clone(),
+        ]);
 
     assert_eq!(
         summary.parallel_scheduler_progress_transitions(),
-        &[scoped_transition],
+        std::slice::from_ref(&scoped_transition),
     );
     assert_eq!(
         summary.full_system_progress_transitions(),
-        vec![full_system_transition],
+        vec![scoped_transition, full_system_transition],
     );
-    assert_eq!(summary.full_system_progress_transition_count(), 1);
+    assert_eq!(summary.full_system_progress_transition_count(), 2);
     assert!(summary.has_full_system_progress_transitions());
 
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_progress_transitions() {
+    let global_subject = subject("global-progress-loop");
+    let scoped_subject = subject("gpu-dma-progress-loop");
+    let plan = replay_plan()
+        .add_expected_parallel_progress_transition(expected_transition(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            6,
+            global_subject.clone(),
+            LivelockTransitionKind::QueueRotation,
+            21,
+            4,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_progress_transitions([actual_transition(
+            8,
+            scoped_subject,
+            LivelockTransitionKind::ProtocolRetry,
+            13,
+            0,
+        )])
+        .with_full_system_progress_transitions([actual_transition(
+            6,
+            global_subject,
+            LivelockTransitionKind::QueueRotation,
+            21,
+            4,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelProgressTransitionRecordMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            partition: PartitionId::new(8),
+            subject: subject("gpu-dma-progress-loop"),
+            kind: LivelockTransitionKind::ProtocolRetry,
+            tick: 13,
+            order: 0,
+        },
+    );
 }
 
 #[test]

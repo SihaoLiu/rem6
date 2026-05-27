@@ -154,6 +154,9 @@ pub(crate) fn verify_expected_parallel_progress_transitions(
         if expected_for_scope.is_empty() {
             continue;
         }
+        if scope == WorkloadParallelRemoteFlowScope::FullSystem {
+            validate_full_system_progress_transition_record_merge_summary(summary)?;
+        }
         let actual_for_scope = actual_parallel_progress_transitions_for_scope(summary, scope);
         if let Some(actual) =
             unexpected_parallel_progress_transition(&expected_for_scope, &actual_for_scope)
@@ -168,6 +171,32 @@ pub(crate) fn verify_expected_parallel_progress_transitions(
             )
             .to_error(WorkloadParallelProgressTransitionExpectationFailure::UnexpectedRecord));
         }
+    }
+    Ok(())
+}
+
+fn validate_full_system_progress_transition_record_merge_summary(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let explicit_transitions = summary.raw_full_system_progress_transitions();
+    if explicit_transitions.is_empty() {
+        return Ok(());
+    }
+
+    for scoped_transition in summary.scoped_full_system_progress_transitions() {
+        if explicit_transitions.contains(&scoped_transition) {
+            continue;
+        }
+        return Err(
+            WorkloadError::InvalidParallelProgressTransitionRecordMergeSummary {
+                scope: WorkloadParallelDiagnosticScope::FullSystem,
+                partition: scoped_transition.partition(),
+                subject: scoped_transition.subject().clone(),
+                kind: scoped_transition.kind(),
+                tick: scoped_transition.tick(),
+                order: scoped_transition.order(),
+            },
+        );
     }
     Ok(())
 }

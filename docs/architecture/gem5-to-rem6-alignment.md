@@ -655,6 +655,12 @@ Implementation evidence on 2026-05-26:
   merged full-system transition records. A global scheduler can report exact
   progress-free transition evidence directly without concatenating scoped
   exact-record streams into an already-merged full-system record set.
+- Workload full-system exact progress-transition validation now rejects
+  explicit full-system transition streams that omit scheduler, data-cache, GPU
+  DMA, or accelerator DMA scoped transition records. A global progress-free
+  transition stream therefore cannot drop subsystem livelock evidence while
+  exact full-system replay expectations still pass from a weaker merged record
+  set.
 - Workload full-system scheduler-count reporting now accepts explicit merged
   epoch, empty-epoch, and dispatch counts. A global scheduler can report its
   aggregate progress and idle counts directly instead of forcing replay to sum

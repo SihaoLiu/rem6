@@ -203,6 +203,19 @@ pub(super) fn format_diagnostic_error(
             "invalid {} progress-transition merge summary: merged transition count {merged_transition_count} is below scoped transition count {scoped_transition_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelProgressTransitionRecordMergeSummary {
+            scope,
+            partition,
+            subject,
+            kind,
+            tick,
+            order,
+        } => write!(
+            formatter,
+            "invalid {} progress-transition record merge summary: scoped {kind:?} transition for {subject} on partition {} at tick {tick} with order {order} is missing from explicit merged evidence",
+            scope.as_str(),
+            partition.index(),
+        ),
         WorkloadError::InvalidParallelProgressTransitionSubjectMergeSummary {
             scope,
             subject,
