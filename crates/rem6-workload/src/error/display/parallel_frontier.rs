@@ -80,6 +80,40 @@ pub(super) fn format_parallel_frontier_error(
                 stage.as_str()
             )
         }
+        WorkloadError::InvalidParallelFrontierMergeSummary {
+            scope,
+            stage,
+            partition,
+            merged_now,
+            scoped_now,
+            merged_safe_until,
+            scoped_safe_until,
+            merged_next_tick,
+            scoped_next_tick,
+            merged_pending_events,
+            scoped_pending_events,
+        } => write!(
+            formatter,
+            "invalid {} {} frontier merge summary on partition {partition}: merged now {}, safe-until {}, next tick {}, pending events {}; scoped now {scoped_now}, safe-until {scoped_safe_until}, next tick {}, pending events {scoped_pending_events}",
+            scope.as_str(),
+            stage.as_str(),
+            format_optional_tick(*merged_now),
+            format_optional_tick(*merged_safe_until),
+            format_optional_tick(*merged_next_tick),
+            format_optional_usize(*merged_pending_events),
+            format_optional_tick(*scoped_next_tick),
+        ),
         _ => unreachable!("parallel frontier display called for unrelated workload error"),
     }
+}
+
+fn format_optional_tick(tick: Option<u64>) -> String {
+    tick.map(|tick| tick.to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn format_optional_usize(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }

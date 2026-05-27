@@ -315,6 +315,47 @@ fn workload_replay_plan_uses_explicit_full_system_frontiers() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_frontiers() {
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            WorkloadParallelFrontierStage::Final,
+            4,
+            21,
+            29,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_frontiers(
+            [],
+            [PartitionFrontier::new(PartitionId::new(4), 21, 29, None, 0)],
+        )
+        .with_full_system_parallel_scheduler_frontiers(
+            [],
+            [PartitionFrontier::new(PartitionId::new(4), 30, 40, None, 0)],
+        );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelFrontierMergeSummary {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            stage: WorkloadParallelFrontierStage::Final,
+            partition: 4,
+            merged_now: Some(30),
+            scoped_now: 21,
+            merged_safe_until: Some(40),
+            scoped_safe_until: 29,
+            merged_next_tick: None,
+            scoped_next_tick: None,
+            merged_pending_events: Some(0),
+            scoped_pending_events: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_full_system_frontier_safety_window() {
     let plan = replay_plan()
         .add_expected_parallel_frontier(expected_frontier(

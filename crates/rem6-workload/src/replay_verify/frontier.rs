@@ -2,7 +2,8 @@ use rem6_kernel::PartitionFrontier;
 
 use super::scheduler_summary::validate_scheduler_scope_summary;
 use crate::{
-    WorkloadError, WorkloadParallelExecutionSummary, WorkloadParallelFrontierStage,
+    result_collect::collect_conservative_partition_frontiers, WorkloadError,
+    WorkloadParallelExecutionSummary, WorkloadParallelFrontierStage,
     WorkloadParallelSchedulerScope, WorkloadReplayPlan, WorkloadResult,
 };
 
@@ -72,8 +73,104 @@ fn validate_frontier_scope_summary(
             ] {
                 validate_frontiers(scope, stage, frontier_records(summary, scoped, stage))?;
             }
+            validate_full_system_frontier_merge_summary(summary, stage)?;
             Ok(())
         }
+    }
+}
+
+fn validate_full_system_frontier_merge_summary(
+    summary: &WorkloadParallelExecutionSummary,
+    stage: WorkloadParallelFrontierStage,
+) -> Result<(), WorkloadError> {
+    let explicit_frontiers =
+        frontier_records(summary, WorkloadParallelSchedulerScope::FullSystem, stage);
+    if explicit_frontiers.is_empty() {
+        return Ok(());
+    }
+
+    let explicit_frontiers = collect_conservative_partition_frontiers(explicit_frontiers);
+    let scoped_frontiers = scoped_full_system_frontier_records(summary, stage);
+    for scoped_frontier in scoped_frontiers {
+        let explicit_frontier = explicit_frontiers
+            .iter()
+            .copied()
+            .find(|frontier| frontier.partition() == scoped_frontier.partition());
+        if explicit_frontier
+            .is_some_and(|frontier| frontier_covers_scoped_frontier(frontier, scoped_frontier))
+        {
+            continue;
+        }
+        return Err(invalid_full_system_frontier_merge_error(
+            stage,
+            scoped_frontier,
+            explicit_frontier,
+        ));
+    }
+    Ok(())
+}
+
+fn scoped_full_system_frontier_records(
+    summary: &WorkloadParallelExecutionSummary,
+    stage: WorkloadParallelFrontierStage,
+) -> Vec<PartitionFrontier> {
+    collect_conservative_partition_frontiers(
+        frontier_records(summary, WorkloadParallelSchedulerScope::Scheduler, stage)
+            .into_iter()
+            .chain(frontier_records(
+                summary,
+                WorkloadParallelSchedulerScope::DataCacheScheduler,
+                stage,
+            ))
+            .chain(frontier_records(
+                summary,
+                WorkloadParallelSchedulerScope::DmaScheduler,
+                stage,
+            )),
+    )
+}
+
+fn frontier_covers_scoped_frontier(
+    merged_frontier: PartitionFrontier,
+    scoped_frontier: PartitionFrontier,
+) -> bool {
+    merged_frontier.now() <= scoped_frontier.now()
+        && merged_frontier.safe_until() <= scoped_frontier.safe_until()
+        && next_tick_covers_scoped_frontier(
+            merged_frontier.next_tick(),
+            scoped_frontier.next_tick(),
+        )
+        && merged_frontier.pending_events() >= scoped_frontier.pending_events()
+}
+
+fn next_tick_covers_scoped_frontier(
+    merged_next_tick: Option<u64>,
+    scoped_next_tick: Option<u64>,
+) -> bool {
+    match (merged_next_tick, scoped_next_tick) {
+        (_, None) => true,
+        (Some(merged_next_tick), Some(scoped_next_tick)) => merged_next_tick <= scoped_next_tick,
+        (None, Some(_)) => false,
+    }
+}
+
+fn invalid_full_system_frontier_merge_error(
+    stage: WorkloadParallelFrontierStage,
+    scoped_frontier: PartitionFrontier,
+    explicit_frontier: Option<PartitionFrontier>,
+) -> WorkloadError {
+    WorkloadError::InvalidParallelFrontierMergeSummary {
+        scope: WorkloadParallelSchedulerScope::FullSystem,
+        stage,
+        partition: scoped_frontier.partition().index(),
+        merged_now: explicit_frontier.map(|frontier| frontier.now()),
+        scoped_now: scoped_frontier.now(),
+        merged_safe_until: explicit_frontier.map(|frontier| frontier.safe_until()),
+        scoped_safe_until: scoped_frontier.safe_until(),
+        merged_next_tick: explicit_frontier.and_then(|frontier| frontier.next_tick()),
+        scoped_next_tick: scoped_frontier.next_tick(),
+        merged_pending_events: explicit_frontier.map(|frontier| frontier.pending_events()),
+        scoped_pending_events: scoped_frontier.pending_events(),
     }
 }
 

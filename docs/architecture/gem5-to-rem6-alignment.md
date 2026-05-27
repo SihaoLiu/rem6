@@ -673,6 +673,12 @@ Implementation evidence on 2026-05-26:
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and
   DMA frontiers remain conservative lower bounds for the same partition.
+- Workload full-system frontier merge validation now rejects explicit
+  full-system initial or final partition frontiers that are more optimistic
+  than scoped scheduler, data-cache, GPU DMA, or accelerator DMA frontiers by
+  now tick, safe-until tick, next pending tick, or pending-event count. A global
+  frontier summary therefore cannot hide an earlier scoped safe-time boundary
+  while replay contracts still pass through the conservative merged getter.
 - Workload full-system dispatch reporting now treats explicit full-system
   partition streaks as aggregate dispatch evidence, using them as a merged
   lower bound instead of adding them to scoped scheduler counts again.
