@@ -525,10 +525,11 @@ fn workload_result_records_parallel_execution_summary() {
         16,
     );
     assert!(summary.has_dram_qos_activity());
+    assert_eq!(summary.dram_operation_count(), summary.dram_command_count());
     assert_eq!(
         summary.resource_activity_count(),
         summary.fabric_transfer_count()
-            + summary.dram_access_count()
+            + summary.dram_operation_count()
             + summary.resource_wait_for_edge_count(),
     );
     assert!(summary.has_resource_activity());

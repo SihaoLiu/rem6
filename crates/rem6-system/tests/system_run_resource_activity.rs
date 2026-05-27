@@ -647,7 +647,7 @@ fn system_run_aggregates_fabric_wait_for_diagnostics() {
     assert!(run.fabric_deadlock_diagnostics().is_empty());
     assert_eq!(
         run.resource_activity_count(),
-        run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+        run.fabric_transfer_count() + run.dram_operation_count() + run.fabric_wait_for_edge_count(),
     );
 }
 
@@ -693,7 +693,7 @@ fn system_run_aggregates_dram_wait_for_diagnostics() {
     assert_eq!(
         run.resource_activity_count(),
         run.fabric_transfer_count()
-            + run.dram_access_count()
+            + run.dram_operation_count()
             + run.fabric_wait_for_edge_count()
             + run.dram_wait_for_edge_count(),
     );
@@ -1232,7 +1232,7 @@ fn topology_run_reports_fabric_and_dram_activity_for_fetch_window() {
     assert!(run.has_resource_activity());
     assert_eq!(
         run.resource_activity_count(),
-        run.fabric_transfer_count() + run.dram_access_count() + run.fabric_wait_for_edge_count(),
+        run.fabric_transfer_count() + run.dram_operation_count() + run.fabric_wait_for_edge_count(),
     );
 }
 
@@ -1307,7 +1307,7 @@ fn topology_run_reports_fabric_wait_for_for_contended_fetches() {
     assert_eq!(
         run.resource_activity_count(),
         run.fabric_transfer_count()
-            + run.dram_access_count()
+            + run.dram_operation_count()
             + run.fabric_wait_for_edge_count()
             + run.dram_wait_for_edge_count(),
     );

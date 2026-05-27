@@ -933,7 +933,9 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn resource_activity_count(&self) -> usize {
-        self.fabric_transfer_count + self.dram_access_count + self.resource_wait_for_edge_count()
+        self.fabric_transfer_count
+            .saturating_add(self.dram_operation_count())
+            .saturating_add(self.resource_wait_for_edge_count())
     }
 
     pub const fn has_fabric_activity(&self) -> bool {
@@ -943,6 +945,32 @@ impl WorkloadParallelExecutionSummary {
             || self.fabric_queue_delay_ticks != 0
             || self.fabric_max_queue_delay_ticks != 0
             || self.contended_fabric_lane_count != 0
+    }
+
+    pub fn dram_operation_count(&self) -> usize {
+        let qos_priority_access_count = self
+            .dram_qos_priority_summaries
+            .iter()
+            .fold(0usize, |count, summary| {
+                count.saturating_add(summary.access_count())
+            });
+        let qos_requestor_access_count = self
+            .dram_qos_requestor_summaries
+            .iter()
+            .fold(0usize, |count, summary| {
+                count.saturating_add(summary.access_count())
+            });
+
+        self.dram_access_count
+            .max(self.dram_read_count.saturating_add(self.dram_write_count))
+            .max(
+                self.dram_row_hit_count
+                    .saturating_add(self.dram_row_miss_count),
+            )
+            .max(self.dram_command_count)
+            .max(self.dram_qos_access_count)
+            .max(qos_priority_access_count)
+            .max(qos_requestor_access_count)
     }
 
     pub fn has_dram_qos_activity(&self) -> bool {

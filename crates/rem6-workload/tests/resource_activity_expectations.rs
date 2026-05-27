@@ -1,7 +1,9 @@
 use rem6_boot::BootImage;
+use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::Address;
 use rem6_workload::{
-    WorkloadError, WorkloadExpectedResourceActivity, WorkloadId, WorkloadParallelExecutionSummary,
+    WorkloadDramQosPrioritySummary, WorkloadDramQosRequestorSummary, WorkloadError,
+    WorkloadExpectedResourceActivity, WorkloadId, WorkloadParallelExecutionSummary,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResult,
 };
@@ -167,6 +169,45 @@ fn workload_replay_plan_rejects_missing_or_underactive_resource_activity() {
             actual_active_resource_count: 1,
         },
     );
+}
+
+#[test]
+fn workload_replay_plan_counts_dram_qos_breakdown_accesses_as_resource_activity() {
+    let plan = replay_plan()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Dram,
+            4,
+            0,
+        ))
+        .unwrap()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Resource,
+            4,
+            0,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default().with_dram_qos_activity(
+        0,
+        128,
+        0,
+        [WorkloadDramQosPrioritySummary::new(
+            QosPriority::new(2),
+            4,
+            128,
+        )],
+        [WorkloadDramQosRequestorSummary::new(
+            QosRequestorId::new(9),
+            4,
+            128,
+        )],
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    let summary = result.parallel_execution_summary().unwrap();
+    assert_eq!(summary.dram_operation_count(), 4);
+    assert_eq!(summary.resource_activity_count(), 4);
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]

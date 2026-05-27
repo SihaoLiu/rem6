@@ -486,6 +486,13 @@ Implementation evidence on 2026-05-26:
   summaries as QoS activity evidence. Per-class memory-controller accounting
   therefore cannot remain queryable while hidden from DRAM and resource
   activity presence.
+- Workload DRAM and aggregate resource activity contracts now count the
+  strongest DRAM operation evidence across aggregate access counts, read/write
+  totals, row outcomes, command counts, QoS aggregate counts, and QoS
+  priority/requestor breakdowns. Full-system run summaries and workload replay
+  results use the same lower bound, so manifest-declared memory-controller
+  activity cannot be underreported just because a run exports class-specific QoS
+  summaries instead of a top-level access count.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence

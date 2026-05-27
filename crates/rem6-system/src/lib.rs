@@ -628,14 +628,19 @@ impl RiscvSystemRun {
     }
 
     pub fn has_dram_activity(&self) -> bool {
-        self.dram_access_count() != 0
+        let dram = self.dram_profile();
+        self.dram_operation_count() != 0
+            || dram.turnaround_count() != 0
+            || dram.total_ready_latency_cycles() != 0
+            || dram.max_ready_latency_cycles() != 0
+            || self.has_dram_qos_activity()
     }
 
     pub fn resource_activity_count(&self) -> usize {
         self.fabric_transfer_count()
-            + self.dram_access_count()
-            + self.fabric_wait_for_edge_count()
-            + self.dram_wait_for_edge_count()
+            .saturating_add(self.dram_operation_count())
+            .saturating_add(self.fabric_wait_for_edge_count())
+            .saturating_add(self.dram_wait_for_edge_count())
     }
 
     pub fn has_resource_activity(&self) -> bool {
