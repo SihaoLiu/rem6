@@ -560,6 +560,12 @@ Implementation evidence on 2026-05-26:
   full-system remote flow and send records. A global scheduler can report
   cross-partition communication directly while same-route scoped flow evidence
   stays a lower bound instead of being added to the merged total again.
+- Workload full-system remote-flow merge validation now rejects explicit
+  full-system flow records that are weaker than same-route scheduler,
+  data-cache, GPU DMA, or accelerator DMA evidence by send count, delivery tick
+  window, or delay-bound window. A global remote-flow summary therefore cannot
+  narrow away scoped cross-partition traffic while replay checks still pass from
+  derived lower-bound evidence.
 - Workload full-system progress-transition reporting now accepts explicit
   merged full-system transition records. A global scheduler can report exact
   progress-free transition evidence directly without concatenating scoped

@@ -389,6 +389,31 @@ pub(crate) fn format_remote_delay_error(
             "{} remote traffic flow evidence {source}->{target} minimum delay {minimum_delay} must not exceed maximum delay {maximum_delay}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelRemoteFlowMergeSummary {
+            scope,
+            source,
+            target,
+            merged_send_count,
+            scoped_send_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+            merged_minimum_delay,
+            scoped_minimum_delay,
+            merged_maximum_delay,
+            scoped_maximum_delay,
+        } => write!(
+            formatter,
+            "invalid {} remote flow {source}->{target} merge summary: merged count {merged_send_count}, ticks {} to {}, delay {} to {}; scoped count {scoped_send_count}, ticks {scoped_first_tick} to {scoped_last_tick}, delay {} to {}",
+            scope.as_str(),
+            format_optional_tick(*merged_first_tick),
+            format_optional_tick(*merged_last_tick),
+            format_optional_tick(*merged_minimum_delay),
+            format_optional_tick(*merged_maximum_delay),
+            format_optional_tick(*scoped_minimum_delay),
+            format_optional_tick(*scoped_maximum_delay)
+        ),
         WorkloadError::MissingParallelRemoteTrafficAggregateFlow {
             scope,
             source,

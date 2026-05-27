@@ -281,6 +281,115 @@ fn workload_replay_plan_uses_explicit_full_system_remote_flows() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_weaker_full_system_remote_flow_count() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            2,
+            11,
+            17,
+        )])
+        .with_full_system_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            1,
+            11,
+            11,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteFlowMergeSummary {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            source: 0,
+            target: 1,
+            merged_send_count: 1,
+            scoped_send_count: 2,
+            merged_first_tick: Some(11),
+            scoped_first_tick: 11,
+            merged_last_tick: Some(11),
+            scoped_last_tick: 17,
+            merged_minimum_delay: None,
+            scoped_minimum_delay: None,
+            merged_maximum_delay: None,
+            scoped_maximum_delay: None,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_full_system_remote_flow_window_and_delay() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_sends([
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                3,
+                11,
+                0,
+            ),
+            ParallelRemoteSendRecord::with_timing(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                7,
+                17,
+                1,
+            ),
+        ])
+        .with_full_system_parallel_scheduler_remote_flows([
+            ParallelRemoteFlowRecord::with_delay_bounds(
+                PartitionId::new(0),
+                PartitionId::new(1),
+                2,
+                12,
+                16,
+                8,
+                8,
+            ),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelRemoteFlowMergeSummary {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            source: 0,
+            target: 1,
+            merged_send_count: 2,
+            scoped_send_count: 2,
+            merged_first_tick: Some(12),
+            scoped_first_tick: 11,
+            merged_last_tick: Some(16),
+            scoped_last_tick: 17,
+            merged_minimum_delay: Some(8),
+            scoped_minimum_delay: Some(8),
+            merged_maximum_delay: Some(8),
+            scoped_maximum_delay: Some(10),
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_prefers_remote_send_flow_evidence_over_weaker_aggregates() {
     let plan = replay_plan()
         .add_expected_parallel_remote_flow(expected(

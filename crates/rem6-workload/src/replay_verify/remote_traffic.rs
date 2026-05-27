@@ -424,6 +424,10 @@ fn validate_remote_flow_scope_evidence(
 ) -> Result<(), WorkloadError> {
     validate_remote_send_scope_evidence(summary, scope)?;
     validate_raw_explicit_remote_flow_scope_evidence(summary, scope)?;
+    if scope == WorkloadParallelRemoteFlowScope::FullSystem {
+        validate_raw_full_system_remote_flow_evidence(summary)?;
+        validate_full_system_remote_flow_merge_summary(summary)?;
+    }
     let flows = actual_parallel_remote_flows_for_scope(summary, scope);
     for flow in flows {
         validate_remote_traffic_flow_evidence(scope, flow)?;
@@ -440,6 +444,80 @@ fn validate_raw_explicit_remote_flow_scope_evidence(
         validate_remote_traffic_flow_evidence(scope, flow)?;
     }
     Ok(())
+}
+
+fn validate_raw_full_system_remote_flow_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    for flow in summary.raw_full_system_parallel_scheduler_remote_flows() {
+        validate_remote_traffic_flow_evidence(WorkloadParallelRemoteFlowScope::FullSystem, *flow)?;
+    }
+    Ok(())
+}
+
+fn validate_full_system_remote_flow_merge_summary(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let merged_flows = summary.explicit_full_system_parallel_scheduler_remote_flow_evidence();
+    if merged_flows.is_empty() {
+        return Ok(());
+    }
+
+    let merged_by_route = merged_flows
+        .into_iter()
+        .map(|flow| ((flow.source(), flow.target()), flow))
+        .collect::<BTreeMap<_, _>>();
+    for scoped_flow in summary.scoped_full_system_parallel_scheduler_remote_flow_evidence() {
+        let route = (scoped_flow.source(), scoped_flow.target());
+        let Some(merged_flow) = merged_by_route.get(&route).copied() else {
+            continue;
+        };
+        if !remote_flow_covers_scoped_flow(merged_flow, scoped_flow) {
+            return Err(WorkloadError::InvalidParallelRemoteFlowMergeSummary {
+                scope: WorkloadParallelRemoteFlowScope::FullSystem,
+                source: scoped_flow.source().index(),
+                target: scoped_flow.target().index(),
+                merged_send_count: merged_flow.send_count(),
+                scoped_send_count: scoped_flow.send_count(),
+                merged_first_tick: Some(merged_flow.first_tick()),
+                scoped_first_tick: scoped_flow.first_tick(),
+                merged_last_tick: Some(merged_flow.last_tick()),
+                scoped_last_tick: scoped_flow.last_tick(),
+                merged_minimum_delay: merged_flow.minimum_delay(),
+                scoped_minimum_delay: scoped_flow.minimum_delay(),
+                merged_maximum_delay: merged_flow.maximum_delay(),
+                scoped_maximum_delay: scoped_flow.maximum_delay(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn remote_flow_covers_scoped_flow(
+    merged_flow: ParallelRemoteFlowRecord,
+    scoped_flow: ParallelRemoteFlowRecord,
+) -> bool {
+    merged_flow.send_count() >= scoped_flow.send_count()
+        && merged_flow.first_tick() <= scoped_flow.first_tick()
+        && merged_flow.last_tick() >= scoped_flow.last_tick()
+        && remote_flow_delay_covers_scoped_flow(merged_flow, scoped_flow)
+}
+
+fn remote_flow_delay_covers_scoped_flow(
+    merged_flow: ParallelRemoteFlowRecord,
+    scoped_flow: ParallelRemoteFlowRecord,
+) -> bool {
+    match (merged_flow.delay_bounds(), scoped_flow.delay_bounds()) {
+        (_, None) => true,
+        (
+            Some((merged_minimum_delay, merged_maximum_delay)),
+            Some((scoped_minimum_delay, scoped_maximum_delay)),
+        ) => {
+            merged_minimum_delay <= scoped_minimum_delay
+                && merged_maximum_delay >= scoped_maximum_delay
+        }
+        (None, Some(_)) => false,
+    }
 }
 
 fn validate_remote_traffic_flow_evidence(

@@ -326,21 +326,39 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_remote_flows(&self) -> Vec<ParallelRemoteFlowRecord> {
-        let scoped_flows = collect_parallel_remote_flow_aggregates(
+        let scoped_flows = self.scoped_full_system_parallel_scheduler_remote_flow_evidence();
+        let explicit_flows = self.explicit_full_system_parallel_scheduler_remote_flow_evidence();
+        collect_strongest_parallel_remote_flow_aggregates(scoped_flows, explicit_flows)
+    }
+
+    pub(crate) fn scoped_full_system_parallel_scheduler_remote_flow_evidence(
+        &self,
+    ) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flow_aggregates(
             self.parallel_scheduler_remote_flow_evidence()
                 .into_iter()
                 .chain(self.data_cache_parallel_scheduler_remote_flow_evidence())
                 .chain(self.dma_scheduler_remote_flows()),
-        );
-        let explicit_flows = collect_parallel_remote_flow_evidence(
+        )
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_remote_flow_evidence(
+        &self,
+    ) -> Vec<ParallelRemoteFlowRecord> {
+        collect_parallel_remote_flow_evidence(
             self.full_system_parallel_scheduler_remote_flows
                 .iter()
                 .copied(),
             self.full_system_parallel_scheduler_remote_sends
                 .iter()
                 .copied(),
-        );
-        collect_strongest_parallel_remote_flow_aggregates(scoped_flows, explicit_flows)
+        )
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_remote_flows(
+        &self,
+    ) -> &[ParallelRemoteFlowRecord] {
+        &self.full_system_parallel_scheduler_remote_flows
     }
 
     pub fn full_system_parallel_scheduler_remote_sends(&self) -> Vec<ParallelRemoteSendRecord> {

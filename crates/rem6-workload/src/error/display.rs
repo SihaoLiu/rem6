@@ -826,6 +826,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelRemoteTrafficFlowEndpoints { .. }
             | Self::InvalidParallelRemoteTrafficFlowTiming { .. }
             | Self::InvalidParallelRemoteTrafficFlowDelayBounds { .. }
+            | Self::InvalidParallelRemoteFlowMergeSummary { .. }
             | Self::MissingParallelRemoteTrafficAggregateFlow { .. }
             | Self::ParallelRemoteTrafficConsistencyMismatch(_)
             | Self::InvalidExpectedParallelRemoteFlowTimingWindow { .. }
