@@ -425,6 +425,20 @@ pub(super) fn format_parallel_batch_error(
             batch_scope.as_str(),
             format_partition_indexes(partitions)
         ),
+        WorkloadError::InvalidParallelBatchTimelineMergeSummary {
+            scope,
+            batch_scope,
+            start_tick,
+            horizon,
+            partitions,
+            worker_count,
+        } => write!(
+            formatter,
+            "invalid {} batch timeline merge summary: scoped record from {} at {start_tick} to horizon {horizon} for partitions {} with {worker_count} workers is missing from the merged timeline",
+            scope.as_str(),
+            batch_scope.as_str(),
+            format_partition_indexes(partitions)
+        ),
         WorkloadError::ZeroExpectedParallelPartitionCount { scope } => write!(
             formatter,
             "expected {} partition use must require a positive active partition count",

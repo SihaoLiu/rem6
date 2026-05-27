@@ -1237,6 +1237,14 @@ pub enum WorkloadError {
         partitions: Vec<u32>,
         worker_count: usize,
     },
+    InvalidParallelBatchTimelineMergeSummary {
+        scope: WorkloadParallelBatchTimelineScope,
+        batch_scope: WorkloadParallelBatchScope,
+        start_tick: Tick,
+        horizon: Tick,
+        partitions: Vec<u32>,
+        worker_count: usize,
+    },
     ZeroExpectedParallelPartitionCount {
         scope: WorkloadParallelBatchPartitionScope,
     },

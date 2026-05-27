@@ -5,31 +5,76 @@ use crate::{
     WorkloadParallelSchedulerScope,
 };
 
+const SCOPED_PLANNED_BATCH_TIMELINE_SCOPES: [WorkloadParallelBatchTimelineScope; 4] = [
+    WorkloadParallelBatchTimelineScope::PlannedScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedDataCacheScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedGpuDmaScheduler,
+    WorkloadParallelBatchTimelineScope::PlannedAcceleratorDmaScheduler,
+];
+
 pub(crate) fn validate_scheduler_scope_batch_timeline_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelSchedulerScope,
 ) -> Result<(), WorkloadError> {
-    validate_batch_timeline_records_for_scope(
-        summary,
-        batch_timeline_scope_for_scheduler_scope(scope),
-    )
+    validate_batch_timeline_scope_evidence(summary, batch_timeline_scope_for_scheduler_scope(scope))
 }
 
 pub(crate) fn validate_worker_scope_batch_timeline_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelBatchWorkerScope,
 ) -> Result<(), WorkloadError> {
-    validate_batch_timeline_records_for_scope(summary, batch_timeline_scope_for_worker_scope(scope))
+    validate_batch_timeline_scope_evidence(summary, batch_timeline_scope_for_worker_scope(scope))
 }
 
 pub(crate) fn validate_partition_scope_batch_timeline_evidence(
     summary: &WorkloadParallelExecutionSummary,
     scope: WorkloadParallelBatchPartitionScope,
 ) -> Result<(), WorkloadError> {
+    validate_batch_timeline_scope_evidence(summary, batch_timeline_scope_for_partition_scope(scope))
+}
+
+pub(crate) fn validate_planned_full_system_batch_timeline_merge_summary(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
     validate_batch_timeline_records_for_scope(
         summary,
-        batch_timeline_scope_for_partition_scope(scope),
-    )
+        WorkloadParallelBatchTimelineScope::PlannedFullSystem,
+    )?;
+    let merged = actual_parallel_batch_timeline_records(
+        WorkloadParallelBatchTimelineScope::PlannedFullSystem,
+        summary,
+    );
+    for scope in SCOPED_PLANNED_BATCH_TIMELINE_SCOPES {
+        validate_batch_timeline_records_for_scope(summary, scope)?;
+        for scoped in actual_parallel_batch_timeline_records(scope, summary) {
+            if !merged.iter().any(|record| record == &scoped) {
+                return Err(WorkloadError::InvalidParallelBatchTimelineMergeSummary {
+                    scope: WorkloadParallelBatchTimelineScope::PlannedFullSystem,
+                    batch_scope: scoped.scope(),
+                    start_tick: scoped.start_tick(),
+                    horizon: scoped.horizon(),
+                    partitions: scoped
+                        .partitions()
+                        .iter()
+                        .map(|partition| partition.index())
+                        .collect(),
+                    worker_count: scoped.worker_count(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_batch_timeline_scope_evidence(
+    summary: &WorkloadParallelExecutionSummary,
+    timeline_scope: WorkloadParallelBatchTimelineScope,
+) -> Result<(), WorkloadError> {
+    validate_batch_timeline_records_for_scope(summary, timeline_scope)?;
+    if timeline_scope == WorkloadParallelBatchTimelineScope::PlannedFullSystem {
+        validate_planned_full_system_batch_timeline_merge_summary(summary)?;
+    }
+    Ok(())
 }
 
 fn validate_batch_timeline_records_for_scope(

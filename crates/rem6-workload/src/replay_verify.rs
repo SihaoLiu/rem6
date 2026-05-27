@@ -16,9 +16,12 @@ mod frontier;
 mod remote_traffic;
 mod scheduler_summary;
 
-use batch_timeline::validate_scheduler_scope_batch_timeline_evidence;
 pub(crate) use batch_timeline::{
     validate_partition_scope_batch_timeline_evidence, validate_worker_scope_batch_timeline_evidence,
+};
+use batch_timeline::{
+    validate_planned_full_system_batch_timeline_merge_summary,
+    validate_scheduler_scope_batch_timeline_evidence,
 };
 pub(crate) use frontier::verify_expected_parallel_frontiers;
 
@@ -73,6 +76,7 @@ pub(crate) fn verify_expected_parallel_batch_timeline_records(
             worker_count: expected.worker_count(),
         });
     };
+    validate_planned_full_system_batch_timeline_merge_summary(summary)?;
 
     for expected in expected_records {
         if expected.actual_record(summary).is_none() {

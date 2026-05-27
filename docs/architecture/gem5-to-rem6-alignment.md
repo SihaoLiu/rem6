@@ -531,6 +531,11 @@ Implementation evidence on 2026-05-26:
   evidence, with direct, combined DMA, and merged full-system planned scopes.
   Heterogeneous device schedulers can now prove pre-dispatch parallel DMA
   occupancy through exact timeline, worker-bucket, and partition-set contracts.
+- Explicit planned full-system batch timelines must preserve scoped planned
+  scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
+  accepts exact timeline or derived worker/partition contracts. A global
+  pre-dispatch plan therefore cannot hide device-local planned occupancy behind
+  a weaker merged timeline.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
