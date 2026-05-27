@@ -34,6 +34,22 @@ pub(crate) fn validate_full_system_scheduler_progress_evidence(
     {
         return Ok(());
     }
+    let expected_minimum_epoch_count = minimum_epoch_count;
+    let minimum_epoch_count = expected_minimum_epoch_count
+        .max(summary.full_system_parallel_scheduler_epoch_count_lower_bound());
+    let actual_epoch_count = summary.raw_full_system_parallel_scheduler_epoch_count();
+    if actual_epoch_count < minimum_epoch_count {
+        return Err(
+            WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+                scope: WorkloadParallelSchedulerScope::FullSystem,
+                minimum_epoch_count,
+                actual_epoch_count,
+                minimum_dispatch_count: summary
+                    .full_system_parallel_scheduler_dispatch_count_lower_bound(),
+                actual_dispatch_count: summary.raw_full_system_parallel_scheduler_dispatch_count(),
+            },
+        );
+    }
     let minimum_dispatch_count =
         summary.full_system_parallel_scheduler_dispatch_count_lower_bound();
     let actual_dispatch_count = summary.raw_full_system_parallel_scheduler_dispatch_count();
@@ -41,7 +57,7 @@ pub(crate) fn validate_full_system_scheduler_progress_evidence(
         return Err(
             WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
                 scope: WorkloadParallelSchedulerScope::FullSystem,
-                minimum_epoch_count,
+                minimum_epoch_count: expected_minimum_epoch_count,
                 actual_epoch_count: summary.raw_full_system_parallel_scheduler_epoch_count(),
                 minimum_dispatch_count,
                 actual_dispatch_count,
@@ -91,9 +107,18 @@ fn scheduler_counts(
             summary.dma_scheduler_epoch_count(),
             summary.dma_scheduler_empty_epoch_count(),
         ),
-        WorkloadParallelSchedulerScope::FullSystem => (
-            summary.full_system_parallel_scheduler_epoch_count(),
-            summary.full_system_parallel_scheduler_empty_epoch_count(),
-        ),
+        WorkloadParallelSchedulerScope::FullSystem => {
+            if summary.has_explicit_full_system_parallel_scheduler_counts() {
+                (
+                    summary.raw_full_system_parallel_scheduler_epoch_count(),
+                    summary.raw_full_system_parallel_scheduler_empty_epoch_count(),
+                )
+            } else {
+                (
+                    summary.full_system_parallel_scheduler_epoch_count(),
+                    summary.full_system_parallel_scheduler_empty_epoch_count(),
+                )
+            }
+        }
     }
 }

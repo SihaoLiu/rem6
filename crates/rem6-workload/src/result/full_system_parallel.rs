@@ -66,14 +66,22 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
-    pub const fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
+    pub fn full_system_parallel_scheduler_epoch_count(&self) -> usize {
         if self.has_full_system_parallel_scheduler_counts {
             self.full_system_parallel_scheduler_epoch_count
+                .max(self.full_system_parallel_scheduler_epoch_count_lower_bound())
         } else {
             self.scheduler_epoch_count
                 + self.data_cache_parallel_scheduler_epoch_count
                 + self.dma_scheduler_epoch_count()
         }
+    }
+
+    pub(crate) fn full_system_parallel_scheduler_epoch_count_lower_bound(&self) -> usize {
+        self.scheduler_epoch_count()
+            .max(self.data_cache_parallel_scheduler_epoch_count())
+            .max(self.gpu_dma_scheduler_epoch_count())
+            .max(self.accelerator_dma_scheduler_epoch_count())
     }
 
     pub const fn full_system_parallel_scheduler_empty_epoch_count(&self) -> usize {
@@ -128,6 +136,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub(crate) const fn raw_full_system_parallel_scheduler_epoch_count(&self) -> usize {
         self.full_system_parallel_scheduler_epoch_count
+    }
+
+    pub(crate) const fn raw_full_system_parallel_scheduler_empty_epoch_count(&self) -> usize {
+        self.full_system_parallel_scheduler_empty_epoch_count
     }
 
     pub(crate) const fn raw_full_system_parallel_scheduler_dispatch_count(&self) -> usize {
