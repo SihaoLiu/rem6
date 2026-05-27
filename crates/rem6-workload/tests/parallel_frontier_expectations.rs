@@ -269,6 +269,52 @@ fn workload_replay_plan_rejects_missing_or_underadvanced_parallel_frontiers() {
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_frontiers() {
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            WorkloadParallelFrontierStage::Initial,
+            6,
+            30,
+            40,
+        ))
+        .unwrap()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            WorkloadParallelFrontierStage::Final,
+            6,
+            45,
+            55,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_frontiers(
+            [PartitionFrontier::new(
+                PartitionId::new(6),
+                30,
+                40,
+                Some(36),
+                2,
+            )],
+            [PartitionFrontier::new(PartitionId::new(6), 45, 55, None, 0)],
+        );
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontiers(),
+        vec![PartitionFrontier::new(
+            PartitionId::new(6),
+            30,
+            40,
+            Some(36),
+            2,
+        )],
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_checks_dma_scheduler_frontiers_directly() {
     let gpu_initial = PartitionFrontier::new(PartitionId::new(8), 10, 20, Some(14), 1);
     let gpu_final = PartitionFrontier::new(PartitionId::new(8), 18, 28, None, 0);

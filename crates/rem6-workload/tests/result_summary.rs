@@ -1771,6 +1771,56 @@ fn workload_result_full_system_frontiers_merge_partitions_conservatively() {
 }
 
 #[test]
+fn workload_result_uses_explicit_full_system_frontiers() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_frontiers(
+            [PartitionFrontier::new(
+                PartitionId::new(0),
+                8,
+                16,
+                Some(12),
+                1,
+            )],
+            [PartitionFrontier::new(PartitionId::new(0), 16, 24, None, 0)],
+        )
+        .with_full_system_parallel_scheduler_frontiers(
+            [
+                PartitionFrontier::new(PartitionId::new(0), 6, 14, Some(10), 3),
+                PartitionFrontier::new(PartitionId::new(4), 30, 40, Some(36), 2),
+            ],
+            [
+                PartitionFrontier::new(PartitionId::new(0), 15, 22, Some(21), 4),
+                PartitionFrontier::new(PartitionId::new(4), 45, 55, None, 0),
+            ],
+        );
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontiers(),
+        vec![
+            PartitionFrontier::new(PartitionId::new(0), 6, 14, Some(10), 3),
+            PartitionFrontier::new(PartitionId::new(4), 30, 40, Some(36), 2),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontiers(),
+        vec![
+            PartitionFrontier::new(PartitionId::new(0), 15, 22, Some(21), 4),
+            PartitionFrontier::new(PartitionId::new(4), 45, 55, None, 0),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_initial_frontier_count(),
+        2,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontier_count(),
+        2,
+    );
+    assert!(summary.has_full_system_parallel_scheduler_frontiers());
+    assert!(summary.has_full_system_parallel_scheduler_work());
+}
+
+#[test]
 fn workload_result_records_parallel_batch_partition_streaks_from_ordered_batches() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_batch_partition_streak_sequence([

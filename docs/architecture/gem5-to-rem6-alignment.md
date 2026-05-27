@@ -474,6 +474,10 @@ Implementation evidence on 2026-05-26:
   explicit merged full-system partition activity records. A global scheduler
   can report partition-owned worker, dispatch, and remote activity directly
   while scoped and batch-derived evidence remain lower bounds.
+- Workload full-system frontier reporting now accepts explicit merged
+  full-system initial and final partition frontiers. A global scheduler can
+  report conservative safe-time frontiers directly while scoped CPU, cache, and
+  DMA frontiers remain conservative lower bounds for the same partition.
 - Workload full-system dispatch reporting now treats explicit full-system
   partition streaks as aggregate dispatch evidence, using them as a merged
   lower bound instead of adding them to scoped scheduler counts again.

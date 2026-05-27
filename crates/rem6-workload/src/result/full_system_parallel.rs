@@ -316,7 +316,12 @@ impl WorkloadParallelExecutionSummary {
                         .iter()
                         .copied(),
                 )
-                .chain(self.dma_scheduler_initial_frontiers()),
+                .chain(self.dma_scheduler_initial_frontiers())
+                .chain(
+                    self.full_system_parallel_scheduler_initial_frontiers
+                        .iter()
+                        .copied(),
+                ),
         )
     }
 
@@ -330,7 +335,12 @@ impl WorkloadParallelExecutionSummary {
                         .iter()
                         .copied(),
                 )
-                .chain(self.dma_scheduler_final_frontiers()),
+                .chain(self.dma_scheduler_final_frontiers())
+                .chain(
+                    self.full_system_parallel_scheduler_final_frontiers
+                        .iter()
+                        .copied(),
+                ),
         )
     }
 
@@ -347,6 +357,12 @@ impl WorkloadParallelExecutionSummary {
         self.has_parallel_scheduler_frontiers()
             || self.has_data_cache_parallel_scheduler_frontiers()
             || self.has_dma_scheduler_frontiers()
+            || !self
+                .full_system_parallel_scheduler_initial_frontiers
+                .is_empty()
+            || !self
+                .full_system_parallel_scheduler_final_frontiers
+                .is_empty()
     }
 
     pub fn full_system_parallel_scheduler_partition_activities(
@@ -532,6 +548,7 @@ impl WorkloadParallelExecutionSummary {
             || !self
                 .full_system_parallel_scheduler_partition_activities
                 .is_empty()
+            || self.has_full_system_parallel_scheduler_frontiers()
             || self.has_parallel_scheduler_work()
             || self.has_data_cache_parallel_work()
             || self.has_dma_parallel_work()

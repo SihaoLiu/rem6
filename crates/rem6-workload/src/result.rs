@@ -268,6 +268,8 @@ pub struct WorkloadParallelExecutionSummary {
         Vec<WorkloadParallelBatchPartitionStreak>,
     full_system_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
+    full_system_parallel_scheduler_initial_frontiers: Vec<PartitionFrontier>,
+    full_system_parallel_scheduler_final_frontiers: Vec<PartitionFrontier>,
     data_cache_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
     data_cache_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
@@ -589,6 +591,18 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.full_system_parallel_scheduler_partition_activities =
             collect_parallel_partition_activities(activities);
+        self
+    }
+
+    pub fn with_full_system_parallel_scheduler_frontiers(
+        mut self,
+        initial_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+        final_frontiers: impl IntoIterator<Item = PartitionFrontier>,
+    ) -> Self {
+        self.full_system_parallel_scheduler_initial_frontiers =
+            collect_partition_frontiers(initial_frontiers);
+        self.full_system_parallel_scheduler_final_frontiers =
+            collect_partition_frontiers(final_frontiers);
         self
     }
 
