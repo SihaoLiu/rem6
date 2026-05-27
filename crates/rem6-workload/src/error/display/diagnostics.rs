@@ -194,6 +194,76 @@ pub(super) fn format_diagnostic_error(
                 .map(|tick| tick.to_string())
                 .unwrap_or_else(|| "missing".to_string()),
         ),
+        WorkloadError::InvalidParallelProgressTransitionMergeSummary {
+            scope,
+            merged_transition_count,
+            scoped_transition_count,
+        } => write!(
+            formatter,
+            "invalid {} progress-transition merge summary: merged transition count {merged_transition_count} is below scoped transition count {scoped_transition_count}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelProgressTransitionSubjectMergeSummary {
+            scope,
+            subject,
+            merged_transition_count,
+            scoped_transition_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} progress-transition subject {subject} merge summary: merged transitions {merged_transition_count} from tick {} to {} are weaker than scoped transitions {scoped_transition_count} from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str(),
+            merged_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            merged_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
+        WorkloadError::InvalidParallelProgressTransitionKindMergeSummary {
+            scope,
+            kind,
+            merged_transition_count,
+            scoped_transition_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} progress-transition kind {kind:?} merge summary: merged transitions {merged_transition_count} from tick {} to {} are weaker than scoped transitions {scoped_transition_count} from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str(),
+            merged_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            merged_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
+        WorkloadError::InvalidParallelProgressTransitionPartitionMergeSummary {
+            scope,
+            partition,
+            merged_transition_count,
+            scoped_transition_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} progress-transition partition {} merge summary: merged transitions {merged_transition_count} from tick {} to {} are weaker than scoped transitions {scoped_transition_count} from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str(),
+            partition.index(),
+            merged_first_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+            merged_last_tick
+                .map(|tick| tick.to_string())
+                .unwrap_or_else(|| "missing".to_string()),
+        ),
         WorkloadError::ExpectedParallelWaitForEdgeKindWindowMismatch {
             scope,
             kind,

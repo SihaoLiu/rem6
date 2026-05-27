@@ -1,6 +1,6 @@
 use rem6_boot::BootError;
 use rem6_fabric::{FabricLinkId, QosPriority, QosRequestorId, VirtualNetworkId};
-use rem6_kernel::{LivelockTransitionKind, Tick, WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{LivelockTransitionKind, PartitionId, Tick, WaitForEdgeKind, WaitForNode};
 use rem6_memory::MemoryError;
 
 use crate::{
@@ -1654,6 +1654,41 @@ pub enum WorkloadError {
         scoped_diagnostic_count: usize,
         merged_transition_count: u64,
         scoped_transition_count: u64,
+        merged_first_tick: Option<Tick>,
+        scoped_first_tick: Tick,
+        merged_last_tick: Option<Tick>,
+        scoped_last_tick: Tick,
+    },
+    InvalidParallelProgressTransitionMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        merged_transition_count: usize,
+        scoped_transition_count: usize,
+    },
+    InvalidParallelProgressTransitionSubjectMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        subject: WaitForNode,
+        merged_transition_count: usize,
+        scoped_transition_count: usize,
+        merged_first_tick: Option<Tick>,
+        scoped_first_tick: Tick,
+        merged_last_tick: Option<Tick>,
+        scoped_last_tick: Tick,
+    },
+    InvalidParallelProgressTransitionKindMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: LivelockTransitionKind,
+        merged_transition_count: usize,
+        scoped_transition_count: usize,
+        merged_first_tick: Option<Tick>,
+        scoped_first_tick: Tick,
+        merged_last_tick: Option<Tick>,
+        scoped_last_tick: Tick,
+    },
+    InvalidParallelProgressTransitionPartitionMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        partition: PartitionId,
+        merged_transition_count: usize,
+        scoped_transition_count: usize,
         merged_first_tick: Option<Tick>,
         scoped_first_tick: Tick,
         merged_last_tick: Option<Tick>,

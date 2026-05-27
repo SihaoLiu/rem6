@@ -457,6 +457,12 @@ Implementation evidence on 2026-05-26:
   each dirty scoped transition kind's diagnostic count, transition count, and
   first/last transition tick coverage, so kind summaries and kind-filtered
   queries cannot be weakened by a global scheduler aggregate.
+- Workload full-system progress-transition merge validation now rejects
+  explicit full-system transition streams that are weaker than scoped scheduler
+  or data-cache transition evidence by aggregate count, subject, transition
+  kind, or partition tick window. Clean-diagnostic livelock thresholds therefore
+  cannot be satisfied by a global transition stream that drops scoped retry-loop
+  evidence.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide

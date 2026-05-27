@@ -1198,6 +1198,10 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelLivelockMergeSummary { .. }
             | Self::InvalidParallelLivelockSubjectMergeSummary { .. }
             | Self::InvalidParallelLivelockTransitionKindMergeSummary { .. }
+            | Self::InvalidParallelProgressTransitionMergeSummary { .. }
+            | Self::InvalidParallelProgressTransitionSubjectMergeSummary { .. }
+            | Self::InvalidParallelProgressTransitionKindMergeSummary { .. }
+            | Self::InvalidParallelProgressTransitionPartitionMergeSummary { .. }
             | Self::ExpectedParallelWaitForEdgeKindWindowMismatch { .. }
             | Self::ExpectedParallelWaitForBlockedNodeWindowMismatch { .. }
             | Self::ExpectedParallelWaitForTargetNodeWindowMismatch { .. } => {

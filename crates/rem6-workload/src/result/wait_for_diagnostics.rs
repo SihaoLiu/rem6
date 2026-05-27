@@ -151,6 +151,7 @@ impl WorkloadParallelExecutionSummary {
                     self.resource_deadlock_diagnostic_count()
                         .saturating_add(self.data_cache_deadlock_diagnostic_count()),
                 )?;
+                self.validate_full_system_progress_transition_merge_summary()?;
                 validate_livelock_transition_count_summary(
                     scope,
                     self.parallel_scheduler_progress_transition_count(),

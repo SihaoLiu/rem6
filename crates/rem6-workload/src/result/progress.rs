@@ -7,6 +7,7 @@ use rem6_kernel::{
 
 use super::WorkloadParallelExecutionSummary;
 use crate::result_collect::collect_parallel_progress_transitions;
+use crate::{WorkloadError, WorkloadParallelDiagnosticScope};
 
 impl WorkloadParallelExecutionSummary {
     pub fn with_parallel_scheduler_progress_transitions(
@@ -756,6 +757,68 @@ impl WorkloadParallelExecutionSummary {
             || self.has_data_cache_parallel_scheduler_progress_transitions()
     }
 
+    pub(crate) fn validate_full_system_progress_transition_merge_summary(
+        &self,
+    ) -> Result<(), WorkloadError> {
+        if self.full_system_progress_transitions.is_empty() {
+            return Ok(());
+        }
+
+        let scoped_transition_count = self
+            .scheduler_progress_transition_count
+            .saturating_add(self.data_cache_parallel_scheduler_progress_transition_count);
+        let merged_transition_count = self.full_system_progress_transitions.len();
+        if merged_transition_count < scoped_transition_count {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    merged_transition_count,
+                    scoped_transition_count,
+                },
+            );
+        }
+
+        let scoped_transitions = self.parallel_scheduler_progress_transitions.iter().chain(
+            self.data_cache_parallel_scheduler_progress_transitions
+                .iter(),
+        );
+        validate_progress_transition_subject_merge_summary(
+            &collect_progress_transition_summaries(
+                self.full_system_progress_transitions.iter(),
+                |transition| transition.subject().clone(),
+            ),
+            &collect_progress_transition_summaries(scoped_transitions, |transition| {
+                transition.subject().clone()
+            }),
+        )?;
+        let scoped_transitions = self.parallel_scheduler_progress_transitions.iter().chain(
+            self.data_cache_parallel_scheduler_progress_transitions
+                .iter(),
+        );
+        validate_progress_transition_kind_merge_summary(
+            &collect_progress_transition_summaries(
+                self.full_system_progress_transitions.iter(),
+                |transition| transition.kind(),
+            ),
+            &collect_progress_transition_summaries(scoped_transitions, |transition| {
+                transition.kind()
+            }),
+        )?;
+        let scoped_transitions = self.parallel_scheduler_progress_transitions.iter().chain(
+            self.data_cache_parallel_scheduler_progress_transitions
+                .iter(),
+        );
+        validate_progress_transition_partition_merge_summary(
+            &collect_progress_transition_summaries(
+                self.full_system_progress_transitions.iter(),
+                |transition| transition.partition(),
+            ),
+            &collect_progress_transition_summaries(scoped_transitions, |transition| {
+                transition.partition()
+            }),
+        )
+    }
+
     fn full_system_progress_transition_iter(
         &self,
     ) -> Box<dyn Iterator<Item = &ParallelProgressTransitionRecord> + '_> {
@@ -889,6 +952,135 @@ fn collect_progress_transition_subjects<'a>(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn validate_progress_transition_subject_merge_summary(
+    merged: &[(WaitForNode, usize, Tick, Tick)],
+    scoped: &[(WaitForNode, usize, Tick, Tick)],
+) -> Result<(), WorkloadError> {
+    for (scoped_subject, scoped_count, scoped_first_tick, scoped_last_tick) in scoped {
+        let Some((_, merged_count, merged_first_tick, merged_last_tick)) = merged
+            .iter()
+            .find(|(merged_subject, _, _, _)| merged_subject == scoped_subject)
+        else {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionSubjectMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    subject: scoped_subject.clone(),
+                    merged_transition_count: 0,
+                    scoped_transition_count: *scoped_count,
+                    merged_first_tick: None,
+                    scoped_first_tick: *scoped_first_tick,
+                    merged_last_tick: None,
+                    scoped_last_tick: *scoped_last_tick,
+                },
+            );
+        };
+        if merged_count < scoped_count
+            || merged_first_tick > scoped_first_tick
+            || merged_last_tick < scoped_last_tick
+        {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionSubjectMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    subject: scoped_subject.clone(),
+                    merged_transition_count: *merged_count,
+                    scoped_transition_count: *scoped_count,
+                    merged_first_tick: Some(*merged_first_tick),
+                    scoped_first_tick: *scoped_first_tick,
+                    merged_last_tick: Some(*merged_last_tick),
+                    scoped_last_tick: *scoped_last_tick,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_progress_transition_kind_merge_summary(
+    merged: &[(LivelockTransitionKind, usize, Tick, Tick)],
+    scoped: &[(LivelockTransitionKind, usize, Tick, Tick)],
+) -> Result<(), WorkloadError> {
+    for (scoped_kind, scoped_count, scoped_first_tick, scoped_last_tick) in scoped {
+        let Some((_, merged_count, merged_first_tick, merged_last_tick)) = merged
+            .iter()
+            .find(|(merged_kind, _, _, _)| merged_kind == scoped_kind)
+        else {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionKindMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    kind: *scoped_kind,
+                    merged_transition_count: 0,
+                    scoped_transition_count: *scoped_count,
+                    merged_first_tick: None,
+                    scoped_first_tick: *scoped_first_tick,
+                    merged_last_tick: None,
+                    scoped_last_tick: *scoped_last_tick,
+                },
+            );
+        };
+        if merged_count < scoped_count
+            || merged_first_tick > scoped_first_tick
+            || merged_last_tick < scoped_last_tick
+        {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionKindMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    kind: *scoped_kind,
+                    merged_transition_count: *merged_count,
+                    scoped_transition_count: *scoped_count,
+                    merged_first_tick: Some(*merged_first_tick),
+                    scoped_first_tick: *scoped_first_tick,
+                    merged_last_tick: Some(*merged_last_tick),
+                    scoped_last_tick: *scoped_last_tick,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_progress_transition_partition_merge_summary(
+    merged: &[(PartitionId, usize, Tick, Tick)],
+    scoped: &[(PartitionId, usize, Tick, Tick)],
+) -> Result<(), WorkloadError> {
+    for (scoped_partition, scoped_count, scoped_first_tick, scoped_last_tick) in scoped {
+        let Some((_, merged_count, merged_first_tick, merged_last_tick)) = merged
+            .iter()
+            .find(|(merged_partition, _, _, _)| merged_partition == scoped_partition)
+        else {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionPartitionMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    partition: *scoped_partition,
+                    merged_transition_count: 0,
+                    scoped_transition_count: *scoped_count,
+                    merged_first_tick: None,
+                    scoped_first_tick: *scoped_first_tick,
+                    merged_last_tick: None,
+                    scoped_last_tick: *scoped_last_tick,
+                },
+            );
+        };
+        if merged_count < scoped_count
+            || merged_first_tick > scoped_first_tick
+            || merged_last_tick < scoped_last_tick
+        {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionPartitionMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    partition: *scoped_partition,
+                    merged_transition_count: *merged_count,
+                    scoped_transition_count: *scoped_count,
+                    merged_first_tick: Some(*merged_first_tick),
+                    scoped_first_tick: *scoped_first_tick,
+                    merged_last_tick: Some(*merged_last_tick),
+                    scoped_last_tick: *scoped_last_tick,
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 fn collect_livelock_diagnostic_subjects<'a>(
