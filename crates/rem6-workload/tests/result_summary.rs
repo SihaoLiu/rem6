@@ -1986,6 +1986,40 @@ fn workload_result_partition_activity_uses_full_system_streak_evidence() {
 }
 
 #[test]
+fn workload_result_partition_activity_uses_merged_partition_set_evidence() {
+    let cpu = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let dma = PartitionId::new(3);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache, dma], 3),
+        ])
+        .with_full_system_parallel_scheduler_batch_partition_streaks([
+            WorkloadParallelBatchPartitionStreak::new([cpu, cache], 5),
+        ]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_partition_sets(),
+        vec![
+            WorkloadParallelBatchPartitionSet::new([cpu, cache], 5),
+            WorkloadParallelBatchPartitionSet::new([cpu, cache, dma], 3),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cpu),
+        Some(ParallelPartitionActivity::with_remote_counts(8, 8, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(cache),
+        Some(ParallelPartitionActivity::with_remote_counts(8, 8, 0, 0, 0)),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_partition_activity(dma),
+        Some(ParallelPartitionActivity::with_remote_counts(3, 3, 0, 0, 0)),
+    );
+}
+
+#[test]
 fn workload_result_reports_remote_endpoint_partitions() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_parallel_scheduler_remote_flows([

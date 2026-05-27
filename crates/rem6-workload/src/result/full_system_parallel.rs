@@ -387,11 +387,13 @@ impl WorkloadParallelExecutionSummary {
             ),
             merge_parallel_partition_activity_evidence_options(dma_activity, dma_remote_activity),
         );
-        let full_system_activity = parallel_batch_streak_activity_for_partition(
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
-            partition,
+        let batch_partition_sets = self.full_system_parallel_scheduler_batch_partition_sets();
+        let batch_partition_streaks = self.full_system_parallel_scheduler_batch_partition_streaks();
+        let batch_activity = merge_parallel_partition_activity_evidence_options(
+            parallel_batch_partition_activity_for_partition(&batch_partition_sets, partition),
+            parallel_batch_streak_activity_for_partition(&batch_partition_streaks, partition),
         );
-        merge_parallel_partition_activity_evidence_options(scoped_activity, full_system_activity)
+        merge_parallel_partition_activity_evidence_options(scoped_activity, batch_activity)
     }
 
     pub fn full_system_parallel_scheduler_remote_flow_count(
