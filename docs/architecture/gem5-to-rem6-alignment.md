@@ -411,7 +411,8 @@ Implementation evidence on 2026-05-26:
   accounting without under-reporting worker-owned dispatch progress.
 - Workload full-system scheduler-progress replay also keeps explicit merged
   epoch counts at or above the strongest scoped CPU, data-cache, GPU DMA, and
-  accelerator DMA epoch evidence. A global scheduler summary can merge epoch
+  accelerator DMA epoch evidence, including the combined GPU-plus-accelerator
+  DMA scheduler epoch lower bound. A global scheduler summary can merge epoch
   accounting without hiding concurrent subsystem progress.
 - Workload scheduler progress, idle, and frontier replay now reject scheduler
   summaries whose empty-epoch count exceeds the total epoch count before
@@ -704,7 +705,8 @@ Implementation evidence on 2026-05-26:
   weaker than scoped dispatch lower bounds before replay accepts idle or
   progress contracts. A dirty merged full-system summary can no longer hide
   behind individually valid scoped scheduler summaries, and explicit epoch
-  counts must still cover the strongest scoped epoch lower bound.
+  counts must still cover the strongest scoped epoch lower bound, including
+  combined DMA scheduler epoch evidence.
 - Workload full-system frontier reporting now accepts explicit merged
   full-system initial and final partition frontiers. A global scheduler can
   report conservative safe-time frontiers directly while scoped CPU, cache, and

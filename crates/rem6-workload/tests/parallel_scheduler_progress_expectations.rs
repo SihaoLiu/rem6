@@ -303,6 +303,36 @@ fn workload_replay_plan_rejects_weak_explicit_full_system_scheduler_epoch_count(
 }
 
 #[test]
+fn workload_replay_plan_rejects_weak_explicit_full_system_scheduler_combined_dma_epoch_count() {
+    let plan = replay_plan()
+        .add_expected_parallel_scheduler_progress(expected_progress(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            5,
+            12,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_counts(3, 5, 2, [(2, 8)])
+        .with_accelerator_dma_scheduler_counts(4, 7, 3, [(3, 9)])
+        .with_full_system_parallel_scheduler_counts(5, 1, 12);
+
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(summary.clone());
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedParallelSchedulerProgressBelowMinimum {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            minimum_epoch_count: 7,
+            actual_epoch_count: 5,
+            minimum_dispatch_count: 12,
+            actual_dispatch_count: 12,
+        },
+    );
+    assert_eq!(summary.dma_scheduler_epoch_count(), 7);
+    assert_eq!(summary.full_system_parallel_scheduler_epoch_count(), 7);
+}
+
+#[test]
 fn workload_replay_plan_derives_dispatch_progress_from_partition_activity() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("scheduler-progress-from-partition-activity"),

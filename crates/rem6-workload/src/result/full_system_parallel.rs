@@ -80,6 +80,7 @@ impl WorkloadParallelExecutionSummary {
     pub(crate) fn full_system_parallel_scheduler_epoch_count_lower_bound(&self) -> usize {
         self.scheduler_epoch_count()
             .max(self.data_cache_parallel_scheduler_epoch_count())
+            .max(self.dma_scheduler_epoch_count())
             .max(self.gpu_dma_scheduler_epoch_count())
             .max(self.accelerator_dma_scheduler_epoch_count())
     }
