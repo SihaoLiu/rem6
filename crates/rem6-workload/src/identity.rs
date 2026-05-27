@@ -26,7 +26,8 @@ use crate::{
     WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
     WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
     WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
-    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId, WorkloadTopology,
+    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId,
+    WorkloadStatsHistoryRecordExpectation, WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -526,6 +527,27 @@ fn hash_expected_stats_history(hash: &mut u64, expected: Option<&WorkloadExpecte
                 }
                 _ => hash_u64(hash, 0),
             }
+            hash_u64(hash, expected.exact_records().len() as u64);
+            for record in expected.exact_records() {
+                hash_expected_stats_history_record(hash, *record);
+            }
+        }
+        None => hash_u64(hash, 0),
+    }
+}
+
+fn hash_expected_stats_history_record(
+    hash: &mut u64,
+    record: WorkloadStatsHistoryRecordExpectation,
+) {
+    hash_u64(hash, record.kind_code());
+    hash_u64(hash, record.id_value());
+    hash_u64(hash, record.tick());
+    hash_u64(hash, record.epoch());
+    match record.reset_tick() {
+        Some(reset_tick) => {
+            hash_u64(hash, 1);
+            hash_u64(hash, reset_tick);
         }
         None => hash_u64(hash, 0),
     }

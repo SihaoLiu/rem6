@@ -1,7 +1,7 @@
 use std::fmt;
 
 use rem6_kernel::Tick;
-use rem6_stats::StatHistoryRecord;
+use rem6_stats::{StatDumpId, StatHistoryRecord, StatResetId};
 
 use crate::{
     WorkloadError, WorkloadManifest, WorkloadManifestBuilder, WorkloadReplayPlan, WorkloadResult,
@@ -49,11 +49,89 @@ impl WorkloadStatsHistorySummary {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadStatsHistoryRecordExpectation {
+    Reset {
+        id: StatResetId,
+        tick: Tick,
+        epoch: u64,
+    },
+    Dump {
+        id: StatDumpId,
+        tick: Tick,
+        epoch: u64,
+        reset_tick: Tick,
+    },
+}
+
+impl WorkloadStatsHistoryRecordExpectation {
+    pub const fn reset(id: StatResetId, tick: Tick, epoch: u64) -> Self {
+        Self::Reset { id, tick, epoch }
+    }
+
+    pub const fn dump(id: StatDumpId, tick: Tick, epoch: u64, reset_tick: Tick) -> Self {
+        Self::Dump {
+            id,
+            tick,
+            epoch,
+            reset_tick,
+        }
+    }
+
+    pub(crate) fn from_history_record(record: &StatHistoryRecord) -> Self {
+        match record {
+            StatHistoryRecord::Reset(record) => {
+                Self::reset(record.id(), record.tick(), record.epoch())
+            }
+            StatHistoryRecord::Dump(record) => Self::dump(
+                record.id(),
+                record.tick(),
+                record.epoch(),
+                record.reset_tick(),
+            ),
+        }
+    }
+
+    pub const fn kind_code(&self) -> u64 {
+        match self {
+            Self::Reset { .. } => 0,
+            Self::Dump { .. } => 1,
+        }
+    }
+
+    pub const fn id_value(&self) -> u64 {
+        match self {
+            Self::Reset { id, .. } => id.get(),
+            Self::Dump { id, .. } => id.get(),
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        match self {
+            Self::Reset { tick, .. } | Self::Dump { tick, .. } => *tick,
+        }
+    }
+
+    pub const fn epoch(&self) -> u64 {
+        match self {
+            Self::Reset { epoch, .. } | Self::Dump { epoch, .. } => *epoch,
+        }
+    }
+
+    pub const fn reset_tick(&self) -> Option<Tick> {
+        match self {
+            Self::Reset { .. } => None,
+            Self::Dump { reset_tick, .. } => Some(*reset_tick),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadExpectedStatsHistory {
     minimum_reset_count: usize,
     minimum_dump_count: usize,
     first_tick: Option<Tick>,
     last_tick: Option<Tick>,
+    exact_records: Vec<WorkloadStatsHistoryRecordExpectation>,
 }
 
 impl WorkloadExpectedStatsHistory {
@@ -71,6 +149,7 @@ impl WorkloadExpectedStatsHistory {
             minimum_dump_count,
             first_tick: None,
             last_tick: None,
+            exact_records: Vec::new(),
         })
     }
 
@@ -92,6 +171,20 @@ impl WorkloadExpectedStatsHistory {
         Ok(self)
     }
 
+    pub fn with_exact_records(
+        mut self,
+        records: impl IntoIterator<Item = WorkloadStatsHistoryRecordExpectation>,
+    ) -> Result<Self, WorkloadError> {
+        let records = records.into_iter().collect::<Vec<_>>();
+        if records.is_empty() {
+            return Err(stats_history_error(
+                WorkloadStatsHistoryExpectationError::EmptyExactRecordSequence,
+            ));
+        }
+        self.exact_records = records;
+        Ok(self)
+    }
+
     pub const fn minimum_reset_count(&self) -> usize {
         self.minimum_reset_count
     }
@@ -108,7 +201,12 @@ impl WorkloadExpectedStatsHistory {
         self.last_tick
     }
 
+    pub fn exact_records(&self) -> &[WorkloadStatsHistoryRecordExpectation] {
+        &self.exact_records
+    }
+
     pub(crate) fn verify(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
+        self.verify_exact_records(result.stats_history_records())?;
         let actual = result.stats_history_summary();
         if actual.reset_count() < self.minimum_reset_count
             || actual.dump_count() < self.minimum_dump_count
@@ -140,11 +238,41 @@ impl WorkloadExpectedStatsHistory {
         }
         Ok(())
     }
+
+    fn verify_exact_records(&self, records: &[StatHistoryRecord]) -> Result<(), WorkloadError> {
+        if self.exact_records.is_empty() {
+            return Ok(());
+        }
+        for (index, expected) in self.exact_records.iter().copied().enumerate() {
+            let actual = records
+                .get(index)
+                .map(WorkloadStatsHistoryRecordExpectation::from_history_record);
+            if actual != Some(expected) {
+                return Err(stats_history_error(
+                    WorkloadStatsHistoryExpectationError::ExactRecordMismatch {
+                        index,
+                        expected,
+                        actual,
+                    },
+                ));
+            }
+        }
+        if let Some(actual) = records.get(self.exact_records.len()) {
+            return Err(stats_history_error(
+                WorkloadStatsHistoryExpectationError::UnexpectedExactRecord {
+                    index: self.exact_records.len(),
+                    actual: WorkloadStatsHistoryRecordExpectation::from_history_record(actual),
+                },
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadStatsHistoryExpectationError {
     EmptyExpectation,
+    EmptyExactRecordSequence,
     InvalidTickWindow {
         first_tick: Tick,
         last_tick: Tick,
@@ -162,6 +290,15 @@ pub enum WorkloadStatsHistoryExpectationError {
         expected_last_tick: Tick,
         actual_last_tick: Option<Tick>,
     },
+    ExactRecordMismatch {
+        index: usize,
+        expected: WorkloadStatsHistoryRecordExpectation,
+        actual: Option<WorkloadStatsHistoryRecordExpectation>,
+    },
+    UnexpectedExactRecord {
+        index: usize,
+        actual: WorkloadStatsHistoryRecordExpectation,
+    },
 }
 
 impl fmt::Display for WorkloadStatsHistoryExpectationError {
@@ -169,6 +306,9 @@ impl fmt::Display for WorkloadStatsHistoryExpectationError {
         match self {
             Self::EmptyExpectation => {
                 write!(formatter, "stats history expectation must require at least one record")
+            }
+            Self::EmptyExactRecordSequence => {
+                write!(formatter, "exact stats history sequence must not be empty")
             }
             Self::InvalidTickWindow {
                 first_tick,
@@ -197,6 +337,18 @@ impl fmt::Display for WorkloadStatsHistoryExpectationError {
             } => write!(
                 formatter,
                 "stats history window {actual_first_tick:?}..{actual_last_tick:?} does not match expected {expected_first_tick}..{expected_last_tick}"
+            ),
+            Self::ExactRecordMismatch {
+                index,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "stats history record {index} is {actual:?}, expected {expected:?}"
+            ),
+            Self::UnexpectedExactRecord { index, actual } => write!(
+                formatter,
+                "stats history has unexpected record {index}: {actual:?}"
             ),
         }
     }
@@ -236,7 +388,7 @@ impl WorkloadReplayPlan {
         &self,
         result: &WorkloadResult,
     ) -> Result<(), WorkloadError> {
-        match self.expected_stats_history {
+        match &self.expected_stats_history {
             Some(expected) => expected.verify(result),
             None => Ok(()),
         }

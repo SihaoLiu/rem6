@@ -143,7 +143,7 @@ impl WorkloadReplayPlan {
             expected_data_cache_run_attribution: manifest
                 .expected_data_cache_run_attribution()
                 .copied(),
-            expected_stats_history: manifest.expected_stats_history().copied(),
+            expected_stats_history: manifest.expected_stats_history().cloned(),
             expected_parallel_remote_flows: manifest.expected_parallel_remote_flows().to_vec(),
             expected_parallel_remote_endpoints: manifest
                 .expected_parallel_remote_endpoints()

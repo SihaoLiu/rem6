@@ -117,7 +117,8 @@ pub use result::{
     WorkloadWaitForTargetNodeWindow,
 };
 pub use stats_history::{
-    WorkloadExpectedStatsHistory, WorkloadStatsHistoryExpectationError, WorkloadStatsHistorySummary,
+    WorkloadExpectedStatsHistory, WorkloadStatsHistoryExpectationError,
+    WorkloadStatsHistoryRecordExpectation, WorkloadStatsHistorySummary,
 };
 pub use suite::{
     WorkloadSuite, WorkloadSuiteBuilder, WorkloadSuiteDispatchLoadExpectation,

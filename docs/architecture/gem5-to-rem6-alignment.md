@@ -193,10 +193,11 @@ isolated bugs:
   kept in one typed interleaved history. Workload replay carries that typed
   reset/dump history into workload results, so replay artifacts preserve both
   the final snapshot and the ordered stats-control record stream. Manifests can
-  require minimum reset/dump counts and exact first/last stats-history ticks, so
-  stats-control behavior becomes replay-verifiable workload identity rather than
-  a log-only side effect. Counter paths are structured scope/name identities with
-  a checked dot-separated spelling before
+  require minimum reset/dump counts, exact first/last stats-history ticks, and
+  exact reset/dump event sequences with stable ids, epochs, and dump reset
+  windows, so stats-control behavior becomes replay-verifiable workload
+  identity rather than a log-only side effect. Counter paths are structured
+  scope/name identities with a checked dot-separated spelling before
   registration, registry-owned stat groups preserve reusable hierarchy ids,
   and snapshots carry a group catalog so exported samples and deltas can
   resolve group ids without a live registry.
@@ -893,7 +894,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | Local files | rem6 owner | Coverage | Alignment target |
 | --- | ---: | --- | --- | --- |
 | `src/arch` | 1187 | `rem6-isa-riscv`, future ISA crates | partial | Keep per-ISA decoding and architectural state as isolated crates. RISC-V exists; ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA support need equivalent crate ownership before claiming parity. |
-| `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. Stats counter paths are now structured scope/name identities, registry-owned stat groups attach stable group ids plus self-describing group catalogs to snapshots and deltas, stat descriptions preserve checked `Info.desc`-style metadata, nested rate units remain machine-readable in snapshots, stats reset requests reject ticks earlier than the active reset window, typed stats resets and dumps preserve stable reset/dump ids plus reset/snapshot payloads in registry-owned, interleaved, workload-result, and manifest-verifiable histories, and typed stats deltas reject cross-scope, group-catalog-drifting, description-drifting, schema-drifting, time-regressing, or value-regressing snapshots so reset ordering and stat descriptor drift cannot silently corrupt dump scope. |
+| `src/base` | 199 | `rem6-kernel`, `rem6-stats`, shared crate utilities | partial | Preserve useful statistics, loader, debug, and helper concepts without a large untyped utility layer. Runtime-visible data must remain typed. Stats counter paths are now structured scope/name identities, registry-owned stat groups attach stable group ids plus self-describing group catalogs to snapshots and deltas, stat descriptions preserve checked `Info.desc`-style metadata, nested rate units remain machine-readable in snapshots, stats reset requests reject ticks earlier than the active reset window, typed stats resets and dumps preserve stable reset/dump ids plus reset/snapshot payloads in registry-owned, interleaved, workload-result, and manifest-verifiable histories with exact event-sequence contracts, and typed stats deltas reject cross-scope, group-catalog-drifting, description-drifting, schema-drifting, time-regressing, or value-regressing snapshots so reset ordering and stat descriptor drift cannot silently corrupt dump scope. |
 | `src/cpu` | 363 | `rem6-cpu`, `rem6-kernel`, `rem6-system` | partial | RISC-V cluster execution exists, RISC-V data access records expose absent memory-route metadata for MMIO accesses as typed optional state instead of panic-only accessors, CPU cluster parallel epochs retain both initial and final partition frontiers through full-system run summaries, and CPU cluster scheduler epochs plus runs expose exact remote-send records, remote-send endpoint counts, progress-free transitions, ordered batch timelines, longest parallel-window evidence, batch worker-count, duration-weighted worker-count tick, worker-tick, partition-set, and same-partition-set streak evidence from the kernel without relying on caller-local batch scans for scheduler-scope counts. gem5 simple, checker, Minor, O3, branch prediction, KVM-style switching, and traffic testers need typed rem6 equivalents or explicit replacement models. |
 | `src/dev` | 418 | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-gpu`, `rem6-accelerator`, `rem6-platform`, `rem6-pci`, `rem6-virtio` | partial | UART, timer, interrupt, an initial typed RISC-V CLINT MMIO model with crate-level snapshot/restore, typed reset policy, platform/topology attachment, typed RISC-V DTS source emission, binary FDT/DTB emission, RISC-V DTB memory/A1 handoff, typed Linux `/chosen` bootargs and initrd DTB metadata, typed DTB and initrd blob installation for store-backed and DRAM-backed memory, GPU, accelerator, initial PCI endpoint, host config-space, 32-bit and 64-bit BAR, BAR MMIO, legacy INTx, MSI, MSI-X, and modern VirtIO PCI common-config, notify-MMIO, ISR-status, device-config, split virtqueue snapshot/restore plus prevalidated system checkpoint capture, regular capability-byte, notify capability-byte, and shared-memory capability paths exist. Storage, network, PS/2, QEMU bridge, and broader platform-specific devices remain alignment targets. |
 | `src/gpu-compute` | 73 | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | partial | Preserve command queues, compute-unit scheduling, DMA, and traceability. Current rem6 GPU execution is a smaller typed model. |
@@ -1224,7 +1225,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   clean parallel diagnostic expectations including livelock counts, scoped
   wait-for edge-kind count expectations, scoped wait-for edge-kind window
   expectations, scoped wait-for blocked-node and target-node window
-  expectations, stats-history reset/dump count and tick-window expectations, and
+  expectations, stats-history reset/dump count, tick-window, and exact
+  event-sequence expectations, and
   manifest identity changes for those expected communication contracts.
   Workload replay QoS tests cover same-tick DRAM
   batching while a data-cache is present, including operation filtering so
