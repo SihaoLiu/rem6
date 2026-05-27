@@ -223,6 +223,12 @@ impl WorkloadParallelExecutionSummary {
                     &self.full_system_wait_for_edge_kind_counts,
                     &scoped_wait_for_counts,
                 )?;
+                let scoped_wait_for_windows = self.scoped_full_system_wait_for_edge_kind_windows();
+                validate_wait_for_edge_kind_window_merge_summary(
+                    scope,
+                    &self.full_system_wait_for_edge_kind_windows,
+                    &scoped_wait_for_windows,
+                )?;
                 validate_deadlock_merge_summary(
                     scope,
                     self.merged_full_system_deadlock_diagnostic_count,
@@ -464,6 +470,18 @@ impl WorkloadParallelExecutionSummary {
         counts: impl IntoIterator<Item = (WaitForEdgeKind, usize)>,
     ) -> Self {
         self.full_system_wait_for_edge_kind_counts = collect_wait_for_edge_kind_counts(counts);
+        self
+    }
+
+    pub fn with_full_system_wait_for_edge_kind_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
+    ) -> Self {
+        self.full_system_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(windows);
+        merge_wait_for_edge_kind_counts_from_windows(
+            &mut self.full_system_wait_for_edge_kind_counts,
+            &self.full_system_wait_for_edge_kind_windows,
+        );
         self
     }
 
@@ -1056,6 +1074,19 @@ impl WorkloadParallelExecutionSummary {
         ])
     }
 
+    fn scoped_full_system_wait_for_edge_kind_windows(&self) -> Vec<WorkloadWaitForEdgeKindWindow> {
+        let resource_windows = self.resource_wait_for_edge_kind_windows();
+        let compute_windows = self.compute_wait_for_edge_kind_windows();
+        let dma_windows = self.dma_wait_for_edge_kind_windows();
+        merge_wait_for_edge_kind_windows(
+            resource_windows
+                .into_iter()
+                .chain(self.data_cache_wait_for_edge_kind_windows.iter().copied())
+                .chain(compute_windows)
+                .chain(dma_windows),
+        )
+    }
+
     pub fn full_system_wait_for_edge_count(&self) -> usize {
         let scoped_edge_count = self.resource_wait_for_edge_count()
             + self.data_cache_wait_for_edge_count()
@@ -1082,15 +1113,11 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_wait_for_edge_kind_windows(&self) -> Vec<WorkloadWaitForEdgeKindWindow> {
-        let resource_windows = self.resource_wait_for_edge_kind_windows();
-        let compute_windows = self.compute_wait_for_edge_kind_windows();
-        let dma_windows = self.dma_wait_for_edge_kind_windows();
-        merge_wait_for_edge_kind_windows(
-            resource_windows
+        let scoped_windows = self.scoped_full_system_wait_for_edge_kind_windows();
+        merge_wait_for_edge_kind_windows_by_strongest(
+            scoped_windows
                 .into_iter()
-                .chain(self.data_cache_wait_for_edge_kind_windows.iter().copied())
-                .chain(compute_windows)
-                .chain(dma_windows),
+                .chain(self.full_system_wait_for_edge_kind_windows.iter().copied()),
         )
     }
 
@@ -1405,6 +1432,36 @@ fn validate_wait_for_edge_kind_count_merge_summary(
     Ok(())
 }
 
+fn validate_wait_for_edge_kind_window_merge_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    merged: &[WorkloadWaitForEdgeKindWindow],
+    scoped: &[WorkloadWaitForEdgeKindWindow],
+) -> Result<(), WorkloadError> {
+    for scoped_window in scoped {
+        let Some(merged_window) = wait_for_edge_kind_window(merged, scoped_window.kind()) else {
+            continue;
+        };
+        if merged_window.edge_count() < scoped_window.edge_count()
+            || merged_window.first_tick() > scoped_window.first_tick()
+            || merged_window.last_tick() < scoped_window.last_tick()
+        {
+            return Err(
+                WorkloadError::InvalidParallelWaitForEdgeKindWindowMergeSummary {
+                    scope,
+                    kind: scoped_window.kind(),
+                    merged_edge_count: merged_window.edge_count(),
+                    scoped_edge_count: scoped_window.edge_count(),
+                    merged_first_tick: merged_window.first_tick(),
+                    scoped_first_tick: scoped_window.first_tick(),
+                    merged_last_tick: merged_window.last_tick(),
+                    scoped_last_tick: scoped_window.last_tick(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_deadlock_merge_summary(
     scope: WorkloadParallelDiagnosticScope,
     merged_diagnostic_count: usize,
@@ -1509,6 +1566,29 @@ pub(super) fn merge_wait_for_edge_kind_windows(
     windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
 ) -> Vec<WorkloadWaitForEdgeKindWindow> {
     collect_wait_for_edge_kind_windows(windows)
+}
+
+fn merge_wait_for_edge_kind_windows_by_strongest(
+    windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
+) -> Vec<WorkloadWaitForEdgeKindWindow> {
+    let mut by_kind = BTreeMap::new();
+    for window in windows {
+        if window.is_empty() {
+            continue;
+        }
+        by_kind
+            .entry(window.kind())
+            .and_modify(|stored: &mut WorkloadWaitForEdgeKindWindow| {
+                *stored = WorkloadWaitForEdgeKindWindow::new(
+                    stored.kind(),
+                    stored.edge_count().max(window.edge_count()),
+                    stored.first_tick().min(window.first_tick()),
+                    stored.last_tick().max(window.last_tick()),
+                );
+            })
+            .or_insert(window);
+    }
+    by_kind.into_values().collect()
 }
 
 pub(super) fn wait_for_edge_kind_window(

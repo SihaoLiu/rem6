@@ -1585,6 +1585,16 @@ pub enum WorkloadError {
         merged_edge_count: usize,
         scoped_edge_count: usize,
     },
+    InvalidParallelWaitForEdgeKindWindowMergeSummary {
+        scope: WorkloadParallelDiagnosticScope,
+        kind: WaitForEdgeKind,
+        merged_edge_count: usize,
+        scoped_edge_count: usize,
+        merged_first_tick: Tick,
+        scoped_first_tick: Tick,
+        merged_last_tick: Tick,
+        scoped_last_tick: Tick,
+    },
     InvalidParallelDeadlockMergeSummary {
         scope: WorkloadParallelDiagnosticScope,
         merged_diagnostic_count: usize,

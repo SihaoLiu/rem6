@@ -749,6 +749,114 @@ fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_edge_kind_c
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_wait_for_edge_kind_windows() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("explicit-full-system-wait-kind-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_window(expected_wait_kind_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        WaitForEdgeKind::Barrier,
+        5,
+        4,
+        20,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_windows([WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Barrier,
+            2,
+            6,
+            10,
+        )])
+        .with_full_system_wait_for_edge_kind_windows([
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Barrier, 5, 4, 20),
+            WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Resource, 3, 7, 9),
+        ]);
+    assert_eq!(
+        summary.full_system_wait_for_edge_kind_window(WaitForEdgeKind::Barrier),
+        Some(WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Barrier,
+            5,
+            4,
+            20,
+        )),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Barrier),
+        5,
+    );
+    assert_eq!(
+        summary.full_system_wait_for_edge_count_by_kind(WaitForEdgeKind::Resource),
+        3,
+    );
+    assert_eq!(summary.full_system_wait_for_edge_count(), 8);
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_edge_kind_windows() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("weak-full-system-wait-kind-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_window(expected_wait_kind_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        WaitForEdgeKind::Barrier,
+        4,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_edge_kind_windows([WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Barrier,
+            4,
+            4,
+            12,
+        )])
+        .with_full_system_wait_for_edge_kind_windows([WorkloadWaitForEdgeKindWindow::new(
+            WaitForEdgeKind::Barrier,
+            4,
+            5,
+            11,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelWaitForEdgeKindWindowMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            kind: WaitForEdgeKind::Barrier,
+            merged_edge_count: 4,
+            scoped_edge_count: 4,
+            merged_first_tick: 5,
+            scoped_first_tick: 4,
+            merged_last_tick: 11,
+            scoped_last_tick: 12,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_verifies_parallel_wait_for_edge_kind_windows() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("verify-wait-kind-window-diagnostics"),

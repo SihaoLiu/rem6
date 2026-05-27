@@ -72,6 +72,20 @@ pub(super) fn format_diagnostic_error(
             "invalid {} wait-for edge kind {kind:?} merge summary: merged edge count {merged_edge_count} is below scoped edge count {scoped_edge_count}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelWaitForEdgeKindWindowMergeSummary {
+            scope,
+            kind,
+            merged_edge_count,
+            scoped_edge_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} wait-for edge kind {kind:?} window merge summary: merged window {merged_edge_count} edges from tick {merged_first_tick} to {merged_last_tick} is weaker than scoped window {scoped_edge_count} edges from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str()
+        ),
         WorkloadError::InvalidParallelDeadlockMergeSummary {
             scope,
             merged_diagnostic_count,

@@ -417,6 +417,11 @@ Implementation evidence on 2026-05-26:
   resource, data-cache, compute, and DMA counts as lower bounds. A merged
   full-system count that is weaker than same-kind scoped evidence is rejected
   before replay applies manifest diagnostic expectations.
+- Workload full-system wait-for edge-kind window reporting now accepts
+  explicit merged full-system windows from a global scheduler without adding
+  them again to scoped windows for the same kind. A merged window must preserve
+  at least the same edge count and tick coverage as scoped evidence before
+  replay applies exact window expectations.
 - Workload clean parallel diagnostic replay now applies declared livelock
   transition thresholds to raw scoped progress-free transition records. A
   result with no materialized livelock diagnostic record is still rejected when
