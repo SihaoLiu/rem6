@@ -143,6 +143,102 @@ fn workload_result_lists_parallel_progress_transition_dimensions() {
 }
 
 #[test]
+fn workload_result_queries_dma_scheduler_progress_transition_dimensions() {
+    let gpu_dma_scheduler = subject("gpu-dma-scheduler");
+    let gpu_retry = subject("gpu-dma-retry");
+    let accelerator_dma_scheduler = subject("accelerator-dma-scheduler");
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_progress_transitions([
+            transition(
+                9,
+                gpu_dma_scheduler.clone(),
+                LivelockTransitionKind::MessageRetry,
+                19,
+                0,
+            ),
+            transition(
+                9,
+                gpu_retry.clone(),
+                LivelockTransitionKind::MessageRetry,
+                23,
+                1,
+            ),
+            transition(
+                10,
+                gpu_dma_scheduler.clone(),
+                LivelockTransitionKind::QueueRotation,
+                29,
+                0,
+            ),
+        ])
+        .with_accelerator_dma_scheduler_progress_transitions([
+            transition(
+                11,
+                accelerator_dma_scheduler.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                31,
+                0,
+            ),
+            transition(
+                11,
+                accelerator_dma_scheduler.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                37,
+                1,
+            ),
+        ]);
+
+    assert_eq!(
+        summary.gpu_dma_scheduler_progress_transition_count_by_kind(
+            LivelockTransitionKind::MessageRetry,
+        ),
+        2,
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_progress_transition_tick_window_by_kind(
+            LivelockTransitionKind::MessageRetry,
+        ),
+        Some((19, 23)),
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_progress_transition_records_by_partition(PartitionId::new(9)),
+        vec![
+            transition(
+                9,
+                gpu_dma_scheduler.clone(),
+                LivelockTransitionKind::MessageRetry,
+                19,
+                0,
+            ),
+            transition(9, gpu_retry, LivelockTransitionKind::MessageRetry, 23, 1),
+        ],
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_progress_transition_subject_summaries(),
+        vec![
+            (subject("gpu-dma-retry"), 1, 23, 23),
+            (gpu_dma_scheduler, 2, 19, 29),
+        ],
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_progress_transition_count_by_subject(
+            &accelerator_dma_scheduler,
+        ),
+        2,
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_progress_transition_partition_summaries(),
+        vec![(PartitionId::new(11), 2, 31, 37)],
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_progress_transition_tick_window_by_partition(
+            PartitionId::new(11),
+        ),
+        Some((31, 37)),
+    );
+}
+
+#[test]
 fn workload_result_reports_parallel_progress_transition_tick_windows() {
     let cpu_scheduler = subject("cpu-scheduler");
     let shared_retry = subject("shared-retry-loop");

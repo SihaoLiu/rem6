@@ -504,6 +504,260 @@ impl WorkloadParallelExecutionSummary {
         &self.accelerator_dma_scheduler_progress_transitions
     }
 
+    pub fn gpu_dma_scheduler_progress_transition_count_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> usize {
+        progress_transition_count_by_kind(&self.gpu_dma_scheduler_progress_transitions, kind)
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_records_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_progress_transition_records(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.kind() == kind,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_kind_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.kind(),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_kinds(&self) -> Vec<LivelockTransitionKind> {
+        collect_progress_transition_kinds(&self.gpu_dma_scheduler_progress_transitions)
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_tick_window_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.kind() == kind,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_count_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> usize {
+        progress_transition_count_by_partition(
+            &self.gpu_dma_scheduler_progress_transitions,
+            partition,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_records_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_progress_transition_records(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.partition() == partition,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_partition_summaries(
+        &self,
+    ) -> Vec<(PartitionId, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.partition(),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_partitions(&self) -> Vec<PartitionId> {
+        collect_progress_transition_partitions(&self.gpu_dma_scheduler_progress_transitions)
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_tick_window_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.partition() == partition,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_count_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> usize {
+        progress_transition_count_by_subject(&self.gpu_dma_scheduler_progress_transitions, subject)
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_records_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_progress_transition_records(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.subject() == subject,
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.subject().clone(),
+        )
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_subjects(&self) -> Vec<WaitForNode> {
+        collect_progress_transition_subjects(&self.gpu_dma_scheduler_progress_transitions)
+    }
+
+    pub fn gpu_dma_scheduler_progress_transition_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.gpu_dma_scheduler_progress_transitions,
+            |transition| transition.subject() == subject,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_count_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> usize {
+        progress_transition_count_by_kind(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            kind,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_records_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_progress_transition_records(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.kind() == kind,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_kind_summaries(
+        &self,
+    ) -> Vec<(LivelockTransitionKind, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.kind(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_kinds(
+        &self,
+    ) -> Vec<LivelockTransitionKind> {
+        collect_progress_transition_kinds(&self.accelerator_dma_scheduler_progress_transitions)
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_tick_window_by_kind(
+        &self,
+        kind: LivelockTransitionKind,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.kind() == kind,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_count_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> usize {
+        progress_transition_count_by_partition(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            partition,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_records_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_progress_transition_records(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.partition() == partition,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_partition_summaries(
+        &self,
+    ) -> Vec<(PartitionId, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.partition(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_partitions(&self) -> Vec<PartitionId> {
+        collect_progress_transition_partitions(&self.accelerator_dma_scheduler_progress_transitions)
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_tick_window_by_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.partition() == partition,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_count_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> usize {
+        progress_transition_count_by_subject(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            subject,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_records_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Vec<ParallelProgressTransitionRecord> {
+        collect_progress_transition_records(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.subject() == subject,
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_subject_summaries(
+        &self,
+    ) -> Vec<(WaitForNode, usize, Tick, Tick)> {
+        collect_progress_transition_summaries(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.subject().clone(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_subjects(&self) -> Vec<WaitForNode> {
+        collect_progress_transition_subjects(&self.accelerator_dma_scheduler_progress_transitions)
+    }
+
+    pub fn accelerator_dma_scheduler_progress_transition_tick_window_by_subject(
+        &self,
+        subject: &WaitForNode,
+    ) -> Option<(Tick, Tick)> {
+        progress_transition_tick_window(
+            &self.accelerator_dma_scheduler_progress_transitions,
+            |transition| transition.subject() == subject,
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_progress_transition_count_by_kind(
         &self,
         kind: LivelockTransitionKind,

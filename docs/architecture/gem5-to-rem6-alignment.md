@@ -475,6 +475,11 @@ Implementation evidence on 2026-05-26:
   is provided. Explicit merged full-system transition streams must also cover
   DMA scoped transition counts and windows, so heterogeneous device scheduler
   livelock evidence cannot disappear behind a CPU/cache-only summary.
+- Workload GPU DMA and accelerator DMA transition evidence now exposes the
+  same kind, partition, subject, tick-window, record, and summary queries as
+  CPU and data-cache scheduler transitions. Heterogeneous scheduler debugging
+  can therefore inspect device-side progress evidence without falling back to
+  full-system aggregates.
 - Workload resource deadlock merge validation rejects explicit merged resource
   deadlock counts that are weaker than the fabric and DRAM scoped deadlock
   evidence they replace. Resource clean-diagnostic replay therefore cannot hide
