@@ -271,6 +271,9 @@ impl ProbeRegistry {
         if !self.points.contains_key(&point) {
             return Err(StatsError::UnknownProbePoint { point });
         }
+        if let Some(previous) = self.events.last() {
+            validate_probe_event_time(tick, previous.tick())?;
+        }
         let sequence = self.next_sequence;
         self.next_sequence = self
             .next_sequence
@@ -377,6 +380,7 @@ impl ProbeRegistry {
         validate_probe_listener_cursor(snapshot.next_listener(), highest_listener)?;
 
         let mut previous_sequence = None;
+        let mut previous_tick = None;
         let mut highest_sequence = None;
         for event in snapshot.events() {
             if !points.contains_key(&event.point()) {
@@ -392,7 +396,11 @@ impl ProbeRegistry {
                     });
                 }
             }
+            if let Some(previous_tick) = previous_tick {
+                validate_probe_event_time(event.tick(), previous_tick)?;
+            }
             previous_sequence = Some(event.sequence());
+            previous_tick = Some(event.tick());
             highest_sequence = Some(event.sequence());
         }
         validate_probe_event_cursor(snapshot.next_sequence(), highest_sequence)?;
@@ -561,6 +569,16 @@ fn validate_probe_event_cursor(
         return Err(StatsError::ProbeEventCursorBehind {
             next_sequence,
             highest_sequence,
+        });
+    }
+    Ok(())
+}
+
+fn validate_probe_event_time(tick: Tick, previous_tick: Tick) -> Result<(), StatsError> {
+    if tick < previous_tick {
+        return Err(StatsError::ProbeEventTimeWentBack {
+            previous_tick,
+            current_tick: tick,
         });
     }
     Ok(())

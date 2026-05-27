@@ -1049,6 +1049,35 @@ fn probe_registry_rejects_ambiguous_identifiers_without_consuming_ids() {
 }
 
 #[test]
+fn probe_registry_rejects_time_regressing_events_without_consuming_sequence() {
+    let mut probes = ProbeRegistry::new();
+    let committed = probes.register_point("cpu0", "commit").unwrap();
+
+    probes.emit(10, committed, ProbePayload::Unit).unwrap();
+    assert_eq!(
+        probes.emit(9, committed, ProbePayload::Unit).unwrap_err(),
+        StatsError::ProbeEventTimeWentBack {
+            previous_tick: 10,
+            current_tick: 9,
+        },
+    );
+
+    let event = probes
+        .emit(10, committed, ProbePayload::Counter { amount: 1 })
+        .unwrap()
+        .clone();
+    assert_eq!(event.sequence(), 1);
+    assert_eq!(
+        probes.events(),
+        [
+            ProbeEvent::new(10, 0, committed, 0, ProbePayload::Unit),
+            ProbeEvent::new(10, 1, committed, 0, ProbePayload::Counter { amount: 1 }),
+        ]
+        .as_slice(),
+    );
+}
+
+#[test]
 fn probe_registry_restores_snapshot_cursors_without_reusing_removed_listener_ids() {
     let mut probes = ProbeRegistry::new();
     let committed = probes.register_point("cpu0", "commit").unwrap();
@@ -1165,6 +1194,26 @@ fn probe_registry_rejects_malformed_snapshots_without_mutating_live_registry() {
         StatsError::ProbeEventSequenceNotIncreasing {
             previous_sequence: 1,
             current_sequence: 1,
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let time_regressing_events = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        Vec::new(),
+        vec![
+            ProbeEvent::new(10, 0, point, 0, ProbePayload::Unit),
+            ProbeEvent::new(9, 1, point, 0, ProbePayload::Unit),
+        ],
+        1,
+        0,
+        2,
+    );
+    assert_eq!(
+        probes.restore(&time_regressing_events).unwrap_err(),
+        StatsError::ProbeEventTimeWentBack {
+            previous_tick: 10,
+            current_tick: 9,
         },
     );
     assert_eq!(probes.snapshot(), original);

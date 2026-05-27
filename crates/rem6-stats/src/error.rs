@@ -139,6 +139,10 @@ pub enum StatsError {
         previous_sequence: u64,
         current_sequence: u64,
     },
+    ProbeEventTimeWentBack {
+        previous_tick: Tick,
+        current_tick: Tick,
+    },
     ProbePointSequenceOverflow,
     ProbeListenerSequenceOverflow,
     ProbeSequenceOverflow,
@@ -311,6 +315,13 @@ impl fmt::Display for StatsError {
             } => write!(
                 formatter,
                 "probe event sequence {current_sequence} does not exceed previous sequence {previous_sequence}"
+            ),
+            Self::ProbeEventTimeWentBack {
+                previous_tick,
+                current_tick,
+            } => write!(
+                formatter,
+                "probe event tick {current_tick} is before previous tick {previous_tick}"
             ),
             Self::ProbePointSequenceOverflow => {
                 write!(formatter, "probe point sequence overflowed")
