@@ -984,6 +984,71 @@ fn probe_registry_records_typed_events_and_listener_state() {
 }
 
 #[test]
+fn probe_registry_rejects_ambiguous_identifiers_without_consuming_ids() {
+    let mut probes = ProbeRegistry::new();
+
+    assert_eq!(
+        probes.register_point("cpu-0", "commit").unwrap_err(),
+        StatsError::InvalidProbeComponent {
+            component: "cpu-0".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "cpu-0".to_string(),
+                character: '-',
+            },
+        },
+    );
+    assert_eq!(
+        probes.register_point("0cpu", "commit").unwrap_err(),
+        StatsError::InvalidProbeComponent {
+            component: "0cpu".to_string(),
+            reason: StatPathError::InvalidSegmentStart {
+                segment: "0cpu".to_string(),
+                character: '0',
+            },
+        },
+    );
+    assert_eq!(
+        probes.register_point("cpu0", "commit count").unwrap_err(),
+        StatsError::InvalidProbeName {
+            name: "commit count".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "commit count".to_string(),
+                character: ' ',
+            },
+        },
+    );
+    assert_eq!(
+        probes.register_point("cpu0", "commit.event").unwrap_err(),
+        StatsError::InvalidProbeName {
+            name: "commit.event".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "commit.event".to_string(),
+                character: '.',
+            },
+        },
+    );
+
+    let committed = probes.register_point("cpu0", "commit").unwrap();
+    assert_eq!(committed, ProbePointId::new(0));
+    assert_eq!(
+        probes
+            .add_listener(committed, "commit listener")
+            .unwrap_err(),
+        StatsError::InvalidProbeListenerName {
+            name: "commit listener".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "commit listener".to_string(),
+                character: ' ',
+            },
+        },
+    );
+    assert_eq!(
+        probes.add_listener(committed, "commit_trace").unwrap(),
+        ProbeListenerId::new(0),
+    );
+}
+
+#[test]
 fn probe_registry_restores_snapshot_cursors_without_reusing_removed_listener_ids() {
     let mut probes = ProbeRegistry::new();
     let committed = probes.register_point("cpu0", "commit").unwrap();
@@ -1117,6 +1182,50 @@ fn probe_registry_rejects_malformed_snapshots_without_mutating_live_registry() {
         StatsError::ProbePointCursorBehind {
             next_point: 0,
             highest_point: point,
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let invalid_point_name = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit count".to_string(), point)],
+        Vec::new(),
+        Vec::new(),
+        1,
+        0,
+        0,
+    );
+    assert_eq!(
+        probes.restore(&invalid_point_name).unwrap_err(),
+        StatsError::InvalidProbeName {
+            name: "commit count".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "commit count".to_string(),
+                character: ' ',
+            },
+        },
+    );
+    assert_eq!(probes.snapshot(), original);
+
+    let invalid_listener_name = ProbeSnapshot::with_cursors(
+        vec![("cpu0".to_string(), "commit".to_string(), point)],
+        vec![(
+            "commit listener".to_string(),
+            point,
+            ProbeListenerId::new(0),
+        )],
+        Vec::new(),
+        1,
+        1,
+        0,
+    );
+    assert_eq!(
+        probes.restore(&invalid_listener_name).unwrap_err(),
+        StatsError::InvalidProbeListenerName {
+            name: "commit listener".to_string(),
+            reason: StatPathError::InvalidSegmentCharacter {
+                segment: "commit listener".to_string(),
+                character: ' ',
+            },
         },
     );
     assert_eq!(probes.snapshot(), original);

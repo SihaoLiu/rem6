@@ -85,7 +85,15 @@ pub enum StatsError {
         current: u64,
     },
     EmptyProbeComponent,
+    InvalidProbeComponent {
+        component: String,
+        reason: StatPathError,
+    },
     EmptyProbeName,
+    InvalidProbeName {
+        name: String,
+        reason: StatPathError,
+    },
     DuplicateProbePoint {
         component: String,
         name: String,
@@ -97,6 +105,10 @@ pub enum StatsError {
         point: ProbePointId,
     },
     EmptyProbeListenerName,
+    InvalidProbeListenerName {
+        name: String,
+        reason: StatPathError,
+    },
     DuplicateProbeListener {
         point: ProbePointId,
         name: String,
@@ -231,7 +243,13 @@ impl fmt::Display for StatsError {
                 stat.get()
             ),
             Self::EmptyProbeComponent => write!(formatter, "probe component must not be empty"),
+            Self::InvalidProbeComponent { component, reason } => {
+                write!(formatter, "probe component {component} is invalid: {reason}")
+            }
             Self::EmptyProbeName => write!(formatter, "probe point name must not be empty"),
+            Self::InvalidProbeName { name, reason } => {
+                write!(formatter, "probe point name {name} is invalid: {reason}")
+            }
             Self::DuplicateProbePoint { component, name } => {
                 write!(formatter, "probe point already exists: {component}.{name}")
             }
@@ -243,6 +261,9 @@ impl fmt::Display for StatsError {
             }
             Self::EmptyProbeListenerName => {
                 write!(formatter, "probe listener name must not be empty")
+            }
+            Self::InvalidProbeListenerName { name, reason } => {
+                write!(formatter, "probe listener name {name} is invalid: {reason}")
             }
             Self::DuplicateProbeListener { point, name } => write!(
                 formatter,

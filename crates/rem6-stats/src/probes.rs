@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_kernel::Tick;
 
 use crate::error::StatsError;
+use crate::stats::StatPathError;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProbePointId(u64);
@@ -188,12 +189,8 @@ impl ProbeRegistry {
     ) -> Result<ProbePointId, StatsError> {
         let component = component.into();
         let name = name.into();
-        if component.is_empty() {
-            return Err(StatsError::EmptyProbeComponent);
-        }
-        if name.is_empty() {
-            return Err(StatsError::EmptyProbeName);
-        }
+        validate_probe_component(&component)?;
+        validate_probe_name(&name)?;
         if self
             .point_names
             .contains(&(component.clone(), name.clone()))
@@ -222,9 +219,7 @@ impl ProbeRegistry {
             return Err(StatsError::UnknownProbePoint { point });
         }
         let name = name.into();
-        if name.is_empty() {
-            return Err(StatsError::EmptyProbeListenerName);
-        }
+        validate_probe_listener_name(&name)?;
         if self
             .listeners
             .values()
@@ -434,18 +429,58 @@ struct ProbeListenerRecord {
 }
 
 fn validate_probe_point_fields(component: &str, name: &str) -> Result<(), StatsError> {
+    validate_probe_component(component)?;
+    validate_probe_name(name)
+}
+
+fn validate_probe_component(component: &str) -> Result<(), StatsError> {
     if component.is_empty() {
         return Err(StatsError::EmptyProbeComponent);
     }
+    validate_probe_identifier(component).map_err(|reason| StatsError::InvalidProbeComponent {
+        component: component.to_string(),
+        reason,
+    })
+}
+
+fn validate_probe_name(name: &str) -> Result<(), StatsError> {
     if name.is_empty() {
         return Err(StatsError::EmptyProbeName);
     }
-    Ok(())
+    validate_probe_identifier(name).map_err(|reason| StatsError::InvalidProbeName {
+        name: name.to_string(),
+        reason,
+    })
 }
 
 fn validate_probe_listener_name(name: &str) -> Result<(), StatsError> {
     if name.is_empty() {
         return Err(StatsError::EmptyProbeListenerName);
+    }
+    validate_probe_identifier(name).map_err(|reason| StatsError::InvalidProbeListenerName {
+        name: name.to_string(),
+        reason,
+    })
+}
+
+fn validate_probe_identifier(identifier: &str) -> Result<(), StatPathError> {
+    let mut chars = identifier.chars();
+    let Some(first) = chars.next() else {
+        return Err(StatPathError::EmptySegment { index: 0 });
+    };
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return Err(StatPathError::InvalidSegmentStart {
+            segment: identifier.to_string(),
+            character: first,
+        });
+    }
+    for character in chars {
+        if !character.is_ascii_alphanumeric() && character != '_' {
+            return Err(StatPathError::InvalidSegmentCharacter {
+                segment: identifier.to_string(),
+                character,
+            });
+        }
     }
     Ok(())
 }
