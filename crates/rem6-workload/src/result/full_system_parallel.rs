@@ -15,8 +15,8 @@ use crate::parallel_batch::{
     normalize_partition_set, parallel_batch_active_partition_count,
     parallel_batch_count_at_or_above, parallel_batch_count_for_partition_set,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
-    parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
-    total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
+    parallel_batch_streak_count_for_partition_set, total_parallel_batch_activity_worker_count,
+    total_parallel_batch_count, WorkloadParallelBatchPartitionSet,
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
@@ -57,14 +57,31 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {
-        (self.scheduler_batch_count()
+        let scoped_batch_count = self.scheduler_batch_count()
             + self.data_cache_parallel_scheduler_batch_count()
-            + self.dma_scheduler_batch_count())
-        .max(strongest_parallel_batch_count(
-            &[],
-            &[],
+            + self.dma_scheduler_batch_count();
+        let scheduler_counts = preferred_batch_count_worker_counts(
+            &self.parallel_scheduler_batch_worker_counts,
+            &self.parallel_scheduler_batch_partition_sets,
+            &self.parallel_scheduler_batch_partition_streaks,
+        );
+        let data_cache_counts = preferred_batch_count_worker_counts(
+            &self.data_cache_parallel_scheduler_batch_worker_counts,
+            &self.data_cache_parallel_scheduler_batch_partition_sets,
+            &self.data_cache_parallel_scheduler_batch_partition_streaks,
+        );
+        let scoped_counts = collect_parallel_batch_worker_counts(
+            scheduler_counts
+                .into_iter()
+                .chain(data_cache_counts)
+                .chain(self.dma_scheduler_batch_worker_counts()),
+        );
+        let full_system_counts = collect_parallel_batch_worker_counts_from_streaks(
             &self.full_system_parallel_scheduler_batch_partition_streaks,
-        ))
+        );
+        let counts =
+            collect_strongest_parallel_batch_worker_counts(scoped_counts, full_system_counts);
+        scoped_batch_count.max(total_parallel_batch_count(&counts))
     }
 
     pub fn active_full_system_parallel_scheduler_partition_count(&self) -> usize {
@@ -463,6 +480,20 @@ impl WorkloadParallelExecutionSummary {
             || self.has_dma_scheduler_remote_flows()
             || self.has_dma_scheduler_remote_sends()
     }
+}
+
+fn preferred_batch_count_worker_counts(
+    explicit_counts: &[WorkloadParallelBatchWorkerCount],
+    partition_sets: &[WorkloadParallelBatchPartitionSet],
+    partition_streaks: &[WorkloadParallelBatchPartitionStreak],
+) -> Vec<WorkloadParallelBatchWorkerCount> {
+    if !explicit_counts.is_empty() {
+        return explicit_counts.to_vec();
+    }
+    collect_strongest_parallel_batch_worker_counts(
+        collect_parallel_batch_worker_counts_from_partition_sets(partition_sets),
+        collect_parallel_batch_worker_counts_from_streaks(partition_streaks),
+    )
 }
 
 impl WorkloadParallelExecutionSummary {
