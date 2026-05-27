@@ -473,6 +473,9 @@ Implementation evidence on 2026-05-26:
 - Workload full-system total-worker reporting now uses the same preferred
   bucket merge while preserving scoped actual worker totals, so total-worker
   activity does not drop disjoint scoped and explicit full-system evidence.
+- Workload full-system dispatch reporting now uses the same preferred bucket
+  merge while preserving scoped actual dispatch totals, so worker-owned
+  dispatch evidence remains visible across disjoint merged buckets.
 - Workload direct per-partition activity now normalizes dispatch counts without
   worker evidence to zero while preserving remote send and receive evidence.
   A replay artifact can still prove cross-partition communication, but it

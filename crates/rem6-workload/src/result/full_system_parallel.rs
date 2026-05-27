@@ -15,10 +15,9 @@ use crate::parallel_batch::{
     normalize_partition_set, parallel_batch_active_partition_count,
     parallel_batch_count_at_or_above, parallel_batch_count_for_partition_set,
     parallel_batch_partition_activity_for_partition, parallel_batch_streak_activity_for_partition,
-    parallel_batch_streak_count_for_partition_set, total_parallel_batch_activity_worker_count,
-    total_parallel_batch_count, total_parallel_batch_worker_count,
-    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchWorkerCount,
+    parallel_batch_streak_count_for_partition_set, total_parallel_batch_count,
+    total_parallel_batch_worker_count, WorkloadParallelBatchPartitionSet,
+    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchWorkerCount,
 };
 use crate::result_collect::{
     collect_conservative_partition_frontiers, collect_parallel_partition_activities,
@@ -47,14 +46,11 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_dispatch_count(&self) -> usize {
-        (self.scheduler_dispatch_count()
+        let scoped_dispatch_count = self.scheduler_dispatch_count()
             + self.data_cache_parallel_scheduler_dispatch_count()
-            + self.dma_scheduler_dispatch_count())
-        .max(total_parallel_batch_activity_worker_count(
-            &[],
-            &[],
-            &self.full_system_parallel_scheduler_batch_partition_streaks,
-        ))
+            + self.dma_scheduler_dispatch_count();
+        let counts = self.preferred_full_system_parallel_scheduler_batch_worker_counts();
+        scoped_dispatch_count.max(total_parallel_batch_worker_count(&counts))
     }
 
     pub fn full_system_parallel_scheduler_batch_count(&self) -> usize {
