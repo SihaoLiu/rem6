@@ -3,8 +3,8 @@ use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
     StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
     StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath, StatPathError,
-    StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError,
-    StatsRegistry, StatsResetRecord,
+    StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError,
+    StatsError, StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -828,6 +828,7 @@ fn stats_registry_records_typed_reset_history() {
     stats.increment(cycles, 50).unwrap();
     stats.increment(misses, 3).unwrap();
     let first_reset = stats.try_reset(20).unwrap();
+    assert_eq!(first_reset.id(), StatResetId::new(0));
     assert_eq!(
         first_reset,
         StatsResetRecord::new(20, 1, vec![(cycles, 50), (misses, 3)])
@@ -849,9 +850,10 @@ fn stats_registry_records_typed_reset_history() {
     );
 
     let second_reset = stats.reset(25);
+    assert_eq!(second_reset.id(), StatResetId::new(1));
     assert_eq!(
         second_reset,
-        StatsResetRecord::new(25, 2, vec![(cycles, 7), (misses, 0)])
+        StatsResetRecord::with_id(StatResetId::new(1), 25, 2, vec![(cycles, 7), (misses, 0)])
     );
     assert_eq!(
         stats.reset_records(),

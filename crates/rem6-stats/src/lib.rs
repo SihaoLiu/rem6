@@ -11,6 +11,6 @@ pub use registry::StatsRegistry;
 pub use stats::{
     StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
     StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath, StatPathError,
-    StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatUnitKind,
-    StatsResetRecord,
+    StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError,
+    StatUnitKind, StatsResetRecord,
 };

@@ -5,14 +5,15 @@ use rem6_kernel::Tick;
 use crate::error::StatsError;
 use crate::stats::{
     StatDescription, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId,
-    StatHistoryRecord, StatId, StatPath, StatSample, StatScope, StatSnapshot, StatUnit,
-    StatsResetRecord,
+    StatHistoryRecord, StatId, StatPath, StatResetId, StatSample, StatScope, StatSnapshot,
+    StatUnit, StatsResetRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsRegistry {
     next_id: u64,
     next_dump_id: u64,
+    next_reset_id: u64,
     next_group_id: u64,
     epoch: u64,
     reset_tick: Tick,
@@ -31,6 +32,7 @@ impl StatsRegistry {
         Self {
             next_id: 0,
             next_dump_id: 0,
+            next_reset_id: 0,
             next_group_id: 0,
             epoch: 0,
             reset_tick: 0,
@@ -367,6 +369,12 @@ impl StatsRegistry {
             });
         }
 
+        let id = StatResetId::new(self.next_reset_id);
+        self.next_reset_id = self
+            .next_reset_id
+            .checked_add(1)
+            .ok_or(StatsError::ResetSequenceOverflow)?;
+
         self.epoch += 1;
         self.reset_tick = tick;
         let mut previous_values = Vec::new();
@@ -374,7 +382,7 @@ impl StatsRegistry {
             previous_values.push((*id, *counter));
             *counter = 0;
         }
-        let record = StatsResetRecord::new(tick, self.epoch, previous_values);
+        let record = StatsResetRecord::with_id(id, tick, self.epoch, previous_values);
         self.reset_records.push(record.clone());
         self.history_records
             .push(StatHistoryRecord::Reset(record.clone()));

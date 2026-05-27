@@ -32,6 +32,19 @@ impl StatDumpId {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StatResetId(u64);
+
+impl StatResetId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StatGroupId(u64);
 
 impl StatGroupId {
@@ -896,6 +909,7 @@ impl StatHistoryRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatsResetRecord {
+    id: StatResetId,
     tick: Tick,
     epoch: u64,
     previous_values: Vec<(StatId, u64)>,
@@ -903,11 +917,25 @@ pub struct StatsResetRecord {
 
 impl StatsResetRecord {
     pub const fn new(tick: Tick, epoch: u64, previous_values: Vec<(StatId, u64)>) -> Self {
+        Self::with_id(StatResetId::new(0), tick, epoch, previous_values)
+    }
+
+    pub const fn with_id(
+        id: StatResetId,
+        tick: Tick,
+        epoch: u64,
+        previous_values: Vec<(StatId, u64)>,
+    ) -> Self {
         Self {
+            id,
             tick,
             epoch,
             previous_values,
         }
+    }
+
+    pub const fn id(&self) -> StatResetId {
+        self.id
     }
 
     pub const fn tick(&self) -> Tick {

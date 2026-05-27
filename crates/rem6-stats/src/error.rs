@@ -108,6 +108,7 @@ pub enum StatsError {
     ProbeSequenceOverflow,
     GroupSequenceOverflow,
     DumpSequenceOverflow,
+    ResetSequenceOverflow,
 }
 
 impl fmt::Display for StatsError {
@@ -233,6 +234,7 @@ impl fmt::Display for StatsError {
             Self::ProbeSequenceOverflow => write!(formatter, "probe event sequence overflowed"),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
+            Self::ResetSequenceOverflow => write!(formatter, "stat reset sequence overflowed"),
         }
     }
 }
