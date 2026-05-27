@@ -41,8 +41,11 @@ mod heterogeneous_activity;
 mod progress;
 mod remote_endpoints;
 mod wait_for_diagnostics;
+mod wait_for_node_windows;
 
-pub use wait_for_diagnostics::{WorkloadWaitForBlockedNodeWindow, WorkloadWaitForTargetNodeWindow};
+pub use wait_for_node_windows::{
+    WorkloadWaitForBlockedNodeWindow, WorkloadWaitForTargetNodeWindow,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
@@ -293,6 +296,8 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     full_system_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     full_system_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,
+    full_system_wait_for_blocked_node_windows: Vec<WorkloadWaitForBlockedNodeWindow>,
+    full_system_wait_for_target_node_windows: Vec<WorkloadWaitForTargetNodeWindow>,
     data_cache_deadlock_diagnostic_count: usize,
     data_cache_parallel_scheduler_progress_transition_count: usize,
     data_cache_parallel_scheduler_livelock_diagnostic_count: usize,

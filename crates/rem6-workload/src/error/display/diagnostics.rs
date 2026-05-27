@@ -86,6 +86,34 @@ pub(super) fn format_diagnostic_error(
             "invalid {} wait-for edge kind {kind:?} window merge summary: merged window {merged_edge_count} edges from tick {merged_first_tick} to {merged_last_tick} is weaker than scoped window {scoped_edge_count} edges from tick {scoped_first_tick} to {scoped_last_tick}",
             scope.as_str()
         ),
+        WorkloadError::InvalidParallelWaitForBlockedNodeWindowMergeSummary {
+            scope,
+            node,
+            merged_edge_count,
+            scoped_edge_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} wait-for blocked node {node} window merge summary: merged window {merged_edge_count} edges from tick {merged_first_tick} to {merged_last_tick} is weaker than scoped window {scoped_edge_count} edges from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str()
+        ),
+        WorkloadError::InvalidParallelWaitForTargetNodeWindowMergeSummary {
+            scope,
+            node,
+            merged_edge_count,
+            scoped_edge_count,
+            merged_first_tick,
+            scoped_first_tick,
+            merged_last_tick,
+            scoped_last_tick,
+        } => write!(
+            formatter,
+            "invalid {} wait-for target node {node} window merge summary: merged window {merged_edge_count} edges from tick {merged_first_tick} to {merged_last_tick} is weaker than scoped window {scoped_edge_count} edges from tick {scoped_first_tick} to {scoped_last_tick}",
+            scope.as_str()
+        ),
         WorkloadError::InvalidParallelDeadlockMergeSummary {
             scope,
             merged_diagnostic_count,

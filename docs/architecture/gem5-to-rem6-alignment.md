@@ -422,6 +422,13 @@ Implementation evidence on 2026-05-26:
   them again to scoped windows for the same kind. A merged window must preserve
   at least the same edge count and tick coverage as scoped evidence before
   replay applies exact window expectations.
+- Workload full-system wait-for blocked-node and target-node window reporting
+  now accepts explicit merged full-system windows from a global scheduler while
+  preserving scoped resource, data-cache, compute, and DMA node windows as
+  lower-bound evidence. Same-node explicit full-system windows merge by the
+  strongest edge count and widest tick range instead of double-counting scoped
+  records, and weaker merged windows are rejected before replay applies exact
+  node-window expectations.
 - Workload clean parallel diagnostic replay now applies declared livelock
   transition thresholds to raw scoped progress-free transition records. A
   result with no materialized livelock diagnostic record is still rejected when

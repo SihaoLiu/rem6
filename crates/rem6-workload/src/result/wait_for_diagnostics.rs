@@ -4,119 +4,17 @@ use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{WorkloadError, WorkloadParallelDiagnosticScope};
 
-use super::{WorkloadParallelExecutionSummary, WorkloadWaitForEdgeKindWindow};
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct WorkloadWaitForBlockedNodeWindow {
-    node: WaitForNode,
-    edge_count: usize,
-    first_tick: u64,
-    last_tick: u64,
-}
-
-impl WorkloadWaitForBlockedNodeWindow {
-    pub fn new(node: WaitForNode, edge_count: usize, first_tick: u64, last_tick: u64) -> Self {
-        let stored_first_tick = if first_tick <= last_tick {
-            first_tick
-        } else {
-            last_tick
-        };
-        let stored_last_tick = if first_tick <= last_tick {
-            last_tick
-        } else {
-            first_tick
-        };
-        Self {
-            node,
-            edge_count,
-            first_tick: stored_first_tick,
-            last_tick: stored_last_tick,
-        }
-    }
-
-    pub const fn node(&self) -> &WaitForNode {
-        &self.node
-    }
-
-    pub const fn edge_count(&self) -> usize {
-        self.edge_count
-    }
-
-    pub const fn first_tick(&self) -> u64 {
-        self.first_tick
-    }
-
-    pub const fn last_tick(&self) -> u64 {
-        self.last_tick
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.edge_count == 0
-    }
-
-    pub(crate) fn merge(&mut self, other: Self) {
-        debug_assert_eq!(self.node, other.node);
-        self.edge_count = self.edge_count.saturating_add(other.edge_count);
-        self.first_tick = self.first_tick.min(other.first_tick);
-        self.last_tick = self.last_tick.max(other.last_tick);
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct WorkloadWaitForTargetNodeWindow {
-    node: WaitForNode,
-    edge_count: usize,
-    first_tick: u64,
-    last_tick: u64,
-}
-
-impl WorkloadWaitForTargetNodeWindow {
-    pub fn new(node: WaitForNode, edge_count: usize, first_tick: u64, last_tick: u64) -> Self {
-        let stored_first_tick = if first_tick <= last_tick {
-            first_tick
-        } else {
-            last_tick
-        };
-        let stored_last_tick = if first_tick <= last_tick {
-            last_tick
-        } else {
-            first_tick
-        };
-        Self {
-            node,
-            edge_count,
-            first_tick: stored_first_tick,
-            last_tick: stored_last_tick,
-        }
-    }
-
-    pub const fn node(&self) -> &WaitForNode {
-        &self.node
-    }
-
-    pub const fn edge_count(&self) -> usize {
-        self.edge_count
-    }
-
-    pub const fn first_tick(&self) -> u64 {
-        self.first_tick
-    }
-
-    pub const fn last_tick(&self) -> u64 {
-        self.last_tick
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.edge_count == 0
-    }
-
-    pub(crate) fn merge(&mut self, other: Self) {
-        debug_assert_eq!(self.node, other.node);
-        self.edge_count = self.edge_count.saturating_add(other.edge_count);
-        self.first_tick = self.first_tick.min(other.first_tick);
-        self.last_tick = self.last_tick.max(other.last_tick);
-    }
-}
+pub(super) use super::wait_for_node_windows::{
+    collect_wait_for_blocked_node_windows, collect_wait_for_target_node_windows,
+    merge_wait_for_blocked_node_windows, merge_wait_for_blocked_node_windows_by_strongest,
+    merge_wait_for_target_node_windows, merge_wait_for_target_node_windows_by_strongest,
+    wait_for_blocked_node_window, wait_for_blocked_node_window_count_sum,
+    wait_for_target_node_window, wait_for_target_node_window_count_sum,
+};
+use super::{
+    WorkloadParallelExecutionSummary, WorkloadWaitForBlockedNodeWindow,
+    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
+};
 
 impl WorkloadParallelExecutionSummary {
     pub(crate) fn validate_parallel_diagnostic_scope_summary(
@@ -228,6 +126,20 @@ impl WorkloadParallelExecutionSummary {
                     scope,
                     &self.full_system_wait_for_edge_kind_windows,
                     &scoped_wait_for_windows,
+                )?;
+                let scoped_blocked_node_windows =
+                    self.scoped_full_system_wait_for_blocked_node_windows();
+                validate_wait_for_blocked_node_window_merge_summary(
+                    scope,
+                    &self.full_system_wait_for_blocked_node_windows,
+                    &scoped_blocked_node_windows,
+                )?;
+                let scoped_target_node_windows =
+                    self.scoped_full_system_wait_for_target_node_windows();
+                validate_wait_for_target_node_window_merge_summary(
+                    scope,
+                    &self.full_system_wait_for_target_node_windows,
+                    &scoped_target_node_windows,
                 )?;
                 validate_deadlock_merge_summary(
                     scope,
@@ -482,6 +394,24 @@ impl WorkloadParallelExecutionSummary {
             &mut self.full_system_wait_for_edge_kind_counts,
             &self.full_system_wait_for_edge_kind_windows,
         );
+        self
+    }
+
+    pub fn with_full_system_wait_for_blocked_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForBlockedNodeWindow>,
+    ) -> Self {
+        self.full_system_wait_for_blocked_node_windows =
+            collect_wait_for_blocked_node_windows(windows);
+        self
+    }
+
+    pub fn with_full_system_wait_for_target_node_windows(
+        mut self,
+        windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
+    ) -> Self {
+        self.full_system_wait_for_target_node_windows =
+            collect_wait_for_target_node_windows(windows);
         self
     }
 
@@ -1087,14 +1017,55 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    fn scoped_full_system_wait_for_blocked_node_windows(
+        &self,
+    ) -> Vec<WorkloadWaitForBlockedNodeWindow> {
+        let resource_windows = self.resource_wait_for_blocked_node_windows();
+        let compute_windows = self.compute_wait_for_blocked_node_windows();
+        let dma_windows = self.dma_wait_for_blocked_node_windows();
+        merge_wait_for_blocked_node_windows(
+            resource_windows
+                .into_iter()
+                .chain(
+                    self.data_cache_wait_for_blocked_node_windows
+                        .iter()
+                        .cloned(),
+                )
+                .chain(compute_windows)
+                .chain(dma_windows),
+        )
+    }
+
+    fn scoped_full_system_wait_for_target_node_windows(
+        &self,
+    ) -> Vec<WorkloadWaitForTargetNodeWindow> {
+        let resource_windows = self.resource_wait_for_target_node_windows();
+        let compute_windows = self.compute_wait_for_target_node_windows();
+        let dma_windows = self.dma_wait_for_target_node_windows();
+        merge_wait_for_target_node_windows(
+            resource_windows
+                .into_iter()
+                .chain(self.data_cache_wait_for_target_node_windows.iter().cloned())
+                .chain(compute_windows)
+                .chain(dma_windows),
+        )
+    }
+
     pub fn full_system_wait_for_edge_count(&self) -> usize {
         let scoped_edge_count = self.resource_wait_for_edge_count()
             + self.data_cache_wait_for_edge_count()
             + self.compute_wait_for_edge_count()
             + self.dma_wait_for_edge_count();
-        scoped_edge_count.max(wait_for_edge_kind_count_sum(
-            &self.full_system_wait_for_edge_kind_counts(),
-        ))
+        let blocked_node_windows = self.full_system_wait_for_blocked_node_windows();
+        let target_node_windows = self.full_system_wait_for_target_node_windows();
+        scoped_edge_count
+            .max(wait_for_edge_kind_count_sum(
+                &self.full_system_wait_for_edge_kind_counts(),
+            ))
+            .max(wait_for_blocked_node_window_count_sum(
+                &blocked_node_windows,
+            ))
+            .max(wait_for_target_node_window_count_sum(&target_node_windows))
     }
 
     pub fn full_system_wait_for_edge_kind_counts(&self) -> BTreeMap<WaitForEdgeKind, usize> {
@@ -1310,19 +1281,13 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_wait_for_blocked_node_windows(
         &self,
     ) -> Vec<WorkloadWaitForBlockedNodeWindow> {
-        let resource_windows = self.resource_wait_for_blocked_node_windows();
-        let compute_windows = self.compute_wait_for_blocked_node_windows();
-        let dma_windows = self.dma_wait_for_blocked_node_windows();
-        merge_wait_for_blocked_node_windows(
-            resource_windows
-                .into_iter()
-                .chain(
-                    self.data_cache_wait_for_blocked_node_windows
-                        .iter()
-                        .cloned(),
-                )
-                .chain(compute_windows)
-                .chain(dma_windows),
+        let scoped_windows = self.scoped_full_system_wait_for_blocked_node_windows();
+        merge_wait_for_blocked_node_windows_by_strongest(
+            scoped_windows.into_iter().chain(
+                self.full_system_wait_for_blocked_node_windows
+                    .iter()
+                    .cloned(),
+            ),
         )
     }
 
@@ -1334,15 +1299,13 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_wait_for_target_node_windows(&self) -> Vec<WorkloadWaitForTargetNodeWindow> {
-        let resource_windows = self.resource_wait_for_target_node_windows();
-        let compute_windows = self.compute_wait_for_target_node_windows();
-        let dma_windows = self.dma_wait_for_target_node_windows();
-        merge_wait_for_target_node_windows(
-            resource_windows
-                .into_iter()
-                .chain(self.data_cache_wait_for_target_node_windows.iter().cloned())
-                .chain(compute_windows)
-                .chain(dma_windows),
+        let scoped_windows = self.scoped_full_system_wait_for_target_node_windows();
+        merge_wait_for_target_node_windows_by_strongest(
+            scoped_windows.into_iter().chain(
+                self.full_system_wait_for_target_node_windows
+                    .iter()
+                    .cloned(),
+            ),
         )
     }
 
@@ -1449,6 +1412,66 @@ fn validate_wait_for_edge_kind_window_merge_summary(
                 WorkloadError::InvalidParallelWaitForEdgeKindWindowMergeSummary {
                     scope,
                     kind: scoped_window.kind(),
+                    merged_edge_count: merged_window.edge_count(),
+                    scoped_edge_count: scoped_window.edge_count(),
+                    merged_first_tick: merged_window.first_tick(),
+                    scoped_first_tick: scoped_window.first_tick(),
+                    merged_last_tick: merged_window.last_tick(),
+                    scoped_last_tick: scoped_window.last_tick(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_wait_for_blocked_node_window_merge_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    merged: &[WorkloadWaitForBlockedNodeWindow],
+    scoped: &[WorkloadWaitForBlockedNodeWindow],
+) -> Result<(), WorkloadError> {
+    for scoped_window in scoped {
+        let Some(merged_window) = wait_for_blocked_node_window(merged, scoped_window.node()) else {
+            continue;
+        };
+        if merged_window.edge_count() < scoped_window.edge_count()
+            || merged_window.first_tick() > scoped_window.first_tick()
+            || merged_window.last_tick() < scoped_window.last_tick()
+        {
+            return Err(
+                WorkloadError::InvalidParallelWaitForBlockedNodeWindowMergeSummary {
+                    scope,
+                    node: scoped_window.node().clone(),
+                    merged_edge_count: merged_window.edge_count(),
+                    scoped_edge_count: scoped_window.edge_count(),
+                    merged_first_tick: merged_window.first_tick(),
+                    scoped_first_tick: scoped_window.first_tick(),
+                    merged_last_tick: merged_window.last_tick(),
+                    scoped_last_tick: scoped_window.last_tick(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_wait_for_target_node_window_merge_summary(
+    scope: WorkloadParallelDiagnosticScope,
+    merged: &[WorkloadWaitForTargetNodeWindow],
+    scoped: &[WorkloadWaitForTargetNodeWindow],
+) -> Result<(), WorkloadError> {
+    for scoped_window in scoped {
+        let Some(merged_window) = wait_for_target_node_window(merged, scoped_window.node()) else {
+            continue;
+        };
+        if merged_window.edge_count() < scoped_window.edge_count()
+            || merged_window.first_tick() > scoped_window.first_tick()
+            || merged_window.last_tick() < scoped_window.last_tick()
+        {
+            return Err(
+                WorkloadError::InvalidParallelWaitForTargetNodeWindowMergeSummary {
+                    scope,
+                    node: scoped_window.node().clone(),
                     merged_edge_count: merged_window.edge_count(),
                     scoped_edge_count: scoped_window.edge_count(),
                     merged_first_tick: merged_window.first_tick(),
@@ -1617,82 +1640,4 @@ fn merge_wait_for_edge_kind_counts_from_windows(
             .and_modify(|count| *count = (*count).max(window.edge_count()))
             .or_insert(window.edge_count());
     }
-}
-
-pub(super) fn collect_wait_for_blocked_node_windows(
-    windows: impl IntoIterator<Item = WorkloadWaitForBlockedNodeWindow>,
-) -> Vec<WorkloadWaitForBlockedNodeWindow> {
-    let mut by_node = BTreeMap::new();
-    for window in windows {
-        if window.is_empty() {
-            continue;
-        }
-        by_node
-            .entry(window.node().clone())
-            .and_modify(|stored: &mut WorkloadWaitForBlockedNodeWindow| {
-                stored.merge(window.clone())
-            })
-            .or_insert(window);
-    }
-    by_node.into_values().collect()
-}
-
-pub(super) fn merge_wait_for_blocked_node_windows(
-    windows: impl IntoIterator<Item = WorkloadWaitForBlockedNodeWindow>,
-) -> Vec<WorkloadWaitForBlockedNodeWindow> {
-    collect_wait_for_blocked_node_windows(windows)
-}
-
-pub(super) fn wait_for_blocked_node_window(
-    windows: &[WorkloadWaitForBlockedNodeWindow],
-    node: &WaitForNode,
-) -> Option<WorkloadWaitForBlockedNodeWindow> {
-    windows.iter().find(|window| window.node() == node).cloned()
-}
-
-pub(super) fn wait_for_blocked_node_window_count_sum(
-    windows: &[WorkloadWaitForBlockedNodeWindow],
-) -> usize {
-    windows
-        .iter()
-        .map(WorkloadWaitForBlockedNodeWindow::edge_count)
-        .sum()
-}
-
-pub(super) fn collect_wait_for_target_node_windows(
-    windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
-) -> Vec<WorkloadWaitForTargetNodeWindow> {
-    let mut by_node = BTreeMap::new();
-    for window in windows {
-        if window.is_empty() {
-            continue;
-        }
-        by_node
-            .entry(window.node().clone())
-            .and_modify(|stored: &mut WorkloadWaitForTargetNodeWindow| stored.merge(window.clone()))
-            .or_insert(window);
-    }
-    by_node.into_values().collect()
-}
-
-pub(super) fn merge_wait_for_target_node_windows(
-    windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
-) -> Vec<WorkloadWaitForTargetNodeWindow> {
-    collect_wait_for_target_node_windows(windows)
-}
-
-pub(super) fn wait_for_target_node_window(
-    windows: &[WorkloadWaitForTargetNodeWindow],
-    node: &WaitForNode,
-) -> Option<WorkloadWaitForTargetNodeWindow> {
-    windows.iter().find(|window| window.node() == node).cloned()
-}
-
-pub(super) fn wait_for_target_node_window_count_sum(
-    windows: &[WorkloadWaitForTargetNodeWindow],
-) -> usize {
-    windows
-        .iter()
-        .map(WorkloadWaitForTargetNodeWindow::edge_count)
-        .sum()
 }

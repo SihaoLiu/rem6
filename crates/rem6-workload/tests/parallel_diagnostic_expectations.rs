@@ -857,6 +857,218 @@ fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_edge_kind_w
 }
 
 #[test]
+fn workload_replay_plan_uses_explicit_full_system_wait_for_blocked_node_windows() {
+    let blocked = wait_resource("fabric.queue.0");
+    let scheduler = wait_resource("full-system.scheduler");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("explicit-full-system-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        blocked.clone(),
+        5,
+        4,
+        20,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_blocked_node_windows([WorkloadWaitForBlockedNodeWindow::new(
+            blocked.clone(),
+            2,
+            6,
+            10,
+        )])
+        .with_full_system_wait_for_blocked_node_windows([
+            WorkloadWaitForBlockedNodeWindow::new(blocked.clone(), 5, 4, 20),
+            WorkloadWaitForBlockedNodeWindow::new(scheduler.clone(), 3, 7, 9),
+        ]);
+    assert_eq!(
+        summary.full_system_wait_for_blocked_node_window(&blocked),
+        Some(WorkloadWaitForBlockedNodeWindow::new(
+            blocked.clone(),
+            5,
+            4,
+            20,
+        )),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_blocked_node_window(&scheduler),
+        Some(WorkloadWaitForBlockedNodeWindow::new(scheduler, 3, 7, 9)),
+    );
+    assert_eq!(summary.full_system_wait_for_edge_count(), 8);
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_blocked_node_windows() {
+    let blocked = wait_resource("fabric.queue.0");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("weak-full-system-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        blocked.clone(),
+        4,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let summary =
+        WorkloadParallelExecutionSummary::default()
+            .with_data_cache_wait_for_blocked_node_windows([WorkloadWaitForBlockedNodeWindow::new(
+                blocked.clone(),
+                4,
+                4,
+                12,
+            )])
+            .with_full_system_wait_for_blocked_node_windows([
+                WorkloadWaitForBlockedNodeWindow::new(blocked.clone(), 4, 5, 11),
+            ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelWaitForBlockedNodeWindowMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            node: blocked,
+            merged_edge_count: 4,
+            scoped_edge_count: 4,
+            merged_first_tick: 5,
+            scoped_first_tick: 4,
+            merged_last_tick: 11,
+            scoped_last_tick: 12,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_uses_explicit_full_system_wait_for_target_node_windows() {
+    let target = wait_resource("dram.bank.0");
+    let scheduler = wait_resource("full-system.scheduler");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("explicit-full-system-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        target.clone(),
+        5,
+        4,
+        20,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+            target.clone(),
+            2,
+            6,
+            10,
+        )])
+        .with_full_system_wait_for_target_node_windows([
+            WorkloadWaitForTargetNodeWindow::new(target.clone(), 5, 4, 20),
+            WorkloadWaitForTargetNodeWindow::new(scheduler.clone(), 3, 7, 9),
+        ]);
+    assert_eq!(
+        summary.full_system_wait_for_target_node_window(&target),
+        Some(WorkloadWaitForTargetNodeWindow::new(
+            target.clone(),
+            5,
+            4,
+            20,
+        )),
+    );
+    assert_eq!(
+        summary.full_system_wait_for_target_node_window(&scheduler),
+        Some(WorkloadWaitForTargetNodeWindow::new(scheduler, 3, 7, 9)),
+    );
+    assert_eq!(summary.full_system_wait_for_edge_count(), 8);
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_target_node_windows() {
+    let target = wait_resource("dram.bank.0");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("weak-full-system-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        target.clone(),
+        4,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+            target.clone(),
+            4,
+            4,
+            12,
+        )])
+        .with_full_system_wait_for_target_node_windows([WorkloadWaitForTargetNodeWindow::new(
+            target.clone(),
+            4,
+            5,
+            11,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelWaitForTargetNodeWindowMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            node: target,
+            merged_edge_count: 4,
+            scoped_edge_count: 4,
+            merged_first_tick: 5,
+            scoped_first_tick: 4,
+            merged_last_tick: 11,
+            scoped_last_tick: 12,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_verifies_parallel_wait_for_edge_kind_windows() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("verify-wait-kind-window-diagnostics"),
