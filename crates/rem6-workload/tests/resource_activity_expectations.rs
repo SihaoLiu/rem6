@@ -211,6 +211,40 @@ fn workload_replay_plan_counts_dram_qos_breakdown_accesses_as_resource_activity(
 }
 
 #[test]
+fn workload_replay_plan_infers_active_resources_from_operation_evidence() {
+    let plan = replay_plan()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Fabric,
+            3,
+            1,
+        ))
+        .unwrap()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Dram,
+            4,
+            1,
+        ))
+        .unwrap()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Resource,
+            7,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_activity(0, 3, 96, 0, 0, 0, 0)
+        .with_dram_activity(0, 0, 0, 4, 4, 0, 0, 0, 0, 0, 0, 0);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    let summary = result.parallel_execution_summary().unwrap();
+    assert_eq!(summary.active_fabric_resource_count(), 1);
+    assert_eq!(summary.active_dram_resource_count(), 1);
+    assert_eq!(summary.active_resource_count(), 2);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_resource_activity() {
     let zero = WorkloadExpectedResourceActivity::new(WorkloadResourceActivityScope::Resource, 0, 0)
         .unwrap_err();

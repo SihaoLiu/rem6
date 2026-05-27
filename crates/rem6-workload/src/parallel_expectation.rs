@@ -356,19 +356,17 @@ impl WorkloadExpectedResourceActivity {
         match self.scope {
             WorkloadResourceActivityScope::Fabric => (
                 summary.fabric_transfer_count(),
-                summary.active_fabric_lane_count(),
+                summary.active_fabric_resource_count(),
             ),
             WorkloadResourceActivityScope::Dram => (
                 summary.dram_operation_count(),
-                summary.active_dram_target_count(),
+                summary.active_dram_resource_count(),
             ),
             WorkloadResourceActivityScope::Resource => (
                 summary
                     .fabric_transfer_count()
                     .saturating_add(summary.dram_operation_count()),
-                summary
-                    .active_fabric_lane_count()
-                    .saturating_add(summary.active_dram_target_count()),
+                summary.active_resource_count(),
             ),
         }
     }

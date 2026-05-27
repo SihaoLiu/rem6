@@ -947,6 +947,18 @@ impl WorkloadParallelExecutionSummary {
             || self.contended_fabric_lane_count != 0
     }
 
+    pub fn active_fabric_resource_count(&self) -> usize {
+        let activity_floor = usize::from(
+            self.has_fabric_activity()
+                || self.fabric_wait_for_edge_count() != 0
+                || !self.fabric_wait_for_target_node_windows.is_empty(),
+        );
+        self.active_fabric_lane_count
+            .max(self.contended_fabric_lane_count)
+            .max(self.fabric_wait_for_target_node_windows.len())
+            .max(activity_floor)
+    }
+
     pub fn dram_operation_count(&self) -> usize {
         let qos_priority_access_count = self
             .dram_qos_priority_summaries
@@ -971,6 +983,24 @@ impl WorkloadParallelExecutionSummary {
             .max(self.dram_qos_access_count)
             .max(qos_priority_access_count)
             .max(qos_requestor_access_count)
+    }
+
+    pub fn active_dram_resource_count(&self) -> usize {
+        let activity_floor = usize::from(
+            self.has_dram_activity()
+                || self.dram_wait_for_edge_count() != 0
+                || !self.dram_wait_for_target_node_windows.is_empty(),
+        );
+        self.active_dram_target_count
+            .max(usize::from(self.active_dram_port_count != 0))
+            .max(usize::from(self.active_dram_bank_count != 0))
+            .max(self.dram_wait_for_target_node_windows.len())
+            .max(activity_floor)
+    }
+
+    pub fn active_resource_count(&self) -> usize {
+        self.active_fabric_resource_count()
+            .saturating_add(self.active_dram_resource_count())
     }
 
     pub fn has_dram_qos_activity(&self) -> bool {

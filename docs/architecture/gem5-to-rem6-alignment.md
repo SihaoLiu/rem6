@@ -493,6 +493,11 @@ Implementation evidence on 2026-05-26:
   results use the same lower bound, so manifest-declared memory-controller
   activity cannot be underreported just because a run exports class-specific QoS
   summaries instead of a top-level access count.
+- Workload fabric, DRAM, and aggregate resource active-count contracts now infer
+  a conservative active-resource lower bound from operation, contention,
+  diagnostic, and wait-target evidence when explicit active lane or target
+  aggregates are absent. Coarse summaries therefore cannot fail active-resource
+  contracts merely because the producer omitted a redundant active-count field.
 - Workload scheduler-work presence checks now treat scoped and explicit
   full-system progress-transition records as work evidence. Retry-loop and
   progress-free transition records therefore stay visible at the same presence
