@@ -37,13 +37,12 @@ use rem6_transport::{
 };
 use rem6_workload::{
     WorkloadCheckpointComponentSummary, WorkloadCheckpointManifestSummary,
-    WorkloadDataCacheProtocol, WorkloadError, WorkloadExpectedCleanParallelDiagnostics,
-    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount, WorkloadReplayPlan, WorkloadResolvedResources,
-    WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadTopology, WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
-    WorkloadWaitForTargetNodeWindow,
+    WorkloadDataCacheProtocol, WorkloadError, WorkloadGpuDmaCopy, WorkloadHostActionSummary,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelBatchScope,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount, WorkloadReplayPlan,
+    WorkloadResolvedResources, WorkloadResult, WorkloadRiscvDataCache, WorkloadRouteFabric,
+    WorkloadRouteHop, WorkloadRouteId, WorkloadTopology, WorkloadWaitForBlockedNodeWindow,
+    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 
 mod cache_response;
@@ -64,7 +63,9 @@ use self::dma_scheduler_evidence::{
 };
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{fixed_priority_policy, queue_arbiter};
-use self::summary::{parallel_execution_summary, WorkloadReplayActivityRefs};
+use self::summary::{
+    livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
+};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
     accelerator_command_kind_counts, accelerator_snapshots, accelerator_wait_for_graph_since,
@@ -1388,19 +1389,13 @@ impl RiscvWorkloadReplay {
                     livelock_transition_threshold(self.plan.expected_clean_parallel_diagnostics()),
                 ))
                 .with_host_action_summary(host_action_summary)
+                .with_stats_history_records(
+                    controller.executor().stats().history_records().to_vec(),
+                )
                 .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
             host_action_outcomes,
         ))
     }
-}
-
-fn livelock_transition_threshold(
-    expected: &[WorkloadExpectedCleanParallelDiagnostics],
-) -> Option<u64> {
-    expected
-        .iter()
-        .filter_map(|diagnostics| diagnostics.livelock_transition_threshold())
-        .min()
 }
 
 fn workload_memory_route(
@@ -1761,17 +1756,9 @@ impl Error for RiscvWorkloadReplayError {
 
 #[cfg(test)]
 mod tests {
-    use rem6_workload::WorkloadParallelDiagnosticScope;
-
     use super::*;
 
     fn assert_response_harness<H: cache_response::WorkloadDataCacheResponseHarness>() {}
-
-    fn expected_clean(
-        scope: WorkloadParallelDiagnosticScope,
-    ) -> WorkloadExpectedCleanParallelDiagnostics {
-        WorkloadExpectedCleanParallelDiagnostics::new(scope)
-    }
 
     #[test]
     fn all_data_cache_protocol_harnesses_share_response_adapter() {
@@ -1779,27 +1766,5 @@ mod tests {
         assert_response_harness::<PartitionedMesiDirectoryLineHarness>();
         assert_response_harness::<PartitionedMoesiDirectoryLineHarness>();
         assert_response_harness::<PartitionedChiDirectoryLineHarness>();
-    }
-
-    #[test]
-    fn livelock_transition_threshold_uses_lowest_declared_clean_threshold() {
-        assert_eq!(
-            livelock_transition_threshold(&[expected_clean(
-                WorkloadParallelDiagnosticScope::FullSystem,
-            )]),
-            None,
-        );
-
-        let full_system = expected_clean(WorkloadParallelDiagnosticScope::FullSystem)
-            .with_livelock_transition_threshold(5)
-            .unwrap();
-        let data_cache = expected_clean(WorkloadParallelDiagnosticScope::DataCache)
-            .with_livelock_transition_threshold(3)
-            .unwrap();
-
-        assert_eq!(
-            livelock_transition_threshold(&[full_system, data_cache]),
-            Some(3),
-        );
     }
 }

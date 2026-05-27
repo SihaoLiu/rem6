@@ -6,7 +6,10 @@ use rem6_dram::{
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address, CacheLineLayout, MemoryTargetId};
-use rem6_stats::StatsRegistry;
+use rem6_stats::{
+    StatDumpId, StatDumpRecord, StatHistoryRecord, StatResetId, StatSnapshot, StatsRegistry,
+    StatsResetRecord,
+};
 use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadCheckpointComponentSummary,
@@ -1394,6 +1397,28 @@ fn workload_result_links_to_manifest_identity_and_stats_snapshot() {
             WorkloadExecutionMode::Functional,
         )]
     );
+}
+
+#[test]
+fn workload_result_records_stats_history() {
+    let manifest = WorkloadManifest::builder(id("result-stats-history"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let reset = StatsResetRecord::with_id(StatResetId::new(2), 12, 1, Vec::new());
+    let dump = StatDumpRecord::new(StatDumpId::new(3), StatSnapshot::new(16, 1, 12, Vec::new()));
+    let history = vec![
+        StatHistoryRecord::Reset(reset),
+        StatHistoryRecord::Dump(dump),
+    ];
+
+    let result =
+        WorkloadResult::new(manifest.identity(), 96).with_stats_history_records(history.clone());
+
+    assert_eq!(result.manifest_identity(), manifest.identity());
+    assert_eq!(result.stats_history_records(), history.as_slice());
 }
 
 #[test]

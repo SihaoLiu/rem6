@@ -4,6 +4,7 @@ use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryPr
 use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
+use rem6_stats::StatHistoryRecord;
 use rem6_system::{
     ExecutionMode, ExecutionModeTarget, GuestHostCallResponse, RiscvSystemRunStopReason,
     RiscvWorkloadReplay, SystemActionOutcome,
@@ -1439,6 +1440,31 @@ fn workload_replay_executes_planned_host_actions() {
         SystemActionOutcome::StatsDump(record)
             if record.tick() == 2 && record.reset_tick() == 1
     )));
+    assert_eq!(
+        outcome.result().stats_history_records(),
+        &[
+            StatHistoryRecord::Reset(
+                outcome
+                    .host_action_outcomes()
+                    .iter()
+                    .find_map(|event| match event {
+                        SystemActionOutcome::StatsReset(record) => Some(record.clone()),
+                        _ => None,
+                    })
+                    .unwrap(),
+            ),
+            StatHistoryRecord::Dump(
+                outcome
+                    .host_action_outcomes()
+                    .iter()
+                    .find_map(|event| match event {
+                        SystemActionOutcome::StatsDump(record) => Some(record.clone()),
+                        _ => None,
+                    })
+                    .unwrap(),
+            ),
+        ],
+    );
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,
         SystemActionOutcome::Checkpoint { tick, event, source, manifest }

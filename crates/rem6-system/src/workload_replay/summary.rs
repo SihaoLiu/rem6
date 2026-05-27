@@ -1,9 +1,9 @@
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
-    WorkloadDramQosRequestorSummary, WorkloadParallelBatchPartitionSet,
-    WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerCount,
-    WorkloadParallelExecutionSummary, WorkloadTopology,
+    WorkloadDramQosRequestorSummary, WorkloadExpectedCleanParallelDiagnostics,
+    WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadTopology,
 };
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
@@ -516,6 +516,15 @@ pub(super) fn parallel_execution_summary(
         )
 }
 
+pub(super) fn livelock_transition_threshold(
+    expected: &[WorkloadExpectedCleanParallelDiagnostics],
+) -> Option<u64> {
+    expected
+        .iter()
+        .filter_map(|diagnostics| diagnostics.livelock_transition_threshold())
+        .min()
+}
+
 fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
     match protocol {
         RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
@@ -570,8 +579,9 @@ mod tests {
     };
     use rem6_workload::{
         WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchScope,
-        WorkloadParallelBatchTimelineRecord, WorkloadWaitForBlockedNodeWindow,
-        WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
+        WorkloadParallelBatchTimelineRecord, WorkloadParallelDiagnosticScope,
+        WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
+        WorkloadWaitForTargetNodeWindow,
     };
 
     use super::*;
@@ -591,6 +601,34 @@ mod tests {
             layout(),
         )
         .unwrap()
+    }
+
+    fn expected_clean(
+        scope: WorkloadParallelDiagnosticScope,
+    ) -> WorkloadExpectedCleanParallelDiagnostics {
+        WorkloadExpectedCleanParallelDiagnostics::new(scope)
+    }
+
+    #[test]
+    fn livelock_transition_threshold_uses_lowest_declared_clean_threshold() {
+        assert_eq!(
+            livelock_transition_threshold(&[expected_clean(
+                WorkloadParallelDiagnosticScope::FullSystem,
+            )]),
+            None,
+        );
+
+        let full_system = expected_clean(WorkloadParallelDiagnosticScope::FullSystem)
+            .with_livelock_transition_threshold(5)
+            .unwrap();
+        let data_cache = expected_clean(WorkloadParallelDiagnosticScope::DataCache)
+            .with_livelock_transition_threshold(3)
+            .unwrap();
+
+        assert_eq!(
+            livelock_transition_threshold(&[full_system, data_cache]),
+            Some(3),
+        );
     }
 
     fn component_wait_node(name: &str) -> WaitForNode {

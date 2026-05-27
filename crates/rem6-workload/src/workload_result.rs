@@ -1,5 +1,5 @@
 use rem6_kernel::Tick;
-use rem6_stats::StatSnapshot;
+use rem6_stats::{StatHistoryRecord, StatSnapshot};
 
 use crate::{
     WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadHostActionSummary,
@@ -208,6 +208,7 @@ pub struct WorkloadResult {
     final_tick: Tick,
     stop_reason: Option<String>,
     stats_snapshot: Option<StatSnapshot>,
+    stats_history_records: Vec<StatHistoryRecord>,
     parallel_execution_summary: Option<WorkloadParallelExecutionSummary>,
     host_action_summary: Option<WorkloadHostActionSummary>,
     checkpoint_labels: Vec<String>,
@@ -225,6 +226,7 @@ impl WorkloadResult {
             final_tick,
             stop_reason: None,
             stats_snapshot: None,
+            stats_history_records: Vec::new(),
             parallel_execution_summary: None,
             host_action_summary: None,
             checkpoint_labels: Vec::new(),
@@ -253,6 +255,14 @@ impl WorkloadResult {
 
     pub fn with_stats_snapshot(mut self, snapshot: StatSnapshot) -> Self {
         self.stats_snapshot = Some(snapshot);
+        self
+    }
+
+    pub fn with_stats_history_records(
+        mut self,
+        records: impl IntoIterator<Item = StatHistoryRecord>,
+    ) -> Self {
+        self.stats_history_records = records.into_iter().collect();
         self
     }
 
@@ -342,6 +352,10 @@ impl WorkloadResult {
 
     pub const fn stats_snapshot(&self) -> Option<&StatSnapshot> {
         self.stats_snapshot.as_ref()
+    }
+
+    pub fn stats_history_records(&self) -> &[StatHistoryRecord] {
+        &self.stats_history_records
     }
 
     pub const fn parallel_execution_summary(&self) -> Option<&WorkloadParallelExecutionSummary> {
