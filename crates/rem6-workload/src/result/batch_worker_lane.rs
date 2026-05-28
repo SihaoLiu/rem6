@@ -108,21 +108,16 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_planned_batch_worker_lanes(
         &self,
     ) -> Vec<WorkloadParallelBatchWorkerLaneRecord> {
-        if self.has_explicit_full_system_parallel_scheduler_planned_batch_worker_lanes() {
-            return self
-                .full_system_parallel_scheduler_planned_batch_worker_lanes
-                .clone();
+        let scoped_lanes = self.scoped_full_system_parallel_scheduler_planned_batch_worker_lanes();
+        if !self.explicit_full_system_parallel_scheduler_planned_batch_worker_lanes_cover_scoped() {
+            return scoped_lanes;
         }
         collect_parallel_batch_worker_lane_records(
-            self.parallel_scheduler_planned_batch_worker_lanes
-                .iter()
-                .copied()
-                .chain(
-                    self.data_cache_parallel_scheduler_planned_batch_worker_lanes
-                        .iter()
-                        .copied(),
-                )
-                .chain(self.dma_scheduler_planned_batch_worker_lanes()),
+            scoped_lanes.into_iter().chain(
+                self.full_system_parallel_scheduler_planned_batch_worker_lanes
+                    .iter()
+                    .copied(),
+            ),
         )
     }
 
@@ -258,10 +253,31 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
-    fn has_explicit_full_system_parallel_scheduler_planned_batch_worker_lanes(&self) -> bool {
-        !self
-            .full_system_parallel_scheduler_planned_batch_worker_lanes
-            .is_empty()
+    fn scoped_full_system_parallel_scheduler_planned_batch_worker_lanes(
+        &self,
+    ) -> Vec<WorkloadParallelBatchWorkerLaneRecord> {
+        collect_parallel_batch_worker_lane_records(
+            self.parallel_scheduler_planned_batch_worker_lanes
+                .iter()
+                .copied()
+                .chain(
+                    self.data_cache_parallel_scheduler_planned_batch_worker_lanes
+                        .iter()
+                        .copied(),
+                )
+                .chain(self.dma_scheduler_planned_batch_worker_lanes()),
+        )
+    }
+
+    fn explicit_full_system_parallel_scheduler_planned_batch_worker_lanes_cover_scoped(
+        &self,
+    ) -> bool {
+        let scoped_lanes = self.scoped_full_system_parallel_scheduler_planned_batch_worker_lanes();
+        scoped_lanes.iter().all(|scoped| {
+            self.full_system_parallel_scheduler_planned_batch_worker_lanes
+                .iter()
+                .any(|record| record == scoped)
+        })
     }
 }
 

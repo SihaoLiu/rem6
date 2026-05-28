@@ -291,6 +291,8 @@ pub(crate) fn collect_parallel_batch_worker_lane_records(
     let mut records = records
         .into_iter()
         .filter(|record| !record.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
     records.sort_by_key(|record| {
         (

@@ -429,6 +429,40 @@ fn workload_summary_preserves_planned_parallel_batch_worker_lane_records() {
 }
 
 #[test]
+fn workload_summary_uses_scoped_planned_lanes_when_explicit_full_system_lanes_are_weaker() {
+    let cpu = planned_lane_record(WorkloadParallelBatchScope::Scheduler, 0, partition(0), 0, 8);
+    let gpu = planned_lane_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        1,
+        partition(2),
+        8,
+        14,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_worker_lanes([cpu])
+        .with_gpu_dma_scheduler_planned_batch_worker_lanes([gpu])
+        .with_full_system_parallel_scheduler_planned_batch_worker_lanes([planned_lane_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            partition(0),
+            0,
+            4,
+        )]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_lanes(),
+        vec![cpu, gpu],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_lane_partition_ticks(
+            1,
+            partition(2),
+        ),
+        6,
+    );
+}
+
+#[test]
 fn workload_replay_plan_checks_planned_parallel_batch_worker_lane_partition_ticks() {
     let plan = replay_plan()
         .add_expected_planned_parallel_batch_worker_lane_partition_ticks(

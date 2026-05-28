@@ -757,6 +757,11 @@ Implementation evidence on 2026-05-26:
   timeline covers the scoped planned records. Slot-level pre-dispatch occupancy
   therefore cannot be weakened by publishing a partial global timeline with a
   larger capacity counter.
+- Planned full-system worker-lane records follow the same evidence boundary:
+  scoped CPU-scheduler, data-cache, GPU DMA, and accelerator DMA lane records
+  remain authoritative unless the explicit full-system lane list covers those
+  scoped records. A global pre-dispatch lane summary therefore cannot erase
+  device-side worker ownership or shrink a scoped lane window.
 - Batch-timeline evidence validation rejects duplicate records at the replay
   boundary. Replaying the same pre-dispatch batch record twice can no longer
   inflate planned full-system worker-bucket evidence.
