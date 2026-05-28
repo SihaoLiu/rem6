@@ -1465,7 +1465,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   component order, and `SystemActionExecutor` can be constructed directly with
   an attached PCI host checkpoint bank. Full PCI configuration checkpoint bytes
   remain dependent on per-capability state codecs; rem6 does not pretend that
-  topology-only payloads restore full PCI configuration state.
+  topology-only payloads restore full PCI configuration state. PM capability
+  state now has the first exposed byte codec: endpoint snapshots can emit a PM
+  payload and validate a candidate payload against the typed PM spec plus
+  current PMCSR, rejecting malformed bytes or live-snapshot mismatches before a
+  broader PCI config checkpoint restore mutates device state.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status

@@ -92,6 +92,7 @@ pub enum PciError {
     },
     DuplicatePowerManagementCapability,
     SnapshotPowerManagementCapabilityMismatch,
+    InvalidPowerManagementCapabilitySnapshot,
     ReadOnlyPowerManagementCapabilityWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -525,6 +526,9 @@ impl fmt::Display for PciError {
             }
             Self::InvalidHostBridgeTopologySnapshot => {
                 write!(f, "PCI host bridge topology snapshot is invalid")
+            }
+            Self::InvalidPowerManagementCapabilitySnapshot => {
+                write!(f, "PCI power-management capability snapshot is invalid")
             }
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,

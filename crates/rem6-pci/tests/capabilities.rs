@@ -312,6 +312,55 @@ fn pci_endpoint_power_management_capability_links_writes_and_snapshots_pmcsr() {
 }
 
 #[test]
+fn pci_endpoint_snapshot_exposes_power_management_payload_for_checkpoint_audit() {
+    let mut endpoint = storage_endpoint();
+    endpoint.install_pm_capability(pm(0x44)).unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x48).unwrap(),
+            &0x8023_u16.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payload = snapshot.power_management_payload().unwrap();
+
+    assert_eq!(snapshot.validate_power_management_payload(&payload), Ok(()));
+    let no_pm = storage_endpoint().snapshot();
+    assert_eq!(no_pm.power_management_payload(), None);
+    assert_eq!(
+        no_pm.validate_power_management_payload(&payload),
+        Err(PciError::SnapshotPowerManagementCapabilityMismatch)
+    );
+
+    let different_pmcsr = {
+        let mut endpoint = storage_endpoint();
+        endpoint.install_pm_capability(pm(0x44)).unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_pmcsr.validate_power_management_payload(&payload),
+        Err(PciError::SnapshotPowerManagementCapabilityMismatch)
+    );
+    let different_spec = {
+        let mut endpoint = storage_endpoint();
+        endpoint.install_pm_capability(pm(0x4c)).unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_spec.validate_power_management_payload(&payload),
+        Err(PciError::SnapshotPowerManagementCapabilityMismatch)
+    );
+
+    let mut corrupted = payload;
+    corrupted.push(0);
+    assert_eq!(
+        snapshot.validate_power_management_payload(&corrupted),
+        Err(PciError::InvalidPowerManagementCapabilitySnapshot)
+    );
+}
+
+#[test]
 fn pci_endpoint_pcie_capability_links_writes_and_snapshots_control_status() {
     let mut endpoint = storage_endpoint();
 

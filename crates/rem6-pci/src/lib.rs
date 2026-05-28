@@ -774,6 +774,21 @@ impl PciEndpointConfigSnapshot {
     pub const fn class(&self) -> PciClassCode {
         self.class
     }
+
+    pub fn power_management_payload(&self) -> Option<Vec<u8>> {
+        self.pm
+            .as_ref()
+            .map(pm::PciPowerManagementCapabilityState::to_bytes)
+    }
+
+    pub fn validate_power_management_payload(&self, payload: &[u8]) -> Result<(), PciError> {
+        let decoded = pm::PciPowerManagementCapabilityState::from_bytes(payload)?;
+        if self.pm.as_ref() == Some(&decoded) {
+            Ok(())
+        } else {
+            Err(PciError::SnapshotPowerManagementCapabilityMismatch)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
