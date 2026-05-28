@@ -133,11 +133,11 @@ impl EthernetLinkDelayVariation {
         self.next_index
     }
 
-    fn peek(&self) -> u64 {
+    pub(crate) fn peek_delay_ticks(&self) -> u64 {
         self.delay_ticks.get(self.next_index).copied().unwrap_or(0)
     }
 
-    fn advance(&mut self) {
+    pub(crate) fn advance_delay(&mut self) {
         if !self.delay_ticks.is_empty() {
             self.next_index = (self.next_index + 1) % self.delay_ticks.len();
         }
@@ -425,13 +425,13 @@ impl EthernetLinkLane {
     fn peek_delay_variation_ticks(&self) -> u64 {
         self.delay_variation
             .as_ref()
-            .map(EthernetLinkDelayVariation::peek)
+            .map(EthernetLinkDelayVariation::peek_delay_ticks)
             .unwrap_or(0)
     }
 
     fn advance_delay_variation(&mut self) {
         if let Some(delay_variation) = &mut self.delay_variation {
-            delay_variation.advance();
+            delay_variation.advance_delay();
         }
     }
 
@@ -802,6 +802,14 @@ pub enum NetworkError {
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
+    InvalidEthernetSwitchRate {
+        ticks_per_byte: u64,
+    },
+    EthernetSwitchTimingOverflow {
+        wire_length_bytes: u64,
+        ticks_per_byte: u64,
+        switch_delay_ticks: u64,
+    },
     UnknownEthernetSwitchPort {
         port: EthernetSwitchPortId,
         port_count: usize,
@@ -909,6 +917,18 @@ impl fmt::Display for NetworkError {
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
                 "ethernet switch port count {port_count} must be positive"
+            ),
+            Self::InvalidEthernetSwitchRate { ticks_per_byte } => write!(
+                formatter,
+                "ethernet switch ticks per byte {ticks_per_byte} must be positive"
+            ),
+            Self::EthernetSwitchTimingOverflow {
+                wire_length_bytes,
+                ticks_per_byte,
+                switch_delay_ticks,
+            } => write!(
+                formatter,
+                "ethernet switch timing overflow for wire length {wire_length_bytes}, ticks per byte {ticks_per_byte}, switch delay {switch_delay_ticks}"
             ),
             Self::UnknownEthernetSwitchPort { port, port_count } => write!(
                 formatter,
