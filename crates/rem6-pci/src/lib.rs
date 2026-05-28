@@ -929,6 +929,32 @@ impl PciDecodedConfigAddress {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciHostBridgeSnapshot {
+    aperture: PciConfigAperture,
+    address_bases: PciHostAddressBases,
+    bridges: BTreeMap<PciFunctionAddress, PciBridgeConfigSnapshot>,
+    endpoints: BTreeMap<PciFunctionAddress, PciEndpointConfigSnapshot>,
+}
+
+impl PciHostBridgeSnapshot {
+    pub const fn aperture(&self) -> PciConfigAperture {
+        self.aperture
+    }
+
+    pub const fn address_bases(&self) -> PciHostAddressBases {
+        self.address_bases
+    }
+
+    pub fn bridges(&self) -> &BTreeMap<PciFunctionAddress, PciBridgeConfigSnapshot> {
+        &self.bridges
+    }
+
+    pub fn endpoints(&self) -> &BTreeMap<PciFunctionAddress, PciEndpointConfigSnapshot> {
+        &self.endpoints
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciHostBridge {
     aperture: PciConfigAperture,
     address_bases: PciHostAddressBases,
@@ -1009,6 +1035,59 @@ impl PciHostBridge {
         self.endpoint_mut(function)
             .ok_or(PciError::MissingEndpoint { function })?
             .assign_legacy_interrupt_line(line)
+    }
+
+    pub fn snapshot(&self) -> PciHostBridgeSnapshot {
+        PciHostBridgeSnapshot {
+            aperture: self.aperture,
+            address_bases: self.address_bases,
+            bridges: self
+                .bridges
+                .iter()
+                .map(|(function, bridge)| (*function, bridge.snapshot()))
+                .collect(),
+            endpoints: self
+                .endpoints
+                .iter()
+                .map(|(function, endpoint)| (*function, endpoint.snapshot()))
+                .collect(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &PciHostBridgeSnapshot) -> Result<(), PciError> {
+        if self.aperture != snapshot.aperture
+            || self.address_bases != snapshot.address_bases
+            || self.bridges.keys().ne(snapshot.bridges.keys())
+            || self.endpoints.keys().ne(snapshot.endpoints.keys())
+        {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+
+        let mut restored_bridges = BTreeMap::new();
+        for (function, bridge) in &self.bridges {
+            let bridge_snapshot = snapshot
+                .bridges
+                .get(function)
+                .ok_or(PciError::SnapshotHostBridgeMismatch)?;
+            let mut restored = bridge.clone();
+            restored.restore(bridge_snapshot)?;
+            restored_bridges.insert(*function, restored);
+        }
+
+        let mut restored_endpoints = BTreeMap::new();
+        for (function, endpoint) in &self.endpoints {
+            let endpoint_snapshot = snapshot
+                .endpoints
+                .get(function)
+                .ok_or(PciError::SnapshotHostBridgeMismatch)?;
+            let mut restored = endpoint.clone();
+            restored.restore(endpoint_snapshot)?;
+            restored_endpoints.insert(*function, restored);
+        }
+
+        self.bridges = restored_bridges;
+        self.endpoints = restored_endpoints;
+        Ok(())
     }
 
     pub fn register_endpoint(&mut self, endpoint: PciEndpointConfig) -> Result<(), PciError> {

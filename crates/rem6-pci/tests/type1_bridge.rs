@@ -608,6 +608,99 @@ fn pci_type1_bridge_snapshot_restore_preserves_config_and_bar_state() {
 }
 
 #[test]
+fn pci_host_bridge_snapshot_restore_preserves_topology_config_and_intx_state() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(1, 2, 0).unwrap();
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+
+    host.register_bridge(bridge_config(bridge_function))
+        .unwrap();
+    host.register_endpoint(
+        storage_endpoint(endpoint_function).with_interrupt(11, PciInterruptPin::IntA),
+    )
+    .unwrap();
+
+    let endpoint_bar_addr = aperture
+        .config_address(endpoint_function, PciConfigOffset::new(0x10).unwrap())
+        .unwrap();
+    let endpoint_command_addr = aperture
+        .config_address(endpoint_function, PciConfigOffset::new(0x04).unwrap())
+        .unwrap();
+    let bridge_memory_window_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x20).unwrap())
+        .unwrap();
+    host.write_config_address(endpoint_bar_addr, &0x0020_1000_u32.to_le_bytes())
+        .unwrap();
+    host.write_config_address(endpoint_command_addr, &0x0002_u16.to_le_bytes())
+        .unwrap();
+    host.write_config_address(bridge_memory_window_addr, &0x0020_0020_u32.to_le_bytes())
+        .unwrap();
+    host.assign_legacy_interrupt_line(endpoint_function, rem6_interrupt::InterruptLineId::new(45))
+        .unwrap();
+
+    let expected_ranges = vec![PciHostBarRange::new(
+        endpoint_function,
+        PciBarIndex::new(0).unwrap(),
+        PciHostAddressSpace::Memory,
+        Address::new(0x0020_0000),
+        Address::new(0x8020_0000),
+        AccessSize::new(0x2000).unwrap(),
+    )
+    .unwrap()];
+    assert_eq!(host.active_host_bar_ranges(), Ok(expected_ranges.clone()));
+
+    let snapshot = host.snapshot();
+    host.write_config_address(endpoint_bar_addr, &0x0040_1000_u32.to_le_bytes())
+        .unwrap();
+    host.write_config_address(bridge_memory_window_addr, &0x0040_0040_u32.to_le_bytes())
+        .unwrap();
+    host.assign_legacy_interrupt_line(endpoint_function, rem6_interrupt::InterruptLineId::new(19))
+        .unwrap();
+
+    assert_eq!(
+        host.endpoint(endpoint_function)
+            .unwrap()
+            .legacy_interrupt_line(),
+        19
+    );
+    assert_ne!(host.active_host_bar_ranges(), Ok(expected_ranges.clone()));
+
+    host.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        host.endpoint(endpoint_function)
+            .unwrap()
+            .legacy_interrupt_line(),
+        45
+    );
+    assert_eq!(host.active_host_bar_ranges(), Ok(expected_ranges));
+    assert_eq!(
+        host.read_config_address(endpoint_bar_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0x00, 0x00, 0x20, 0x00])
+    );
+    assert_eq!(
+        host.read_config_address(bridge_memory_window_addr, AccessSize::new(4).unwrap()),
+        Ok(vec![0x20, 0x00, 0x20, 0x00])
+    );
+
+    let mut missing_endpoint_host = PciHostBridge::with_address_bases(aperture, bases);
+    missing_endpoint_host
+        .register_bridge(bridge_config(bridge_function))
+        .unwrap();
+    assert_eq!(
+        missing_endpoint_host.restore(&snapshot),
+        Err(PciError::SnapshotHostBridgeMismatch)
+    );
+    assert!(missing_endpoint_host.endpoint(endpoint_function).is_none());
+}
+
+#[test]
 fn pci_host_routes_subordinate_config_only_through_declared_bridge_bus_numbers() {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 4).unwrap();
     let mut host = PciHostBridge::new(aperture);

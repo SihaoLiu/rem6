@@ -1446,7 +1446,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   BAR0/BAR1 install and command-bit-gated host mapping, snapshot restore of
   bridge config and BAR state, writable bus-number and memory-window registers,
   subordinate config routing, and downstream BAR host-range filtering through
-  bridge windows.
+  bridge windows. PCI host bridge tests also cover topology-level snapshot
+  restore across registered type-1 bridges, downstream endpoints, bridge
+  forwarding windows, endpoint BAR mappings, and derived legacy INTx line state,
+  with mismatched host topology rejected before live state is replaced.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status
