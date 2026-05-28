@@ -323,6 +323,17 @@ Research anchors refreshed on 2026-05-26:
   syscall emulation, RISC-V vector tracing, CHI LR/SC behavior, and Ruby
   checkpoint restore schedule-in-past failures.
 
+Implementation evidence on 2026-05-28:
+
+- `rem6-net` has a typed distributed Ethernet link endpoint aligned with gem5
+  `DistEtherLink::TxLink` and `DistEtherLink::RxLink`: local transmits encode
+  endian-stable distributed data messages, preserve deterministic
+  serialization plus delay-variation ticks, mark the bound interface busy until
+  transmit completion, emit typed send-done events through the interface
+  registry, schedule remote data messages through the distributed receive
+  scheduler, inject ready packets into the bound local peer, and snapshot codec,
+  delay, transmit, and receive-scheduler state.
+
 Implementation evidence on 2026-05-26:
 
 - `rem6-cpu` RISC-V cluster scheduler epochs now retain exact batch

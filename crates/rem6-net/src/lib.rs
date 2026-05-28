@@ -894,6 +894,18 @@ pub enum NetworkError {
         actual_bytes: u64,
     },
     DistributedEthernetSequenceOverflow,
+    DistributedEthernetLinkBusy {
+        interface: EthernetInterfaceId,
+        request_tick: u64,
+        busy_until_tick: u64,
+    },
+    DistributedEthernetLinkTimingOverflow {
+        request_tick: u64,
+        wire_length_bytes: u64,
+        ticks_per_byte: u64,
+        delay_variation_ticks: u64,
+    },
+    DistributedEthernetLinkSequenceOverflow,
     InvalidDistributedEthernetReceiveWindow {
         previous_sync_tick: u64,
         next_sync_tick: u64,
@@ -1176,6 +1188,27 @@ impl fmt::Display for NetworkError {
             ),
             Self::DistributedEthernetSequenceOverflow => {
                 write!(formatter, "distributed ethernet record sequence overflow")
+            }
+            Self::DistributedEthernetLinkBusy {
+                interface,
+                request_tick,
+                busy_until_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet interface {} is busy at tick {request_tick} until tick {busy_until_tick}",
+                interface.index()
+            ),
+            Self::DistributedEthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes,
+                ticks_per_byte,
+                delay_variation_ticks,
+            } => write!(
+                formatter,
+                "distributed ethernet link timing overflow for request tick {request_tick}, wire length {wire_length_bytes}, ticks per byte {ticks_per_byte}, delay variation {delay_variation_ticks}"
+            ),
+            Self::DistributedEthernetLinkSequenceOverflow => {
+                write!(formatter, "distributed ethernet link transmission sequence overflow")
             }
             Self::InvalidDistributedEthernetReceiveWindow {
                 previous_sync_tick,

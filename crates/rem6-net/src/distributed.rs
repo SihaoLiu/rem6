@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::{EthernetPacket, NetworkError};
+use crate::{
+    EthernetInterfaceEvent, EthernetInterfaceId, EthernetInterfaceRegistry,
+    EthernetInterfaceSendRecord, EthernetLinkDelayVariation, EthernetPacket, NetworkError,
+};
 
 const MAGIC: [u8; 4] = *b"R6DN";
 const DATA_KIND: u8 = 1;
@@ -461,6 +464,32 @@ impl DistributedEthernetReceiveWindow {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetLinkTiming {
+    ticks_per_byte: u64,
+    link_delay_ticks: u64,
+}
+
+impl DistributedEthernetLinkTiming {
+    pub fn new(ticks_per_byte: u64, link_delay_ticks: u64) -> Result<Self, NetworkError> {
+        if ticks_per_byte == 0 {
+            return Err(NetworkError::InvalidEthernetLinkRate { ticks_per_byte });
+        }
+        Ok(Self {
+            ticks_per_byte,
+            link_delay_ticks,
+        })
+    }
+
+    pub const fn ticks_per_byte(&self) -> u64 {
+        self.ticks_per_byte
+    }
+
+    pub const fn link_delay_ticks(&self) -> u64 {
+        self.link_delay_ticks
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DistributedEthernetReceiveScheduler {
     link_delay_ticks: u64,
@@ -753,6 +782,362 @@ impl DistributedEthernetReceiveSchedulerSnapshot {
 
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetLinkEndpoint {
+    interface: EthernetInterfaceId,
+    timing: DistributedEthernetLinkTiming,
+    delay_variation: Option<EthernetLinkDelayVariation>,
+    codec: DistributedEthernetCodec,
+    receive_scheduler: DistributedEthernetReceiveScheduler,
+    next_sequence: u64,
+    pending_transmit: Option<DistributedEthernetLinkTransmission>,
+}
+
+impl DistributedEthernetLinkEndpoint {
+    pub fn new(interface: EthernetInterfaceId, timing: DistributedEthernetLinkTiming) -> Self {
+        Self {
+            interface,
+            timing,
+            delay_variation: None,
+            codec: DistributedEthernetCodec::new(),
+            receive_scheduler: DistributedEthernetReceiveScheduler::new(timing.link_delay_ticks),
+            next_sequence: 0,
+            pending_transmit: None,
+        }
+    }
+
+    pub fn new_with_delay_variation(
+        interface: EthernetInterfaceId,
+        timing: DistributedEthernetLinkTiming,
+        delay_variation: EthernetLinkDelayVariation,
+    ) -> Self {
+        Self {
+            interface,
+            timing,
+            delay_variation: Some(delay_variation),
+            codec: DistributedEthernetCodec::new(),
+            receive_scheduler: DistributedEthernetReceiveScheduler::new(timing.link_delay_ticks),
+            next_sequence: 0,
+            pending_transmit: None,
+        }
+    }
+
+    pub const fn interface(&self) -> EthernetInterfaceId {
+        self.interface
+    }
+
+    pub const fn timing(&self) -> DistributedEthernetLinkTiming {
+        self.timing
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn codec_record_count(&self) -> usize {
+        self.codec.record_count()
+    }
+
+    pub fn pending_transmit_count(&self) -> usize {
+        usize::from(self.pending_transmit.is_some())
+    }
+
+    pub fn pending_receive_count(&self) -> usize {
+        self.receive_scheduler.pending_count()
+    }
+
+    pub fn busy_until_tick(&self) -> Option<u64> {
+        self.pending_transmit
+            .as_ref()
+            .map(DistributedEthernetLinkTransmission::transmit_done_tick)
+    }
+
+    pub fn next_receive_tick(&self) -> Option<u64> {
+        self.receive_scheduler.next_receive_tick()
+    }
+
+    pub fn transmit(
+        &mut self,
+        registry: &mut EthernetInterfaceRegistry,
+        packet: EthernetPacket,
+        request_tick: u64,
+    ) -> Result<DistributedEthernetLinkTransmission, NetworkError> {
+        self.drain_transmit_done(registry, request_tick)?;
+        if let Some(busy_until_tick) = self.busy_until_tick() {
+            return Err(NetworkError::DistributedEthernetLinkBusy {
+                interface: self.interface,
+                request_tick,
+                busy_until_tick,
+            });
+        }
+        if !registry.is_connected(self.interface)? {
+            return Err(NetworkError::EthernetInterfacePeerMissing {
+                interface: self.interface,
+            });
+        }
+
+        let wire_length_bytes = packet.wire_length_bytes();
+        let delay_variation_ticks = self.peek_delay_variation_ticks();
+        let serialization_ticks = self
+            .timing
+            .ticks_per_byte
+            .checked_mul(wire_length_bytes)
+            .and_then(|ticks| ticks.checked_add(1))
+            .ok_or(NetworkError::DistributedEthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes,
+                ticks_per_byte: self.timing.ticks_per_byte,
+                delay_variation_ticks,
+            })?;
+        let send_delay_ticks = serialization_ticks
+            .checked_add(delay_variation_ticks)
+            .ok_or(NetworkError::DistributedEthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes,
+                ticks_per_byte: self.timing.ticks_per_byte,
+                delay_variation_ticks,
+            })?;
+        let transmit_done_tick = request_tick.checked_add(send_delay_ticks).ok_or(
+            NetworkError::DistributedEthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes,
+                ticks_per_byte: self.timing.ticks_per_byte,
+                delay_variation_ticks,
+            },
+        )?;
+        let sequence = self.next_sequence;
+        let next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(NetworkError::DistributedEthernetLinkSequenceOverflow)?;
+
+        let message = DistributedEthernetMessage::data(request_tick, send_delay_ticks, packet)?;
+        let encoded_message = self.codec.encode(&message)?;
+        let transmission = DistributedEthernetLinkTransmission {
+            sequence,
+            interface: self.interface,
+            request_tick,
+            send_delay_ticks,
+            delay_variation_ticks,
+            transmit_done_tick,
+            message,
+            encoded_message,
+        };
+
+        self.advance_delay_variation();
+        self.next_sequence = next_sequence;
+        registry.set_busy(self.interface, true)?;
+        self.pending_transmit = Some(transmission.clone());
+        Ok(transmission)
+    }
+
+    pub fn drain_transmit_done(
+        &mut self,
+        registry: &mut EthernetInterfaceRegistry,
+        up_to_tick: u64,
+    ) -> Result<Option<DistributedEthernetLinkSendDone>, NetworkError> {
+        let Some(pending) = self.pending_transmit.as_ref() else {
+            return Ok(None);
+        };
+        if pending.transmit_done_tick > up_to_tick {
+            return Ok(None);
+        }
+
+        let event = registry.recv_done(self.interface, pending.transmit_done_tick)?;
+        registry.set_busy(self.interface, false)?;
+        let transmission = self
+            .pending_transmit
+            .take()
+            .expect("distributed ethernet pending transmission exists");
+        Ok(Some(DistributedEthernetLinkSendDone {
+            transmission,
+            event,
+        }))
+    }
+
+    pub fn accept_remote_message(
+        &mut self,
+        message: DistributedEthernetMessage,
+        current_tick: u64,
+        window: Option<DistributedEthernetReceiveWindow>,
+    ) -> Result<DistributedEthernetReceiveRecord, NetworkError> {
+        self.receive_scheduler
+            .push_data(message, current_tick, window)
+    }
+
+    pub fn drain_ready_receives(
+        &mut self,
+        registry: &mut EthernetInterfaceRegistry,
+        up_to_tick: u64,
+    ) -> Result<Vec<DistributedEthernetLinkReceiveDelivery>, NetworkError> {
+        let mut deliveries = Vec::new();
+        while let Some(delivery) = self.receive_scheduler.pop_ready(up_to_tick)? {
+            let send_record =
+                registry.send_packet(self.interface, delivery.packet().clone(), up_to_tick)?;
+            deliveries.push(DistributedEthernetLinkReceiveDelivery {
+                delivery,
+                send_record,
+            });
+        }
+        Ok(deliveries)
+    }
+
+    pub fn snapshot(&self) -> DistributedEthernetLinkEndpointSnapshot {
+        DistributedEthernetLinkEndpointSnapshot {
+            interface: self.interface,
+            timing: self.timing,
+            delay_variation: self.delay_variation.clone(),
+            codec: self.codec.snapshot(),
+            receive_scheduler: self.receive_scheduler.snapshot(),
+            next_sequence: self.next_sequence,
+            pending_transmit: self.pending_transmit.clone(),
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &DistributedEthernetLinkEndpointSnapshot,
+    ) -> Result<(), NetworkError> {
+        self.interface = snapshot.interface;
+        self.timing = snapshot.timing;
+        self.delay_variation = snapshot.delay_variation.clone();
+        self.codec.restore(&snapshot.codec)?;
+        self.receive_scheduler
+            .restore(&snapshot.receive_scheduler)?;
+        self.next_sequence = snapshot.next_sequence;
+        self.pending_transmit = snapshot.pending_transmit.clone();
+        Ok(())
+    }
+
+    fn peek_delay_variation_ticks(&self) -> u64 {
+        self.delay_variation
+            .as_ref()
+            .map(EthernetLinkDelayVariation::peek_delay_ticks)
+            .unwrap_or(0)
+    }
+
+    fn advance_delay_variation(&mut self) {
+        if let Some(delay_variation) = &mut self.delay_variation {
+            delay_variation.advance_delay();
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetLinkTransmission {
+    sequence: u64,
+    interface: EthernetInterfaceId,
+    request_tick: u64,
+    send_delay_ticks: u64,
+    delay_variation_ticks: u64,
+    transmit_done_tick: u64,
+    message: DistributedEthernetMessage,
+    encoded_message: Vec<u8>,
+}
+
+impl DistributedEthernetLinkTransmission {
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn interface(&self) -> EthernetInterfaceId {
+        self.interface
+    }
+
+    pub const fn request_tick(&self) -> u64 {
+        self.request_tick
+    }
+
+    pub const fn send_delay_ticks(&self) -> u64 {
+        self.send_delay_ticks
+    }
+
+    pub const fn delay_variation_ticks(&self) -> u64 {
+        self.delay_variation_ticks
+    }
+
+    pub const fn transmit_done_tick(&self) -> u64 {
+        self.transmit_done_tick
+    }
+
+    pub const fn message(&self) -> &DistributedEthernetMessage {
+        &self.message
+    }
+
+    pub fn encoded_message(&self) -> &[u8] {
+        &self.encoded_message
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetLinkSendDone {
+    transmission: DistributedEthernetLinkTransmission,
+    event: EthernetInterfaceEvent,
+}
+
+impl DistributedEthernetLinkSendDone {
+    pub const fn transmission(&self) -> &DistributedEthernetLinkTransmission {
+        &self.transmission
+    }
+
+    pub const fn event(&self) -> &EthernetInterfaceEvent {
+        &self.event
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetLinkReceiveDelivery {
+    delivery: DistributedEthernetReceiveDelivery,
+    send_record: EthernetInterfaceSendRecord,
+}
+
+impl DistributedEthernetLinkReceiveDelivery {
+    pub const fn delivery(&self) -> &DistributedEthernetReceiveDelivery {
+        &self.delivery
+    }
+
+    pub const fn send_record(&self) -> &EthernetInterfaceSendRecord {
+        &self.send_record
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetLinkEndpointSnapshot {
+    interface: EthernetInterfaceId,
+    timing: DistributedEthernetLinkTiming,
+    delay_variation: Option<EthernetLinkDelayVariation>,
+    codec: DistributedEthernetCodecSnapshot,
+    receive_scheduler: DistributedEthernetReceiveSchedulerSnapshot,
+    next_sequence: u64,
+    pending_transmit: Option<DistributedEthernetLinkTransmission>,
+}
+
+impl DistributedEthernetLinkEndpointSnapshot {
+    pub const fn interface(&self) -> EthernetInterfaceId {
+        self.interface
+    }
+
+    pub const fn timing(&self) -> DistributedEthernetLinkTiming {
+        self.timing
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn pending_transmit_count(&self) -> usize {
+        usize::from(self.pending_transmit.is_some())
+    }
+
+    pub fn codec_record_count(&self) -> usize {
+        self.codec.record_count()
+    }
+
+    pub fn pending_receive_count(&self) -> usize {
+        self.receive_scheduler.pending_count()
     }
 }
 
