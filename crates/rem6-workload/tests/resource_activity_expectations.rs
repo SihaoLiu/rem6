@@ -245,6 +245,34 @@ fn workload_replay_plan_infers_active_resources_from_operation_evidence() {
 }
 
 #[test]
+fn workload_replay_plan_preserves_dram_resource_parallelism_from_port_and_bank_counts() {
+    let plan = replay_plan()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Dram,
+            8,
+            8,
+        ))
+        .unwrap()
+        .add_expected_resource_activity(expected_activity(
+            WorkloadResourceActivityScope::Resource,
+            13,
+            11,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_fabric_activity(3, 5, 160, 11, 0, 0, 0)
+        .with_dram_activity(1, 4, 8, 8, 6, 2, 3, 5, 8, 1, 34, 13);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    let summary = result.parallel_execution_summary().unwrap();
+    assert_eq!(summary.active_fabric_resource_count(), 3);
+    assert_eq!(summary.active_dram_resource_count(), 8);
+    assert_eq!(summary.active_resource_count(), 11);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_replay_plan_counts_resource_wait_diagnostics_as_resource_activity() {
     let plan = replay_plan()
         .add_expected_resource_activity(expected_activity(

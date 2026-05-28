@@ -626,6 +626,9 @@ fabric, DRAM channel, HBM stack, LPDDR channel, or DDR controller must expose:
 - virtual network or traffic class;
 - service profile;
 - unique active-resource coverage when activity windows are merged;
+- active-resource lower bounds that preserve the strongest target, port, bank,
+  lane, or wait-target evidence instead of collapsing a resource class to a
+  Boolean presence bit;
 - checkpoint state.
 
 The system run summary must aggregate resource activity without discarding the

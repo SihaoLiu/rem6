@@ -979,8 +979,8 @@ impl WorkloadParallelExecutionSummary {
                 || !self.dram_wait_for_target_node_windows.is_empty(),
         );
         self.active_dram_target_count
-            .max(usize::from(self.active_dram_port_count != 0))
-            .max(usize::from(self.active_dram_bank_count != 0))
+            .max(self.active_dram_port_count)
+            .max(self.active_dram_bank_count)
             .max(self.dram_wait_for_target_node_windows.len())
             .max(activity_floor)
     }
