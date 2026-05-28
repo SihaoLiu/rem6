@@ -731,6 +731,11 @@ Implementation evidence on 2026-05-26:
   full-system planned worker ticks, capacity ticks, idle ticks, and utilization
   ratios now include those DMA planned records, so full-system efficiency
   checks cannot be satisfied by a CPU/cache-only planned-capacity aggregate.
+- Explicit planned full-system worker-capacity summaries are treated as lower
+  bounds against the scoped CPU-scheduler, data-cache, GPU DMA, and accelerator
+  DMA planned capacities. Replay idle-budget checks therefore keep the strongest
+  available pre-dispatch capacity evidence instead of trusting a weaker global
+  aggregate.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global

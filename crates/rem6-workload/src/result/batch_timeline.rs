@@ -732,20 +732,15 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
-        if self
-            .planned_batch_worker_capacity_ticks
-            .full_system_parallel_scheduler
-            != 0
-        {
-            return self
-                .planned_batch_worker_capacity_ticks
-                .full_system_parallel_scheduler;
-        }
-        self.parallel_scheduler_planned_batch_worker_capacity_ticks()
+        let scoped_capacity_ticks = self
+            .parallel_scheduler_planned_batch_worker_capacity_ticks()
             .saturating_add(
                 self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
             )
-            .saturating_add(self.dma_scheduler_planned_batch_worker_capacity_ticks())
+            .saturating_add(self.dma_scheduler_planned_batch_worker_capacity_ticks());
+        self.planned_batch_worker_capacity_ticks
+            .full_system_parallel_scheduler
+            .max(scoped_capacity_ticks)
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
