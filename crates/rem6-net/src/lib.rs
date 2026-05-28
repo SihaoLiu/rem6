@@ -2,8 +2,10 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
+mod bus;
 mod switch;
 
+pub use bus::*;
 pub use switch::*;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -799,6 +801,27 @@ pub enum NetworkError {
         link_delay_ticks: u64,
     },
     EthernetLinkSequenceOverflow,
+    InvalidEthernetBusPortCount {
+        port_count: u16,
+    },
+    InvalidEthernetBusRate {
+        ticks_per_byte: u64,
+    },
+    UnknownEthernetBusPort {
+        port: EthernetBusPortId,
+        port_count: u16,
+    },
+    EthernetBusBusy {
+        sender_port: EthernetBusPortId,
+        request_tick: u64,
+        busy_until_tick: u64,
+    },
+    EthernetBusTimingOverflow {
+        request_tick: u64,
+        wire_length_bytes: u64,
+        ticks_per_byte: u64,
+    },
+    EthernetBusSequenceOverflow,
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
@@ -913,6 +936,38 @@ impl fmt::Display for NetworkError {
             ),
             Self::EthernetLinkSequenceOverflow => {
                 write!(formatter, "ethernet link transmission sequence overflow")
+            }
+            Self::InvalidEthernetBusPortCount { port_count } => {
+                write!(formatter, "ethernet bus port count {port_count} must be positive")
+            }
+            Self::InvalidEthernetBusRate { ticks_per_byte } => write!(
+                formatter,
+                "ethernet bus ticks per byte {ticks_per_byte} must be positive"
+            ),
+            Self::UnknownEthernetBusPort { port, port_count } => write!(
+                formatter,
+                "unknown ethernet bus port {} for bus with {port_count} ports",
+                port.index()
+            ),
+            Self::EthernetBusBusy {
+                sender_port,
+                request_tick,
+                busy_until_tick,
+            } => write!(
+                formatter,
+                "ethernet bus sender port {} is busy at tick {request_tick} until tick {busy_until_tick}",
+                sender_port.index()
+            ),
+            Self::EthernetBusTimingOverflow {
+                request_tick,
+                wire_length_bytes,
+                ticks_per_byte,
+            } => write!(
+                formatter,
+                "ethernet bus timing overflow for request tick {request_tick}, wire length {wire_length_bytes}, ticks per byte {ticks_per_byte}"
+            ),
+            Self::EthernetBusSequenceOverflow => {
+                write!(formatter, "ethernet bus transmission sequence overflow")
             }
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
