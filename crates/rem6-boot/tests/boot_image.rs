@@ -36,6 +36,13 @@ struct ElfProgramHeaderSpec {
     memory_size: u64,
 }
 
+#[derive(Clone, Copy)]
+struct ElfSectionSpec<'a> {
+    name: &'a str,
+    kind: u32,
+    data: &'a [u8],
+}
+
 fn elf64_image(entry: u64, headers: &[ElfProgramHeaderSpec], data: &[(usize, &[u8])]) -> Vec<u8> {
     let mut size = 64 + headers.len() * 56;
     for (offset, bytes) in data {
@@ -108,6 +115,98 @@ fn elf32_image(entry: u32, headers: &[ElfProgramHeaderSpec], data: &[(usize, &[u
         bytes[*offset..*offset + payload.len()].copy_from_slice(payload);
     }
     bytes
+}
+
+fn add_elf64_sections(bytes: &mut Vec<u8>, sections: &[ElfSectionSpec<'_>]) {
+    let mut name_data = vec![0];
+    let mut name_offsets = Vec::new();
+    for section in sections {
+        name_offsets.push(name_data.len() as u32);
+        name_data.extend_from_slice(section.name.as_bytes());
+        name_data.push(0);
+    }
+    let shstr_name = name_data.len() as u32;
+    name_data.extend_from_slice(b".shstrtab\0");
+
+    let mut section_offsets = Vec::new();
+    for section in sections {
+        section_offsets.push(bytes.len() as u64);
+        bytes.extend_from_slice(section.data);
+    }
+    let shstr_offset = bytes.len() as u64;
+    bytes.extend_from_slice(&name_data);
+
+    let section_table_offset = bytes.len() as u64;
+    write_u64(bytes, 40, section_table_offset);
+    write_u16(bytes, 58, 64);
+    write_u16(bytes, 60, sections.len() as u16 + 2);
+    write_u16(bytes, 62, sections.len() as u16 + 1);
+    bytes.resize(bytes.len() + (sections.len() + 2) * 64, 0);
+
+    for (index, section) in sections.iter().enumerate() {
+        let base = section_table_offset as usize + (index + 1) * 64;
+        write_u32(bytes, base, name_offsets[index]);
+        write_u32(bytes, base + 4, section.kind);
+        write_u64(bytes, base + 24, section_offsets[index]);
+        write_u64(bytes, base + 32, section.data.len() as u64);
+    }
+
+    let shstr_base = section_table_offset as usize + (sections.len() + 1) * 64;
+    write_u32(bytes, shstr_base, shstr_name);
+    write_u32(bytes, shstr_base + 4, 3);
+    write_u64(bytes, shstr_base + 24, shstr_offset);
+    write_u64(bytes, shstr_base + 32, name_data.len() as u64);
+}
+
+fn add_elf32_sections(bytes: &mut Vec<u8>, sections: &[ElfSectionSpec<'_>]) {
+    let mut name_data = vec![0];
+    let mut name_offsets = Vec::new();
+    for section in sections {
+        name_offsets.push(name_data.len() as u32);
+        name_data.extend_from_slice(section.name.as_bytes());
+        name_data.push(0);
+    }
+    let shstr_name = name_data.len() as u32;
+    name_data.extend_from_slice(b".shstrtab\0");
+
+    let mut section_offsets = Vec::new();
+    for section in sections {
+        section_offsets.push(bytes.len() as u32);
+        bytes.extend_from_slice(section.data);
+    }
+    let shstr_offset = bytes.len() as u32;
+    bytes.extend_from_slice(&name_data);
+
+    let section_table_offset = bytes.len() as u32;
+    write_u32(bytes, 32, section_table_offset);
+    write_u16(bytes, 46, 40);
+    write_u16(bytes, 48, sections.len() as u16 + 2);
+    write_u16(bytes, 50, sections.len() as u16 + 1);
+    bytes.resize(bytes.len() + (sections.len() + 2) * 40, 0);
+
+    for (index, section) in sections.iter().enumerate() {
+        let base = section_table_offset as usize + (index + 1) * 40;
+        write_u32(bytes, base, name_offsets[index]);
+        write_u32(bytes, base + 4, section.kind);
+        write_u32(bytes, base + 16, section_offsets[index]);
+        write_u32(bytes, base + 20, section.data.len() as u32);
+    }
+
+    let shstr_base = section_table_offset as usize + (sections.len() + 1) * 40;
+    write_u32(bytes, shstr_base, shstr_name);
+    write_u32(bytes, shstr_base + 4, 3);
+    write_u32(bytes, shstr_base + 16, shstr_offset);
+    write_u32(bytes, shstr_base + 20, name_data.len() as u32);
+}
+
+fn abi_note(os: u32) -> [u8; 20] {
+    let mut note = [0; 20];
+    write_u32(&mut note, 0, 4);
+    write_u32(&mut note, 4, 16);
+    write_u32(&mut note, 8, 1);
+    note[12..16].copy_from_slice(b"GNU\0");
+    write_u32(&mut note, 16, os);
+    note
 }
 
 #[test]
@@ -490,6 +589,99 @@ fn boot_image_maps_power64_abi_from_elf_flags() {
             .unwrap()
             .operating_system(),
         BootElfOperatingSystem::LinuxPower64AbiV2,
+    );
+}
+
+#[test]
+fn boot_image_derives_operating_system_from_abi_note_section() {
+    let linux_note = abi_note(0);
+    let mut linux = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut linux,
+        &[ElfSectionSpec {
+            name: ".note.ABI-tag",
+            kind: 7,
+            data: &linux_note,
+        }],
+    );
+    let freebsd_note = abi_note(3);
+    let mut freebsd = elf32_image(
+        0x8040,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x9000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x93, 0x05, 0x10, 0x00])],
+    );
+    add_elf32_sections(
+        &mut freebsd,
+        &[ElfSectionSpec {
+            name: ".note.ABI-tag",
+            kind: 7,
+            data: &freebsd_note,
+        }],
+    );
+
+    assert_eq!(
+        BootImage::from_elf64_le(&linux)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .operating_system(),
+        BootElfOperatingSystem::Linux,
+    );
+    assert_eq!(
+        BootImage::from_elf32_le(&freebsd)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .operating_system(),
+        BootElfOperatingSystem::FreeBsd,
+    );
+}
+
+#[test]
+fn boot_image_derives_solaris_from_section_names() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[ElfSectionSpec {
+            name: ".SUNW_version",
+            kind: 1,
+            data: &[],
+        }],
+    );
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .operating_system(),
+        BootElfOperatingSystem::Solaris,
     );
 }
 

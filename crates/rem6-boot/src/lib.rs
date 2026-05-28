@@ -8,8 +8,10 @@ use rem6_memory::{
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
+const ELF64_SECTION_HEADER_SIZE: u16 = 64;
 const ELF32_HEADER_SIZE: usize = 52;
 const ELF32_PROGRAM_HEADER_SIZE: u16 = 32;
+const ELF32_SECTION_HEADER_SIZE: u16 = 40;
 const ELF_CLASS_32: u8 = 1;
 const ELF_CLASS_64: u8 = 2;
 const ELF_DATA_LITTLE: u8 = 1;
@@ -20,6 +22,7 @@ const ELF_OSABI_FREEBSD: u8 = 9;
 const ELF_OSABI_TRU64: u8 = 10;
 const ELF_OSABI_ARM: u8 = 97;
 const PT_LOAD: u32 = 1;
+const SHT_NOTE: u32 = 7;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
 const EM_MIPS: u16 = 8;
@@ -130,6 +133,7 @@ impl BootElfMetadata {
         machine: u16,
         os_abi: u8,
         flags: u32,
+        operating_system: BootElfOperatingSystem,
         entry: Address,
     ) -> Self {
         Self {
@@ -138,7 +142,7 @@ impl BootElfMetadata {
             os_abi,
             flags,
             architecture: BootElfArchitecture::from_machine(class, machine, entry),
-            operating_system: BootElfOperatingSystem::from_header(machine, os_abi, flags),
+            operating_system,
         }
     }
 
@@ -477,6 +481,8 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     let os_abi = bytes[7];
     let machine = read_u16(bytes, 18)?;
     let flags = read_u32(bytes, 48)?;
+    let operating_system =
+        detect_elf_operating_system(bytes, BootElfClass::Class64, machine, os_abi, flags)?;
     let entry = Address::new(read_u64(bytes, 24)?);
     let program_header_offset = read_u64(bytes, 32)?;
     let program_header_count = read_u16(bytes, 56)?;
@@ -502,6 +508,7 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         machine,
         os_abi,
         flags,
+        operating_system,
         entry,
     ));
     let mut loaded_segments = 0usize;
@@ -600,6 +607,8 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     let os_abi = bytes[7];
     let machine = read_u16(bytes, 18)?;
     let flags = read_u32(bytes, 36)?;
+    let operating_system =
+        detect_elf_operating_system(bytes, BootElfClass::Class32, machine, os_abi, flags)?;
     let entry = Address::new(u64::from(read_u32(bytes, 24)?));
     let program_header_offset = u64::from(read_u32(bytes, 28)?);
     let program_header_count = read_u16(bytes, 44)?;
@@ -625,6 +634,7 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         machine,
         os_abi,
         flags,
+        operating_system,
         entry,
     ));
     let mut loaded_segments = 0usize;
@@ -746,6 +756,248 @@ fn detect_elf_class(bytes: &[u8]) -> Result<u8, BootError> {
     Ok(class)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ElfSectionHeader {
+    name: u32,
+    kind: u32,
+    offset: u64,
+    size: u64,
+}
+
+fn detect_elf_operating_system(
+    bytes: &[u8],
+    class: BootElfClass,
+    machine: u16,
+    os_abi: u8,
+    flags: u32,
+) -> Result<BootElfOperatingSystem, BootError> {
+    let header_os = BootElfOperatingSystem::from_header(machine, os_abi, flags);
+    if !matches!(header_os, BootElfOperatingSystem::Unknown { .. }) {
+        return Ok(header_os);
+    }
+
+    Ok(detect_elf_operating_system_from_sections(bytes, class)?.unwrap_or(header_os))
+}
+
+fn detect_elf_operating_system_from_sections(
+    bytes: &[u8],
+    class: BootElfClass,
+) -> Result<Option<BootElfOperatingSystem>, BootError> {
+    match class {
+        BootElfClass::Class32 => detect_elf32_operating_system_from_sections(bytes),
+        BootElfClass::Class64 => detect_elf64_operating_system_from_sections(bytes),
+    }
+}
+
+fn detect_elf64_operating_system_from_sections(
+    bytes: &[u8],
+) -> Result<Option<BootElfOperatingSystem>, BootError> {
+    let section_table_offset = read_u64(bytes, 40)?;
+    let section_header_size = read_u16(bytes, 58)?;
+    let section_count = read_u16(bytes, 60)?;
+    let string_section = read_u16(bytes, 62)?;
+    if section_table_offset == 0
+        || section_count == 0
+        || string_section == 0
+        || string_section >= section_count
+        || section_header_size != ELF64_SECTION_HEADER_SIZE
+    {
+        return Ok(None);
+    }
+
+    validate_section_table_range(
+        bytes,
+        section_table_offset,
+        section_header_size,
+        section_count,
+    )?;
+    let string_header = read_elf64_section_header(
+        bytes,
+        section_table_offset,
+        section_header_size,
+        string_section,
+    )?;
+    let string_table = checked_file_range(bytes, string_header.offset, string_header.size)
+        .map_err(|_| {
+            invalid_elf(BootElfError::SectionDataRangeOutOfBounds {
+                offset: string_header.offset,
+                size: string_header.size,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+
+    for index in 1..section_count {
+        let section =
+            read_elf64_section_header(bytes, section_table_offset, section_header_size, index)?;
+        if let Some(operating_system) =
+            detect_section_operating_system(bytes, string_table, section)?
+        {
+            return Ok(Some(operating_system));
+        }
+    }
+    Ok(None)
+}
+
+fn detect_elf32_operating_system_from_sections(
+    bytes: &[u8],
+) -> Result<Option<BootElfOperatingSystem>, BootError> {
+    let section_table_offset = u64::from(read_u32(bytes, 32)?);
+    let section_header_size = read_u16(bytes, 46)?;
+    let section_count = read_u16(bytes, 48)?;
+    let string_section = read_u16(bytes, 50)?;
+    if section_table_offset == 0
+        || section_count == 0
+        || string_section == 0
+        || string_section >= section_count
+        || section_header_size != ELF32_SECTION_HEADER_SIZE
+    {
+        return Ok(None);
+    }
+
+    validate_section_table_range(
+        bytes,
+        section_table_offset,
+        section_header_size,
+        section_count,
+    )?;
+    let string_header = read_elf32_section_header(
+        bytes,
+        section_table_offset,
+        section_header_size,
+        string_section,
+    )?;
+    let string_table = checked_file_range(bytes, string_header.offset, string_header.size)
+        .map_err(|_| {
+            invalid_elf(BootElfError::SectionDataRangeOutOfBounds {
+                offset: string_header.offset,
+                size: string_header.size,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+
+    for index in 1..section_count {
+        let section =
+            read_elf32_section_header(bytes, section_table_offset, section_header_size, index)?;
+        if let Some(operating_system) =
+            detect_section_operating_system(bytes, string_table, section)?
+        {
+            return Ok(Some(operating_system));
+        }
+    }
+    Ok(None)
+}
+
+fn validate_section_table_range(
+    bytes: &[u8],
+    offset: u64,
+    header_size: u16,
+    count: u16,
+) -> Result<(), BootError> {
+    let size = u64::from(header_size)
+        .checked_mul(u64::from(count))
+        .ok_or_else(|| {
+            invalid_elf(BootElfError::SectionHeaderTableOutOfBounds {
+                offset,
+                size: u64::MAX,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+    checked_file_range(bytes, offset, size).map_err(|_| {
+        invalid_elf(BootElfError::SectionHeaderTableOutOfBounds {
+            offset,
+            size,
+            image_size: bytes.len() as u64,
+        })
+    })?;
+    Ok(())
+}
+
+fn read_elf64_section_header(
+    bytes: &[u8],
+    table_offset: u64,
+    header_size: u16,
+    index: u16,
+) -> Result<ElfSectionHeader, BootError> {
+    let base = table_offset + u64::from(index) * u64::from(header_size);
+    Ok(ElfSectionHeader {
+        name: read_u32_at_u64(bytes, base)?,
+        kind: read_u32_at_u64(bytes, base + 4)?,
+        offset: read_u64_at_u64(bytes, base + 24)?,
+        size: read_u64_at_u64(bytes, base + 32)?,
+    })
+}
+
+fn read_elf32_section_header(
+    bytes: &[u8],
+    table_offset: u64,
+    header_size: u16,
+    index: u16,
+) -> Result<ElfSectionHeader, BootError> {
+    let base = table_offset + u64::from(index) * u64::from(header_size);
+    Ok(ElfSectionHeader {
+        name: read_u32_at_u64(bytes, base)?,
+        kind: read_u32_at_u64(bytes, base + 4)?,
+        offset: u64::from(read_u32_at_u64(bytes, base + 16)?),
+        size: u64::from(read_u32_at_u64(bytes, base + 20)?),
+    })
+}
+
+fn detect_section_operating_system(
+    bytes: &[u8],
+    string_table: &[u8],
+    section: ElfSectionHeader,
+) -> Result<Option<BootElfOperatingSystem>, BootError> {
+    if section.kind == SHT_NOTE
+        && section_name_matches(string_table, section.name, b".note.ABI-tag")
+    {
+        let section_data =
+            checked_file_range(bytes, section.offset, section.size).map_err(|_| {
+                invalid_elf(BootElfError::SectionDataRangeOutOfBounds {
+                    offset: section.offset,
+                    size: section.size,
+                    image_size: bytes.len() as u64,
+                })
+            })?;
+        if section_data.len() >= 20 {
+            return Ok(
+                match u32::from_le_bytes([
+                    section_data[16],
+                    section_data[17],
+                    section_data[18],
+                    section_data[19],
+                ]) {
+                    0 => Some(BootElfOperatingSystem::Linux),
+                    2 => Some(BootElfOperatingSystem::Solaris),
+                    3 => Some(BootElfOperatingSystem::FreeBsd),
+                    _ => None,
+                },
+            );
+        }
+    }
+
+    if section_name_matches(string_table, section.name, b".SUNW_version")
+        || section_name_matches(string_table, section.name, b".stab.index")
+    {
+        return Ok(Some(BootElfOperatingSystem::Solaris));
+    }
+
+    Ok(None)
+}
+
+fn section_name_matches(string_table: &[u8], name_offset: u32, expected: &[u8]) -> bool {
+    let Ok(start) = usize::try_from(name_offset) else {
+        return false;
+    };
+    let Some(rest) = string_table.get(start..) else {
+        return false;
+    };
+    let end = rest
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(rest.len());
+    &rest[..end] == expected
+}
+
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, BootError> {
     let data = read_exact(bytes, offset, 2)?;
     Ok(u16::from_le_bytes([data[0], data[1]]))
@@ -853,6 +1105,16 @@ pub enum BootElfError {
         size: u64,
         image_size: u64,
     },
+    SectionHeaderTableOutOfBounds {
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
+    SectionDataRangeOutOfBounds {
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
     TruncatedField {
         offset: u64,
         size: u64,
@@ -944,6 +1206,22 @@ impl fmt::Display for BootElfError {
             } => write!(
                 formatter,
                 "ELF program header table {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::SectionHeaderTableOutOfBounds {
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF section header table {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::SectionDataRangeOutOfBounds {
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF section data {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
             ),
             Self::TruncatedField {
                 offset,
