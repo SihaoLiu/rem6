@@ -376,6 +376,37 @@ impl SinicFifoDevice {
         Ok(plan)
     }
 
+    pub fn pending_rx_dma_payload(&self) -> Result<(SinicDmaCopyPlan, Vec<u8>), SinicError> {
+        let plan = self
+            .rx_dma_pending
+            .clone()
+            .ok_or(SinicError::DmaCopyNotPending {
+                direction: SinicDmaDirection::Receive,
+            })?;
+        let packet = self.rx_fifo.front().ok_or(SinicError::PacketQueueEmpty {
+            queue: SinicQueueKind::Receive,
+        })?;
+        let available = packet.payload_len().saturating_sub(plan.packet_offset);
+        if available < u64::from(plan.copy_len) {
+            return Err(SinicError::DmaCompletionLengthMismatch {
+                direction: SinicDmaDirection::Receive,
+                expected_bytes: plan.copy_len,
+                actual_bytes: available,
+            });
+        }
+        let start = plan.packet_offset as usize;
+        let end = start.saturating_add(plan.copy_len as usize);
+        Ok((plan, packet.payload()[start..end].to_vec()))
+    }
+
+    pub fn pending_tx_dma_copy_plan(&self) -> Result<SinicDmaCopyPlan, SinicError> {
+        self.tx_dma_pending
+            .clone()
+            .ok_or(SinicError::DmaCopyNotPending {
+                direction: SinicDmaDirection::Transmit,
+            })
+    }
+
     pub fn complete_tx_dma_copy(
         &mut self,
         bytes: &[u8],

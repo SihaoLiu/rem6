@@ -4,9 +4,12 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 
 #[path = "sinic/fifo.rs"]
 mod fifo;
+#[path = "sinic/memory.rs"]
+mod memory;
 #[path = "sinic/mmio.rs"]
 mod mmio;
 pub use fifo::*;
+pub use memory::*;
 pub use mmio::*;
 
 use crate::NetworkError;
@@ -962,6 +965,9 @@ pub enum SinicError {
     EthernetPeerBusy {
         interface: crate::EthernetInterfaceId,
     },
+    Memory {
+        source: rem6_memory::MemoryError,
+    },
     Network {
         source: NetworkError,
     },
@@ -1041,12 +1047,21 @@ impl fmt::Display for SinicError {
                 "SINIC ethernet interface {} peer is busy",
                 interface.index()
             ),
+            Self::Memory { source } => write!(formatter, "SINIC memory error: {source}"),
             Self::Network { source } => write!(formatter, "SINIC network error: {source}"),
         }
     }
 }
 
-impl Error for SinicError {}
+impl Error for SinicError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Memory { source } => Some(source),
+            Self::Network { source } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 fn validate_params(params: SinicRegisterParams) -> Result<(), SinicError> {
     let zero_copy = (params.config_bits & SinicRegisterBlock::CONFIG_ZERO_COPY) != 0;
