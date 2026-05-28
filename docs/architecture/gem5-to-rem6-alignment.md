@@ -1173,7 +1173,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   access and byte accounting in DRAM activity profiles, gem5-like burst
   spacing across same-direction commands on a shared port, gem5-like
   same-bank-group burst spacing for bank-group memories, and gem5-like
-  command-window bandwidth limits across row and data commands. NVM profile tests
+  command-window bandwidth limits across row and data commands, plus
+  target-local unique active port and bank coverage when DRAM activity windows
+  are merged. NVM profile tests
   cover typed read/write byte accounting, persistent write counters, NVM media
   timing, pending-read buffer limits, pending-write queue limits, checkpoint
   round-trip of media/pending state, NVM queue wait-for diagnostics, profile

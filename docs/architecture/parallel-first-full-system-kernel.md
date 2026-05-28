@@ -614,6 +614,7 @@ fabric, DRAM channel, HBM stack, LPDDR channel, or DDR controller must expose:
 - contention source;
 - virtual network or traffic class;
 - service profile;
+- unique active-resource coverage when activity windows are merged;
 - checkpoint state.
 
 The system run summary must aggregate resource activity without discarding the
@@ -737,7 +738,7 @@ work.
 | GPU execution | Tests for command submission over topology, workgroup scheduling, DMA traffic, traces, run summaries, and checkpoint restore. |
 | Accelerator execution | Tests for command submission, NPU-style job completion, DMA traffic, traces, run summaries, and checkpoint restore. |
 | Fabric transport | Tests for route validation, virtual network activity, bandwidth contention, trace records, and checkpoint restore. |
-| DRAM timing | Tests for target mapping, read and write timing, geometry effects, activity records, and checkpoint restore. |
+| DRAM timing | Tests for target mapping, read and write timing, geometry effects, activity records, unique resource coverage across merged windows, and checkpoint restore. |
 | MSI coherence | Pure transition tests, partitioned directory tests, full-system CPU data tests, resource activity tests, and checkpoint tests. |
 | MESI coherence | Pure transition tests, partitioned directory tests, full-system CPU data tests, resource activity tests, and checkpoint tests. |
 | MOESI coherence | Pure transition tests, partitioned directory tests, full-system dirty-owner tests, resource activity tests, and checkpoint tests. |

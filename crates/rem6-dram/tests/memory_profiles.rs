@@ -585,6 +585,40 @@ fn volatile_memory_activity_keeps_persistent_write_counters_zero() {
 }
 
 #[test]
+fn dram_target_activity_merge_preserves_unique_port_and_bank_coverage() {
+    let profile =
+        ExternalMemoryProfile::hbm(target(16), layout(), 1, 2, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x33; 64])
+        .unwrap();
+
+    let first_start = controller.mark_activity();
+    controller.accept(0, &read(0x0000, 90)).unwrap();
+    let first = controller
+        .target_activity_since(&first_start, profile.target())
+        .unwrap();
+    let second_start = controller.mark_activity();
+    controller.accept(20, &read(0x0008, 91)).unwrap();
+    let second = controller
+        .target_activity_since(&second_start, profile.target())
+        .unwrap();
+    let merged = first.merge_window(second);
+
+    assert_eq!(merged.profile().access_count(), 2);
+    assert_eq!(merged.profile().active_port_count(), 1);
+    assert_eq!(merged.profile().active_bank_count(), 1);
+}
+
+#[test]
 fn profiled_hbm_target_uses_independent_parallel_ports_for_turnaround() {
     let profile =
         ExternalMemoryProfile::hbm(target(8), layout(), 1, 2, geometry(), timing()).unwrap();

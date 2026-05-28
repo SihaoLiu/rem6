@@ -246,6 +246,8 @@ impl DramPortActivity {
 pub struct DramActivityProfile {
     active_port_count: usize,
     active_bank_count: usize,
+    active_ports: BTreeSet<u32>,
+    active_banks: BTreeSet<(u32, u32)>,
     access_count: usize,
     read_count: usize,
     write_count: usize,
@@ -276,6 +278,8 @@ impl DramActivityProfile {
         let mut profile = Self {
             active_port_count: ports.len(),
             active_bank_count: banks.len(),
+            active_ports: ports.keys().copied().collect(),
+            active_banks: banks.keys().copied().collect(),
             ..Self::default()
         };
         for port in ports.values() {
@@ -324,8 +328,10 @@ impl DramActivityProfile {
     }
 
     pub fn merge_window(mut self, later: Self) -> Self {
-        self.active_port_count += later.active_port_count;
-        self.active_bank_count += later.active_bank_count;
+        self.active_ports.extend(later.active_ports);
+        self.active_banks.extend(later.active_banks);
+        self.active_port_count = self.active_ports.len();
+        self.active_bank_count = self.active_banks.len();
         self.access_count += later.access_count;
         self.read_count += later.read_count;
         self.write_count += later.write_count;
@@ -486,6 +492,49 @@ impl DramActivityProfile {
         requestors.extend(self.qos_requestor_byte_counts.keys().copied());
         requestors.into_iter().collect()
     }
+
+    fn add_independent_target_profile(&mut self, profile: &Self) {
+        self.active_port_count += profile.active_port_count;
+        self.active_bank_count += profile.active_bank_count;
+        self.access_count += profile.access_count;
+        self.read_count += profile.read_count;
+        self.write_count += profile.write_count;
+        self.read_byte_count += profile.read_byte_count;
+        self.write_byte_count += profile.write_byte_count;
+        self.max_pending_persistent_writes = self
+            .max_pending_persistent_writes
+            .max(profile.max_pending_persistent_writes);
+        self.max_pending_nvm_reads = self
+            .max_pending_nvm_reads
+            .max(profile.max_pending_nvm_reads);
+        self.row_hit_count += profile.row_hit_count;
+        self.row_miss_count += profile.row_miss_count;
+        self.command_count += profile.command_count;
+        self.turnaround_count += profile.turnaround_count;
+        self.total_ready_latency_cycles += profile.total_ready_latency_cycles;
+        self.max_ready_latency_cycles = self
+            .max_ready_latency_cycles
+            .max(profile.max_ready_latency_cycles);
+        self.qos_access_count += profile.qos_access_count;
+        self.qos_byte_count += profile.qos_byte_count;
+        self.qos_escalated_access_count += profile.qos_escalated_access_count;
+        merge_count_map(
+            &mut self.qos_priority_access_counts,
+            &profile.qos_priority_access_counts,
+        );
+        merge_count_map(
+            &mut self.qos_priority_byte_counts,
+            &profile.qos_priority_byte_counts,
+        );
+        merge_count_map(
+            &mut self.qos_requestor_access_counts,
+            &profile.qos_requestor_access_counts,
+        );
+        merge_count_map(
+            &mut self.qos_requestor_byte_counts,
+            &profile.qos_requestor_byte_counts,
+        );
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -603,7 +652,7 @@ impl DramMemoryActivityProfile {
         for activity in activities {
             if !activity.profile().is_empty() {
                 active_target_count += 1;
-                profile = profile.merge_window(activity.profile());
+                profile.add_independent_target_profile(&activity.profile());
             }
         }
         Self {
