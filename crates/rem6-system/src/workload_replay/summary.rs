@@ -3,7 +3,8 @@ use rem6_workload::{
     WorkloadDramQosRequestorSummary, WorkloadExpectedCleanParallelDiagnostics,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadTopology,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord,
+    WorkloadParallelExecutionSummary, WorkloadTopology,
 };
 
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
@@ -13,7 +14,7 @@ use crate::workload_replay_heterogeneous::{
 };
 use crate::{
     RiscvDataCacheProtocol, RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
-    RiscvSystemRun,
+    RiscvSystemParallelBatchWorkerLaneRecord, RiscvSystemRun,
 };
 
 pub(super) struct WorkloadReplayActivityRefs<'a> {
@@ -112,6 +113,11 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
+        .with_parallel_scheduler_planned_batch_worker_lanes(
+            run.parallel_scheduler_planned_batch_worker_lanes()
+                .into_iter()
+                .map(workload_parallel_batch_worker_lane_record),
+        )
         .with_parallel_scheduler_planned_batch_worker_capacity_ticks(
             run.parallel_scheduler_planned_batch_worker_capacity_ticks(),
         )
@@ -182,6 +188,11 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
+        .with_data_cache_parallel_scheduler_planned_batch_worker_lanes(
+            run.data_cache_parallel_scheduler_planned_batch_worker_lanes()
+                .into_iter()
+                .map(workload_parallel_batch_worker_lane_record),
+        )
         .with_data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(
             run.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
         )
@@ -189,6 +200,11 @@ pub(super) fn parallel_execution_summary(
             run.full_system_parallel_scheduler_planned_batch_timeline()
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
+        )
+        .with_full_system_parallel_scheduler_planned_batch_worker_lanes(
+            run.full_system_parallel_scheduler_planned_batch_worker_lanes()
+                .into_iter()
+                .map(workload_parallel_batch_worker_lane_record),
         )
         .with_full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(
             run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
@@ -587,6 +603,19 @@ fn workload_parallel_batch_timeline_record(
         record.worker_count(),
     )
 }
+
+fn workload_parallel_batch_worker_lane_record(
+    record: RiscvSystemParallelBatchWorkerLaneRecord,
+) -> WorkloadParallelBatchWorkerLaneRecord {
+    WorkloadParallelBatchWorkerLaneRecord::new(
+        workload_parallel_batch_scope(record.scope()),
+        record.lane(),
+        record.partition(),
+        record.start_tick(),
+        record.horizon(),
+    )
+}
+
 fn workload_parallel_batch_scope(
     scope: RiscvSystemParallelBatchScope,
 ) -> WorkloadParallelBatchScope {

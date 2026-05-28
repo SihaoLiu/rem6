@@ -667,6 +667,12 @@ Implementation evidence on 2026-05-26:
   particular host lane to own a particular partition for a minimum number of
   planned ticks, so pre-dispatch multicore evidence survives into workload
   artifacts instead of disappearing after kernel planning.
+- System run summaries now lift CPU-scheduler and data-cache planned
+  worker-lane records from kernel plans into `RiscvSystemRun` and workload
+  result artifacts. The same run object can report scoped and merged
+  full-system lane ownership, per-lane planned ticks, and lane/partition tick
+  totals, so real workload replay results preserve pre-dispatch host-lane
+  ownership instead of requiring a hand-authored summary.
 - Recorded parallel runs now preserve that planned batch shape alongside the
   actual executed batches. Epoch and run summaries expose planned worker-count
   histograms, partition-set histograms, total planned workers, maximum planned

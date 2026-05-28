@@ -42,6 +42,7 @@ mod riscv_run_activity;
 mod riscv_run_translation;
 mod scheduler_checkpoint;
 mod system_run_parallel_batch;
+mod system_run_planned_lanes;
 mod system_run_progress;
 mod system_run_qos;
 mod system_run_remote_flow;
@@ -103,6 +104,7 @@ pub use scheduler_checkpoint::{
 pub use system_run_parallel_batch::{
     RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
 };
+pub use system_run_planned_lanes::RiscvSystemParallelBatchWorkerLaneRecord;
 pub use timer_checkpoint::{
     TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
 };

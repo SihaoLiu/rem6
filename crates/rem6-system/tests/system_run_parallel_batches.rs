@@ -1,7 +1,10 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_cpu::RiscvClusterTurn;
 use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
-use rem6_system::{RiscvSystemParallelBatchScope, RiscvSystemRun, RiscvSystemRunStopReason};
+use rem6_system::{
+    RiscvSystemParallelBatchScope, RiscvSystemParallelBatchWorkerLaneRecord, RiscvSystemRun,
+    RiscvSystemRunStopReason,
+};
 
 fn empty_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
     ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new())
@@ -212,8 +215,46 @@ fn system_run_preserves_planned_parallel_batches_before_remote_wakeups() {
         1,
     );
     assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_lanes(),
+        vec![
+            RiscvSystemParallelBatchWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::Scheduler,
+                0,
+                cpu0,
+                0,
+                5,
+            ),
+            RiscvSystemParallelBatchWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::Scheduler,
+                1,
+                cpu1,
+                1,
+                5,
+            ),
+            RiscvSystemParallelBatchWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::Scheduler,
+                0,
+                cpu2,
+                3,
+                5,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_lane_tick_summaries(),
+        vec![(0, 7), (1, 4)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_lane_partition_ticks(0, cpu2),
+        2,
+    );
+    assert_eq!(
         run.full_system_parallel_scheduler_planned_batch_timeline(),
         planned,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_worker_lanes(),
+        run.parallel_scheduler_planned_batch_worker_lanes(),
     );
     assert_eq!(
         run.full_system_parallel_scheduler_planned_batch_worker_count_tick_summaries(),

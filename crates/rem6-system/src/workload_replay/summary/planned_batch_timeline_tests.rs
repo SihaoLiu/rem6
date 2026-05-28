@@ -1,7 +1,8 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
 use rem6_workload::{
-    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord, WorkloadTopology,
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
+    WorkloadParallelBatchWorkerLaneRecord, WorkloadTopology,
 };
 
 use super::{
@@ -48,6 +49,16 @@ fn workload_batch_record(
     worker_count: usize,
 ) -> WorkloadParallelBatchTimelineRecord {
     WorkloadParallelBatchTimelineRecord::new(scope, start_tick, horizon, partitions, worker_count)
+}
+
+fn workload_lane_record(
+    scope: WorkloadParallelBatchScope,
+    lane: usize,
+    partition: PartitionId,
+    start_tick: u64,
+    horizon: u64,
+) -> WorkloadParallelBatchWorkerLaneRecord {
+    WorkloadParallelBatchWorkerLaneRecord::new(scope, lane, partition, start_tick, horizon)
 }
 
 #[test]
@@ -119,12 +130,69 @@ fn parallel_execution_summary_copies_planned_batch_timeline() {
         expected_scheduler.as_slice(),
     );
     assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_lanes(),
+        &[
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 0, cpu0, 0, 5),
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 1, cpu1, 1, 5),
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 0, cpu2, 3, 5),
+        ],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_lane_tick_summaries(),
+        vec![(0, 7), (1, 4)],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_lane_partition_ticks(0, cpu2),
+        2,
+    );
+    assert_eq!(
         summary.data_cache_parallel_scheduler_planned_batch_timeline(),
         expected_data_cache.as_slice(),
     );
     assert_eq!(
+        summary.data_cache_parallel_scheduler_planned_batch_worker_lanes(),
+        &[
+            workload_lane_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                0,
+                cpu2,
+                2,
+                4
+            ),
+            workload_lane_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                1,
+                memory,
+                2,
+                4
+            ),
+        ],
+    );
+    assert_eq!(
         summary.full_system_parallel_scheduler_planned_batch_timeline(),
         expected_full_system,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_lanes(),
+        vec![
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 0, cpu0, 0, 5),
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 1, cpu1, 1, 5),
+            workload_lane_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                0,
+                cpu2,
+                2,
+                4
+            ),
+            workload_lane_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                1,
+                memory,
+                2,
+                4
+            ),
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 0, cpu2, 3, 5),
+        ],
     );
     assert_eq!(
         summary.parallel_scheduler_planned_batch_worker_ticks(),
