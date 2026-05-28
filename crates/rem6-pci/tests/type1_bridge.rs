@@ -608,6 +608,95 @@ fn pci_type1_bridge_snapshot_restore_preserves_config_and_bar_state() {
 }
 
 #[test]
+fn pci_type1_bridge_snapshot_exposes_bar_payloads_for_checkpoint_audit() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+    bridge
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory64 { prefetchable: true },
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x10).unwrap(),
+            &0x0040_1234_u32.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x14).unwrap(),
+            &0x0000_0001_u32.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = bridge.snapshot();
+
+    let payloads = snapshot.bar_payloads();
+
+    assert_eq!(payloads.len(), 2);
+    assert!(payloads[0].is_some());
+    assert!(payloads[1].is_some());
+    assert_eq!(snapshot.validate_bar_payloads(&payloads), Ok(()));
+
+    let no_bars = bridge_config(function).snapshot();
+    assert_eq!(
+        no_bars.validate_bar_payloads(&payloads),
+        Err(PciError::SnapshotBarMismatch {
+            index: PciBarIndex::new(0).unwrap(),
+        })
+    );
+
+    let different_state = {
+        let mut bridge = bridge_config(function);
+        bridge
+            .install_bar(
+                PciBarSpec::new(
+                    PciBarIndex::new(0).unwrap(),
+                    PciBarKind::Memory64 { prefetchable: true },
+                    AccessSize::new(0x2000).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        bridge
+            .write_config(
+                PciConfigOffset::new(0x10).unwrap(),
+                &0x0080_0000_u32.to_le_bytes(),
+            )
+            .unwrap();
+        bridge
+            .write_config(
+                PciConfigOffset::new(0x14).unwrap(),
+                &0x0000_0001_u32.to_le_bytes(),
+            )
+            .unwrap();
+        bridge.snapshot()
+    };
+    assert_eq!(
+        different_state.validate_bar_payloads(&payloads),
+        Err(PciError::SnapshotBarMismatch {
+            index: PciBarIndex::new(0).unwrap(),
+        })
+    );
+
+    assert_eq!(
+        snapshot.validate_bar_payloads(&payloads[..1]),
+        Err(PciError::InvalidBarSnapshot)
+    );
+
+    let mut corrupted = payloads;
+    corrupted[1].as_mut().unwrap().push(0);
+    assert_eq!(
+        snapshot.validate_bar_payloads(&corrupted),
+        Err(PciError::InvalidBarSnapshot)
+    );
+}
+
+#[test]
 fn pci_host_bridge_snapshot_restore_preserves_topology_config_and_intx_state() {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
     let bases = PciHostAddressBases::new(

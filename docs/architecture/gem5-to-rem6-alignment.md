@@ -1451,7 +1451,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   reserved-bit masking, common cache-line-size, latency-timer, and BIST byte
   writes, common status writes that do not create guest-owned bits, bridge
   BAR0/BAR1 install and command-bit-gated host mapping, snapshot restore of
-  bridge config and BAR state, writable bus-number and memory-window registers,
+  bridge config and BAR state, stable bridge BAR payload encoding for
+  checkpoint audit, writable bus-number and memory-window registers,
   subordinate config routing, and downstream BAR host-range filtering through
   bridge windows. PCI host bridge tests also cover topology-level snapshot
   restore across registered type-1 bridges, downstream endpoints, bridge
@@ -1477,6 +1478,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   preserving endpoint shape, raw lower and upper register state, size-probe
   masks, and 64-bit upper-slot ownership while rejecting malformed or
   ambiguous payloads before broader PCI config restore mutates device state.
+  Type-1 bridge snapshots expose the same BAR payload audit API with the
+  bridge's two-slot BAR shape, so bridge BAR mismatches are rejected before
+  restore applies broader bridge configuration bytes.
   Raw capability state now has a stable byte codec for vendor capability audit,
   preserving the canonical capability bytes while rejecting nonzero
   next-pointer bytes because the endpoint capability registry owns chain
