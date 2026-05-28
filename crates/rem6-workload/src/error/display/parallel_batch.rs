@@ -71,6 +71,15 @@ pub(super) fn format_parallel_batch_error(
             "unexpected {} batch worker-count bucket {worker_count} with {batch_count} batches",
             scope.as_str()
         ),
+        WorkloadError::UnexpectedParallelBatchWorkerTickSummary {
+            scope,
+            worker_count,
+            ticks,
+        } => write!(
+            formatter,
+            "unexpected {} batch worker-count tick summary {worker_count} with {ticks} ticks",
+            scope.as_str()
+        ),
         WorkloadError::InvalidExpectedParallelBatchWorkerBucket {
             scope,
             worker_count,

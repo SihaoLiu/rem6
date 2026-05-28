@@ -751,6 +751,11 @@ Implementation evidence on 2026-05-26:
   or duplicate global worker-count buckets before merge lower-bound checks, so
   a convenient aggregate cannot silently collapse malformed full-system
   evidence.
+- Explicit recorded full-system worker-count tick and tick-streak summaries
+  follow the same raw evidence rule. Replay rejects empty or duplicate global
+  worker-count duration summaries before tick-bucket, tick-activity,
+  tick-streak, or worker-tick lower-bound checks, preventing normalized
+  duration sums from hiding contradictory multicore occupancy records.
 - Explicit recorded full-system batch timelines must also cover scoped runtime
   scheduler, data-cache, GPU DMA, and accelerator DMA records before reporting
   APIs use them as the full-system timeline. Runtime timeline queries therefore

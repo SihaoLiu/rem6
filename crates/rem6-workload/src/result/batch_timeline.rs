@@ -322,8 +322,14 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         summaries: impl IntoIterator<Item = (usize, Tick)>,
     ) -> Self {
+        self.raw_full_system_parallel_scheduler_batch_worker_count_ticks =
+            summaries.into_iter().collect();
         self.full_system_parallel_scheduler_batch_worker_count_ticks =
-            collect_batch_worker_count_tick_summaries(summaries);
+            collect_batch_worker_count_tick_summaries(
+                self.raw_full_system_parallel_scheduler_batch_worker_count_ticks
+                    .iter()
+                    .copied(),
+            );
         self
     }
 
@@ -331,8 +337,14 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         summaries: impl IntoIterator<Item = (usize, Tick)>,
     ) -> Self {
+        self.raw_full_system_parallel_scheduler_batch_worker_tick_streaks =
+            summaries.into_iter().collect();
         self.full_system_parallel_scheduler_batch_worker_tick_streaks =
-            collect_batch_worker_tick_streak_summaries(summaries);
+            collect_batch_worker_tick_streak_summaries(
+                self.raw_full_system_parallel_scheduler_batch_worker_tick_streaks
+                    .iter()
+                    .copied(),
+            );
         self
     }
 

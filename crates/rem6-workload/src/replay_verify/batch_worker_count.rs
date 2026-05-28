@@ -120,6 +120,7 @@ fn validate_full_system_batch_worker_tick_bucket_merge_summary(
     summary: &WorkloadParallelExecutionSummary,
     worker_count: usize,
 ) -> Result<(), WorkloadError> {
+    validate_raw_full_system_batch_worker_count_tick_summaries(summary)?;
     let merged_summaries =
         summary.explicit_full_system_parallel_scheduler_batch_worker_count_tick_summaries();
     if merged_summaries.is_empty() {
@@ -147,6 +148,7 @@ fn validate_full_system_batch_worker_tick_activity_merge_summary(
     summary: &WorkloadParallelExecutionSummary,
     minimum_worker_count: usize,
 ) -> Result<(), WorkloadError> {
+    validate_raw_full_system_batch_worker_count_tick_summaries(summary)?;
     let merged_summaries =
         summary.explicit_full_system_parallel_scheduler_batch_worker_count_tick_summaries();
     if merged_summaries.is_empty() {
@@ -174,6 +176,7 @@ fn validate_full_system_batch_worker_tick_streak_merge_summary(
     summary: &WorkloadParallelExecutionSummary,
     minimum_worker_count: usize,
 ) -> Result<(), WorkloadError> {
+    validate_raw_full_system_batch_worker_tick_streak_summaries(summary)?;
     let merged_summaries =
         summary.explicit_full_system_parallel_scheduler_batch_worker_tick_streak_summaries();
     if merged_summaries.is_empty() {
@@ -197,10 +200,30 @@ fn validate_full_system_batch_worker_tick_streak_merge_summary(
     Ok(())
 }
 
+fn validate_raw_full_system_batch_worker_tick_streak_summaries(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let mut seen_worker_counts = Vec::new();
+    for (worker_count, ticks) in
+        summary.raw_full_system_parallel_scheduler_batch_worker_tick_streak_summaries()
+    {
+        if *worker_count == 0 || *ticks == 0 || seen_worker_counts.contains(worker_count) {
+            return Err(WorkloadError::UnexpectedParallelBatchWorkerTickSummary {
+                scope: WorkloadParallelBatchWorkerScope::FullSystem,
+                worker_count: *worker_count,
+                ticks: *ticks,
+            });
+        }
+        seen_worker_counts.push(*worker_count);
+    }
+    Ok(())
+}
+
 fn validate_full_system_batch_worker_ticks_merge_summary(
     summary: &WorkloadParallelExecutionSummary,
     minimum_worker_count: usize,
 ) -> Result<(), WorkloadError> {
+    validate_raw_full_system_batch_worker_count_tick_summaries(summary)?;
     let merged_summaries =
         summary.explicit_full_system_parallel_scheduler_batch_worker_count_tick_summaries();
     if merged_summaries.is_empty() {
@@ -220,6 +243,25 @@ fn validate_full_system_batch_worker_ticks_merge_summary(
                 actual_worker_ticks: actual_ticks,
             },
         );
+    }
+    Ok(())
+}
+
+fn validate_raw_full_system_batch_worker_count_tick_summaries(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let mut seen_worker_counts = Vec::new();
+    for (worker_count, ticks) in
+        summary.raw_full_system_parallel_scheduler_batch_worker_count_tick_summaries()
+    {
+        if *worker_count == 0 || *ticks == 0 || seen_worker_counts.contains(worker_count) {
+            return Err(WorkloadError::UnexpectedParallelBatchWorkerTickSummary {
+                scope: WorkloadParallelBatchWorkerScope::FullSystem,
+                worker_count: *worker_count,
+                ticks: *ticks,
+            });
+        }
+        seen_worker_counts.push(*worker_count);
     }
     Ok(())
 }

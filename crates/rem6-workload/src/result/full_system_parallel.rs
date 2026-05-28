@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    PartitionFrontier, PartitionId,
+    PartitionFrontier, PartitionId, Tick,
 };
 
 use crate::parallel_batch::{
@@ -713,6 +713,18 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> &[WorkloadParallelBatchWorkerCount] {
         &self.raw_full_system_parallel_scheduler_batch_worker_counts
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_batch_worker_count_tick_summaries(
+        &self,
+    ) -> &[(usize, Tick)] {
+        &self.raw_full_system_parallel_scheduler_batch_worker_count_ticks
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_batch_worker_tick_streak_summaries(
+        &self,
+    ) -> &[(usize, Tick)] {
+        &self.raw_full_system_parallel_scheduler_batch_worker_tick_streaks
     }
 
     pub(crate) fn scoped_full_system_parallel_scheduler_batch_partition_sets(
