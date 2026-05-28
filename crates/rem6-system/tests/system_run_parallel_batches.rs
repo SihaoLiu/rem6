@@ -176,12 +176,50 @@ fn system_run_preserves_planned_parallel_batches_before_remote_wakeups() {
     assert_eq!(run.parallel_scheduler_planned_batch_worker_count_total(), 3);
     assert_eq!(run.parallel_scheduler_planned_batch_max_workers(), 2);
     assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_count_tick_summaries(),
+        vec![(1, 2), (2, 5)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_ticks_for_worker_count(1),
+        2,
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_ticks_for_worker_count(2),
+        5,
+    );
+    assert_eq!(run.parallel_scheduler_planned_batch_ticks_at_or_above(2), 5,);
+    assert_eq!(run.parallel_scheduler_planned_batch_worker_ticks(), 12);
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_ticks_at_or_above(1),
+        12,
+    );
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_ticks_at_or_above(2),
+        10,
+    );
+    assert_eq!(
         run.parallel_scheduler_planned_batch_count_for_partition_set([cpu2]),
         1,
     );
     assert_eq!(
         run.full_system_parallel_scheduler_planned_batch_timeline(),
         planned,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_worker_count_tick_summaries(),
+        vec![(1, 2), (2, 5)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_ticks_at_or_above(2),
+        5,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+        12
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_worker_ticks_at_or_above(2),
+        10,
     );
 
     assert_eq!(

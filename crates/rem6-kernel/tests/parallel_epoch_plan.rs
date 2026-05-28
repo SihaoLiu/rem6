@@ -87,6 +87,16 @@ fn scheduler_parallel_plan_exposes_planned_batch_occupancy_ticks() {
     assert_eq!(batches[1].start_tick(), 5);
     assert_eq!(batches[1].duration_ticks(), 1);
     assert_eq!(batches[1].worker_ticks(), 1);
+    assert_eq!(
+        plan.parallel_batch_worker_count_tick_summaries(),
+        vec![(1, 1), (2, 6)],
+    );
+    assert_eq!(plan.parallel_batch_ticks_for_worker_count(1), 1);
+    assert_eq!(plan.parallel_batch_ticks_for_worker_count(2), 6);
+    assert_eq!(plan.parallel_batch_ticks_at_or_above(2), 6);
+    assert_eq!(plan.parallel_batch_worker_ticks(), 13);
+    assert_eq!(plan.parallel_batch_worker_ticks_at_or_above(1), 13);
+    assert_eq!(plan.parallel_batch_worker_ticks_at_or_above(2), 12);
 }
 
 #[test]
@@ -121,6 +131,17 @@ fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     assert_eq!(epoch.planned_batch_count_at_or_above(2), 1);
     assert_eq!(epoch.planned_batch_worker_count_total(), 3);
     assert_eq!(epoch.planned_batch_max_workers(), 2);
+    assert_eq!(
+        epoch.planned_batch_worker_count_tick_summaries(),
+        vec![(1, 2), (2, 5)],
+    );
+    assert_eq!(epoch.planned_batch_ticks_for_worker_count(1), 2);
+    assert_eq!(epoch.planned_batch_ticks_for_worker_count(2), 5);
+    assert_eq!(epoch.planned_batch_ticks_at_or_above(1), 7);
+    assert_eq!(epoch.planned_batch_ticks_at_or_above(2), 5);
+    assert_eq!(epoch.planned_batch_worker_ticks(), 12);
+    assert_eq!(epoch.planned_batch_worker_ticks_at_or_above(1), 12);
+    assert_eq!(epoch.planned_batch_worker_ticks_at_or_above(2), 10);
     assert_eq!(
         epoch.planned_batch_partition_set_summaries(),
         vec![
@@ -168,6 +189,17 @@ fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     assert_eq!(recorded.planned_batch_count_at_or_above(2), 1);
     assert_eq!(recorded.planned_batch_worker_count_total(), 3);
     assert_eq!(recorded.planned_batch_max_workers(), 2);
+    assert_eq!(
+        recorded.planned_batch_worker_count_tick_summaries(),
+        vec![(1, 2), (2, 5)],
+    );
+    assert_eq!(recorded.planned_batch_ticks_for_worker_count(1), 2);
+    assert_eq!(recorded.planned_batch_ticks_for_worker_count(2), 5);
+    assert_eq!(recorded.planned_batch_ticks_at_or_above(1), 7);
+    assert_eq!(recorded.planned_batch_ticks_at_or_above(2), 5);
+    assert_eq!(recorded.planned_batch_worker_ticks(), 12);
+    assert_eq!(recorded.planned_batch_worker_ticks_at_or_above(1), 12);
+    assert_eq!(recorded.planned_batch_worker_ticks_at_or_above(2), 10);
     assert_eq!(
         recorded.planned_batch_count_for_partition_set([PartitionId::new(2)]),
         1,

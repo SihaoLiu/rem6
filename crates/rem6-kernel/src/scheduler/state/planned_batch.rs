@@ -102,6 +102,26 @@ impl ParallelEpochPlan {
         planned_batch_max_workers(&self.parallel_batches)
     }
 
+    pub fn parallel_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_planned_batch_worker_count_tick_summaries(&self.parallel_batches)
+    }
+
+    pub fn parallel_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        planned_batch_ticks_for_worker_count(&self.parallel_batches, worker_count)
+    }
+
+    pub fn parallel_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        planned_batch_ticks_at_or_above(&self.parallel_batches, minimum_worker_count)
+    }
+
+    pub fn parallel_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(&self.parallel_batches)
+    }
+
+    pub fn parallel_batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        planned_batch_worker_ticks_at_or_above(&self.parallel_batches, minimum_worker_count)
+    }
+
     pub fn parallel_batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
         collect_planned_batch_partition_set_summaries(&self.parallel_batches)
     }
@@ -145,6 +165,26 @@ impl RecordedRunSummary {
 
     pub fn planned_batch_max_workers(&self) -> usize {
         planned_batch_max_workers(&self.planned_batches)
+    }
+
+    pub fn planned_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_planned_batch_worker_count_tick_summaries(&self.planned_batches)
+    }
+
+    pub fn planned_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        planned_batch_ticks_for_worker_count(&self.planned_batches, worker_count)
+    }
+
+    pub fn planned_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        planned_batch_ticks_at_or_above(&self.planned_batches, minimum_worker_count)
+    }
+
+    pub fn planned_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(&self.planned_batches)
+    }
+
+    pub fn planned_batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        planned_batch_worker_ticks_at_or_above(&self.planned_batches, minimum_worker_count)
     }
 
     pub fn planned_batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
@@ -213,6 +253,49 @@ impl RecordedConservativeRunSummary {
             self.epochs
                 .iter()
                 .flat_map(|epoch| epoch.planned_batches().iter()),
+        )
+    }
+
+    pub fn planned_batch_worker_count_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_planned_batch_worker_count_tick_summaries(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+        )
+    }
+
+    pub fn planned_batch_ticks_for_worker_count(&self, worker_count: usize) -> Tick {
+        planned_batch_ticks_for_worker_count(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+            worker_count,
+        )
+    }
+
+    pub fn planned_batch_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        planned_batch_ticks_at_or_above(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+            minimum_worker_count,
+        )
+    }
+
+    pub fn planned_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+        )
+    }
+
+    pub fn planned_batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
+        planned_batch_worker_ticks_at_or_above(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+            minimum_worker_count,
         )
     }
 
@@ -301,6 +384,65 @@ where
         .map(ParallelEpochPlannedBatch::worker_count)
         .max()
         .unwrap_or(0)
+}
+
+fn collect_planned_batch_worker_count_tick_summaries<'a, I>(batches: I) -> Vec<(usize, Tick)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for batch in batches {
+        let worker_count = batch.worker_count();
+        let duration_ticks = batch.duration_ticks();
+        if worker_count != 0 && duration_ticks != 0 {
+            let ticks = summaries.entry(worker_count).or_default();
+            *ticks = ticks.saturating_add(duration_ticks);
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+fn planned_batch_ticks_for_worker_count<'a, I>(batches: I, worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() == worker_count)
+        .map(ParallelEpochPlannedBatch::duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .map(ParallelEpochPlannedBatch::duration_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_worker_ticks<'a, I>(batches: I) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .map(ParallelEpochPlannedBatch::worker_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_worker_ticks_at_or_above<'a, I>(batches: I, minimum_worker_count: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .filter(|batch| batch.worker_count() >= minimum_worker_count)
+        .map(ParallelEpochPlannedBatch::worker_ticks)
+        .fold(0, Tick::saturating_add)
 }
 
 fn collect_planned_batch_partition_set_summaries<'a, I>(
