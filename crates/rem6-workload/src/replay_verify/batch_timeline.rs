@@ -108,6 +108,24 @@ fn full_system_batch_timeline_records_for_merge_validation(
     }
 }
 
+fn batch_timeline_records_for_record_validation(
+    summary: &WorkloadParallelExecutionSummary,
+    timeline_scope: WorkloadParallelBatchTimelineScope,
+) -> Vec<crate::WorkloadParallelBatchTimelineRecord> {
+    match timeline_scope {
+        WorkloadParallelBatchTimelineScope::FullSystem
+            if !summary
+                .explicit_full_system_parallel_scheduler_batch_timeline()
+                .is_empty() =>
+        {
+            summary
+                .explicit_full_system_parallel_scheduler_batch_timeline()
+                .to_vec()
+        }
+        _ => actual_parallel_batch_timeline_records(timeline_scope, summary),
+    }
+}
+
 fn validate_batch_timeline_scope_evidence(
     summary: &WorkloadParallelExecutionSummary,
     timeline_scope: WorkloadParallelBatchTimelineScope,
@@ -127,7 +145,7 @@ fn validate_batch_timeline_records_for_scope(
     timeline_scope: WorkloadParallelBatchTimelineScope,
 ) -> Result<(), WorkloadError> {
     let mut seen = Vec::new();
-    for record in actual_parallel_batch_timeline_records(timeline_scope, summary) {
+    for record in batch_timeline_records_for_record_validation(summary, timeline_scope) {
         if record.is_empty() || seen.iter().any(|seen_record| seen_record == &record) {
             return Err(unexpected_batch_timeline_record(timeline_scope, &record));
         }

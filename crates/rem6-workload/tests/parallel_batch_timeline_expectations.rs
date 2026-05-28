@@ -4,8 +4,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchTimelineRecord, WorkloadId,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelExecutionSummary, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -535,6 +536,52 @@ fn workload_summary_uses_scoped_recorded_timeline_when_explicit_full_system_time
             ),
             gpu,
         ],
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_duplicate_weak_explicit_full_system_batch_timeline_records() {
+    let cpu = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        4,
+        8,
+        [partition(2), partition(3)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(
+            rem6_workload::WorkloadExpectedParallelBatchWorkerBucket::new(
+                WorkloadParallelBatchWorkerScope::FullSystem,
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([cpu.clone()])
+        .with_gpu_dma_scheduler_batch_timeline([gpu])
+        .with_full_system_parallel_scheduler_batch_timeline([cpu.clone(), cpu]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchTimelineRecord {
+            scope: WorkloadParallelBatchTimelineScope::FullSystem,
+            batch_scope: WorkloadParallelBatchScope::Scheduler,
+            start_tick: 0,
+            horizon: 4,
+            partitions: vec![0, 1],
+            worker_count: 2,
+        },
     );
 }
 

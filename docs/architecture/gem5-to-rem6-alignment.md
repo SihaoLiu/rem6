@@ -751,6 +751,10 @@ Implementation evidence on 2026-05-26:
   APIs use them as the full-system timeline. Runtime timeline queries therefore
   expose scoped device-side batches directly instead of hiding them until replay
   validation rejects the weak merge.
+- Replay validation still audits raw explicit recorded full-system timeline
+  records before applying that reporting fallback. Duplicate or malformed
+  global timeline records are therefore rejected at the evidence boundary even
+  when the explicit global timeline is too weak to cover scoped device records.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global
