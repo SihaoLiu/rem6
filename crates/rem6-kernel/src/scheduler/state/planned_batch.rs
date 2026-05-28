@@ -50,6 +50,23 @@ impl ParallelEpochPlannedBatch {
             .iter()
             .any(|ready| ready.partition == partition)
     }
+
+    pub fn start_tick(&self) -> Tick {
+        self.ready_partitions
+            .iter()
+            .map(|ready| ready.next_tick)
+            .min()
+            .unwrap_or(self.horizon)
+    }
+
+    pub fn duration_ticks(&self) -> Tick {
+        self.horizon.saturating_sub(self.start_tick())
+    }
+
+    pub fn worker_ticks(&self) -> Tick {
+        self.duration_ticks()
+            .saturating_mul(self.worker_count() as Tick)
+    }
 }
 
 impl ParallelEpochPlan {

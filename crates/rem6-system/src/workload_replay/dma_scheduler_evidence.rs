@@ -145,20 +145,11 @@ fn dma_scheduler_batch_timeline_record(
 ) -> WorkloadParallelBatchTimelineRecord {
     WorkloadParallelBatchTimelineRecord::new(
         scope,
-        batch_start_tick(batch),
+        batch.start_tick(),
         batch.horizon(),
         normalize_partition_set(batch.worker_partitions()),
         batch.worker_count(),
     )
-}
-
-fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch
-        .workers()
-        .iter()
-        .map(|worker| worker.start_tick())
-        .min()
-        .unwrap_or_else(|| batch.horizon())
 }
 
 fn normalize_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {

@@ -242,6 +242,23 @@ impl ParallelEpochBatchRecord {
         collect_parallel_remote_flows(&self.remote_sends)
     }
 
+    pub fn start_tick(&self) -> Tick {
+        self.workers
+            .iter()
+            .map(|worker| worker.start_tick())
+            .min()
+            .unwrap_or(self.horizon)
+    }
+
+    pub fn duration_ticks(&self) -> Tick {
+        self.horizon.saturating_sub(self.start_tick())
+    }
+
+    pub fn worker_ticks(&self) -> Tick {
+        self.duration_ticks()
+            .saturating_mul(self.worker_count() as Tick)
+    }
+
     pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
         self.dispatches
             .iter()

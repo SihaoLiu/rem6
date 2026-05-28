@@ -415,7 +415,7 @@ impl RiscvSystemRun {
         batches.extend(self.data_cache_parallel_scheduler_batches());
         batches.sort_by_key(|batch| {
             (
-                batch_start_tick(batch),
+                batch.start_tick(),
                 batch.horizon(),
                 batch_partition_key(batch),
             )
@@ -765,15 +765,6 @@ fn merge_partition_activity(
                 .max(activity.max_pending_events()),
         ),
     );
-}
-
-fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch
-        .workers()
-        .iter()
-        .map(|worker| worker.start_tick())
-        .min()
-        .unwrap_or_else(|| batch.horizon())
 }
 
 fn batch_partition_key(batch: &ParallelEpochBatchRecord) -> Vec<PartitionId> {

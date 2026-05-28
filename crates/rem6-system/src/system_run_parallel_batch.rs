@@ -40,7 +40,7 @@ impl RiscvSystemParallelBatchTimelineRecord {
     pub fn new(scope: RiscvSystemParallelBatchScope, batch: &ParallelEpochBatchRecord) -> Self {
         Self {
             scope,
-            start_tick: batch_start_tick(batch),
+            start_tick: batch.start_tick(),
             horizon: batch.horizon(),
             worker_count: batch.worker_count(),
             partitions: batch.partition_set(),
@@ -53,7 +53,7 @@ impl RiscvSystemParallelBatchTimelineRecord {
     ) -> Self {
         Self {
             scope,
-            start_tick: planned_batch_start_tick(batch),
+            start_tick: batch.start_tick(),
             horizon: batch.horizon(),
             partitions: batch.partition_set(),
             worker_count: batch.worker_count(),
@@ -564,15 +564,6 @@ fn collect_batch_timeline(
     timeline
 }
 
-fn planned_batch_start_tick(batch: &ParallelEpochPlannedBatch) -> Tick {
-    batch
-        .ready_partitions()
-        .iter()
-        .map(|ready| ready.next_tick)
-        .min()
-        .unwrap_or_else(|| batch.horizon())
-}
-
 fn sort_batch_timeline(timeline: &mut [RiscvSystemParallelBatchTimelineRecord]) {
     timeline.sort_by_key(|record| {
         (
@@ -900,15 +891,6 @@ fn flush_partition_streak(
             .and_modify(|stored| *stored = (*stored).max(count))
             .or_insert(count);
     }
-}
-
-fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch
-        .workers()
-        .iter()
-        .map(|worker| worker.start_tick())
-        .min()
-        .unwrap_or_else(|| batch.horizon())
 }
 
 fn normalize_partition_set(partitions: impl IntoIterator<Item = PartitionId>) -> Vec<PartitionId> {

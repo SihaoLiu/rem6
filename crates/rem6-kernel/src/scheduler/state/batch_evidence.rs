@@ -182,20 +182,11 @@ where
 }
 
 fn batch_worker_tick_count(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch_duration_ticks(batch).saturating_mul(batch.worker_count() as Tick)
+    batch.worker_ticks()
 }
 
 fn batch_duration_ticks(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch.horizon().saturating_sub(batch_start_tick(batch))
-}
-
-fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch
-        .workers()
-        .iter()
-        .map(|worker| worker.start_tick())
-        .min()
-        .unwrap_or_else(|| batch.horizon())
+    batch.duration_ticks()
 }
 
 pub(super) fn normalize_partition_set(

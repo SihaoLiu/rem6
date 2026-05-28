@@ -67,6 +67,29 @@ fn scheduler_parallel_plan_exposes_worker_limited_batch_shape_without_dispatchin
 }
 
 #[test]
+fn scheduler_parallel_plan_exposes_planned_batch_occupancy_ticks() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 6, 2).unwrap();
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cpu2 = PartitionId::new(2);
+
+    scheduler.schedule_parallel_at(cpu0, 0, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(cpu1, 2, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(cpu2, 5, |_| {}).unwrap();
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let batches = plan.parallel_batches();
+
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[0].start_tick(), 0);
+    assert_eq!(batches[0].duration_ticks(), 6);
+    assert_eq!(batches[0].worker_ticks(), 12);
+    assert_eq!(batches[1].start_tick(), 5);
+    assert_eq!(batches[1].duration_ticks(), 1);
+    assert_eq!(batches[1].worker_ticks(), 1);
+}
+
+#[test]
 fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(5, 5, 2).unwrap();
 

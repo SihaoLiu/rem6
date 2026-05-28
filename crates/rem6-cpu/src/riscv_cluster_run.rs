@@ -182,7 +182,7 @@ pub struct RiscvClusterParallelBatchTimelineRecord {
 impl RiscvClusterParallelBatchTimelineRecord {
     pub fn new(batch: &ParallelEpochBatchRecord) -> Self {
         Self {
-            start_tick: batch_start_tick(batch),
+            start_tick: batch.start_tick(),
             horizon: batch.horizon(),
             partitions: batch.partition_set(),
             worker_count: batch.worker_count(),
@@ -1128,15 +1128,6 @@ fn longest_batch_tick_streak_at_or_above(
         longest = longest.max(current_end.saturating_sub(streak_start));
     }
     longest
-}
-
-fn batch_start_tick(batch: &ParallelEpochBatchRecord) -> Tick {
-    batch
-        .workers()
-        .iter()
-        .map(|worker| worker.start_tick())
-        .min()
-        .unwrap_or_else(|| batch.horizon())
 }
 
 fn batch_worker_ticks_from_tick_summaries(summaries: &[(usize, Tick)]) -> Tick {
