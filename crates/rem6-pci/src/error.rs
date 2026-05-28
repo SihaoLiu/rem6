@@ -200,6 +200,7 @@ pub enum PciError {
     SnapshotBarMismatch {
         index: PciBarIndex,
     },
+    InvalidBarSnapshot,
     SnapshotMsiCapabilityMismatch,
     InvalidMsiCapabilitySnapshot,
     InvalidMsiCapabilityOffset {
@@ -589,6 +590,9 @@ impl fmt::Display for PciError {
                     "PCI snapshot BAR {} does not match this endpoint",
                     index.get()
                 )
+            }
+            Self::InvalidBarSnapshot => {
+                write!(f, "PCI BAR snapshot is invalid")
             }
             Self::SnapshotMsiCapabilityMismatch => {
                 write!(f, "PCI snapshot MSI capability does not match this endpoint")

@@ -2,6 +2,20 @@ use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{PciError, PciFunctionAddress, PCI_BAR0_OFFSET, PCI_BAR_COUNT};
 
+const PCI_BAR_SNAPSHOT_MAGIC: &[u8; 8] = b"R6PCBAR1";
+const PCI_BAR_SNAPSHOT_VERSION: u16 = 1;
+const PCI_BAR_SNAPSHOT_ENDPOINT: u8 = 1;
+const PCI_BAR_SNAPSHOT_UPPER: u8 = 2;
+const PCI_BAR_KIND_MEMORY32: u8 = 1;
+const PCI_BAR_KIND_MEMORY32_PREFETCHABLE: u8 = 2;
+const PCI_BAR_KIND_MEMORY64: u8 = 3;
+const PCI_BAR_KIND_MEMORY64_PREFETCHABLE: u8 = 4;
+const PCI_BAR_KIND_LEGACY_IO: u8 = 5;
+const PCI_BAR_KIND_IO: u8 = 6;
+const U16_BYTES: usize = 2;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PciBarIndex(u8);
 
@@ -302,6 +316,36 @@ impl PciBarState {
         }
     }
 
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_BAR_SNAPSHOT_MAGIC);
+        write_u16(&mut payload, PCI_BAR_SNAPSHOT_VERSION);
+        match self {
+            Self::Endpoint {
+                spec,
+                raw,
+                upper_raw,
+            } => {
+                payload.push(PCI_BAR_SNAPSHOT_ENDPOINT);
+                payload.push(spec.index().get());
+                payload.push(encode_bar_kind(spec.kind()));
+                write_u32(&mut payload, *raw);
+                write_u32(&mut payload, *upper_raw);
+                write_u64(&mut payload, spec.size().bytes());
+                write_u64(&mut payload, legacy_io_address(spec.kind()).get());
+            }
+            Self::Upper { owner } => {
+                payload.push(PCI_BAR_SNAPSHOT_UPPER);
+                payload.push(owner.get());
+            }
+        }
+        payload
+    }
+
+    pub(crate) fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        decode_bar_state(payload).ok_or(PciError::InvalidBarSnapshot)
+    }
+
     pub(crate) fn write_lower(&mut self, value: u32) {
         let Self::Endpoint { spec, raw, .. } = self else {
             return;
@@ -355,6 +399,151 @@ impl PciBarState {
     }
 }
 
+fn decode_bar_state(payload: &[u8]) -> Option<PciBarState> {
+    let mut cursor = 0;
+    let magic = read_exact(payload, &mut cursor, PCI_BAR_SNAPSHOT_MAGIC.len())?;
+    if magic != PCI_BAR_SNAPSHOT_MAGIC {
+        return None;
+    }
+    if read_u16(payload, &mut cursor)? != PCI_BAR_SNAPSHOT_VERSION {
+        return None;
+    }
+    let tag = read_u8(payload, &mut cursor)?;
+    let state = match tag {
+        PCI_BAR_SNAPSHOT_ENDPOINT => {
+            let index = PciBarIndex::new(read_u8(payload, &mut cursor)?).ok()?;
+            let kind_tag = read_u8(payload, &mut cursor)?;
+            let raw = read_u32(payload, &mut cursor)?;
+            let upper_raw = read_u32(payload, &mut cursor)?;
+            let size = AccessSize::new(read_u64(payload, &mut cursor)?).ok()?;
+            let legacy_address = Address::new(read_u64(payload, &mut cursor)?);
+            if kind_tag != PCI_BAR_KIND_LEGACY_IO && legacy_address.get() != 0 {
+                return None;
+            }
+            let kind = decode_bar_kind(kind_tag, legacy_address)?;
+            let spec = PciBarSpec::new(index, kind, size).ok()?;
+            if !bar_raw_state_is_valid(spec, raw, upper_raw) {
+                return None;
+            }
+            PciBarState::Endpoint {
+                spec,
+                raw,
+                upper_raw,
+            }
+        }
+        PCI_BAR_SNAPSHOT_UPPER => {
+            let owner = PciBarIndex::new(read_u8(payload, &mut cursor)?).ok()?;
+            if owner.as_usize() + 1 >= PCI_BAR_COUNT {
+                return None;
+            }
+            PciBarState::Upper { owner }
+        }
+        _ => return None,
+    };
+    if cursor != payload.len() {
+        return None;
+    }
+    Some(state)
+}
+
+fn encode_bar_kind(kind: PciBarKind) -> u8 {
+    match kind {
+        PciBarKind::Memory32 {
+            prefetchable: false,
+        } => PCI_BAR_KIND_MEMORY32,
+        PciBarKind::Memory32 { prefetchable: true } => PCI_BAR_KIND_MEMORY32_PREFETCHABLE,
+        PciBarKind::Memory64 {
+            prefetchable: false,
+        } => PCI_BAR_KIND_MEMORY64,
+        PciBarKind::Memory64 { prefetchable: true } => PCI_BAR_KIND_MEMORY64_PREFETCHABLE,
+        PciBarKind::LegacyIo { .. } => PCI_BAR_KIND_LEGACY_IO,
+        PciBarKind::Io => PCI_BAR_KIND_IO,
+    }
+}
+
+fn decode_bar_kind(tag: u8, legacy_address: Address) -> Option<PciBarKind> {
+    match tag {
+        PCI_BAR_KIND_MEMORY32 => Some(PciBarKind::Memory32 {
+            prefetchable: false,
+        }),
+        PCI_BAR_KIND_MEMORY32_PREFETCHABLE => Some(PciBarKind::Memory32 { prefetchable: true }),
+        PCI_BAR_KIND_MEMORY64 => Some(PciBarKind::Memory64 {
+            prefetchable: false,
+        }),
+        PCI_BAR_KIND_MEMORY64_PREFETCHABLE => Some(PciBarKind::Memory64 { prefetchable: true }),
+        PCI_BAR_KIND_LEGACY_IO => Some(PciBarKind::LegacyIo {
+            address: legacy_address,
+        }),
+        PCI_BAR_KIND_IO => Some(PciBarKind::Io),
+        _ => None,
+    }
+}
+
+fn legacy_io_address(kind: PciBarKind) -> Address {
+    match kind {
+        PciBarKind::LegacyIo { address } => address,
+        _ => Address::new(0),
+    }
+}
+
+fn bar_raw_state_is_valid(spec: PciBarSpec, raw: u32, upper_raw: u32) -> bool {
+    match spec.kind() {
+        PciBarKind::LegacyIo { .. } => raw == 0 && upper_raw == 0,
+        kind => {
+            let mask = !((spec.size().bytes() - 1) as u32);
+            if raw != ((raw & mask) | kind.flags()) {
+                return false;
+            }
+            if kind.is_64_bit() {
+                let upper_mask = !(((spec.size().bytes() - 1) >> 32) as u32);
+                upper_raw == (upper_raw & upper_mask)
+            } else {
+                upper_raw == 0
+            }
+        }
+    }
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u8(payload: &[u8], cursor: &mut usize) -> Option<u8> {
+    let byte = *payload.get(*cursor)?;
+    *cursor += 1;
+    Some(byte)
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Option<u16> {
+    let bytes = read_exact(payload, cursor, U16_BYTES)?;
+    Some(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u32(payload: &[u8], cursor: &mut usize) -> Option<u32> {
+    let bytes = read_exact(payload, cursor, U32_BYTES)?;
+    Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u64(payload: &[u8], cursor: &mut usize) -> Option<u64> {
+    let bytes = read_exact(payload, cursor, U64_BYTES)?;
+    Some(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_exact<'a>(payload: &'a [u8], cursor: &mut usize, length: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(length)?;
+    let bytes = payload.get(*cursor..end)?;
+    *cursor = end;
+    Some(bytes)
+}
+
 pub(crate) fn bar_index_for_offset(offset: crate::PciConfigOffset) -> Option<PciBarIndex> {
     let offset = offset.as_usize();
     if !(PCI_BAR0_OFFSET..PCI_BAR0_OFFSET + PCI_BAR_COUNT * 4).contains(&offset) {
@@ -378,5 +567,111 @@ pub(crate) const fn host_address_space(kind: PciBarKind) -> PciHostAddressSpace 
         } => PciHostAddressSpace::Memory,
         PciBarKind::LegacyIo { .. } => PciHostAddressSpace::Io,
         PciBarKind::Io => PciHostAddressSpace::Io,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn memory64_bar() -> PciBarSpec {
+        PciBarSpec::new(
+            PciBarIndex::new(2).unwrap(),
+            PciBarKind::Memory64 { prefetchable: true },
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn bar_state_codec_preserves_endpoint_and_upper_state() {
+        let mut state = PciBarState::new(memory64_bar());
+        state.write_lower(0x0000_2345);
+        state.write_upper(0x0000_0001);
+        let decoded = PciBarState::from_bytes(&state.to_bytes()).unwrap();
+
+        assert_eq!(decoded, state);
+        assert_eq!(
+            decoded.range(),
+            Ok(PciBarRange::new(
+                PciBarIndex::new(2).unwrap(),
+                PciBarKind::Memory64 { prefetchable: true },
+                Address::new(0x1_0000_2000),
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap())
+        );
+
+        let upper = PciBarState::upper(PciBarIndex::new(2).unwrap());
+        assert_eq!(PciBarState::from_bytes(&upper.to_bytes()), Ok(upper));
+    }
+
+    #[test]
+    fn bar_state_codec_rejects_invalid_payloads() {
+        let state = PciBarState::new(memory64_bar());
+        let mut payload = state.to_bytes();
+
+        assert_eq!(
+            PciBarState::from_bytes(&payload[..payload.len() - 1]),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        payload.push(0);
+        assert_eq!(
+            PciBarState::from_bytes(&payload),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        let mut invalid_magic = state.to_bytes();
+        invalid_magic[0] = 0;
+        assert_eq!(
+            PciBarState::from_bytes(&invalid_magic),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        let mut invalid_version = state.to_bytes();
+        invalid_version[8] = 0xff;
+        assert_eq!(
+            PciBarState::from_bytes(&invalid_version),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        let mut invalid_raw_low_bits = state.to_bytes();
+        invalid_raw_low_bits[13] = 0;
+        assert_eq!(
+            PciBarState::from_bytes(&invalid_raw_low_bits),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        let mut invalid_upper_raw = PciBarState::new(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .to_bytes();
+        invalid_upper_raw[17] = 1;
+        assert_eq!(
+            PciBarState::from_bytes(&invalid_upper_raw),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        let mut invalid_legacy_address = state.to_bytes();
+        invalid_legacy_address[29] = 1;
+        assert_eq!(
+            PciBarState::from_bytes(&invalid_legacy_address),
+            Err(PciError::InvalidBarSnapshot)
+        );
+
+        let mut invalid_upper_owner = PciBarState::upper(PciBarIndex::new(2).unwrap()).to_bytes();
+        invalid_upper_owner[11] = 5;
+        assert_eq!(
+            PciBarState::from_bytes(&invalid_upper_owner),
+            Err(PciError::InvalidBarSnapshot)
+        );
     }
 }

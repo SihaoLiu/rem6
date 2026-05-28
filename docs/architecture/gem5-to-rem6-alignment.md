@@ -1410,11 +1410,14 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   64-bit memory BAR lower
   and upper config dwords, upper-slot reservation, invalid BAR pairing, one
   active logical range per 64-bit BAR pair, and host memory-space mapping of
-  full 64-bit PCI BAR bases. Legacy I/O BAR tests cover fixed-address ranges,
-  ignored config BAR writes, command-bit gating, and Type-1 I/O-window filtering
-  of downstream host mappings. Type-0 header tests cover Cardbus CIS,
-  subsystem IDs, common command writes with reserved-bit masking, common
-  cache-line-size, latency-timer, and BIST byte writes, status
+  full 64-bit PCI BAR bases. They also cover stable BAR payload encoding for
+  endpoint checkpoint audit, including BAR shape, lower and upper raw register
+  state, and malformed payload rejection. Legacy I/O BAR tests cover
+  fixed-address ranges, ignored config BAR writes, command-bit gating, and
+  Type-1 I/O-window filtering of downstream host mappings. Type-0 header
+  tests cover Cardbus CIS, subsystem IDs, common command writes with
+  reserved-bit masking, common cache-line-size, latency-timer, and BIST byte
+  writes, status
   write-one-to-clear behavior that preserves capability-list state, Expansion
   ROM reads and writes, Expansion ROM size probing, and minimum-grant plus
   maximum-latency read-only byte behavior. PCI config MMIO tests cover masked
@@ -1468,11 +1471,16 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   decodes manifest payloads back into typed audit records in deterministic
   component order, and `SystemActionExecutor` can be constructed directly with
   an attached PCI host checkpoint bank. Full PCI configuration checkpoint bytes
-  remain dependent on per-capability state codecs; rem6 does not pretend that
-  topology-only payloads restore full PCI configuration state. Raw capability
-  state now has a stable byte codec for vendor capability audit, preserving the
-  canonical capability bytes while rejecting nonzero next-pointer bytes because
-  the endpoint capability registry owns chain reconstruction. PM capability
+  remain dependent on per-capability and BAR state codecs; rem6 does not
+  pretend that topology-only payloads restore full PCI configuration state.
+  BAR state now has a stable byte codec for endpoint checkpoint audit,
+  preserving endpoint shape, raw lower and upper register state, size-probe
+  masks, and 64-bit upper-slot ownership while rejecting malformed or
+  ambiguous payloads before broader PCI config restore mutates device state.
+  Raw capability state now has a stable byte codec for vendor capability audit,
+  preserving the canonical capability bytes while rejecting nonzero
+  next-pointer bytes because the endpoint capability registry owns chain
+  reconstruction. PM capability
   state exposes the same byte-codec pattern: endpoint snapshots can emit a PM
   payload and validate a candidate payload against the typed PM spec plus
   current PMCSR, rejecting malformed bytes or live-snapshot mismatches before a

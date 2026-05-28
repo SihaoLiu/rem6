@@ -674,3 +674,99 @@ fn pci_endpoint_snapshot_restore_preserves_command_and_bar_state() {
         })
     );
 }
+
+#[test]
+fn pci_endpoint_snapshot_exposes_bar_payloads_for_checkpoint_audit() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Io,
+                AccessSize::new(0x100).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(2).unwrap(),
+                PciBarKind::Memory64 { prefetchable: true },
+                AccessSize::new(0x2000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x10).unwrap(), 0x0000_c123)
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x18).unwrap(), 0x0000_2345)
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x1c).unwrap(), 0x0000_0001)
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payloads = snapshot.bar_payloads();
+
+    assert_eq!(payloads.len(), 6);
+    assert!(payloads[0].is_some());
+    assert_eq!(payloads[1], None);
+    assert!(payloads[2].is_some());
+    assert!(payloads[3].is_some());
+    assert_eq!(snapshot.validate_bar_payloads(&payloads), Ok(()));
+
+    let no_bars = network_endpoint().snapshot();
+    assert_eq!(
+        no_bars.validate_bar_payloads(&payloads),
+        Err(PciError::SnapshotBarMismatch {
+            index: PciBarIndex::new(0).unwrap(),
+        })
+    );
+
+    let different_state = {
+        let mut endpoint = network_endpoint();
+        endpoint
+            .install_bar(
+                PciBarSpec::new(
+                    PciBarIndex::new(0).unwrap(),
+                    PciBarKind::Io,
+                    AccessSize::new(0x100).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        endpoint
+            .install_bar(
+                PciBarSpec::new(
+                    PciBarIndex::new(2).unwrap(),
+                    PciBarKind::Memory64 { prefetchable: true },
+                    AccessSize::new(0x2000).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        endpoint
+            .write_u32(PciConfigOffset::new(0x10).unwrap(), 0x0000_c123)
+            .unwrap();
+        endpoint
+            .write_u32(PciConfigOffset::new(0x18).unwrap(), 0x0000_4000)
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_state.validate_bar_payloads(&payloads),
+        Err(PciError::SnapshotBarMismatch {
+            index: PciBarIndex::new(2).unwrap(),
+        })
+    );
+
+    let mut corrupted = payloads;
+    corrupted[2].as_mut().unwrap().push(0);
+    assert_eq!(
+        snapshot.validate_bar_payloads(&corrupted),
+        Err(PciError::InvalidBarSnapshot)
+    );
+}

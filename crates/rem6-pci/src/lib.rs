@@ -782,6 +782,31 @@ impl PciEndpointConfigSnapshot {
             .collect()
     }
 
+    pub fn bar_payloads(&self) -> Vec<Option<Vec<u8>>> {
+        self.bars
+            .iter()
+            .map(|bar| bar.as_ref().map(PciBarState::to_bytes))
+            .collect()
+    }
+
+    pub fn validate_bar_payloads(&self, payloads: &[Option<Vec<u8>>]) -> Result<(), PciError> {
+        if payloads.len() != PCI_BAR_COUNT {
+            return Err(PciError::InvalidBarSnapshot);
+        }
+        for (index, (expected, payload)) in self.bars.iter().zip(payloads.iter()).enumerate() {
+            let decoded = match payload {
+                Some(payload) => Some(PciBarState::from_bytes(payload)?),
+                None => None,
+            };
+            if expected.as_ref() != decoded.as_ref() {
+                return Err(PciError::SnapshotBarMismatch {
+                    index: PciBarIndex::new(index as u8).expect("snapshot bar index"),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate_raw_capability_payloads(&self, payloads: &[Vec<u8>]) -> Result<(), PciError> {
         let decoded = payloads
             .iter()
