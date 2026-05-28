@@ -6,6 +6,13 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 
+const ELF64_HEADER_SIZE: usize = 64;
+const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
+const ELF_CLASS_64: u8 = 2;
+const ELF_DATA_LITTLE: u8 = 1;
+const ELF_VERSION_CURRENT: u8 = 1;
+const PT_LOAD: u32 = 1;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootImage {
     entry: Address,
@@ -22,6 +29,10 @@ impl BootImage {
 
     pub const fn entry(&self) -> Address {
         self.entry
+    }
+
+    pub fn from_elf64_le(bytes: &[u8]) -> Result<Self, BootError> {
+        parse_elf64_le(bytes)
     }
 
     pub fn segments(&self) -> &[BootSegment] {
@@ -264,10 +275,194 @@ fn zero_line(layout: CacheLineLayout) -> Vec<u8> {
     vec![0; layout.bytes() as usize]
 }
 
+fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
+    validate_elf64_ident(bytes)?;
+    let header_size = read_u16(bytes, 52)?;
+    if header_size as usize != ELF64_HEADER_SIZE {
+        return Err(invalid_elf(BootElfError::UnsupportedHeaderSize {
+            expected: ELF64_HEADER_SIZE as u16,
+            actual: header_size,
+        }));
+    }
+
+    let program_header_size = read_u16(bytes, 54)?;
+    if program_header_size != ELF64_PROGRAM_HEADER_SIZE {
+        return Err(invalid_elf(BootElfError::UnsupportedProgramHeaderSize {
+            expected: ELF64_PROGRAM_HEADER_SIZE,
+            actual: program_header_size,
+        }));
+    }
+
+    let entry = Address::new(read_u64(bytes, 24)?);
+    let program_header_offset = read_u64(bytes, 32)?;
+    let program_header_count = read_u16(bytes, 56)?;
+    let table_size = (program_header_size as u64)
+        .checked_mul(program_header_count as u64)
+        .ok_or_else(|| {
+            invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
+                offset: program_header_offset,
+                size: u64::MAX,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+    checked_file_range(bytes, program_header_offset, table_size).map_err(|_| {
+        invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
+            offset: program_header_offset,
+            size: table_size,
+            image_size: bytes.len() as u64,
+        })
+    })?;
+
+    let mut image = BootImage::new(entry);
+    let mut loaded_segments = 0usize;
+    for index in 0..program_header_count {
+        let header_offset = program_header_offset + index as u64 * program_header_size as u64;
+        let kind = read_u32_at_u64(bytes, header_offset)?;
+        if kind != PT_LOAD {
+            continue;
+        }
+
+        let file_offset = read_u64_at_u64(bytes, header_offset + 8)?;
+        let physical = read_u64_at_u64(bytes, header_offset + 24)?;
+        let file_size = read_u64_at_u64(bytes, header_offset + 32)?;
+        let memory_size = read_u64_at_u64(bytes, header_offset + 40)?;
+        if memory_size == 0 {
+            continue;
+        }
+        if file_size > memory_size {
+            return Err(invalid_elf(
+                BootElfError::SegmentFileSizeExceedsMemorySize {
+                    segment: index,
+                    file_size,
+                    memory_size,
+                },
+            ));
+        }
+
+        let file_range = checked_file_range(bytes, file_offset, file_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
+                segment: index,
+                offset: file_offset,
+                size: file_size,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+        let memory_len = usize::try_from(memory_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
+                segment: index,
+                memory_size,
+            })
+        })?;
+        let file_len = usize::try_from(file_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
+                segment: index,
+                offset: file_offset,
+                size: file_size,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+
+        let mut data = vec![0; memory_len];
+        data[..file_len].copy_from_slice(file_range);
+        image = image.add_segment(Address::new(physical), data)?;
+        loaded_segments += 1;
+    }
+
+    if loaded_segments == 0 {
+        return Err(invalid_elf(BootElfError::NoLoadableSegments));
+    }
+
+    Ok(image)
+}
+
+fn validate_elf64_ident(bytes: &[u8]) -> Result<(), BootError> {
+    let ident = read_exact(bytes, 0, 16)?;
+    if &ident[0..4] != b"\x7fELF" {
+        return Err(invalid_elf(BootElfError::BadMagic));
+    }
+    if ident[4] != ELF_CLASS_64 {
+        return Err(invalid_elf(BootElfError::UnsupportedClass {
+            class: ident[4],
+        }));
+    }
+    if ident[5] != ELF_DATA_LITTLE {
+        return Err(invalid_elf(BootElfError::UnsupportedEncoding {
+            encoding: ident[5],
+        }));
+    }
+    if ident[6] != ELF_VERSION_CURRENT {
+        return Err(invalid_elf(BootElfError::UnsupportedVersion {
+            version: ident[6],
+        }));
+    }
+    Ok(())
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, BootError> {
+    let data = read_exact(bytes, offset, 2)?;
+    Ok(u16::from_le_bytes([data[0], data[1]]))
+}
+
+fn read_u32_at_u64(bytes: &[u8], offset: u64) -> Result<u32, BootError> {
+    let offset = usize::try_from(offset).map_err(|_| {
+        invalid_elf(BootElfError::TruncatedField {
+            offset,
+            size: 4,
+            image_size: bytes.len() as u64,
+        })
+    })?;
+    let data = read_exact(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, BootError> {
+    let data = read_exact(bytes, offset, 8)?;
+    Ok(u64::from_le_bytes([
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+    ]))
+}
+
+fn read_u64_at_u64(bytes: &[u8], offset: u64) -> Result<u64, BootError> {
+    let offset = usize::try_from(offset).map_err(|_| {
+        invalid_elf(BootElfError::TruncatedField {
+            offset,
+            size: 8,
+            image_size: bytes.len() as u64,
+        })
+    })?;
+    read_u64(bytes, offset)
+}
+
+fn read_exact(bytes: &[u8], offset: usize, size: usize) -> Result<&[u8], BootError> {
+    bytes
+        .get(offset..offset.saturating_add(size))
+        .ok_or_else(|| {
+            invalid_elf(BootElfError::TruncatedField {
+                offset: offset as u64,
+                size: size as u64,
+                image_size: bytes.len() as u64,
+            })
+        })
+}
+
+fn checked_file_range(bytes: &[u8], offset: u64, size: u64) -> Result<&[u8], ()> {
+    let end = offset.checked_add(size).ok_or(())?;
+    let start = usize::try_from(offset).map_err(|_| ())?;
+    let end = usize::try_from(end).map_err(|_| ())?;
+    bytes.get(start..end).ok_or(())
+}
+
+fn invalid_elf(reason: BootElfError) -> BootError {
+    BootError::InvalidElf { reason }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BootError {
     EmptySegment {
         start: Address,
+    },
+    InvalidElf {
+        reason: BootElfError,
     },
     OverlappingSegment {
         existing: AddressRange,
@@ -276,12 +471,61 @@ pub enum BootError {
     Memory(MemoryError),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BootElfError {
+    BadMagic,
+    NoLoadableSegments,
+    SegmentFileRangeOutOfBounds {
+        segment: u16,
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
+    SegmentFileSizeExceedsMemorySize {
+        segment: u16,
+        file_size: u64,
+        memory_size: u64,
+    },
+    SegmentMemorySizeTooLarge {
+        segment: u16,
+        memory_size: u64,
+    },
+    ProgramHeaderTableOutOfBounds {
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
+    TruncatedField {
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
+    UnsupportedClass {
+        class: u8,
+    },
+    UnsupportedEncoding {
+        encoding: u8,
+    },
+    UnsupportedHeaderSize {
+        expected: u16,
+        actual: u16,
+    },
+    UnsupportedProgramHeaderSize {
+        expected: u16,
+        actual: u16,
+    },
+    UnsupportedVersion {
+        version: u8,
+    },
+}
+
 impl fmt::Display for BootError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySegment { start } => {
                 write!(formatter, "boot segment at {:#x} is empty", start.get())
             }
+            Self::InvalidElf { reason } => write!(formatter, "invalid ELF image: {reason}"),
             Self::OverlappingSegment {
                 existing,
                 requested,
@@ -298,9 +542,78 @@ impl fmt::Display for BootError {
     }
 }
 
+impl fmt::Display for BootElfError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadMagic => write!(formatter, "bad ELF magic"),
+            Self::NoLoadableSegments => write!(formatter, "ELF image has no loadable segments"),
+            Self::SegmentFileRangeOutOfBounds {
+                segment,
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF segment {segment} file range {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::SegmentFileSizeExceedsMemorySize {
+                segment,
+                file_size,
+                memory_size,
+            } => write!(
+                formatter,
+                "ELF segment {segment} file size {file_size:#x} exceeds memory size {memory_size:#x}"
+            ),
+            Self::SegmentMemorySizeTooLarge {
+                segment,
+                memory_size,
+            } => write!(
+                formatter,
+                "ELF segment {segment} memory size {memory_size:#x} is too large"
+            ),
+            Self::ProgramHeaderTableOutOfBounds {
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF program header table {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::TruncatedField {
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF field {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::UnsupportedClass { class } => {
+                write!(formatter, "unsupported ELF class {class}")
+            }
+            Self::UnsupportedEncoding { encoding } => {
+                write!(formatter, "unsupported ELF data encoding {encoding}")
+            }
+            Self::UnsupportedHeaderSize { expected, actual } => write!(
+                formatter,
+                "unsupported ELF header size {actual}, expected {expected}"
+            ),
+            Self::UnsupportedProgramHeaderSize { expected, actual } => write!(
+                formatter,
+                "unsupported ELF program header size {actual}, expected {expected}"
+            ),
+            Self::UnsupportedVersion { version } => {
+                write!(formatter, "unsupported ELF version {version}")
+            }
+        }
+    }
+}
+
+impl Error for BootElfError {}
+
 impl Error for BootError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::InvalidElf { reason } => Some(reason),
             Self::Memory(error) => Some(error),
             _ => None,
         }

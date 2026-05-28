@@ -375,7 +375,7 @@ crate owns one reason to change and exposes typed data to adjacent crates.
 | `rem6-mmio` | MMIO address decoding, register banks, device register semantics, and access errors. |
 | `rem6-interrupt` | Interrupt controller state, routing, pending delivery, and checkpointable interrupt metadata. |
 | `rem6-timer` | Timer MMIO, programmed events, interrupt emission, and checkpointable timer state. |
-| `rem6-boot` | Boot images, segments, initial memory population, and workload input metadata. |
+| `rem6-boot` | Boot images, typed ELF64 little-endian loadable-segment parsing, segments, initial memory population, and workload input metadata. |
 | `rem6-checkpoint` | Manifest format, component chunks, restore validation, and protocol-neutral checkpoint assembly. |
 | `rem6-stats` | Typed counters, registry-owned stat groups, self-describing snapshot group catalogs, checked stat descriptions, structured scope/name paths, typed unit registration, structured units and rate units, registry ownership, statistics reset, typed dump history, schema-and-reset-scope-checked snapshot deltas, and run metadata. |
 | `rem6-power` | Power domains, residency, typed expression inputs, core stats-delta bindings, and thermal models. |
