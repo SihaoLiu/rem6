@@ -70,6 +70,43 @@ fn elf64_image(entry: u64, headers: &[ElfProgramHeaderSpec], data: &[(usize, &[u
     bytes
 }
 
+fn elf32_image(entry: u32, headers: &[ElfProgramHeaderSpec], data: &[(usize, &[u8])]) -> Vec<u8> {
+    let mut size = 52 + headers.len() * 32;
+    for (offset, bytes) in data {
+        size = size.max(offset + bytes.len());
+    }
+    let mut bytes = vec![0; size];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 1;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, 243);
+    write_u32(&mut bytes, 20, 1);
+    write_u32(&mut bytes, 24, entry);
+    write_u32(&mut bytes, 28, 52);
+    write_u16(&mut bytes, 40, 52);
+    write_u16(&mut bytes, 42, 32);
+    write_u16(&mut bytes, 44, headers.len() as u16);
+
+    for (index, header) in headers.iter().enumerate() {
+        let base = 52 + index * 32;
+        write_u32(&mut bytes, base, header.kind);
+        write_u32(&mut bytes, base + 4, header.offset as u32);
+        write_u32(&mut bytes, base + 8, header.physical as u32);
+        write_u32(&mut bytes, base + 12, header.physical as u32);
+        write_u32(&mut bytes, base + 16, header.file_size as u32);
+        write_u32(&mut bytes, base + 20, header.memory_size as u32);
+        write_u32(&mut bytes, base + 24, 5);
+        write_u32(&mut bytes, base + 28, 0x1000);
+    }
+
+    for (offset, payload) in data {
+        bytes[*offset..*offset + payload.len()].copy_from_slice(payload);
+    }
+    bytes
+}
+
 #[test]
 fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
     let elf = elf64_image(
@@ -118,6 +155,53 @@ fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
 }
 
 #[test]
+fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
+    let elf = elf32_image(
+        0x8040,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 8,
+            },
+            ElfProgramHeaderSpec {
+                kind: 4,
+                offset: 0x108,
+                physical: 0x9000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x110,
+                physical: 0xa002,
+                file_size: 3,
+                memory_size: 3,
+            },
+        ],
+        &[
+            (0x100, &[0x13, 0x05, 0x00, 0x00]),
+            (0x108, &[0xde, 0xad, 0xbe, 0xef]),
+            (0x110, &[0xb0, 0xb1, 0xb2]),
+        ],
+    );
+
+    let image = BootImage::from_elf32_le(&elf).unwrap();
+
+    assert_eq!(image.entry(), Address::new(0x8040));
+    assert_eq!(image.segments().len(), 2);
+    assert_eq!(image.segments()[0].range().start(), Address::new(0x8000));
+    assert_eq!(
+        image.segments()[0].data(),
+        &[0x13, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_eq!(image.segments()[1].range().start(), Address::new(0xa002));
+    assert_eq!(image.segments()[1].data(), &[0xb0, 0xb1, 0xb2]);
+}
+
+#[test]
 fn boot_image_rejects_elf64_segment_memory_overflow_with_segment_context() {
     let elf = elf64_image(
         0x8000,
@@ -137,6 +221,32 @@ fn boot_image_rejects_elf64_segment_memory_overflow_with_segment_context() {
             reason: BootElfError::SegmentMemoryRangeOverflow {
                 segment: 0,
                 physical: u64::MAX - 1,
+                memory_size: 4,
+            },
+        },
+    );
+}
+
+#[test]
+fn boot_image_rejects_elf32_segment_memory_overflow_with_segment_context() {
+    let elf = elf32_image(
+        0x8000,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: u32::MAX as u64 - 1,
+            file_size: 2,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0xaa, 0xbb])],
+    );
+
+    assert_eq!(
+        BootImage::from_elf32_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::SegmentMemoryRangeOverflow {
+                segment: 0,
+                physical: u32::MAX as u64 - 1,
                 memory_size: 4,
             },
         },

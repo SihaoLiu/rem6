@@ -8,6 +8,9 @@ use rem6_memory::{
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
+const ELF32_HEADER_SIZE: usize = 52;
+const ELF32_PROGRAM_HEADER_SIZE: u16 = 32;
+const ELF_CLASS_32: u8 = 1;
 const ELF_CLASS_64: u8 = 2;
 const ELF_DATA_LITTLE: u8 = 1;
 const ELF_VERSION_CURRENT: u8 = 1;
@@ -33,6 +36,10 @@ impl BootImage {
 
     pub fn from_elf64_le(bytes: &[u8]) -> Result<Self, BootError> {
         parse_elf64_le(bytes)
+    }
+
+    pub fn from_elf32_le(bytes: &[u8]) -> Result<Self, BootError> {
+        parse_elf32_le(bytes)
     }
 
     pub fn segments(&self) -> &[BootSegment] {
@@ -276,7 +283,7 @@ fn zero_line(layout: CacheLineLayout) -> Vec<u8> {
 }
 
 fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
-    validate_elf64_ident(bytes)?;
+    validate_elf_ident(bytes, ELF_CLASS_64)?;
     let header_size = read_u16(bytes, 52)?;
     if header_size as usize != ELF64_HEADER_SIZE {
         return Err(invalid_elf(BootElfError::UnsupportedHeaderSize {
@@ -389,12 +396,140 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     Ok(image)
 }
 
-fn validate_elf64_ident(bytes: &[u8]) -> Result<(), BootError> {
+fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
+    validate_elf_ident(bytes, ELF_CLASS_32)?;
+    let header_size = read_u16(bytes, 40)?;
+    if header_size as usize != ELF32_HEADER_SIZE {
+        return Err(invalid_elf(BootElfError::UnsupportedHeaderSize {
+            expected: ELF32_HEADER_SIZE as u16,
+            actual: header_size,
+        }));
+    }
+
+    let program_header_size = read_u16(bytes, 42)?;
+    if program_header_size != ELF32_PROGRAM_HEADER_SIZE {
+        return Err(invalid_elf(BootElfError::UnsupportedProgramHeaderSize {
+            expected: ELF32_PROGRAM_HEADER_SIZE,
+            actual: program_header_size,
+        }));
+    }
+
+    let entry = Address::new(u64::from(read_u32(bytes, 24)?));
+    let program_header_offset = u64::from(read_u32(bytes, 28)?);
+    let program_header_count = read_u16(bytes, 44)?;
+    let table_size = (program_header_size as u64)
+        .checked_mul(program_header_count as u64)
+        .ok_or_else(|| {
+            invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
+                offset: program_header_offset,
+                size: u64::MAX,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+    checked_file_range(bytes, program_header_offset, table_size).map_err(|_| {
+        invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
+            offset: program_header_offset,
+            size: table_size,
+            image_size: bytes.len() as u64,
+        })
+    })?;
+
+    let mut image = BootImage::new(entry);
+    let mut loaded_segments = 0usize;
+    for index in 0..program_header_count {
+        let header_offset = program_header_offset + index as u64 * program_header_size as u64;
+        let kind = read_u32_at_u64(bytes, header_offset)?;
+        if kind != PT_LOAD {
+            continue;
+        }
+
+        let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4)?);
+        let physical = u64::from(read_u32_at_u64(bytes, header_offset + 12)?);
+        let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16)?);
+        let memory_size = u64::from(read_u32_at_u64(bytes, header_offset + 20)?);
+        if memory_size == 0 {
+            continue;
+        }
+        if file_size > memory_size {
+            return Err(invalid_elf(
+                BootElfError::SegmentFileSizeExceedsMemorySize {
+                    segment: index,
+                    file_size,
+                    memory_size,
+                },
+            ));
+        }
+
+        let file_range = checked_file_range(bytes, file_offset, file_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
+                segment: index,
+                offset: file_offset,
+                size: file_size,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+        let memory_end = physical.checked_add(memory_size).ok_or_else(|| {
+            invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
+                segment: index,
+                physical,
+                memory_size,
+            })
+        })?;
+        if memory_end > u64::from(u32::MAX) + 1 {
+            return Err(invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
+                segment: index,
+                physical,
+                memory_size,
+            }));
+        }
+        let memory_len = usize::try_from(memory_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
+                segment: index,
+                memory_size,
+            })
+        })?;
+        let memory_access_size = AccessSize::new(memory_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
+                segment: index,
+                physical,
+                memory_size,
+            })
+        })?;
+        AddressRange::new(Address::new(physical), memory_access_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
+                segment: index,
+                physical,
+                memory_size,
+            })
+        })?;
+        let file_len = usize::try_from(file_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
+                segment: index,
+                offset: file_offset,
+                size: file_size,
+                image_size: bytes.len() as u64,
+            })
+        })?;
+
+        let mut data = vec![0; memory_len];
+        data[..file_len].copy_from_slice(file_range);
+        image = image.add_segment(Address::new(physical), data)?;
+        loaded_segments += 1;
+    }
+
+    if loaded_segments == 0 {
+        return Err(invalid_elf(BootElfError::NoLoadableSegments));
+    }
+
+    Ok(image)
+}
+
+fn validate_elf_ident(bytes: &[u8], expected_class: u8) -> Result<(), BootError> {
     let ident = read_exact(bytes, 0, 16)?;
     if &ident[0..4] != b"\x7fELF" {
         return Err(invalid_elf(BootElfError::BadMagic));
     }
-    if ident[4] != ELF_CLASS_64 {
+    if ident[4] != expected_class {
         return Err(invalid_elf(BootElfError::UnsupportedClass {
             class: ident[4],
         }));
@@ -415,6 +550,11 @@ fn validate_elf64_ident(bytes: &[u8]) -> Result<(), BootError> {
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, BootError> {
     let data = read_exact(bytes, offset, 2)?;
     Ok(u16::from_le_bytes([data[0], data[1]]))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, BootError> {
+    let data = read_exact(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
 }
 
 fn read_u32_at_u64(bytes: &[u8], offset: u64) -> Result<u32, BootError> {
