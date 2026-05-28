@@ -981,8 +981,21 @@ pub enum SinicError {
         expected_bytes: u64,
         actual_bytes: u64,
     },
+    PciInterruptBindingMismatch {
+        expected_function: rem6_pci::PciFunctionAddress,
+        actual_function: rem6_pci::PciFunctionAddress,
+        expected_pin: rem6_pci::PciInterruptPin,
+        actual_pin: rem6_pci::PciInterruptPin,
+    },
+    InterruptScheduleInPast {
+        current_tick: u64,
+        scheduled_tick: u64,
+    },
     PciEndpoint {
         source: rem6_pci::PciError,
+    },
+    Scheduler {
+        source: rem6_kernel::SchedulerError,
     },
     Network {
         source: NetworkError,
@@ -1084,9 +1097,27 @@ impl fmt::Display for SinicError {
                 formatter,
                 "SINIC PCI BAR binding expected {expected_bytes} bytes but got {actual_bytes}"
             ),
+            Self::PciInterruptBindingMismatch {
+                expected_function,
+                actual_function,
+                expected_pin,
+                actual_pin,
+            } => write!(
+                formatter,
+                "SINIC PCI interrupt binding expected {:?} {:?} but got {:?} {:?}",
+                expected_function, expected_pin, actual_function, actual_pin
+            ),
+            Self::InterruptScheduleInPast {
+                current_tick,
+                scheduled_tick,
+            } => write!(
+                formatter,
+                "SINIC interrupt scheduled at tick {scheduled_tick} before current tick {current_tick}"
+            ),
             Self::PciEndpoint { source } => {
                 write!(formatter, "SINIC PCI endpoint error: {source}")
             }
+            Self::Scheduler { source } => write!(formatter, "SINIC scheduler error: {source}"),
             Self::Network { source } => write!(formatter, "SINIC network error: {source}"),
         }
     }
@@ -1097,6 +1128,7 @@ impl Error for SinicError {
         match self {
             Self::Memory { source } => Some(source),
             Self::PciEndpoint { source } => Some(source),
+            Self::Scheduler { source } => Some(source),
             Self::Network { source } => Some(source),
             _ => None,
         }

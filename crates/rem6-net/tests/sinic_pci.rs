@@ -1,5 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_interrupt::{
+    InterruptController, InterruptEvent, InterruptEventKind, InterruptLineId, InterruptRoute,
+    InterruptSourceId, InterruptTargetId,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address};
 use rem6_mmio::{MmioBus, MmioCompletion, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
@@ -9,6 +13,7 @@ use rem6_net::{
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciClassCode, PciConfigAperture, PciConfigOffset, PciDeviceIdentity,
     PciFunctionAddress, PciHostAddressBases, PciHostBarRange, PciHostBridge,
+    PciLegacyInterruptPort, PciLegacyInterruptRoute,
 };
 
 fn function() -> PciFunctionAddress {
@@ -72,6 +77,32 @@ fn active_host_bar_range(host: &mut PciHostBridge) -> PciHostBarRange {
     assert_eq!(ranges[0].function(), function);
     assert_eq!(ranges[0].bar(), bar);
     ranges[0].clone()
+}
+
+fn legacy_interrupt_port(
+    target: PartitionId,
+    signal_latency: u64,
+) -> (
+    Arc<Mutex<InterruptController>>,
+    PciLegacyInterruptPort,
+    InterruptSourceId,
+) {
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let route = PciLegacyInterruptRoute::new(
+        function(),
+        SinicPciEndpointSpec::new(function()).interrupt_pin(),
+        InterruptRoute::new(InterruptLineId::new(44), InterruptTargetId::new(0), target),
+        signal_latency,
+    )
+    .unwrap();
+    controller
+        .lock()
+        .unwrap()
+        .register_route(route.interrupt_route())
+        .unwrap();
+    let port = PciLegacyInterruptPort::new(route, Arc::clone(&controller)).unwrap();
+    let source = InterruptSourceId::new(0x1293);
+    (controller, port, source)
 }
 
 #[test]
@@ -194,6 +225,74 @@ fn sinic_pci_bar_routes_host_mmio_to_sinic_registers() {
         response_for(&completions, MmioRequestId::new(2)),
         &Ok(MmioResponse::completed(MmioRequestId::new(2), None))
     );
+}
+
+#[test]
+fn sinic_pci_interrupt_port_delivers_scheduled_intx_in_parallel() {
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let (controller, legacy_port, source) = legacy_interrupt_port(cpu, 2);
+    let sinic_port = SinicPciEndpointSpec::new(function())
+        .build_legacy_interrupt_port(legacy_port, source)
+        .unwrap();
+    let mut device = SinicFifoDevice::new(
+        SinicRegisterParams::default().with_interrupt_mask(SinicInterrupts::RX_PACKET),
+    )
+    .unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            rem6_net::SinicRegisterBlock::CONFIG_RX_EN
+                | rem6_net::SinicRegisterBlock::CONFIG_INT_EN,
+            4,
+        )
+        .unwrap();
+    let record = device
+        .receive_from_wire(rem6_net::EthernetPacket::new(vec![0xaa; 64]).unwrap(), 5, 3)
+        .unwrap()
+        .interrupt_record()
+        .copied()
+        .unwrap();
+    assert_eq!(record.scheduled_tick(), Some(8));
+
+    let post_port = sinic_port.clone();
+    let clear_port = sinic_port.clone();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 5, move |context| {
+            post_port.post_record_parallel(context, record).unwrap();
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 12, move |context| {
+            clear_port.clear_parallel(context).unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                10,
+                InterruptLineId::new(44),
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                14,
+                InterruptLineId::new(44),
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Deassert,
+            ),
+        ]
+    );
+    assert!(sinic_port.dispatch_errors().lock().unwrap().is_empty());
 }
 
 fn response_for(

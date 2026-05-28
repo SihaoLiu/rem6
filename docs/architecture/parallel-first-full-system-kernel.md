@@ -102,10 +102,12 @@ The following public sources shape this design:
   support and history unwinding as a source of misleading predictor results:
   <https://github.com/orgs/gem5/discussions/1341>
 - The May 2026 public gem5 issue sweep still shows open stats-reset test debt,
-  current syscall-emulation correctness gaps, RISC-V vector tracing failures,
-  and a multicore CHI LR/SC race report. rem6 treats these as evidence that
-  cross-subsystem behavior must remain typed, identity-preserving, and
-  regression-tested before parity claims:
+  current syscall-emulation correctness gaps, and a multicore CHI LR/SC race
+  report. A previously reported RISC-V vector tracing crash is now closed, but
+  it remains evidence that trace, ISA, and execution-mode boundaries need typed
+  regression coverage. rem6 treats these as evidence that cross-subsystem
+  behavior must remain typed, identity-preserving, and regression-tested before
+  parity claims:
   <https://github.com/gem5/gem5/issues/1644>,
   <https://github.com/gem5/gem5/issues/2754>,
   <https://github.com/gem5/gem5/issues/2758>,
@@ -373,7 +375,7 @@ crate owns one reason to change and exposes typed data to adjacent crates.
 | `rem6-cpu` | CPU front ends, architectural state, core clusters, instruction events, and data or instruction memory requests. |
 | `rem6-gpu` | GPU command submission, compute units, workgroups, DMA, traces, and checkpointable device state. |
 | `rem6-accelerator` | Accelerator command engines, NPU-style jobs, DMA, traces, and checkpointable device state. |
-| `rem6-net` | Ethernet packet payloads, wire-length metadata, packet FIFO capacity, reservation, slack, typed Ethernet interface peer binding, typed tap stub framing and retry queues, SINIC register layout, interrupt state, FIFO ingress, FIFO egress, DMA copy records, descriptor-memory DMA requests, typed MMIO register access, and SINIC PCI BAR binding, distributed Ethernet message headers, payload records, receive scheduling, sync-window checks, distributed link transmit-done and receive-delivery records, typed PCAP capture records, fixed full-duplex link timing, deterministic delay variation, explicit transmission records, delivery drain, typed shared-bus broadcast timing, learning-switch forwarding, ordered output queue tail drops, output queue timing, ready-output records, and snapshot state. |
+| `rem6-net` | Ethernet packet payloads, wire-length metadata, packet FIFO capacity, reservation, slack, typed Ethernet interface peer binding, typed tap stub framing and retry queues, SINIC register layout, interrupt state, FIFO ingress, FIFO egress, DMA copy records, descriptor-memory DMA requests, typed MMIO register access, SINIC PCI BAR binding, and scheduled SINIC PCI legacy INTx bridging, distributed Ethernet message headers, payload records, receive scheduling, sync-window checks, distributed link transmit-done and receive-delivery records, typed PCAP capture records, fixed full-duplex link timing, deterministic delay variation, explicit transmission records, delivery drain, typed shared-bus broadcast timing, learning-switch forwarding, ordered output queue tail drops, output queue timing, ready-output records, and snapshot state. |
 | `rem6-mmio` | MMIO address decoding, register banks, device register semantics, and access errors. |
 | `rem6-interrupt` | Interrupt controller state, routing, pending delivery, and checkpointable interrupt metadata. |
 | `rem6-timer` | Timer MMIO, programmed events, interrupt emission, and checkpointable timer state. |

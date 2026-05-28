@@ -1,10 +1,17 @@
+use std::sync::{Arc, Mutex};
+
+use rem6_interrupt::InterruptSourceId;
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarMmioDevice, PciBarSpec, PciClassCode, PciDeviceIdentity,
-    PciEndpointConfig, PciFunctionAddress, PciHostBarRange, PciInterruptPin, PciType0HeaderFields,
+    PciEndpointConfig, PciFunctionAddress, PciHostBarRange, PciInterruptPin,
+    PciLegacyInterruptPort, PciType0HeaderFields,
 };
 
-use crate::{SinicError, SinicMmioDevice};
+use crate::{SinicError, SinicInterruptRecord, SinicMmioDevice};
 
 pub const SINIC_PCI_VENDOR_ID: u16 = 0x1291;
 pub const SINIC_PCI_DEVICE_ID: u16 = 0x1293;
@@ -101,6 +108,22 @@ impl SinicPciEndpointSpec {
         Ok(PciBarMmioDevice::new(host_bar_range, device))
     }
 
+    pub fn build_legacy_interrupt_port(
+        self,
+        port: PciLegacyInterruptPort,
+        source: InterruptSourceId,
+    ) -> Result<SinicPciInterruptPort, SinicError> {
+        if port.function() != self.function || port.pin() != self.interrupt_pin {
+            return Err(SinicError::PciInterruptBindingMismatch {
+                expected_function: self.function,
+                actual_function: port.function(),
+                expected_pin: self.interrupt_pin,
+                actual_pin: port.pin(),
+            });
+        }
+        Ok(SinicPciInterruptPort::new(port, source))
+    }
+
     fn validate_host_bar_range(self, host_bar_range: &PciHostBarRange) -> Result<(), SinicError> {
         if host_bar_range.function() != self.function || host_bar_range.bar() != self.bar_index {
             return Err(SinicError::PciBarBindingMismatch {
@@ -127,4 +150,130 @@ impl SinicPciEndpointSpec {
 
 fn pci_error(source: rem6_pci::PciError) -> SinicError {
     SinicError::PciEndpoint { source }
+}
+
+#[derive(Clone, Debug)]
+pub struct SinicPciInterruptPort {
+    port: PciLegacyInterruptPort,
+    source: InterruptSourceId,
+    dispatch_errors: Arc<Mutex<Vec<rem6_pci::PciError>>>,
+}
+
+impl SinicPciInterruptPort {
+    fn new(port: PciLegacyInterruptPort, source: InterruptSourceId) -> Self {
+        Self {
+            port,
+            source,
+            dispatch_errors: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub const fn source(&self) -> InterruptSourceId {
+        self.source
+    }
+
+    pub const fn port(&self) -> &PciLegacyInterruptPort {
+        &self.port
+    }
+
+    pub fn dispatch_errors(&self) -> Arc<Mutex<Vec<rem6_pci::PciError>>> {
+        Arc::clone(&self.dispatch_errors)
+    }
+
+    pub fn post_record(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        record: SinicInterruptRecord,
+    ) -> Result<Option<PartitionEventId>, SinicError> {
+        let Some(delay) = record_delay(context.now(), record)? else {
+            return Ok(None);
+        };
+        if delay == 0 {
+            return self
+                .port
+                .post(context, self.source)
+                .map(Some)
+                .map_err(pci_error);
+        }
+
+        let port = self.port.clone();
+        let source = self.source;
+        let dispatch_errors = Arc::clone(&self.dispatch_errors);
+        context
+            .schedule_local_after(delay, move |context| {
+                if let Err(error) = port.post(context, source) {
+                    dispatch_errors
+                        .lock()
+                        .expect("SINIC PCI interrupt dispatch errors lock")
+                        .push(error);
+                }
+            })
+            .map(Some)
+            .map_err(scheduler_error)
+    }
+
+    pub fn post_record_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        record: SinicInterruptRecord,
+    ) -> Result<Option<PartitionEventId>, SinicError> {
+        let Some(delay) = record_delay(context.now(), record)? else {
+            return Ok(None);
+        };
+        if delay == 0 {
+            return self
+                .port
+                .post_parallel(context, self.source)
+                .map(Some)
+                .map_err(pci_error);
+        }
+
+        let port = self.port.clone();
+        let source = self.source;
+        let dispatch_errors = Arc::clone(&self.dispatch_errors);
+        context
+            .schedule_local_after(delay, move |context| {
+                if let Err(error) = port.post_parallel(context, source) {
+                    dispatch_errors
+                        .lock()
+                        .expect("SINIC PCI interrupt dispatch errors lock")
+                        .push(error);
+                }
+            })
+            .map(Some)
+            .map_err(scheduler_error)
+    }
+
+    pub fn clear(
+        &self,
+        context: &mut SchedulerContext<'_>,
+    ) -> Result<PartitionEventId, SinicError> {
+        self.port.clear(context, self.source).map_err(pci_error)
+    }
+
+    pub fn clear_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+    ) -> Result<PartitionEventId, SinicError> {
+        self.port
+            .clear_parallel(context, self.source)
+            .map_err(pci_error)
+    }
+}
+
+fn record_delay(now: Tick, record: SinicInterruptRecord) -> Result<Option<Tick>, SinicError> {
+    let Some(scheduled_tick) = record.scheduled_tick() else {
+        return Ok(None);
+    };
+    if scheduled_tick < now {
+        return Err(SinicError::InterruptScheduleInPast {
+            current_tick: now,
+            scheduled_tick,
+        });
+    }
+    Ok(Some(scheduled_tick - now))
+}
+
+fn scheduler_error(source: SchedulerError) -> SinicError {
+    SinicError::Scheduler { source }
 }
