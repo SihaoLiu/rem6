@@ -1,5 +1,6 @@
 use rem6_net::{
-    EthernetFullDuplexLink, EthernetLinkDirection, EthernetLinkTiming, EthernetPacket, NetworkError,
+    EthernetFullDuplexLink, EthernetLinkDelayVariation, EthernetLinkDirection, EthernetLinkTiming,
+    EthernetPacket, NetworkError,
 };
 
 fn packet(bytes: &[u8]) -> EthernetPacket {
@@ -90,6 +91,74 @@ fn full_duplex_link_keeps_directions_independent_and_reports_busy() {
 }
 
 #[test]
+fn ethernet_link_applies_reproducible_delay_variation_per_direction() {
+    let timing = EthernetLinkTiming::new(1, 4).unwrap();
+    let variation = EthernetLinkDelayVariation::new(3, vec![2, 0]).unwrap();
+    let mut link = EthernetFullDuplexLink::new_with_delay_variation(timing, variation);
+
+    let left_first = link
+        .transmit(EthernetLinkDirection::LeftToRight, packet(&[1, 2, 3]), 0)
+        .unwrap();
+    let right_first = link
+        .transmit(EthernetLinkDirection::RightToLeft, packet(&[4, 5]), 0)
+        .unwrap();
+
+    assert_eq!(left_first.serialization_done_tick(), 4);
+    assert_eq!(left_first.delay_variation_ticks(), 2);
+    assert_eq!(left_first.transmit_done_tick(), 6);
+    assert_eq!(left_first.delivery_tick(), 10);
+    assert_eq!(right_first.serialization_done_tick(), 3);
+    assert_eq!(right_first.delay_variation_ticks(), 2);
+    assert_eq!(right_first.transmit_done_tick(), 5);
+    assert_eq!(right_first.delivery_tick(), 9);
+
+    assert!(link.is_busy(EthernetLinkDirection::LeftToRight, 5));
+    assert!(!link.is_busy(EthernetLinkDirection::LeftToRight, 6));
+
+    let left_second = link
+        .transmit(EthernetLinkDirection::LeftToRight, packet(&[6]), 6)
+        .unwrap();
+    assert_eq!(left_second.sequence(), 2);
+    assert_eq!(left_second.serialization_done_tick(), 8);
+    assert_eq!(left_second.delay_variation_ticks(), 0);
+    assert_eq!(left_second.transmit_done_tick(), 8);
+    assert_eq!(left_second.delivery_tick(), 12);
+}
+
+#[test]
+fn ethernet_link_snapshot_restores_delay_variation_position() {
+    let timing = EthernetLinkTiming::new(1, 1).unwrap();
+    let variation = EthernetLinkDelayVariation::new(3, vec![1, 3]).unwrap();
+    let mut link = EthernetFullDuplexLink::new_with_delay_variation(timing, variation);
+
+    let first = link
+        .transmit(EthernetLinkDirection::LeftToRight, packet(&[1]), 0)
+        .unwrap();
+    assert_eq!(first.delay_variation_ticks(), 1);
+    let snapshot = link.snapshot();
+
+    let after_snapshot = link
+        .transmit(EthernetLinkDirection::LeftToRight, packet(&[2]), 3)
+        .unwrap();
+    assert_eq!(after_snapshot.delay_variation_ticks(), 3);
+    assert_eq!(after_snapshot.transmit_done_tick(), 8);
+
+    link.restore(&snapshot).unwrap();
+    let restored = link
+        .transmit(EthernetLinkDirection::LeftToRight, packet(&[3]), 3)
+        .unwrap();
+    assert_eq!(restored.sequence(), after_snapshot.sequence());
+    assert_eq!(
+        restored.delay_variation_ticks(),
+        after_snapshot.delay_variation_ticks()
+    );
+    assert_eq!(
+        restored.transmit_done_tick(),
+        after_snapshot.transmit_done_tick()
+    );
+}
+
+#[test]
 fn ethernet_link_snapshot_restores_pending_deliveries_and_counters() {
     let timing = EthernetLinkTiming::new(1, 4).unwrap();
     let mut link = EthernetFullDuplexLink::new(timing);
@@ -135,6 +204,13 @@ fn ethernet_link_rejects_invalid_timing_and_overflow() {
     assert!(matches!(
         EthernetLinkTiming::new(0, 1),
         Err(NetworkError::InvalidEthernetLinkRate { ticks_per_byte: 0 })
+    ));
+    assert!(matches!(
+        EthernetLinkDelayVariation::new(2, vec![0, 3]),
+        Err(NetworkError::InvalidEthernetLinkDelayVariation {
+            max_delay_ticks: 2,
+            delay_ticks: 3,
+        })
     ));
 
     let timing = EthernetLinkTiming::new(2, 1).unwrap();

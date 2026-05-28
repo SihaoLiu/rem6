@@ -94,6 +94,53 @@ impl EthernetLinkTiming {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EthernetLinkDelayVariation {
+    max_delay_ticks: u64,
+    delay_ticks: Vec<u64>,
+    next_index: usize,
+}
+
+impl EthernetLinkDelayVariation {
+    pub fn new(max_delay_ticks: u64, delay_ticks: Vec<u64>) -> Result<Self, NetworkError> {
+        for delay_ticks in &delay_ticks {
+            if *delay_ticks > max_delay_ticks {
+                return Err(NetworkError::InvalidEthernetLinkDelayVariation {
+                    max_delay_ticks,
+                    delay_ticks: *delay_ticks,
+                });
+            }
+        }
+        Ok(Self {
+            max_delay_ticks,
+            delay_ticks,
+            next_index: 0,
+        })
+    }
+
+    pub const fn max_delay_ticks(&self) -> u64 {
+        self.max_delay_ticks
+    }
+
+    pub fn delay_count(&self) -> usize {
+        self.delay_ticks.len()
+    }
+
+    pub const fn next_index(&self) -> usize {
+        self.next_index
+    }
+
+    fn peek(&self) -> u64 {
+        self.delay_ticks.get(self.next_index).copied().unwrap_or(0)
+    }
+
+    fn advance(&mut self) {
+        if !self.delay_ticks.is_empty() {
+            self.next_index = (self.next_index + 1) % self.delay_ticks.len();
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EthernetFullDuplexLink {
     timing: EthernetLinkTiming,
     next_sequence: u64,
@@ -108,6 +155,18 @@ impl EthernetFullDuplexLink {
             next_sequence: 0,
             left_to_right: EthernetLinkLane::new(),
             right_to_left: EthernetLinkLane::new(),
+        }
+    }
+
+    pub fn new_with_delay_variation(
+        timing: EthernetLinkTiming,
+        delay_variation: EthernetLinkDelayVariation,
+    ) -> Self {
+        Self {
+            timing,
+            next_sequence: 0,
+            left_to_right: EthernetLinkLane::new_with_delay_variation(delay_variation.clone()),
+            right_to_left: EthernetLinkLane::new_with_delay_variation(delay_variation),
         }
     }
 
@@ -170,7 +229,16 @@ impl EthernetFullDuplexLink {
                 link_delay_ticks: self.timing.link_delay_ticks,
             },
         )?;
-        let delivery_tick = serialization_done_tick
+        let delay_variation_ticks = self.lane(direction).peek_delay_variation_ticks();
+        let transmit_done_tick = serialization_done_tick
+            .checked_add(delay_variation_ticks)
+            .ok_or(NetworkError::EthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes: packet.wire_length_bytes(),
+                ticks_per_byte: self.timing.ticks_per_byte,
+                link_delay_ticks: self.timing.link_delay_ticks,
+            })?;
+        let delivery_tick = transmit_done_tick
             .checked_add(self.timing.link_delay_ticks)
             .ok_or(NetworkError::EthernetLinkTimingOverflow {
                 request_tick,
@@ -184,6 +252,8 @@ impl EthernetFullDuplexLink {
             direction,
             request_tick,
             serialization_done_tick,
+            delay_variation_ticks,
+            transmit_done_tick,
             delivery_tick,
             packet,
         };
@@ -193,7 +263,8 @@ impl EthernetFullDuplexLink {
             .ok_or(NetworkError::EthernetLinkSequenceOverflow)?;
 
         let lane = self.lane_mut(direction);
-        lane.busy_until_tick = Some(serialization_done_tick);
+        lane.advance_delay_variation();
+        lane.busy_until_tick = Some(transmit_done_tick);
         lane.pending_deliveries.push_back(transmission.clone());
         Ok(transmission)
     }
@@ -279,6 +350,8 @@ pub struct EthernetTransmission {
     direction: EthernetLinkDirection,
     request_tick: u64,
     serialization_done_tick: u64,
+    delay_variation_ticks: u64,
+    transmit_done_tick: u64,
     delivery_tick: u64,
     packet: EthernetPacket,
 }
@@ -300,6 +373,14 @@ impl EthernetTransmission {
         self.serialization_done_tick
     }
 
+    pub const fn delay_variation_ticks(&self) -> u64 {
+        self.delay_variation_ticks
+    }
+
+    pub const fn transmit_done_tick(&self) -> u64 {
+        self.transmit_done_tick
+    }
+
     pub const fn delivery_tick(&self) -> u64 {
         self.delivery_tick
     }
@@ -316,6 +397,7 @@ impl EthernetTransmission {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct EthernetLinkLane {
     busy_until_tick: Option<u64>,
+    delay_variation: Option<EthernetLinkDelayVariation>,
     pending_deliveries: VecDeque<EthernetTransmission>,
 }
 
@@ -323,7 +405,29 @@ impl EthernetLinkLane {
     const fn new() -> Self {
         Self {
             busy_until_tick: None,
+            delay_variation: None,
             pending_deliveries: VecDeque::new(),
+        }
+    }
+
+    fn new_with_delay_variation(delay_variation: EthernetLinkDelayVariation) -> Self {
+        Self {
+            busy_until_tick: None,
+            delay_variation: Some(delay_variation),
+            pending_deliveries: VecDeque::new(),
+        }
+    }
+
+    fn peek_delay_variation_ticks(&self) -> u64 {
+        self.delay_variation
+            .as_ref()
+            .map(EthernetLinkDelayVariation::peek)
+            .unwrap_or(0)
+    }
+
+    fn advance_delay_variation(&mut self) {
+        if let Some(delay_variation) = &mut self.delay_variation {
+            delay_variation.advance();
         }
     }
 
@@ -675,6 +779,10 @@ pub enum NetworkError {
     InvalidEthernetLinkRate {
         ticks_per_byte: u64,
     },
+    InvalidEthernetLinkDelayVariation {
+        max_delay_ticks: u64,
+        delay_ticks: u64,
+    },
     EthernetLinkBusy {
         direction: EthernetLinkDirection,
         request_tick: u64,
@@ -756,6 +864,13 @@ impl fmt::Display for NetworkError {
             Self::InvalidEthernetLinkRate { ticks_per_byte } => write!(
                 formatter,
                 "ethernet link ticks per byte {ticks_per_byte} must be positive"
+            ),
+            Self::InvalidEthernetLinkDelayVariation {
+                max_delay_ticks,
+                delay_ticks,
+            } => write!(
+                formatter,
+                "ethernet link delay variation {delay_ticks} exceeds maximum {max_delay_ticks}"
             ),
             Self::EthernetLinkBusy {
                 direction,
