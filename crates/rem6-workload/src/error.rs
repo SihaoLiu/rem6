@@ -1042,6 +1042,11 @@ pub enum WorkloadError {
         minimum_batch_count: usize,
         actual_batch_count: usize,
     },
+    UnexpectedParallelBatchWorkerCount {
+        scope: WorkloadParallelBatchWorkerScope,
+        worker_count: usize,
+        batch_count: usize,
+    },
     InvalidExpectedParallelBatchWorkerBucket {
         scope: WorkloadParallelBatchWorkerScope,
         worker_count: usize,

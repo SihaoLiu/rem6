@@ -323,6 +323,59 @@ fn workload_replay_plan_rejects_weak_explicit_full_system_batch_worker_bucket() 
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_explicit_full_system_batch_worker_counts() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(expected_bucket(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            4,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+            WorkloadParallelBatchWorkerCount::new(2, 2),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchWorkerCount {
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
+            worker_count: 2,
+            batch_count: 2,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_empty_explicit_full_system_batch_worker_counts() {
+    let plan = replay_plan()
+        .add_expected_parallel_batch_worker_bucket(expected_bucket(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            2,
+            1,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_batch_worker_counts([
+            WorkloadParallelBatchWorkerCount::new(0, 1),
+        ]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelBatchWorkerCount {
+            scope: WorkloadParallelBatchWorkerScope::FullSystem,
+            worker_count: 0,
+            batch_count: 1,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_malformed_timeline_for_batch_worker_buckets() {
     let plan = replay_plan()
         .add_expected_parallel_batch_worker_bucket(expected_bucket(

@@ -709,6 +709,12 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub(crate) fn raw_full_system_parallel_scheduler_batch_worker_counts(
+        &self,
+    ) -> &[WorkloadParallelBatchWorkerCount] {
+        &self.raw_full_system_parallel_scheduler_batch_worker_counts
+    }
+
     pub(crate) fn scoped_full_system_parallel_scheduler_batch_partition_sets(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionSet> {

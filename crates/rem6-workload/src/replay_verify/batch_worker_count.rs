@@ -78,6 +78,7 @@ fn validate_full_system_batch_worker_count_merge_summary(
     summary: &WorkloadParallelExecutionSummary,
     worker_count: usize,
 ) -> Result<(), WorkloadError> {
+    validate_raw_full_system_batch_worker_counts(summary)?;
     let merged_counts = summary.explicit_full_system_parallel_scheduler_batch_worker_counts();
     if merged_counts.is_empty() {
         return Ok(());
@@ -94,6 +95,23 @@ fn validate_full_system_batch_worker_count_merge_summary(
             minimum_batch_count: lower_bound_batch_count,
             actual_batch_count,
         });
+    }
+    Ok(())
+}
+
+fn validate_raw_full_system_batch_worker_counts(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), WorkloadError> {
+    let mut seen_worker_counts = Vec::new();
+    for count in summary.raw_full_system_parallel_scheduler_batch_worker_counts() {
+        if count.is_empty() || seen_worker_counts.contains(&count.worker_count()) {
+            return Err(WorkloadError::UnexpectedParallelBatchWorkerCount {
+                scope: WorkloadParallelBatchWorkerScope::FullSystem,
+                worker_count: count.worker_count(),
+                batch_count: count.batch_count(),
+            });
+        }
+        seen_worker_counts.push(count.worker_count());
     }
     Ok(())
 }

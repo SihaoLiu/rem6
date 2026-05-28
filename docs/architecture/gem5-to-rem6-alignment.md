@@ -746,6 +746,11 @@ Implementation evidence on 2026-05-26:
   by retaining the strongest active and idle tick evidence per slot. A runtime
   full-system summary therefore cannot hide device-side worker slots merely by
   publishing a shorter global slot list.
+- Explicit recorded full-system worker-count buckets retain their raw replay
+  evidence separately from the normalized reporting view. Replay rejects empty
+  or duplicate global worker-count buckets before merge lower-bound checks, so
+  a convenient aggregate cannot silently collapse malformed full-system
+  evidence.
 - Explicit recorded full-system batch timelines must also cover scoped runtime
   scheduler, data-cache, GPU DMA, and accelerator DMA records before reporting
   APIs use them as the full-system timeline. Runtime timeline queries therefore

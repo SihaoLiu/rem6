@@ -994,6 +994,7 @@ impl fmt::Display for WorkloadError {
             | Self::MissingParallelBatchActivitySummary { .. }
             | Self::ExpectedParallelBatchActivityBelowMinimum { .. }
             | Self::ParallelBatchWorkerCountBelowMinimum { .. }
+            | Self::UnexpectedParallelBatchWorkerCount { .. }
             | Self::InvalidExpectedParallelBatchWorkerBucket { .. }
             | Self::ZeroExpectedParallelBatchWorkerBucket { .. }
             | Self::DuplicateExpectedParallelBatchWorkerBucket { .. }

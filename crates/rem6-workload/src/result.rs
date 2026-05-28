@@ -212,6 +212,7 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_parallel_scheduler_epoch_count: usize,
     full_system_parallel_scheduler_empty_epoch_count: usize,
     full_system_parallel_scheduler_dispatch_count: usize,
+    raw_full_system_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     full_system_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     full_system_parallel_scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
     full_system_parallel_scheduler_batch_worker_tick_streaks: Vec<(usize, Tick)>,
@@ -526,8 +527,13 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         counts: impl IntoIterator<Item = WorkloadParallelBatchWorkerCount>,
     ) -> Self {
+        self.raw_full_system_parallel_scheduler_batch_worker_counts = counts.into_iter().collect();
         self.full_system_parallel_scheduler_batch_worker_counts =
-            collect_parallel_batch_worker_counts(counts);
+            collect_parallel_batch_worker_counts(
+                self.raw_full_system_parallel_scheduler_batch_worker_counts
+                    .iter()
+                    .copied(),
+            );
         self
     }
 

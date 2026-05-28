@@ -62,6 +62,15 @@ pub(super) fn format_parallel_batch_error(
             "{} batch worker-count bucket {worker_count} has {actual_batch_count} batches, below {minimum_batch_count}",
             scope.as_str()
         ),
+        WorkloadError::UnexpectedParallelBatchWorkerCount {
+            scope,
+            worker_count,
+            batch_count,
+        } => write!(
+            formatter,
+            "unexpected {} batch worker-count bucket {worker_count} with {batch_count} batches",
+            scope.as_str()
+        ),
         WorkloadError::InvalidExpectedParallelBatchWorkerBucket {
             scope,
             worker_count,
