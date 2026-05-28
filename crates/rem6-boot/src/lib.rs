@@ -34,6 +34,10 @@ impl BootImage {
         self.entry
     }
 
+    pub fn from_elf(bytes: &[u8]) -> Result<Self, BootError> {
+        parse_elf(bytes)
+    }
+
     pub fn from_elf64_le(bytes: &[u8]) -> Result<Self, BootError> {
         parse_elf64_le(bytes)
     }
@@ -282,6 +286,14 @@ fn zero_line(layout: CacheLineLayout) -> Vec<u8> {
     vec![0; layout.bytes() as usize]
 }
 
+fn parse_elf(bytes: &[u8]) -> Result<BootImage, BootError> {
+    match detect_elf_class(bytes)? {
+        ELF_CLASS_32 => parse_elf32_le(bytes),
+        ELF_CLASS_64 => parse_elf64_le(bytes),
+        class => Err(invalid_elf(BootElfError::UnsupportedClass { class })),
+    }
+}
+
 fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     validate_elf_ident(bytes, ELF_CLASS_64)?;
     let header_size = read_u16(bytes, 52)?;
@@ -525,14 +537,21 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
 }
 
 fn validate_elf_ident(bytes: &[u8], expected_class: u8) -> Result<(), BootError> {
+    let class = detect_elf_class(bytes)?;
+    if class != expected_class {
+        return Err(invalid_elf(BootElfError::UnsupportedClass { class }));
+    }
+    Ok(())
+}
+
+fn detect_elf_class(bytes: &[u8]) -> Result<u8, BootError> {
     let ident = read_exact(bytes, 0, 16)?;
     if &ident[0..4] != b"\x7fELF" {
         return Err(invalid_elf(BootElfError::BadMagic));
     }
-    if ident[4] != expected_class {
-        return Err(invalid_elf(BootElfError::UnsupportedClass {
-            class: ident[4],
-        }));
+    let class = ident[4];
+    if !matches!(class, ELF_CLASS_32 | ELF_CLASS_64) {
+        return Err(invalid_elf(BootElfError::UnsupportedClass { class }));
     }
     if ident[5] != ELF_DATA_LITTLE {
         return Err(invalid_elf(BootElfError::UnsupportedEncoding {
@@ -544,7 +563,7 @@ fn validate_elf_ident(bytes: &[u8], expected_class: u8) -> Result<(), BootError>
             version: ident[6],
         }));
     }
-    Ok(())
+    Ok(class)
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, BootError> {

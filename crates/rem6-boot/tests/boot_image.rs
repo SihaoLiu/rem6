@@ -202,6 +202,64 @@ fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
 }
 
 #[test]
+fn boot_image_detects_little_endian_elf_class() {
+    let elf64 = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 8,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    let elf32 = elf32_image(
+        0x8040,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x9000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x93, 0x05, 0x10, 0x00])],
+    );
+
+    assert_eq!(
+        BootImage::from_elf(&elf64).unwrap(),
+        BootImage::from_elf64_le(&elf64).unwrap(),
+    );
+    assert_eq!(
+        BootImage::from_elf(&elf32).unwrap(),
+        BootImage::from_elf32_le(&elf32).unwrap(),
+    );
+}
+
+#[test]
+fn boot_image_detects_unsupported_elf_encoding() {
+    let mut elf = elf64_image(
+        0x8000,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    elf[5] = 2;
+
+    assert_eq!(
+        BootImage::from_elf(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::UnsupportedEncoding { encoding: 2 },
+        },
+    );
+}
+
+#[test]
 fn boot_image_rejects_elf64_segment_memory_overflow_with_segment_context() {
     let elf = elf64_image(
         0x8000,
