@@ -361,6 +361,10 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
             [gpu, memory],
             2,
         )],
+        scheduler_planned_batch_worker_lanes: vec![
+            workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 0, gpu, 0, 4),
+            workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 1, memory, 0, 4),
+        ],
         scheduler_recorded_batch_worker_capacity_ticks: 12,
         scheduler_recorded_batch_worker_slot_tick_summaries: vec![(0, 4, 0), (1, 4, 0), (2, 0, 4)],
         ..WorkloadGpuDmaActivity::default()
@@ -373,6 +377,13 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
             8,
             [accelerator],
             1,
+        )],
+        scheduler_planned_batch_worker_lanes: vec![workload_lane_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            0,
+            accelerator,
+            4,
+            8,
         )],
         scheduler_recorded_batch_worker_capacity_ticks: 8,
         scheduler_recorded_batch_worker_slot_tick_summaries: vec![(0, 4, 0), (1, 0, 4)],
@@ -390,6 +401,42 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
         None,
     );
 
+    assert_eq!(
+        summary.gpu_dma_scheduler_planned_batch_worker_lanes(),
+        gpu_dma.scheduler_planned_batch_worker_lanes.as_slice(),
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_planned_batch_worker_lane_tick_summaries(),
+        vec![(0, 4), (1, 4)],
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_planned_batch_worker_lane_partition_ticks(1, memory),
+        4,
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_planned_batch_worker_lanes(),
+        accelerator_dma
+            .scheduler_planned_batch_worker_lanes
+            .as_slice(),
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_planned_batch_worker_lane_tick_summaries(),
+        vec![(0, 4)],
+    );
+    assert_eq!(
+        summary.dma_scheduler_planned_batch_worker_lanes(),
+        vec![
+            workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 0, gpu, 0, 4),
+            workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 1, memory, 0, 4),
+            workload_lane_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                0,
+                accelerator,
+                4,
+                8,
+            ),
+        ],
+    );
     assert_eq!(summary.gpu_dma_scheduler_recorded_batch_worker_ticks(), 8);
     assert_eq!(
         summary.gpu_dma_scheduler_recorded_batch_worker_capacity_ticks(),

@@ -715,6 +715,12 @@ Implementation evidence on 2026-05-26:
   Heterogeneous device schedulers can now prove pre-dispatch parallel DMA
   occupancy through exact timeline, worker-bucket, partition-set, and planned
   utilization contracts.
+- GPU DMA and accelerator DMA replay now carry scheduler planned worker-lane
+  records from recorded read/write runs into workload summaries. Direct GPU,
+  direct accelerator, and combined DMA queries can report lane, partition,
+  start tick, and horizon ownership, so device-side DMA parallelism is audited
+  from the scheduler's pre-dispatch plan instead of inferred from executed
+  batch counters.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global

@@ -1,21 +1,22 @@
 use rem6_workload::{
-    WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
+    WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
     WorkloadDramQosRequestorSummary, WorkloadExpectedCleanParallelDiagnostics,
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
-    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord,
-    WorkloadParallelExecutionSummary, WorkloadTopology,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelExecutionSummary, WorkloadTopology,
 };
 
+mod conversions;
+
+use self::conversions::{
+    workload_data_cache_protocol, workload_parallel_batch_timeline_record,
+    workload_parallel_batch_worker_lane_record,
+};
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
 use crate::workload_replay_heterogeneous::{
     wait_for_blocked_node_windows_from_edges, wait_for_edge_kind_windows_from_edges,
     wait_for_target_node_windows_from_edges, WorkloadAcceleratorActivity, WorkloadGpuActivity,
 };
-use crate::{
-    RiscvDataCacheProtocol, RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
-    RiscvSystemParallelBatchWorkerLaneRecord, RiscvSystemRun,
-};
+use crate::RiscvSystemRun;
 
 pub(super) struct WorkloadReplayActivityRefs<'a> {
     pub(super) gpu: &'a WorkloadGpuActivity,
@@ -379,6 +380,13 @@ pub(super) fn parallel_execution_summary(
         .with_gpu_dma_scheduler_batch_timeline(
             activities.gpu_dma.scheduler_batch_timeline.iter().cloned(),
         )
+        .with_gpu_dma_scheduler_planned_batch_worker_lanes(
+            activities
+                .gpu_dma
+                .scheduler_planned_batch_worker_lanes
+                .iter()
+                .copied(),
+        )
         .with_gpu_dma_scheduler_recorded_batch_worker_capacity_ticks(
             activities
                 .gpu_dma
@@ -509,6 +517,13 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .cloned(),
         )
+        .with_accelerator_dma_scheduler_planned_batch_worker_lanes(
+            activities
+                .accelerator_dma
+                .scheduler_planned_batch_worker_lanes
+                .iter()
+                .copied(),
+        )
         .with_accelerator_dma_scheduler_recorded_batch_worker_capacity_ticks(
             activities
                 .accelerator_dma
@@ -584,49 +599,6 @@ pub(super) fn livelock_transition_threshold(
         .filter_map(|diagnostics| diagnostics.livelock_transition_threshold())
         .min()
 }
-fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
-    match protocol {
-        RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
-        RiscvDataCacheProtocol::Mesi => WorkloadDataCacheProtocol::Mesi,
-        RiscvDataCacheProtocol::Moesi => WorkloadDataCacheProtocol::Moesi,
-        RiscvDataCacheProtocol::Chi => WorkloadDataCacheProtocol::Chi,
-    }
-}
-fn workload_parallel_batch_timeline_record(
-    record: RiscvSystemParallelBatchTimelineRecord,
-) -> WorkloadParallelBatchTimelineRecord {
-    WorkloadParallelBatchTimelineRecord::new(
-        workload_parallel_batch_scope(record.scope()),
-        record.start_tick(),
-        record.horizon(),
-        record.partitions().iter().copied(),
-        record.worker_count(),
-    )
-}
-
-fn workload_parallel_batch_worker_lane_record(
-    record: RiscvSystemParallelBatchWorkerLaneRecord,
-) -> WorkloadParallelBatchWorkerLaneRecord {
-    WorkloadParallelBatchWorkerLaneRecord::new(
-        workload_parallel_batch_scope(record.scope()),
-        record.lane(),
-        record.partition(),
-        record.start_tick(),
-        record.horizon(),
-    )
-}
-
-fn workload_parallel_batch_scope(
-    scope: RiscvSystemParallelBatchScope,
-) -> WorkloadParallelBatchScope {
-    match scope {
-        RiscvSystemParallelBatchScope::Scheduler => WorkloadParallelBatchScope::Scheduler,
-        RiscvSystemParallelBatchScope::DataCacheScheduler => {
-            WorkloadParallelBatchScope::DataCacheScheduler
-        }
-    }
-}
-
 #[cfg(test)]
 mod planned_batch_timeline_tests;
 
