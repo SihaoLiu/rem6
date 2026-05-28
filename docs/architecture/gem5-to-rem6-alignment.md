@@ -756,6 +756,11 @@ Implementation evidence on 2026-05-26:
   worker-count duration summaries before tick-bucket, tick-activity,
   tick-streak, or worker-tick lower-bound checks, preventing normalized
   duration sums from hiding contradictory multicore occupancy records.
+- Explicit recorded full-system partition-set and partition-streak summaries
+  also retain raw replay evidence. Replay rejects empty, single-partition, or
+  duplicate global partition summaries before strongest-evidence merge checks,
+  so normalized partition-set aggregation cannot erase contradictory multicore
+  placement evidence.
 - Explicit recorded full-system batch timelines must also cover scoped runtime
   scheduler, data-cache, GPU DMA, and accelerator DMA records before reporting
   APIs use them as the full-system timeline. Runtime timeline queries therefore

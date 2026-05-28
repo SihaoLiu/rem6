@@ -1024,6 +1024,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidExpectedParallelBatchPartitionSet { .. }
             | Self::ZeroExpectedParallelBatchPartitionSetCount { .. }
             | Self::DuplicateExpectedParallelBatchPartitionSet { .. }
+            | Self::UnexpectedParallelBatchPartitionSummary { .. }
             | Self::MissingParallelBatchPartitionSetSummary { .. }
             | Self::ExpectedParallelBatchPartitionSetBelowMinimum { .. }
             | Self::InvalidExpectedParallelBatchPartitionStreak { .. }

@@ -727,6 +727,18 @@ impl WorkloadParallelExecutionSummary {
         &self.raw_full_system_parallel_scheduler_batch_worker_tick_streaks
     }
 
+    pub(crate) fn raw_full_system_parallel_scheduler_batch_partition_sets(
+        &self,
+    ) -> &[WorkloadParallelBatchPartitionSet] {
+        &self.raw_full_system_parallel_scheduler_batch_partition_sets
+    }
+
+    pub(crate) fn raw_full_system_parallel_scheduler_batch_partition_streaks(
+        &self,
+    ) -> &[WorkloadParallelBatchPartitionStreak] {
+        &self.raw_full_system_parallel_scheduler_batch_partition_streaks
+    }
+
     pub(crate) fn scoped_full_system_parallel_scheduler_batch_partition_sets(
         &self,
     ) -> Vec<WorkloadParallelBatchPartitionSet> {

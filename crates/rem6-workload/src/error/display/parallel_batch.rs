@@ -313,6 +313,16 @@ pub(super) fn format_parallel_batch_error(
             scope.as_str(),
             format_partition_indexes(partitions)
         ),
+        WorkloadError::UnexpectedParallelBatchPartitionSummary {
+            scope,
+            partitions,
+            count,
+        } => write!(
+            formatter,
+            "unexpected {} batch partition summary {} with {count} batches",
+            scope.as_str(),
+            format_partition_indexes(partitions)
+        ),
         WorkloadError::MissingParallelBatchPartitionSetSummary {
             scope,
             partitions,

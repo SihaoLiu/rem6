@@ -226,7 +226,10 @@ pub struct WorkloadParallelExecutionSummary {
     recorded_batch_worker_capacity_ticks: batch_timeline::WorkloadRecordedBatchWorkerCapacityTicks,
     recorded_batch_worker_slot_tick_summaries:
         batch_timeline::WorkloadRecordedBatchWorkerSlotTickSummaries,
+    raw_full_system_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     full_system_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
+    raw_full_system_parallel_scheduler_batch_partition_streaks:
+        Vec<WorkloadParallelBatchPartitionStreak>,
     full_system_parallel_scheduler_batch_partition_streaks:
         Vec<WorkloadParallelBatchPartitionStreak>,
     full_system_parallel_scheduler_partition_activities:
@@ -543,8 +546,13 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         sets: impl IntoIterator<Item = WorkloadParallelBatchPartitionSet>,
     ) -> Self {
+        self.raw_full_system_parallel_scheduler_batch_partition_sets = sets.into_iter().collect();
         self.full_system_parallel_scheduler_batch_partition_sets =
-            collect_parallel_batch_partition_sets(sets);
+            collect_parallel_batch_partition_sets(
+                self.raw_full_system_parallel_scheduler_batch_partition_sets
+                    .iter()
+                    .cloned(),
+            );
         self
     }
 
@@ -552,8 +560,14 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         streaks: impl IntoIterator<Item = WorkloadParallelBatchPartitionStreak>,
     ) -> Self {
+        self.raw_full_system_parallel_scheduler_batch_partition_streaks =
+            streaks.into_iter().collect();
         self.full_system_parallel_scheduler_batch_partition_streaks =
-            collect_parallel_batch_partition_streaks(streaks);
+            collect_parallel_batch_partition_streaks(
+                self.raw_full_system_parallel_scheduler_batch_partition_streaks
+                    .iter()
+                    .cloned(),
+            );
         self
     }
 

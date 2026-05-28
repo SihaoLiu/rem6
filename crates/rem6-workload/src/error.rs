@@ -1189,6 +1189,11 @@ pub enum WorkloadError {
         scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
     },
+    UnexpectedParallelBatchPartitionSummary {
+        scope: WorkloadParallelBatchPartitionScope,
+        partitions: Vec<u32>,
+        count: usize,
+    },
     MissingParallelBatchPartitionSetSummary {
         scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,
