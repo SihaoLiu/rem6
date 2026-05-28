@@ -196,6 +196,63 @@ fn pci_msi_snapshot_restore_preserves_configured_message_state() {
 }
 
 #[test]
+fn pci_endpoint_snapshot_exposes_msi_payload_for_checkpoint_audit() {
+    let mut endpoint = storage_endpoint();
+    program_enabled_msi(&mut endpoint);
+    endpoint
+        .write_u32(PciConfigOffset::new(0x60).unwrap(), 0b0100)
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payload = snapshot.msi_payload().unwrap();
+
+    assert_eq!(snapshot.validate_msi_payload(&payload), Ok(()));
+    let no_msi = storage_endpoint().snapshot();
+    assert_eq!(no_msi.msi_payload(), None);
+    assert_eq!(
+        no_msi.validate_msi_payload(&payload),
+        Err(PciError::SnapshotMsiCapabilityMismatch)
+    );
+
+    let different_message = {
+        let mut endpoint = storage_endpoint();
+        program_enabled_msi(&mut endpoint);
+        endpoint
+            .write_config(
+                PciConfigOffset::new(0x5c).unwrap(),
+                &0x0050_u16.to_le_bytes(),
+            )
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_message.validate_msi_payload(&payload),
+        Err(PciError::SnapshotMsiCapabilityMismatch)
+    );
+    let different_spec = {
+        let mut endpoint = storage_endpoint();
+        endpoint
+            .install_msi_capability(
+                PciMsiCapabilitySpec::new(PciConfigOffset::new(0x70).unwrap(), 2, true, true)
+                    .unwrap(),
+            )
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_spec.validate_msi_payload(&payload),
+        Err(PciError::SnapshotMsiCapabilityMismatch)
+    );
+
+    let mut corrupted = payload;
+    corrupted.push(0);
+    assert_eq!(
+        snapshot.validate_msi_payload(&corrupted),
+        Err(PciError::InvalidMsiCapabilitySnapshot)
+    );
+}
+
+#[test]
 fn pci_msi_port_sends_configured_message_on_serial_scheduler() {
     let mut endpoint = storage_endpoint();
     program_enabled_msi(&mut endpoint);

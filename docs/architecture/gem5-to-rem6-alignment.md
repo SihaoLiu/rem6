@@ -1431,8 +1431,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   read-only device and slot capability rejection, and overlap rejection without
   mutating existing config bytes. MSI tests cover capability header exposure,
   clamped vector enable state, message-address masking, vector masks, snapshot
-  restore, duplicate and invalid capability layouts, and serial plus parallel
-  MSI delivery through typed rem6-interrupt routes. MSI-X tests cover typed
+  restore, stable payload encoding for endpoint checkpoint audit, duplicate and
+  invalid capability layouts, and serial plus parallel MSI delivery through
+  typed rem6-interrupt routes. MSI-X tests cover typed
   capability table and PBA register exposure, BAR-local table programming,
   vector and function masks, table plus pending-bit snapshot restore, invalid
   and overlapping layout rejection, serial delivery, and masked parallel
@@ -1469,7 +1470,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   state now has the first exposed byte codec: endpoint snapshots can emit a PM
   payload and validate a candidate payload against the typed PM spec plus
   current PMCSR, rejecting malformed bytes or live-snapshot mismatches before a
-  broader PCI config checkpoint restore mutates device state.
+  broader PCI config checkpoint restore mutates device state. MSI capability
+  state now follows the same audit pattern for vector count, 64-bit and
+  per-vector-mask support, enabled vectors, programmed address and data, and
+  mask and pending bits.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status

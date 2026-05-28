@@ -789,6 +789,19 @@ impl PciEndpointConfigSnapshot {
             Err(PciError::SnapshotPowerManagementCapabilityMismatch)
         }
     }
+
+    pub fn msi_payload(&self) -> Option<Vec<u8>> {
+        self.msi.as_ref().map(msi::PciMsiCapabilityState::to_bytes)
+    }
+
+    pub fn validate_msi_payload(&self, payload: &[u8]) -> Result<(), PciError> {
+        let decoded = msi::PciMsiCapabilityState::from_bytes(payload)?;
+        if self.msi.as_ref() == Some(&decoded) {
+            Ok(())
+        } else {
+            Err(PciError::SnapshotMsiCapabilityMismatch)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

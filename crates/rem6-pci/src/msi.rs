@@ -26,6 +26,14 @@ const PCI_MSI_MULTIPLE_CAPABLE_SHIFT: u16 = 1;
 const PCI_MSI_MULTIPLE_ENABLE_SHIFT: u16 = 4;
 const PCI_MSI_64_BIT_CAPABLE_BIT: u16 = 1 << 7;
 const PCI_MSI_PER_VECTOR_MASK_BIT: u16 = 1 << 8;
+const PCI_MSI_SNAPSHOT_MAGIC: &[u8; 8] = b"R6PCMSI1";
+const PCI_MSI_SNAPSHOT_VERSION: u16 = 1;
+const PCI_MSI_SNAPSHOT_SUPPORTS_64_BIT: u8 = 1 << 0;
+const PCI_MSI_SNAPSHOT_PER_VECTOR_MASKING: u8 = 1 << 1;
+const PCI_MSI_SNAPSHOT_ENABLED: u8 = 1 << 2;
+const U16_BYTES: usize = 2;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciMsiCapabilitySpec {
@@ -158,6 +166,25 @@ impl PciMsiCapabilityState {
         self.spec
     }
 
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_MSI_SNAPSHOT_MAGIC);
+        write_u16(&mut payload, PCI_MSI_SNAPSHOT_VERSION);
+        write_u16(&mut payload, self.spec.offset().get());
+        payload.push(self.spec.vector_count());
+        payload.push(self.snapshot_flags());
+        payload.push(self.enabled_vector_bits);
+        write_u64(&mut payload, self.address);
+        write_u16(&mut payload, self.data);
+        write_u32(&mut payload, self.mask_bits);
+        write_u32(&mut payload, self.pending_bits);
+        payload
+    }
+
+    pub(crate) fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        decode_state(payload).ok_or(PciError::InvalidMsiCapabilitySnapshot)
+    }
+
     pub(crate) fn install_into(&self, config: &mut [u8; PCI_CONFIG_SPACE_SIZE]) {
         let base = self.spec.offset().as_usize();
         config[base] = PCI_MSI_CAPABILITY_ID;
@@ -167,11 +194,23 @@ impl PciMsiCapabilityState {
             base + PCI_MSI_CONTROL_OFFSET as usize,
             self.control(),
         );
-        write_u32_at(config, base + PCI_MSI_ADDRESS_OFFSET as usize, 0);
-        write_u32_at(config, base + PCI_MSI_UPPER_ADDRESS_OFFSET as usize, 0);
-        write_u16_at(config, base + PCI_MSI_DATA_OFFSET as usize, 0);
-        write_u32_at(config, base + PCI_MSI_MASK_OFFSET as usize, 0);
-        write_u32_at(config, base + PCI_MSI_PENDING_OFFSET as usize, 0);
+        write_u32_at(
+            config,
+            base + PCI_MSI_ADDRESS_OFFSET as usize,
+            self.address as u32,
+        );
+        write_u32_at(
+            config,
+            base + PCI_MSI_UPPER_ADDRESS_OFFSET as usize,
+            (self.address >> 32) as u32,
+        );
+        write_u16_at(config, base + PCI_MSI_DATA_OFFSET as usize, self.data);
+        write_u32_at(config, base + PCI_MSI_MASK_OFFSET as usize, self.mask_bits);
+        write_u32_at(
+            config,
+            base + PCI_MSI_PENDING_OFFSET as usize,
+            self.pending_bits,
+        );
     }
 
     pub(crate) fn contains(&self, offset: PciConfigOffset, size: AccessSize) -> bool {
@@ -278,6 +317,112 @@ impl PciMsiCapabilityState {
     fn masked(&self, vector: u8) -> bool {
         self.spec.per_vector_masking() && (self.mask_bits & (1_u32 << vector)) != 0
     }
+
+    fn snapshot_flags(&self) -> u8 {
+        let mut flags = 0;
+        if self.spec.supports_64_bit() {
+            flags |= PCI_MSI_SNAPSHOT_SUPPORTS_64_BIT;
+        }
+        if self.spec.per_vector_masking() {
+            flags |= PCI_MSI_SNAPSHOT_PER_VECTOR_MASKING;
+        }
+        if self.enabled {
+            flags |= PCI_MSI_SNAPSHOT_ENABLED;
+        }
+        flags
+    }
+}
+
+fn decode_state(payload: &[u8]) -> Option<PciMsiCapabilityState> {
+    let mut cursor = 0;
+    let magic = read_exact(payload, &mut cursor, PCI_MSI_SNAPSHOT_MAGIC.len())?;
+    if magic != PCI_MSI_SNAPSHOT_MAGIC {
+        return None;
+    }
+    if read_u16(payload, &mut cursor)? != PCI_MSI_SNAPSHOT_VERSION {
+        return None;
+    }
+    let offset = PciConfigOffset::new(read_u16(payload, &mut cursor)?).ok()?;
+    let vector_count = read_u8(payload, &mut cursor)?;
+    let flags = read_u8(payload, &mut cursor)?;
+    let known_flags = PCI_MSI_SNAPSHOT_SUPPORTS_64_BIT
+        | PCI_MSI_SNAPSHOT_PER_VECTOR_MASKING
+        | PCI_MSI_SNAPSHOT_ENABLED;
+    if flags & !known_flags != 0 {
+        return None;
+    }
+    let enabled_vector_bits = read_u8(payload, &mut cursor)?;
+    let address = read_u64(payload, &mut cursor)?;
+    let data = read_u16(payload, &mut cursor)?;
+    let mask_bits = read_u32(payload, &mut cursor)?;
+    let pending_bits = read_u32(payload, &mut cursor)?;
+    if cursor != payload.len() || address & 0x3 != 0 {
+        return None;
+    }
+
+    let supports_64_bit = flags & PCI_MSI_SNAPSHOT_SUPPORTS_64_BIT != 0;
+    let per_vector_masking = flags & PCI_MSI_SNAPSHOT_PER_VECTOR_MASKING != 0;
+    if !supports_64_bit && address >> 32 != 0 {
+        return None;
+    }
+    if !per_vector_masking && (mask_bits != 0 || pending_bits != 0) {
+        return None;
+    }
+
+    let spec = PciMsiCapabilitySpec::new(offset, vector_count, supports_64_bit, per_vector_masking)
+        .ok()?;
+    if enabled_vector_bits > spec.multiple_message_capable_bits() {
+        return None;
+    }
+    Some(PciMsiCapabilityState {
+        spec,
+        enabled: flags & PCI_MSI_SNAPSHOT_ENABLED != 0,
+        enabled_vector_bits,
+        address,
+        data,
+        mask_bits,
+        pending_bits,
+    })
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u8(payload: &[u8], cursor: &mut usize) -> Option<u8> {
+    let byte = *payload.get(*cursor)?;
+    *cursor += 1;
+    Some(byte)
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Option<u16> {
+    let bytes = read_exact(payload, cursor, U16_BYTES)?;
+    Some(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u32(payload: &[u8], cursor: &mut usize) -> Option<u32> {
+    let bytes = read_exact(payload, cursor, U32_BYTES)?;
+    Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u64(payload: &[u8], cursor: &mut usize) -> Option<u64> {
+    let bytes = read_exact(payload, cursor, U64_BYTES)?;
+    Some(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_exact<'a>(payload: &'a [u8], cursor: &mut usize, length: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(length)?;
+    let bytes = payload.get(*cursor..end)?;
+    *cursor = end;
+    Some(bytes)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -431,4 +576,97 @@ impl PciMsiPort {
 
 fn msi_capability_size() -> AccessSize {
     AccessSize::new(PCI_MSI_CAPABILITY_SIZE).expect("MSI capability size is nonzero")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msi_spec(offset: u16) -> PciMsiCapabilitySpec {
+        PciMsiCapabilitySpec::new(PciConfigOffset::new(offset).unwrap(), 4, true, true).unwrap()
+    }
+
+    #[test]
+    fn msi_capability_state_codec_preserves_programmed_message_state() {
+        let spec = msi_spec(0x50);
+        let mut state = PciMsiCapabilityState::new(spec);
+        let mut config = [0; PCI_CONFIG_SPACE_SIZE];
+        state.install_into(&mut config);
+        state
+            .write_config(
+                PciConfigOffset::new(0x52).unwrap(),
+                &0x0021_u16.to_le_bytes(),
+                &mut config,
+            )
+            .unwrap();
+        state
+            .write_config(
+                PciConfigOffset::new(0x54).unwrap(),
+                &0xfee0_0123_u32.to_le_bytes(),
+                &mut config,
+            )
+            .unwrap();
+        state
+            .write_config(
+                PciConfigOffset::new(0x58).unwrap(),
+                &0x0000_0001_u32.to_le_bytes(),
+                &mut config,
+            )
+            .unwrap();
+        state
+            .write_config(
+                PciConfigOffset::new(0x5c).unwrap(),
+                &0x0040_u16.to_le_bytes(),
+                &mut config,
+            )
+            .unwrap();
+        state
+            .write_config(
+                PciConfigOffset::new(0x60).unwrap(),
+                &0b0100_u32.to_le_bytes(),
+                &mut config,
+            )
+            .unwrap();
+
+        let decoded = PciMsiCapabilityState::from_bytes(&state.to_bytes()).unwrap();
+        let mut decoded_config = [0; PCI_CONFIG_SPACE_SIZE];
+        decoded.install_into(&mut decoded_config);
+
+        assert_eq!(decoded, state);
+        assert_eq!(&decoded_config[0x50..0x68], &config[0x50..0x68]);
+    }
+
+    #[test]
+    fn msi_capability_state_codec_rejects_invalid_payloads() {
+        let state = PciMsiCapabilityState::new(msi_spec(0x50));
+        let mut payload = state.to_bytes();
+
+        assert_eq!(
+            PciMsiCapabilityState::from_bytes(&payload[..payload.len() - 1]),
+            Err(PciError::InvalidMsiCapabilitySnapshot)
+        );
+
+        payload.push(0);
+        assert_eq!(
+            PciMsiCapabilityState::from_bytes(&payload),
+            Err(PciError::InvalidMsiCapabilitySnapshot)
+        );
+
+        let mut invalid_vector_count = state.to_bytes();
+        invalid_vector_count[12] = 3;
+        assert_eq!(
+            PciMsiCapabilityState::from_bytes(&invalid_vector_count),
+            Err(PciError::InvalidMsiCapabilitySnapshot)
+        );
+
+        let non_masking = PciMsiCapabilityState::new(
+            PciMsiCapabilitySpec::new(PciConfigOffset::new(0x50).unwrap(), 1, true, false).unwrap(),
+        );
+        let mut invalid_pending_bits = non_masking.to_bytes();
+        invalid_pending_bits[29] = 1;
+        assert_eq!(
+            PciMsiCapabilityState::from_bytes(&invalid_pending_bits),
+            Err(PciError::InvalidMsiCapabilitySnapshot)
+        );
+    }
 }
