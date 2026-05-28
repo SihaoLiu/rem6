@@ -113,6 +113,27 @@ impl ExternalMemoryTopology {
             } => stacks * pseudo_channels_per_stack,
         }
     }
+
+    pub const fn topology_unit_count(self) -> u32 {
+        match self {
+            Self::Ddr {
+                channels,
+                ranks_per_channel,
+            } => channels * ranks_per_channel,
+            Self::Hbm {
+                stacks,
+                pseudo_channels_per_stack,
+            } => stacks * pseudo_channels_per_stack,
+            Self::Lpddr {
+                channels,
+                dies_per_channel,
+            } => channels * dies_per_channel,
+            Self::Nvm {
+                controllers,
+                media_banks_per_controller,
+            } => controllers * media_banks_per_controller,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -124,6 +145,81 @@ pub struct ExternalMemoryProfile {
     technology: DramMemoryTechnology,
     topology: ExternalMemoryTopology,
     nvm_media_timing: Option<NvmMediaTiming>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExternalMemoryParallelResourceSummary {
+    target: MemoryTargetId,
+    technology: DramMemoryTechnology,
+    parallel_port_count: u32,
+    topology_unit_count: u32,
+    banks_per_topology_unit: u32,
+    total_topology_bank_count: u32,
+    scheduler_bank_count: u32,
+    bank_groups_per_port: Option<u32>,
+    scheduler_bank_group_count: Option<u32>,
+}
+
+impl ExternalMemoryParallelResourceSummary {
+    const fn new(profile: ExternalMemoryProfile) -> Self {
+        let parallel_port_count = profile.parallel_port_count();
+        let topology_unit_count = profile.topology.topology_unit_count();
+        let banks_per_topology_unit = profile.geometry.bank_count();
+        let total_topology_bank_count = topology_unit_count * banks_per_topology_unit;
+        let scheduler_bank_count = parallel_port_count * banks_per_topology_unit;
+        let bank_groups_per_port = profile.geometry.bank_group_count();
+        let scheduler_bank_group_count = match bank_groups_per_port {
+            Some(bank_groups_per_port) => Some(parallel_port_count * bank_groups_per_port),
+            None => None,
+        };
+        Self {
+            target: profile.target,
+            technology: profile.technology,
+            parallel_port_count,
+            topology_unit_count,
+            banks_per_topology_unit,
+            total_topology_bank_count,
+            scheduler_bank_count,
+            bank_groups_per_port,
+            scheduler_bank_group_count,
+        }
+    }
+
+    pub const fn target(self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn technology(self) -> DramMemoryTechnology {
+        self.technology
+    }
+
+    pub const fn parallel_port_count(self) -> u32 {
+        self.parallel_port_count
+    }
+
+    pub const fn topology_unit_count(self) -> u32 {
+        self.topology_unit_count
+    }
+
+    pub const fn banks_per_topology_unit(self) -> u32 {
+        self.banks_per_topology_unit
+    }
+
+    pub const fn total_topology_bank_count(self) -> u32 {
+        self.total_topology_bank_count
+    }
+
+    pub const fn scheduler_bank_count(self) -> u32 {
+        self.scheduler_bank_count
+    }
+
+    pub const fn bank_groups_per_port(self) -> Option<u32> {
+        self.bank_groups_per_port
+    }
+
+    pub const fn scheduler_bank_group_count(self) -> Option<u32> {
+        self.scheduler_bank_group_count
+    }
 }
 
 impl ExternalMemoryProfile {
@@ -314,6 +410,14 @@ impl ExternalMemoryProfile {
 
     pub const fn parallel_port_count(self) -> u32 {
         self.topology.parallel_port_count()
+    }
+
+    pub const fn topology_unit_count(self) -> u32 {
+        self.topology.topology_unit_count()
+    }
+
+    pub const fn parallel_resource_summary(self) -> ExternalMemoryParallelResourceSummary {
+        ExternalMemoryParallelResourceSummary::new(self)
     }
 
     pub const fn controller_config(self) -> DramControllerConfig {

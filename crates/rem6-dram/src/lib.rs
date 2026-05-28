@@ -17,8 +17,8 @@ pub use activity::{
 };
 pub use memory_error::DramMemoryError;
 pub use profile::{
-    DramMemoryTechnology, DramProfileField, ExternalMemoryProfile, ExternalMemoryTopology,
-    NvmMediaTiming, NvmMediaTimingField,
+    DramMemoryTechnology, DramProfileField, ExternalMemoryParallelResourceSummary,
+    ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming, NvmMediaTimingField,
 };
 pub use profile_snapshot::DramProfileSnapshotMismatch;
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
@@ -1565,6 +1565,23 @@ impl DramMemoryController {
 
     pub fn memory_profile(&self, target: MemoryTargetId) -> Option<&ExternalMemoryProfile> {
         self.profiles.get(&target)
+    }
+
+    pub fn profile_parallel_resource_summary(
+        &self,
+        target: MemoryTargetId,
+    ) -> Option<ExternalMemoryParallelResourceSummary> {
+        self.memory_profile(target)
+            .map(|profile| profile.parallel_resource_summary())
+    }
+
+    pub fn profile_parallel_resource_summaries(
+        &self,
+    ) -> Vec<ExternalMemoryParallelResourceSummary> {
+        self.profiles
+            .values()
+            .map(|profile| profile.parallel_resource_summary())
+            .collect()
     }
 
     pub fn mark_activity(&self) -> DramMemoryActivityMarker {

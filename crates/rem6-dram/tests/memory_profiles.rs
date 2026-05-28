@@ -164,6 +164,50 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
 }
 
 #[test]
+fn external_memory_profiles_report_parallel_resource_capacity() {
+    let grouped_geometry = geometry().with_bank_groups(4).unwrap();
+    let ddr =
+        ExternalMemoryProfile::ddr(target(30), layout(), 2, 2, grouped_geometry, timing()).unwrap();
+    let hbm =
+        ExternalMemoryProfile::hbm(target(31), layout(), 2, 4, grouped_geometry, timing()).unwrap();
+    let lpddr =
+        ExternalMemoryProfile::lpddr(target(32), layout(), 3, 2, geometry(), timing()).unwrap();
+    let nvm = ExternalMemoryProfile::nvm(target(33), layout(), 2, 8, geometry(), timing()).unwrap();
+
+    let ddr_summary = ddr.parallel_resource_summary();
+    assert_eq!(ddr_summary.target(), target(30));
+    assert_eq!(ddr_summary.technology(), DramMemoryTechnology::Ddr);
+    assert_eq!(ddr_summary.parallel_port_count(), 2);
+    assert_eq!(ddr_summary.topology_unit_count(), 4);
+    assert_eq!(ddr_summary.banks_per_topology_unit(), 16);
+    assert_eq!(ddr_summary.total_topology_bank_count(), 64);
+    assert_eq!(ddr_summary.scheduler_bank_count(), 32);
+    assert_eq!(ddr_summary.bank_groups_per_port(), Some(4));
+    assert_eq!(ddr_summary.scheduler_bank_group_count(), Some(8));
+
+    let hbm_summary = hbm.parallel_resource_summary();
+    assert_eq!(hbm_summary.parallel_port_count(), 8);
+    assert_eq!(hbm_summary.topology_unit_count(), 8);
+    assert_eq!(hbm_summary.total_topology_bank_count(), 128);
+    assert_eq!(hbm_summary.scheduler_bank_count(), 128);
+    assert_eq!(hbm_summary.scheduler_bank_group_count(), Some(32));
+
+    let lpddr_summary = lpddr.parallel_resource_summary();
+    assert_eq!(lpddr_summary.parallel_port_count(), 3);
+    assert_eq!(lpddr_summary.topology_unit_count(), 6);
+    assert_eq!(lpddr_summary.total_topology_bank_count(), 96);
+    assert_eq!(lpddr_summary.scheduler_bank_count(), 48);
+    assert_eq!(lpddr_summary.bank_groups_per_port(), None);
+    assert_eq!(lpddr_summary.scheduler_bank_group_count(), None);
+
+    let nvm_summary = nvm.parallel_resource_summary();
+    assert_eq!(nvm_summary.parallel_port_count(), 2);
+    assert_eq!(nvm_summary.topology_unit_count(), 16);
+    assert_eq!(nvm_summary.total_topology_bank_count(), 256);
+    assert_eq!(nvm_summary.scheduler_bank_count(), 32);
+}
+
+#[test]
 fn external_memory_profiles_reject_zero_topology_counts() {
     assert_eq!(
         ExternalMemoryProfile::ddr(target(1), layout(), 0, 1, geometry(), timing()).unwrap_err(),
@@ -352,6 +396,35 @@ fn dram_memory_controller_reports_profile_metadata_in_target_activity() {
         DramMemoryTechnology::Nvm,
     );
     assert_eq!(activity.profile().access_count(), 1);
+}
+
+#[test]
+fn dram_memory_controller_lists_profile_parallel_resource_summaries_by_target() {
+    let ddr = ExternalMemoryProfile::ddr(target(40), layout(), 2, 2, geometry(), timing()).unwrap();
+    let hbm = ExternalMemoryProfile::hbm(target(41), layout(), 2, 4, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+
+    controller.add_profile(hbm).unwrap();
+    controller.add_profile(ddr).unwrap();
+
+    let summaries = controller.profile_parallel_resource_summaries();
+
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(summaries[0].target(), target(40));
+    assert_eq!(summaries[0].parallel_port_count(), 2);
+    assert_eq!(summaries[0].topology_unit_count(), 4);
+    assert_eq!(summaries[1].target(), target(41));
+    assert_eq!(summaries[1].parallel_port_count(), 8);
+    assert_eq!(summaries[1].topology_unit_count(), 8);
+    assert_eq!(
+        controller
+            .profile_parallel_resource_summary(target(41))
+            .unwrap(),
+        hbm.parallel_resource_summary(),
+    );
+    assert!(controller
+        .profile_parallel_resource_summary(target(42))
+        .is_none());
 }
 
 #[test]
