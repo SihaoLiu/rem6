@@ -8,9 +8,12 @@ mod fifo;
 mod memory;
 #[path = "sinic/mmio.rs"]
 mod mmio;
+#[path = "sinic/pci.rs"]
+mod pci;
 pub use fifo::*;
 pub use memory::*;
 pub use mmio::*;
+pub use pci::*;
 
 use crate::NetworkError;
 
@@ -968,6 +971,19 @@ pub enum SinicError {
     Memory {
         source: rem6_memory::MemoryError,
     },
+    PciBarBindingMismatch {
+        expected_function: rem6_pci::PciFunctionAddress,
+        actual_function: rem6_pci::PciFunctionAddress,
+        expected_bar: rem6_pci::PciBarIndex,
+        actual_bar: rem6_pci::PciBarIndex,
+    },
+    PciBarSizeMismatch {
+        expected_bytes: u64,
+        actual_bytes: u64,
+    },
+    PciEndpoint {
+        source: rem6_pci::PciError,
+    },
     Network {
         source: NetworkError,
     },
@@ -1048,6 +1064,29 @@ impl fmt::Display for SinicError {
                 interface.index()
             ),
             Self::Memory { source } => write!(formatter, "SINIC memory error: {source}"),
+            Self::PciBarBindingMismatch {
+                expected_function,
+                actual_function,
+                expected_bar,
+                actual_bar,
+            } => write!(
+                formatter,
+                "SINIC PCI BAR binding expected {:?} BAR {} but got {:?} BAR {}",
+                expected_function,
+                expected_bar.get(),
+                actual_function,
+                actual_bar.get()
+            ),
+            Self::PciBarSizeMismatch {
+                expected_bytes,
+                actual_bytes,
+            } => write!(
+                formatter,
+                "SINIC PCI BAR binding expected {expected_bytes} bytes but got {actual_bytes}"
+            ),
+            Self::PciEndpoint { source } => {
+                write!(formatter, "SINIC PCI endpoint error: {source}")
+            }
             Self::Network { source } => write!(formatter, "SINIC network error: {source}"),
         }
     }
@@ -1057,6 +1096,7 @@ impl Error for SinicError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Memory { source } => Some(source),
+            Self::PciEndpoint { source } => Some(source),
             Self::Network { source } => Some(source),
             _ => None,
         }

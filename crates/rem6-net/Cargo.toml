@@ -9,6 +9,7 @@ repository.workspace = true
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
 rem6-mmio = { path = "../rem6-mmio" }
+rem6-pci = { path = "../rem6-pci" }
 
 [lints]
 workspace = true
