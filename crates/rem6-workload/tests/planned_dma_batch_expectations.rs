@@ -4,10 +4,12 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchPartitionSet,
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
-    WorkloadId, WorkloadParallelBatchPartitionScope, WorkloadParallelBatchScope,
+    WorkloadExpectedPlannedParallelBatchUtilization, WorkloadId,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
-    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary, WorkloadReplayPlan,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -100,6 +102,61 @@ fn workload_summary_preserves_planned_dma_batch_timelines() {
     assert_eq!(
         summary.full_system_parallel_scheduler_planned_batch_timeline(),
         vec![gpu, accelerator],
+    );
+}
+
+#[test]
+fn workload_summary_reports_planned_dma_batch_utilization() {
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        0,
+        4,
+        [partition(10), partition(11)],
+        2,
+    );
+    let accelerator = timeline_record(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+        4,
+        8,
+        [partition(20), partition(21)],
+        2,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_planned_batch_timeline([gpu])
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(16)
+        .with_accelerator_dma_scheduler_planned_batch_timeline([accelerator])
+        .with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(8);
+
+    assert_eq!(summary.gpu_dma_scheduler_planned_batch_worker_ticks(), 8);
+    assert_eq!(
+        summary.gpu_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        16
+    );
+    assert_eq!(
+        summary
+            .gpu_dma_scheduler_planned_batch_utilization_ratio()
+            .unwrap()
+            .numerator(),
+        8
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_planned_batch_worker_ticks(),
+        8
+    );
+    assert_eq!(
+        summary.dma_scheduler_planned_batch_worker_capacity_ticks(),
+        24
+    );
+    assert_eq!(
+        summary
+            .dma_scheduler_planned_batch_utilization_ratio()
+            .unwrap()
+            .denominator(),
+        24
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        24
     );
 }
 
@@ -245,5 +302,81 @@ fn workload_replay_plan_checks_planned_dma_timeline_worker_and_partition_contrac
             minimum_batch_count: 2,
             actual_batch_count: 0,
         },
+    );
+}
+
+#[test]
+fn workload_replay_plan_checks_planned_dma_utilization_contracts() {
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        0,
+        4,
+        [partition(10), partition(11)],
+        2,
+    );
+    let accelerator = timeline_record(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+        4,
+        8,
+        [partition(20), partition(21)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_planned_parallel_batch_utilization(
+            WorkloadExpectedPlannedParallelBatchUtilization::new(
+                WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler,
+                1,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_expected_planned_parallel_batch_utilization(
+            WorkloadExpectedPlannedParallelBatchUtilization::new(
+                WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler,
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_expected_planned_parallel_batch_utilization(
+            WorkloadExpectedPlannedParallelBatchUtilization::new(
+                WorkloadParallelBatchWorkerScope::PlannedDmaScheduler,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_planned_batch_timeline([gpu.clone()])
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(16)
+        .with_accelerator_dma_scheduler_planned_batch_timeline([accelerator.clone()])
+        .with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(8);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let underutilized = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_planned_batch_timeline([gpu])
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(20)
+        .with_accelerator_dma_scheduler_planned_batch_timeline([accelerator])
+        .with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(8);
+    let underutilized_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underutilized);
+
+    assert_eq!(
+        plan.verify_result(&underutilized_result).unwrap_err(),
+        WorkloadError::PlannedParallelBatchUtilizationExpectation(
+            WorkloadPlannedParallelBatchUtilizationExpectationError::BelowMinimum {
+                scope: WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler,
+                minimum_numerator: 1,
+                minimum_denominator: 2,
+                actual_numerator: 8,
+                actual_denominator: 20,
+            },
+        ),
     );
 }

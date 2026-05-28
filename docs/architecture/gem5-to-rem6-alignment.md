@@ -595,10 +595,11 @@ Implementation evidence on 2026-05-26:
   the pre-dispatch plan, rather than accepting post-execution serial or
   wakeup-mutated evidence as a substitute.
 - Workload manifests and replay plans can now require minimum planned
-  utilization ratios for CPU-scheduler, data-cache scheduler, and merged
-  full-system planned scopes. Planned worker capacity, idle ticks, and
-  worker-ticks are therefore checked as one manifest-owned ratio instead of
-  being reconstructed by external scripts after a run.
+  utilization ratios for CPU-scheduler, data-cache scheduler, GPU DMA,
+  accelerator DMA, combined DMA, and merged full-system planned scopes.
+  Planned worker capacity, idle ticks, and worker-ticks are therefore checked
+  as one manifest-owned ratio instead of being reconstructed by external
+  scripts after a run.
 - Planned scheduler timelines now also feed exact partition-set, sustained
   partition-streak, active-partition, and per-partition activity contracts.
   Manifest checks can therefore require which partitions were naturally planned
@@ -606,7 +607,8 @@ Implementation evidence on 2026-05-26:
 - Planned GPU DMA and accelerator DMA batch timelines are first-class workload
   evidence, with direct, combined DMA, and merged full-system planned scopes.
   Heterogeneous device schedulers can now prove pre-dispatch parallel DMA
-  occupancy through exact timeline, worker-bucket, and partition-set contracts.
+  occupancy through exact timeline, worker-bucket, partition-set, and planned
+  utilization contracts.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global

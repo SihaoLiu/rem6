@@ -598,6 +598,9 @@ impl WorkloadExpectedPlannedParallelBatchUtilization {
             scope,
             WorkloadParallelBatchWorkerScope::PlannedScheduler
                 | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+                | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+                | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+                | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
                 | WorkloadParallelBatchWorkerScope::PlannedFullSystem
         ) {
             return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
@@ -642,6 +645,15 @@ impl WorkloadExpectedPlannedParallelBatchUtilization {
             }
             WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => {
                 summary.data_cache_parallel_scheduler_planned_batch_utilization_ratio()
+            }
+            WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler => {
+                summary.gpu_dma_scheduler_planned_batch_utilization_ratio()
+            }
+            WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler => {
+                summary.accelerator_dma_scheduler_planned_batch_utilization_ratio()
+            }
+            WorkloadParallelBatchWorkerScope::PlannedDmaScheduler => {
+                summary.dma_scheduler_planned_batch_utilization_ratio()
             }
             WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
                 summary.full_system_parallel_scheduler_planned_batch_utilization_ratio()

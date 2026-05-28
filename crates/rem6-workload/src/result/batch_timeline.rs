@@ -30,6 +30,8 @@ use crate::result_partition_activity::{
 pub(super) struct WorkloadPlannedBatchWorkerCapacityTicks {
     parallel_scheduler: Tick,
     data_cache_parallel_scheduler: Tick,
+    gpu_dma_scheduler: Tick,
+    accelerator_dma_scheduler: Tick,
     full_system_parallel_scheduler: Tick,
 }
 
@@ -137,6 +139,14 @@ impl WorkloadParallelExecutionSummary {
         self
     }
 
+    pub fn with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(
+        mut self,
+        worker_capacity_ticks: Tick,
+    ) -> Self {
+        self.planned_batch_worker_capacity_ticks.gpu_dma_scheduler = worker_capacity_ticks;
+        self
+    }
+
     pub fn with_accelerator_dma_scheduler_batch_timeline(
         mut self,
         records: impl IntoIterator<Item = WorkloadParallelBatchTimelineRecord>,
@@ -163,6 +173,15 @@ impl WorkloadParallelExecutionSummary {
                 WorkloadParallelBatchScope::AcceleratorDmaScheduler,
                 records,
             );
+        self
+    }
+
+    pub fn with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(
+        mut self,
+        worker_capacity_ticks: Tick,
+    ) -> Self {
+        self.planned_batch_worker_capacity_ticks
+            .accelerator_dma_scheduler = worker_capacity_ticks;
         self
     }
 
@@ -486,6 +505,75 @@ impl WorkloadParallelExecutionSummary {
         )
     }
 
+    pub fn gpu_dma_scheduler_planned_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(&self.gpu_dma_scheduler_planned_batch_timeline)
+    }
+
+    pub fn gpu_dma_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.planned_batch_worker_capacity_ticks.gpu_dma_scheduler
+    }
+
+    pub fn gpu_dma_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.gpu_dma_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.gpu_dma_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn gpu_dma_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.gpu_dma_scheduler_planned_batch_worker_ticks(),
+            self.gpu_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
+    pub fn accelerator_dma_scheduler_planned_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(&self.accelerator_dma_scheduler_planned_batch_timeline)
+    }
+
+    pub fn accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.planned_batch_worker_capacity_ticks
+            .accelerator_dma_scheduler
+    }
+
+    pub fn accelerator_dma_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.accelerator_dma_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.accelerator_dma_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn accelerator_dma_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.accelerator_dma_scheduler_planned_batch_worker_ticks(),
+            self.accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
+    pub fn dma_scheduler_planned_batch_worker_ticks(&self) -> Tick {
+        let timeline = self.dma_scheduler_planned_batch_timeline();
+        planned_batch_worker_ticks(&timeline)
+    }
+
+    pub fn dma_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.gpu_dma_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_add(self.accelerator_dma_scheduler_planned_batch_worker_capacity_ticks())
+    }
+
+    pub fn dma_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.dma_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.dma_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn dma_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.dma_scheduler_planned_batch_worker_ticks(),
+            self.dma_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn full_system_parallel_scheduler_planned_batch_worker_ticks(&self) -> Tick {
         let timeline = self.full_system_parallel_scheduler_planned_batch_timeline();
         planned_batch_worker_ticks(&timeline)
@@ -505,6 +593,7 @@ impl WorkloadParallelExecutionSummary {
             .saturating_add(
                 self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
             )
+            .saturating_add(self.dma_scheduler_planned_batch_worker_capacity_ticks())
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
