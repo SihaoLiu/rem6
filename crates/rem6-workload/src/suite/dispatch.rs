@@ -7,6 +7,7 @@ use crate::{WorkloadError, WorkloadId, WorkloadManifestIdentity};
 use super::{
     WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionRatio, WorkloadSuiteExecutionSummary,
     WorkloadSuiteIdentity, WorkloadSuiteReplayPlan, WorkloadSuiteWorkerExecutionSummary,
+    WorkloadSuiteWorkerSlotTickSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -735,6 +736,27 @@ impl WorkloadSuiteDispatchTimeline {
             .to_execution_summary()?
             .execution_efficiency(self.worker_count())?
             .idle_worker_ticks())
+    }
+
+    pub fn worker_slot_tick_summaries(&self) -> Vec<WorkloadSuiteWorkerSlotTickSummary> {
+        let wall_clock_ticks = self.wall_clock_ticks();
+        let mut active_ticks: Vec<Tick> = vec![0; self.worker_count()];
+        for entry in &self.entries {
+            active_ticks[entry.worker_index()] =
+                active_ticks[entry.worker_index()].saturating_add(entry.estimated_ticks());
+        }
+
+        active_ticks
+            .into_iter()
+            .enumerate()
+            .map(|(worker_index, active_ticks)| {
+                WorkloadSuiteWorkerSlotTickSummary::new(
+                    worker_index,
+                    active_ticks,
+                    wall_clock_ticks.saturating_sub(active_ticks),
+                )
+            })
+            .collect()
     }
 
     pub fn verify_against_expectation(

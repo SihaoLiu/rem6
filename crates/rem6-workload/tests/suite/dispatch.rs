@@ -572,6 +572,33 @@ fn workload_suite_dispatch_timeline_reports_planned_worker_idle_ticks() {
 }
 
 #[test]
+fn workload_suite_dispatch_timeline_reports_planned_worker_slot_ticks() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let timeline = planned_occupancy_timeline("planned-worker-slots");
+
+    let slots = timeline.worker_slot_tick_summaries();
+
+    assert_eq!(slots.len(), 2);
+    assert_eq!(slots[0].worker_index(), 0);
+    assert_eq!(slots[0].active_ticks(), 8);
+    assert_eq!(slots[0].idle_ticks(), 1);
+    assert_eq!(slots[1].worker_index(), 1);
+    assert_eq!(slots[1].active_ticks(), 9);
+    assert_eq!(slots[1].idle_ticks(), 0);
+
+    let single_timeline = single_planned_timeline("planned-worker-slots-unused", &alpha, 10);
+    let single_slots = single_timeline.worker_slot_tick_summaries();
+
+    assert_eq!(single_slots.len(), 2);
+    assert_eq!(single_slots[0].worker_index(), 0);
+    assert_eq!(single_slots[0].active_ticks(), 10);
+    assert_eq!(single_slots[0].idle_ticks(), 0);
+    assert_eq!(single_slots[1].worker_index(), 1);
+    assert_eq!(single_slots[1].active_ticks(), 0);
+    assert_eq!(single_slots[1].idle_ticks(), 10);
+}
+
+#[test]
 fn workload_suite_dispatch_timeline_reports_planned_occupancy_windows() {
     let alpha = manifest("alpha", "sha256:alpha");
     let timeline = planned_occupancy_timeline("planned-occupancy");

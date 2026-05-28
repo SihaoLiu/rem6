@@ -78,8 +78,8 @@ The following public sources shape this design:
   dispatch timelines derive per-workload start/final ticks from the same worker
   assignment, expose wall-clock span, occupancy windows, worker-count tick
   histograms, full and underoccupied tick spans, occupancy utilization, and
-  per-worker idle ticks, reject planned
-  timelines that do not meet sustained-occupancy, worker-count tick,
+  per-worker idle ticks, plus per-worker-slot active and idle ticks, reject
+  planned timelines that do not meet sustained-occupancy, worker-count tick,
   full-occupancy, or underoccupied-tick contracts, and reject actual execution
   windows that drift from the plan.
   Planned-load expectations reject suite identity drift, worker-count drift, and
@@ -88,8 +88,9 @@ The following public sources shape this design:
   requirements before a run, and suite-level execution efficiency summaries
   record wall-clock span, serial work, capacity, idle worker time, speedup,
   utilization, runtime occupancy windows, and exact worker-count tick
-  histograms. Dispatch-declared speedup, utilization, exact worker-count tick,
-  full-occupancy, and underoccupied-tick thresholds are checked
+  histograms, with per-worker-slot active and idle ticks available from the
+  same timed completion records. Dispatch-declared speedup, utilization, exact
+  worker-count tick, full-occupancy, and underoccupied-tick thresholds are checked
   with integer ratios, and minimum simultaneous-worker checks turn
   multi-workload orchestration into a typed contract instead of ad hoc external
   scripts:

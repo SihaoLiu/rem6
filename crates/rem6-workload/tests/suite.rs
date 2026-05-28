@@ -464,6 +464,51 @@ fn workload_suite_execution_summary_reports_occupancy_worker_count_ticks() {
 }
 
 #[test]
+fn workload_suite_execution_summary_reports_worker_slot_ticks() {
+    let alpha = manifest("alpha", "sha256:alpha");
+    let beta = manifest("beta", "sha256:beta");
+    let gamma = manifest("gamma", "sha256:gamma");
+    let suite = WorkloadSuite::builder(suite_id("execution-worker-slots"))
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(gamma.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let summary = WorkloadSuiteExecutionSummary::new(suite.identity())
+        .add_timed_completion(alpha.id().clone(), alpha.identity(), 0, 0, 0, 4)
+        .unwrap()
+        .add_timed_completion(beta.id().clone(), beta.identity(), 1, 1, 1, 5)
+        .unwrap()
+        .add_timed_completion(gamma.id().clone(), gamma.identity(), 2, 0, 4, 7)
+        .unwrap();
+
+    let slots = summary.worker_slot_tick_summaries(3).unwrap();
+
+    assert_eq!(slots.len(), 3);
+    assert_eq!(slots[0].worker_index(), 0);
+    assert_eq!(slots[0].active_ticks(), 7);
+    assert_eq!(slots[0].idle_ticks(), 0);
+    assert_eq!(slots[1].worker_index(), 1);
+    assert_eq!(slots[1].active_ticks(), 4);
+    assert_eq!(slots[1].idle_ticks(), 3);
+    assert_eq!(slots[2].worker_index(), 2);
+    assert_eq!(slots[2].active_ticks(), 0);
+    assert_eq!(slots[2].idle_ticks(), 7);
+
+    let error = summary.worker_slot_tick_summaries(1).unwrap_err();
+    assert!(matches!(
+        error,
+        WorkloadError::SuiteExecutionWorkerCountBelowActiveWorkers {
+            worker_count: 1,
+            active_workers: 2
+        }
+    ));
+}
+
+#[test]
 fn workload_suite_execution_summary_reports_efficiency_metrics() {
     let alpha = manifest("alpha", "sha256:alpha");
     let beta = manifest("beta", "sha256:beta");

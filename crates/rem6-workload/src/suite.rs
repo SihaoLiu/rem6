@@ -793,6 +793,49 @@ impl WorkloadSuiteExecutionSummary {
         summary
     }
 
+    pub fn worker_slot_tick_summaries(
+        &self,
+        worker_count: usize,
+    ) -> Result<Vec<WorkloadSuiteWorkerSlotTickSummary>, WorkloadError> {
+        if worker_count == 0 {
+            return Err(WorkloadError::ZeroWorkloadSuiteWorkers);
+        }
+        let active_workers = self
+            .records
+            .iter()
+            .map(WorkloadSuiteExecutionRecord::worker_index)
+            .max()
+            .map_or(0, |worker| worker + 1);
+        if worker_count < active_workers {
+            return Err(WorkloadError::SuiteExecutionWorkerCountBelowActiveWorkers {
+                worker_count,
+                active_workers,
+            });
+        }
+
+        let wall_clock_ticks = match (self.minimum_start_tick(), self.maximum_final_tick()) {
+            (Some(start), Some(final_tick)) => final_tick.saturating_sub(start),
+            _ => 0,
+        };
+        let mut active_ticks: Vec<Tick> = vec![0; worker_count];
+        for record in &self.records {
+            active_ticks[record.worker_index()] =
+                active_ticks[record.worker_index()].saturating_add(record.duration_ticks());
+        }
+
+        Ok(active_ticks
+            .into_iter()
+            .enumerate()
+            .map(|(worker_index, active_ticks)| {
+                WorkloadSuiteWorkerSlotTickSummary::new(
+                    worker_index,
+                    active_ticks,
+                    wall_clock_ticks.saturating_sub(active_ticks),
+                )
+            })
+            .collect())
+    }
+
     pub fn verify_against_dispatch(
         &self,
         dispatch: &WorkloadSuiteDispatchPlan,
@@ -887,6 +930,35 @@ impl WorkloadSuiteExecutionOccupancyWindow {
 
     pub const fn active_worker_count(&self) -> usize {
         self.active_worker_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteWorkerSlotTickSummary {
+    worker_index: usize,
+    active_ticks: Tick,
+    idle_ticks: Tick,
+}
+
+impl WorkloadSuiteWorkerSlotTickSummary {
+    pub(crate) const fn new(worker_index: usize, active_ticks: Tick, idle_ticks: Tick) -> Self {
+        Self {
+            worker_index,
+            active_ticks,
+            idle_ticks,
+        }
+    }
+
+    pub const fn worker_index(self) -> usize {
+        self.worker_index
+    }
+
+    pub const fn active_ticks(self) -> Tick {
+        self.active_ticks
+    }
+
+    pub const fn idle_ticks(self) -> Tick {
+        self.idle_ticks
     }
 }
 

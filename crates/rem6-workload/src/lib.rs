@@ -135,6 +135,7 @@ pub use suite::{
     WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
     WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
     WorkloadSuiteResultEntry, WorkloadSuiteWorkerDispatchLoad, WorkloadSuiteWorkerExecutionSummary,
+    WorkloadSuiteWorkerSlotTickSummary,
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,
