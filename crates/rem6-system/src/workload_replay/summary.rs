@@ -106,6 +106,9 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(
+            run.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
         .with_parallel_scheduler_partition_activities(run.parallel_scheduler_partition_activities())
         .with_parallel_scheduler_remote_flows(run.parallel_scheduler_remote_flows())
         .with_parallel_scheduler_remote_sends(run.parallel_scheduler_remote_sends())
@@ -167,10 +170,16 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
+        .with_data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(
+            run.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
         .with_full_system_parallel_scheduler_planned_batch_timeline(
             run.full_system_parallel_scheduler_planned_batch_timeline()
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
+        )
+        .with_full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(
+            run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
         )
         .with_full_system_parallel_scheduler_batch_partition_streaks(
             run.full_system_parallel_scheduler_batch_partition_streak_summaries()

@@ -467,6 +467,10 @@ window from worker records, rebuild planned occupancy from timeline records, or
 recompute planned worker capacity from scheduler-private worker limits.
 The runtime scheduler itself remains the first source of parallel occupancy
 truth rather than relying on subsystem-specific reconstruction.
+Workload replay results preserve those planned capacity totals and derive
+planned worker-tick, idle-worker-tick, and utilization-ratio evidence beside
+the planned timelines, so manifest and replay diagnostics can audit planned
+parallel efficiency without access to live scheduler internals.
 Workload results retain explicit merged full-system streak evidence instead of
 reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to

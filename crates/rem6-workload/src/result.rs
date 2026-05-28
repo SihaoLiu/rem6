@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use rem6_fabric::{
     FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
     QosPriority, QosRequestorId,
@@ -9,6 +7,7 @@ use rem6_kernel::{
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId, Tick,
     WaitForEdgeKind,
 };
+use std::collections::BTreeMap;
 
 use crate::parallel_batch::{
     collect_parallel_batch_partition_sets, collect_parallel_batch_partition_streaks,
@@ -276,6 +275,7 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_parallel_scheduler_batch_worker_tick_streaks: Vec<(usize, Tick)>,
     full_system_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     full_system_parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    planned_batch_worker_capacity_ticks: batch_timeline::WorkloadPlannedBatchWorkerCapacityTicks,
     full_system_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     full_system_parallel_scheduler_batch_partition_streaks:
         Vec<WorkloadParallelBatchPartitionStreak>,

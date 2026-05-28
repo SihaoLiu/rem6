@@ -14,8 +14,8 @@ use crate::parallel_batch::{
     WorkloadParallelBatchTimelineRecord,
 };
 use rem6_kernel::{
-    ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionId,
-    Tick,
+    ParallelBatchUtilizationRatio, ParallelPartitionActivity, ParallelRemoteFlowRecord,
+    ParallelRemoteSendRecord, PartitionId, Tick,
 };
 
 use super::WorkloadParallelExecutionSummary;
@@ -25,6 +25,13 @@ use crate::result_partition_activity::{
     merge_parallel_partition_activity_evidence_options,
     parallel_partition_activity_for_partition as remote_partition_activity_for_partition,
 };
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct WorkloadPlannedBatchWorkerCapacityTicks {
+    parallel_scheduler: Tick,
+    data_cache_parallel_scheduler: Tick,
+    full_system_parallel_scheduler: Tick,
+}
 
 impl WorkloadParallelExecutionSummary {
     pub fn with_parallel_scheduler_batch_timeline(
@@ -50,6 +57,14 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.parallel_scheduler_planned_batch_timeline =
             collect_scoped_parallel_batch_timeline(WorkloadParallelBatchScope::Scheduler, records);
+        self
+    }
+
+    pub fn with_parallel_scheduler_planned_batch_worker_capacity_ticks(
+        mut self,
+        worker_capacity_ticks: Tick,
+    ) -> Self {
+        self.planned_batch_worker_capacity_ticks.parallel_scheduler = worker_capacity_ticks;
         self
     }
 
@@ -82,6 +97,15 @@ impl WorkloadParallelExecutionSummary {
                 WorkloadParallelBatchScope::DataCacheScheduler,
                 records,
             );
+        self
+    }
+
+    pub fn with_data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(
+        mut self,
+        worker_capacity_ticks: Tick,
+    ) -> Self {
+        self.planned_batch_worker_capacity_ticks
+            .data_cache_parallel_scheduler = worker_capacity_ticks;
         self
     }
 
@@ -157,6 +181,15 @@ impl WorkloadParallelExecutionSummary {
     ) -> Self {
         self.full_system_parallel_scheduler_planned_batch_timeline =
             collect_parallel_batch_timeline(records);
+        self
+    }
+
+    pub fn with_full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(
+        mut self,
+        worker_capacity_ticks: Tick,
+    ) -> Self {
+        self.planned_batch_worker_capacity_ticks
+            .full_system_parallel_scheduler = worker_capacity_ticks;
         self
     }
 
@@ -405,6 +438,86 @@ impl WorkloadParallelExecutionSummary {
                         .cloned(),
                 )
                 .chain(self.dma_scheduler_planned_batch_timeline()),
+        )
+    }
+
+    pub fn parallel_scheduler_planned_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(&self.parallel_scheduler_planned_batch_timeline)
+    }
+
+    pub fn parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.planned_batch_worker_capacity_ticks.parallel_scheduler
+    }
+
+    pub fn parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn parallel_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.parallel_scheduler_planned_batch_worker_ticks(),
+            self.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_worker_ticks(&self) -> Tick {
+        planned_batch_worker_ticks(&self.data_cache_parallel_scheduler_planned_batch_timeline)
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.planned_batch_worker_capacity_ticks
+            .data_cache_parallel_scheduler
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.data_cache_parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.data_cache_parallel_scheduler_planned_batch_worker_ticks(),
+            self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_worker_ticks(&self) -> Tick {
+        let timeline = self.full_system_parallel_scheduler_planned_batch_timeline();
+        planned_batch_worker_ticks(&timeline)
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        if self
+            .planned_batch_worker_capacity_ticks
+            .full_system_parallel_scheduler
+            != 0
+        {
+            return self
+                .planned_batch_worker_capacity_ticks
+                .full_system_parallel_scheduler;
+        }
+        self.parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_add(
+                self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+            )
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.full_system_parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+            self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
         )
     }
 
@@ -761,6 +874,18 @@ fn batch_and_remote_active_partition_count(
         }
     }
     partitions.len()
+}
+
+fn planned_batch_worker_ticks(records: &[WorkloadParallelBatchTimelineRecord]) -> Tick {
+    records
+        .iter()
+        .filter(|record| record.has_record_shape())
+        .map(|record| {
+            record
+                .duration_ticks()
+                .saturating_mul(record.worker_count() as Tick)
+        })
+        .fold(0, Tick::saturating_add)
 }
 
 fn collect_batch_worker_count_tick_summaries(

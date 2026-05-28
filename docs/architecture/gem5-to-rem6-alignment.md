@@ -50,7 +50,10 @@ isolated bugs:
   Planned kernel and full-system scheduler batches also expose worker-capacity
   ticks, idle-worker ticks, and utilization ratios directly, so pre-dispatch
   multicore efficiency checks do not need to infer scheduler capacity from
-  timeline shape or private worker-limit state.
+  timeline shape or private worker-limit state. Workload replay summaries carry
+  those capacity totals into result artifacts and derive planned worker-ticks,
+  idle ticks, and utilization ratios from the preserved planned timelines, so
+  post-run diagnostics keep the same pre-dispatch authority.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -113,8 +116,10 @@ isolated bugs:
   start/final windows, worker-level suite completion summaries, round-robin or
   weighted suite dispatch plans, dispatch-declared suite execution
   expectations with runtime occupancy thresholds, suite-level execution efficiency summaries, declared suite
-  speedup and utilization thresholds, and explicit boot handoff reports as the
-  authority for platform and workload state.
+  speedup and utilization thresholds, planned workload-result scheduler
+  capacity totals, planned worker-ticks, planned idle-worker ticks, planned
+  utilization ratios, and explicit boot handoff reports as the authority for
+  platform and workload state.
 - Error surfaces are split across simulator fatal errors, simulator panics, and
   Python tracebacks. gem5 documentation directs users to different debugging
   paths depending on which layer raised the problem. rem6 therefore returns

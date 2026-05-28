@@ -1,5 +1,5 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
-use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForGraph};
+use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
 use rem6_workload::WorkloadTopology;
 
 use super::{
@@ -113,5 +113,71 @@ fn parallel_execution_summary_copies_planned_batch_timeline() {
     assert_eq!(
         summary.full_system_parallel_scheduler_planned_batch_timeline(),
         expected_full_system,
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_ticks(),
+        run.parallel_scheduler_planned_batch_worker_ticks(),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        run.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_idle_worker_ticks(),
+        run.parallel_scheduler_planned_batch_idle_worker_ticks(),
+    );
+    assert_eq!(
+        summary
+            .parallel_scheduler_planned_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(
+            run.parallel_scheduler_planned_batch_worker_ticks(),
+            run.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_planned_batch_worker_ticks(),
+        run.data_cache_parallel_scheduler_planned_batch_worker_ticks(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        run.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_planned_batch_idle_worker_ticks(),
+        run.data_cache_parallel_scheduler_planned_batch_idle_worker_ticks(),
+    );
+    assert_eq!(
+        summary
+            .data_cache_parallel_scheduler_planned_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(
+            run.data_cache_parallel_scheduler_planned_batch_worker_ticks(),
+            run.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+        run.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_idle_worker_ticks(),
+        run.full_system_parallel_scheduler_planned_batch_idle_worker_ticks(),
+    );
+    assert_eq!(
+        summary
+            .full_system_parallel_scheduler_planned_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(
+            run.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+            run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+        .unwrap(),
     );
 }
