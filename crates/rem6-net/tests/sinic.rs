@@ -428,3 +428,208 @@ fn sinic_fifo_device_records_tx_full_and_restores_snapshot() {
     assert_eq!(device.tx_occupied_bytes(), 3);
     assert_eq!(device.tx_done_status().packets(), 1);
 }
+
+#[test]
+fn sinic_dma_rx_copy_records_partial_more_then_packet_completion() {
+    let params = SinicRegisterParams::default()
+        .with_zero_copy(true)
+        .with_rx_copy_limits(8, 4, 2)
+        .with_fifo_limits(16, 16, 8, 4, 12, 12)
+        .with_interrupt_mask(SinicInterrupts::RX_DMA | SinicInterrupts::RX_EMPTY);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN
+                | SinicRegisterBlock::CONFIG_RX_EN
+                | SinicRegisterBlock::CONFIG_ZERO_COPY,
+            1,
+        )
+        .unwrap();
+    device
+        .receive_from_wire(packet(&[10, 11, 12, 13, 14, 15]), 2, 0)
+        .unwrap();
+
+    let limited = device
+        .begin_rx_dma_copy(SinicDataDescriptor::new(0x1000, 8).unwrap())
+        .unwrap()
+        .expect("queued receive packet");
+    assert_eq!(limited.guest_address(), 0x1000);
+    assert_eq!(limited.copy_len(), 2);
+    assert!(limited.zero_limited());
+    assert_eq!(limited.packet_offset(), 0);
+
+    let partial = device.complete_rx_dma_copy(3, 7).unwrap();
+    assert_eq!(partial.copied_bytes(), 2);
+    assert_eq!(partial.remaining_packet_bytes(), 4);
+    assert_eq!(partial.rx_packet_count(), 1);
+    assert_eq!(
+        partial.done_status().bits(),
+        SinicDoneStatus::new()
+            .with_complete(true)
+            .with_more(true)
+            .with_copy_len(4)
+            .unwrap()
+            .bits()
+    );
+    assert_eq!(
+        partial
+            .interrupt_record()
+            .expect("rx dma interrupt")
+            .masked_bits()
+            .bits(),
+        SinicInterrupts::RX_DMA.bits()
+    );
+
+    let final_plan = device
+        .begin_rx_dma_copy(
+            SinicDataDescriptor::new(0x2000, 8)
+                .unwrap()
+                .with_no_delay(true),
+        )
+        .unwrap()
+        .expect("partial receive packet remains queued");
+    assert_eq!(final_plan.copy_len(), 4);
+    assert!(!final_plan.zero_limited());
+    assert_eq!(final_plan.packet_offset(), 2);
+
+    let complete = device.complete_rx_dma_copy(4, 7).unwrap();
+    assert_eq!(complete.copied_bytes(), 4);
+    assert_eq!(complete.remaining_packet_bytes(), 0);
+    assert_eq!(complete.rx_packet_count(), 0);
+    assert_eq!(
+        complete.done_status().bits(),
+        SinicDoneStatus::new()
+            .with_complete(true)
+            .with_copy_len(4)
+            .unwrap()
+            .bits()
+    );
+    assert_eq!(
+        complete
+            .interrupt_record()
+            .expect("rx dma and empty interrupt")
+            .masked_bits()
+            .bits(),
+        (SinicInterrupts::RX_DMA | SinicInterrupts::RX_EMPTY).bits()
+    );
+}
+
+#[test]
+fn sinic_dma_tx_copy_accumulates_fragments_and_posts_dma_interrupts() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(16, 6, 4, 2, 12, 12)
+        .with_tx_max_copy(2)
+        .with_interrupt_mask(SinicInterrupts::TX_DMA | SinicInterrupts::TX_FULL);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_TX_EN,
+            1,
+        )
+        .unwrap();
+
+    let first = device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x3000, 3).unwrap().with_more(true))
+        .unwrap();
+    assert_eq!(first.copy_len(), 3);
+    assert!(first.more_fragment());
+    let partial = device.complete_tx_dma_copy(&[1, 2, 3], 2, 5).unwrap();
+    assert!(!partial.packet_complete());
+    assert_eq!(partial.assembled_bytes(), 3);
+    assert_eq!(partial.tx_packet_count(), 0);
+    assert_eq!(
+        partial
+            .interrupt_record()
+            .expect("partial tx dma interrupt")
+            .masked_bits()
+            .bits(),
+        SinicInterrupts::TX_DMA.bits()
+    );
+
+    let second = device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x4000, 2).unwrap())
+        .unwrap();
+    assert_eq!(second.packet_offset(), 3);
+    let complete = device.complete_tx_dma_copy(&[4, 5], 3, 5).unwrap();
+    assert!(complete.packet_complete());
+    assert_eq!(complete.assembled_bytes(), 5);
+    assert_eq!(complete.tx_packet_count(), 1);
+    assert_eq!(
+        complete
+            .interrupt_record()
+            .expect("tx dma and full interrupt")
+            .masked_bits()
+            .bits(),
+        (SinicInterrupts::TX_DMA | SinicInterrupts::TX_FULL).bits()
+    );
+
+    let mut registry = EthernetInterfaceRegistry::new();
+    let nic = registry.register("sinic").unwrap();
+    let peer = registry.register("peer").unwrap();
+    registry.bind_pair(nic, peer).unwrap();
+    let sent = device
+        .transmit_one(&mut registry, nic, 4, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(sent.send_record().packet().payload(), &[1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn sinic_dma_errors_preserve_pending_state_and_restore_partial_tx_packet() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(16, 16, 4, 4, 12, 12)
+        .with_interrupt_mask(SinicInterrupts::TX_DMA);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+
+    device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x5000, 3).unwrap())
+        .unwrap();
+    assert!(matches!(
+        device.begin_tx_dma_copy(SinicDataDescriptor::new(0x6000, 1).unwrap()),
+        Err(SinicError::DmaCopyAlreadyPending {
+            direction: rem6_net::SinicDmaDirection::Transmit,
+        })
+    ));
+    assert!(matches!(
+        device.complete_tx_dma_copy(&[1, 2], 1, 0),
+        Err(SinicError::DmaCompletionLengthMismatch {
+            direction: rem6_net::SinicDmaDirection::Transmit,
+            expected_bytes: 3,
+            actual_bytes: 2,
+        })
+    ));
+    let complete = device.complete_tx_dma_copy(&[1, 2, 3], 2, 0).unwrap();
+    assert!(complete.packet_complete());
+    assert_eq!(complete.done_status().copy_len(), 3);
+
+    let mut snapshot_device = SinicFifoDevice::new(params).unwrap();
+    snapshot_device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x7000, 2).unwrap().with_more(true))
+        .unwrap();
+    snapshot_device.complete_tx_dma_copy(&[7, 8], 3, 0).unwrap();
+    let snapshot = snapshot_device.snapshot();
+    snapshot_device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x8000, 1).unwrap())
+        .unwrap();
+    snapshot_device.complete_tx_dma_copy(&[1], 4, 0).unwrap();
+    assert_eq!(snapshot_device.tx_packet_count(), 1);
+
+    snapshot_device.restore(&snapshot).unwrap();
+    assert_eq!(snapshot_device.tx_packet_count(), 0);
+    snapshot_device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x9000, 1).unwrap())
+        .unwrap();
+    snapshot_device.complete_tx_dma_copy(&[9], 5, 0).unwrap();
+
+    let mut registry = EthernetInterfaceRegistry::new();
+    let nic = registry.register("sinic").unwrap();
+    let peer = registry.register("peer").unwrap();
+    registry.bind_pair(nic, peer).unwrap();
+    let sent = snapshot_device
+        .transmit_one(&mut registry, nic, 6, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(sent.send_record().packet().payload(), &[7, 8, 9]);
+}

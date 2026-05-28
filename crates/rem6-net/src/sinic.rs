@@ -659,6 +659,14 @@ impl SinicRegisterBlock {
         self.params.tx_max_copy
     }
 
+    pub const fn zero_copy_size(&self) -> u32 {
+        self.params.zero_copy_size
+    }
+
+    pub const fn zero_copy_mark(&self) -> u32 {
+        self.params.zero_copy_mark
+    }
+
     pub const fn hardware_address(&self) -> u64 {
         self.params.hardware_address
     }
@@ -923,6 +931,20 @@ pub enum SinicError {
     PacketQueueEmpty {
         queue: SinicQueueKind,
     },
+    DmaCopyAlreadyPending {
+        direction: SinicDmaDirection,
+    },
+    DmaCopyNotPending {
+        direction: SinicDmaDirection,
+    },
+    DmaCopyLengthZero {
+        direction: SinicDmaDirection,
+    },
+    DmaCompletionLengthMismatch {
+        direction: SinicDmaDirection,
+        expected_bytes: u32,
+        actual_bytes: u64,
+    },
     EthernetPeerBusy {
         interface: crate::EthernetInterfaceId,
     },
@@ -983,6 +1005,23 @@ impl fmt::Display for SinicError {
             Self::PacketQueueEmpty { queue } => {
                 write!(formatter, "SINIC {queue} packet queue is empty")
             }
+            Self::DmaCopyAlreadyPending { direction } => {
+                write!(formatter, "SINIC {direction} DMA copy is already pending")
+            }
+            Self::DmaCopyNotPending { direction } => {
+                write!(formatter, "SINIC {direction} DMA copy is not pending")
+            }
+            Self::DmaCopyLengthZero { direction } => {
+                write!(formatter, "SINIC {direction} DMA copy length is zero")
+            }
+            Self::DmaCompletionLengthMismatch {
+                direction,
+                expected_bytes,
+                actual_bytes,
+            } => write!(
+                formatter,
+                "SINIC {direction} DMA completion copied {actual_bytes} bytes but expected {expected_bytes}"
+            ),
             Self::EthernetPeerBusy { interface } => write!(
                 formatter,
                 "SINIC ethernet interface {} peer is busy",

@@ -347,9 +347,16 @@ Implementation evidence on 2026-05-28:
   interrupts, TX FIFO capacity and full watermark interrupts, peer-busy
   transmit backpressure without popping queued data, TX packet and low
   watermark interrupts, derived RX/TX done status words, and snapshot restore
-  are explicit records. The remaining SINIC DMA copy state machines,
-  descriptor-memory walking, checksum offload, and full PCI/MMIO binding remain
-  open.
+  are explicit records.
+- `rem6-net` now has typed SINIC DMA copy state aligned with gem5 `rxKick` and
+  `txKick`: RX copy plans derive guest address, packet offset, copy length,
+  zero/delay-copy limiting, More completion status, RX DMA and empty
+  interrupts, and packet removal from explicit state; TX copy plans accumulate
+  multi-descriptor fragments, preserve pending fragment buffers across
+  snapshots, reject nested or mismatched completions with typed errors, enqueue
+  complete packets into the TX FIFO, and post TX DMA plus TX-full interrupts.
+  The remaining SINIC descriptor-memory backend, checksum offload, and full
+  PCI/MMIO binding remain open.
 
 Implementation evidence on 2026-05-26:
 
