@@ -102,6 +102,8 @@ struct WorkloadGpuDmaActivity {
     scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
+    scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    scheduler_planned_batch_worker_capacity_ticks: Tick,
     scheduler_planned_batch_worker_lanes: Vec<WorkloadParallelBatchWorkerLaneRecord>,
     scheduler_recorded_batch_worker_capacity_ticks: Tick,
     scheduler_recorded_batch_worker_slot_tick_summaries: Vec<(usize, Tick, Tick)>,
@@ -984,6 +986,11 @@ impl RiscvWorkloadReplay {
             scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
                 scheduler_evidence.batch_worker_count_ticks,
             ),
+            scheduler_planned_batch_timeline: dma_scheduler_batch_timeline(
+                scheduler_evidence.planned_batch_timeline,
+            ),
+            scheduler_planned_batch_worker_capacity_ticks: scheduler_evidence
+                .planned_batch_worker_capacity_ticks,
             scheduler_planned_batch_worker_lanes: dma_scheduler_planned_batch_worker_lanes(
                 scheduler_evidence.planned_batch_worker_lanes,
             ),

@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_kernel::{
-    ParallelEpochBatchRecord, ParallelEpochPlannedWorkerRecord, ParallelRemoteFlowRecord,
-    ParallelRemoteSendRecord, PartitionFrontier, PartitionId, RecordedConservativeRunSummary, Tick,
+    ParallelEpochBatchRecord, ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord,
+    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
+    RecordedConservativeRunSummary, Tick,
 };
 use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
@@ -18,6 +19,8 @@ pub(super) struct DmaSchedulerEvidence {
     pub(super) batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     pub(super) batch_worker_counts: BTreeMap<usize, usize>,
     pub(super) batch_worker_count_ticks: BTreeMap<usize, Tick>,
+    pub(super) planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    pub(super) planned_batch_worker_capacity_ticks: Tick,
     pub(super) planned_batch_worker_lanes: Vec<WorkloadParallelBatchWorkerLaneRecord>,
     pub(super) recorded_batch_worker_capacity_ticks: Tick,
     pub(super) recorded_batch_worker_slot_tick_summaries: BTreeMap<usize, (Tick, Tick)>,
@@ -45,6 +48,14 @@ impl DmaSchedulerEvidence {
                 .iter()
                 .map(|batch| dma_scheduler_batch_timeline_record(scope, batch)),
         );
+        self.planned_batch_timeline.extend(
+            run.planned_batches()
+                .iter()
+                .map(|batch| dma_scheduler_planned_batch_timeline_record(scope, batch)),
+        );
+        self.planned_batch_worker_capacity_ticks = self
+            .planned_batch_worker_capacity_ticks
+            .saturating_add(run.planned_batch_worker_capacity_ticks());
         self.planned_batch_worker_lanes.extend(
             run.planned_batch_planned_workers()
                 .into_iter()
@@ -187,6 +198,19 @@ pub(super) fn dma_scheduler_recorded_batch_worker_slot_tick_summaries(
 fn dma_scheduler_batch_timeline_record(
     scope: WorkloadParallelBatchScope,
     batch: &ParallelEpochBatchRecord,
+) -> WorkloadParallelBatchTimelineRecord {
+    WorkloadParallelBatchTimelineRecord::new(
+        scope,
+        batch.start_tick(),
+        batch.horizon(),
+        normalize_partition_set(batch.worker_partitions()),
+        batch.worker_count(),
+    )
+}
+
+fn dma_scheduler_planned_batch_timeline_record(
+    scope: WorkloadParallelBatchScope,
+    batch: &ParallelEpochPlannedBatch,
 ) -> WorkloadParallelBatchTimelineRecord {
     WorkloadParallelBatchTimelineRecord::new(
         scope,

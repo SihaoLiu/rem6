@@ -8,8 +8,9 @@ use rem6_workload::{
 mod conversions;
 
 use self::conversions::{
-    workload_data_cache_protocol, workload_parallel_batch_timeline_record,
-    workload_parallel_batch_worker_lane_record,
+    full_system_planned_batch_timeline, full_system_planned_batch_worker_capacity_ticks,
+    full_system_planned_batch_worker_lanes, workload_data_cache_protocol,
+    workload_parallel_batch_timeline_record, workload_parallel_batch_worker_lane_record,
 };
 use super::workload_replay_dma::WorkloadAcceleratorDmaActivity;
 use crate::workload_replay_heterogeneous::{
@@ -198,31 +199,13 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
         )
         .with_full_system_parallel_scheduler_planned_batch_timeline(
-            run.full_system_parallel_scheduler_planned_batch_timeline()
-                .into_iter()
-                .map(workload_parallel_batch_timeline_record),
+            full_system_planned_batch_timeline(run, &activities),
         )
         .with_full_system_parallel_scheduler_planned_batch_worker_lanes(
-            run.full_system_parallel_scheduler_planned_batch_worker_lanes()
-                .into_iter()
-                .map(workload_parallel_batch_worker_lane_record)
-                .chain(
-                    activities
-                        .gpu_dma
-                        .scheduler_planned_batch_worker_lanes
-                        .iter()
-                        .copied(),
-                )
-                .chain(
-                    activities
-                        .accelerator_dma
-                        .scheduler_planned_batch_worker_lanes
-                        .iter()
-                        .copied(),
-                ),
+            full_system_planned_batch_worker_lanes(run, &activities),
         )
         .with_full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(
-            run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+            full_system_planned_batch_worker_capacity_ticks(run, &activities),
         )
         .with_full_system_parallel_scheduler_batch_partition_streaks(
             run.full_system_parallel_scheduler_batch_partition_streak_summaries()
@@ -394,6 +377,18 @@ pub(super) fn parallel_execution_summary(
         .with_gpu_dma_scheduler_batch_timeline(
             activities.gpu_dma.scheduler_batch_timeline.iter().cloned(),
         )
+        .with_gpu_dma_scheduler_planned_batch_timeline(
+            activities
+                .gpu_dma
+                .scheduler_planned_batch_timeline
+                .iter()
+                .cloned(),
+        )
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(
+            activities
+                .gpu_dma
+                .scheduler_planned_batch_worker_capacity_ticks,
+        )
         .with_gpu_dma_scheduler_planned_batch_worker_lanes(
             activities
                 .gpu_dma
@@ -530,6 +525,18 @@ pub(super) fn parallel_execution_summary(
                 .scheduler_batch_timeline
                 .iter()
                 .cloned(),
+        )
+        .with_accelerator_dma_scheduler_planned_batch_timeline(
+            activities
+                .accelerator_dma
+                .scheduler_planned_batch_timeline
+                .iter()
+                .cloned(),
+        )
+        .with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(
+            activities
+                .accelerator_dma
+                .scheduler_planned_batch_worker_capacity_ticks,
         )
         .with_accelerator_dma_scheduler_planned_batch_worker_lanes(
             activities

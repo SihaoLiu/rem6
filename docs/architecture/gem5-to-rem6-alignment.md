@@ -726,6 +726,11 @@ Implementation evidence on 2026-05-26:
   lanes. Full-system replay evidence therefore cannot satisfy pre-dispatch
   lane-ownership contracts while hiding device-side DMA worker ownership behind
   a CPU/cache-only aggregate.
+- GPU DMA and accelerator DMA replay also carry planned DMA batch timelines
+  and planned worker-capacity ticks from the kernel scheduler plans. Merged
+  full-system planned worker ticks, capacity ticks, idle ticks, and utilization
+  ratios now include those DMA planned records, so full-system efficiency
+  checks cannot be satisfied by a CPU/cache-only planned-capacity aggregate.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global

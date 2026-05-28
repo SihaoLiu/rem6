@@ -365,6 +365,14 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
             workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 0, gpu, 0, 4),
             workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 1, memory, 0, 4),
         ],
+        scheduler_planned_batch_timeline: vec![workload_batch_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            0,
+            4,
+            [gpu, memory],
+            2,
+        )],
+        scheduler_planned_batch_worker_capacity_ticks: 12,
         scheduler_recorded_batch_worker_capacity_ticks: 12,
         scheduler_recorded_batch_worker_slot_tick_summaries: vec![(0, 4, 0), (1, 4, 0), (2, 0, 4)],
         ..WorkloadGpuDmaActivity::default()
@@ -385,6 +393,14 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
             4,
             8,
         )],
+        scheduler_planned_batch_timeline: vec![workload_batch_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            4,
+            8,
+            [accelerator],
+            1,
+        )],
+        scheduler_planned_batch_worker_capacity_ticks: 8,
         scheduler_recorded_batch_worker_capacity_ticks: 8,
         scheduler_recorded_batch_worker_slot_tick_summaries: vec![(0, 4, 0), (1, 0, 4)],
         ..WorkloadAcceleratorDmaActivity::default()
@@ -437,6 +453,27 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
             ),
         ],
     );
+    assert_eq!(summary.gpu_dma_scheduler_planned_batch_worker_ticks(), 8);
+    assert_eq!(
+        summary.gpu_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        12,
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_planned_batch_idle_worker_ticks(),
+        4,
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_planned_batch_worker_ticks(),
+        4,
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        8,
+    );
+    assert_eq!(
+        summary.dma_scheduler_planned_batch_worker_capacity_ticks(),
+        20,
+    );
     assert_eq!(
         summary.full_system_parallel_scheduler_planned_batch_worker_lanes(),
         vec![
@@ -455,6 +492,24 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
     assert_eq!(
         summary.full_system_parallel_scheduler_planned_batch_worker_lane_partition_ticks(0, gpu),
         4,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+        16,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        28,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_idle_worker_ticks(),
+        12,
+    );
+    assert_eq!(
+        summary
+            .full_system_parallel_scheduler_planned_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(16, 28).unwrap(),
     );
     assert_eq!(summary.gpu_dma_scheduler_recorded_batch_worker_ticks(), 8);
     assert_eq!(
