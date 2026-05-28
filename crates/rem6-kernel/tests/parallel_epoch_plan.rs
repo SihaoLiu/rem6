@@ -1,5 +1,6 @@
 use rem6_kernel::{
-    ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, ReadyPartition,
+    ParallelBatchUtilizationRatio, ParallelEpochPlannedWorkerRecord, PartitionId,
+    PartitionedScheduler, ReadyPartition,
 };
 
 #[test]
@@ -116,6 +117,69 @@ fn scheduler_parallel_plan_exposes_planned_batch_occupancy_ticks() {
     assert_eq!(
         plan.parallel_batch_utilization_ratio().unwrap(),
         ParallelBatchUtilizationRatio::new(13, 14).unwrap(),
+    );
+}
+
+#[test]
+fn scheduler_parallel_plan_exposes_stable_host_worker_lane_assignments() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(5, 6, 2).unwrap();
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let core2 = PartitionId::new(2);
+
+    scheduler.schedule_parallel_at(core0, 0, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(core1, 2, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(core2, 5, |_| {}).unwrap();
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let batches = plan.parallel_batches();
+
+    assert_eq!(
+        batches[0].planned_workers(),
+        &[
+            ParallelEpochPlannedWorkerRecord::new(0, core0, 0, 6),
+            ParallelEpochPlannedWorkerRecord::new(1, core1, 2, 6),
+        ],
+    );
+    assert_eq!(
+        batches[1].planned_workers(),
+        &[ParallelEpochPlannedWorkerRecord::new(0, core2, 5, 6)],
+    );
+    assert_eq!(
+        batches[0]
+            .planned_worker_for_partition(core1)
+            .unwrap()
+            .lane(),
+        1
+    );
+    assert_eq!(
+        batches[1].planned_worker_for_lane(0).unwrap().partition(),
+        core2
+    );
+    assert_eq!(batches[1].planned_worker_for_lane(1), None);
+    assert_eq!(
+        plan.parallel_batch_planned_workers(),
+        vec![
+            ParallelEpochPlannedWorkerRecord::new(0, core0, 0, 6),
+            ParallelEpochPlannedWorkerRecord::new(1, core1, 2, 6),
+            ParallelEpochPlannedWorkerRecord::new(0, core2, 5, 6),
+        ],
+    );
+    assert_eq!(
+        plan.parallel_batch_lane_tick_summaries(),
+        vec![(0, 7), (1, 4)],
+    );
+    assert_eq!(plan.parallel_batch_ticks_for_lane(0), 7);
+    assert_eq!(plan.parallel_batch_ticks_for_lane(1), 4);
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    assert_eq!(
+        run.planned_batch_planned_workers(),
+        plan.parallel_batch_planned_workers(),
+    );
+    assert_eq!(
+        run.planned_batch_lane_tick_summaries(),
+        vec![(0, 7), (1, 4)]
     );
 }
 

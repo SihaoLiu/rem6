@@ -20,7 +20,9 @@ use self::batch_evidence::{
 };
 use self::planned_batch::collect_parallel_epoch_planned_batches;
 
-pub use self::planned_batch::{ParallelBatchUtilizationRatio, ParallelEpochPlannedBatch};
+pub use self::planned_batch::{
+    ParallelBatchUtilizationRatio, ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EpochPlan {

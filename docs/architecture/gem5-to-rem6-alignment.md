@@ -51,10 +51,14 @@ isolated bugs:
   ticks, idle-worker ticks, utilization ratios, and worker-slot active and idle
   tick summaries directly, so pre-dispatch and post-dispatch multicore
   efficiency checks do not need to infer scheduler capacity from timeline shape,
-  worker records, or private worker-limit state. Workload replay summaries carry
-  planned capacity totals into result artifacts and derive planned worker-ticks,
-  idle ticks, and utilization ratios from the preserved planned timelines, so
-  replay diagnostics keep the same pre-dispatch authority. Workload results
+  worker records, or private worker-limit state. Planned batches now also
+  expose stable host worker-lane records with lane, partition, start tick,
+  horizon, and duration, so the simulator can audit which host worker would own
+  each ready partition before callbacks run instead of proving multicore use
+  only from aggregate occupancy. Workload replay summaries carry planned
+  capacity totals into result artifacts and derive planned worker-ticks, idle
+  ticks, and utilization ratios from the preserved planned timelines, so replay
+  diagnostics keep the same pre-dispatch authority. Workload results
   also carry recorded worker-capacity ticks, idle-worker ticks, utilization
   ratios, and per-worker-slot active/idle summaries separately from
   multi-worker parallel-evidence contracts. Kernel recorded
@@ -649,8 +653,9 @@ Implementation evidence on 2026-05-26:
   scheduler stream instead of two unrelated device-local fragments.
 - Kernel parallel epoch planning now exposes the worker-limit-shaped batch plan
   before dispatch. A plan records the configured worker limit, deterministic
-  ready-partition chunks, per-worker-count batch summaries, partition-set
-  summaries, and maximum planned workers without executing callbacks. The
+  ready-partition chunks, stable planned worker-lane records, per-lane planned
+  ticks, per-worker-count batch summaries, partition-set summaries, and maximum
+  planned workers without executing callbacks. The
   scheduler can therefore prove planned multicore occupancy before spawning
   worker threads, avoiding gem5-style reliance on post-hoc global event-queue
   traces to infer parallelism.

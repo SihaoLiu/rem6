@@ -12,6 +12,16 @@ use super::{
 pub struct ParallelEpochPlannedBatch {
     horizon: Tick,
     ready_partitions: Vec<ReadyPartition>,
+    planned_workers: Vec<ParallelEpochPlannedWorkerRecord>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ParallelEpochPlannedWorkerRecord {
+    lane: usize,
+    partition: PartitionId,
+    start_tick: Tick,
+    horizon: Tick,
+    duration_ticks: Tick,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,9 +58,22 @@ impl ParallelBatchUtilizationRatio {
 
 impl ParallelEpochPlannedBatch {
     pub fn new(horizon: Tick, ready_partitions: Vec<ReadyPartition>) -> Self {
+        let planned_workers = ready_partitions
+            .iter()
+            .enumerate()
+            .map(|(lane, ready)| {
+                ParallelEpochPlannedWorkerRecord::new(
+                    lane,
+                    ready.partition,
+                    ready.next_tick,
+                    horizon,
+                )
+            })
+            .collect();
         Self {
             horizon,
             ready_partitions,
+            planned_workers,
         }
     }
 
@@ -60,6 +83,27 @@ impl ParallelEpochPlannedBatch {
 
     pub fn ready_partitions(&self) -> &[ReadyPartition] {
         &self.ready_partitions
+    }
+
+    pub fn planned_workers(&self) -> &[ParallelEpochPlannedWorkerRecord] {
+        &self.planned_workers
+    }
+
+    pub fn planned_worker_for_lane(&self, lane: usize) -> Option<ParallelEpochPlannedWorkerRecord> {
+        self.planned_workers
+            .iter()
+            .copied()
+            .find(|worker| worker.lane() == lane)
+    }
+
+    pub fn planned_worker_for_partition(
+        &self,
+        partition: PartitionId,
+    ) -> Option<ParallelEpochPlannedWorkerRecord> {
+        self.planned_workers
+            .iter()
+            .copied()
+            .find(|worker| worker.partition() == partition)
     }
 
     pub fn worker_count(&self) -> usize {
@@ -118,6 +162,38 @@ impl ParallelEpochPlannedBatch {
             self.worker_ticks(),
             self.worker_capacity_ticks(worker_capacity),
         )
+    }
+}
+
+impl ParallelEpochPlannedWorkerRecord {
+    pub const fn new(lane: usize, partition: PartitionId, start_tick: Tick, horizon: Tick) -> Self {
+        Self {
+            lane,
+            partition,
+            start_tick,
+            horizon,
+            duration_ticks: horizon.saturating_sub(start_tick),
+        }
+    }
+
+    pub const fn lane(self) -> usize {
+        self.lane
+    }
+
+    pub const fn partition(self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn start_tick(self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn horizon(self) -> Tick {
+        self.horizon
+    }
+
+    pub const fn duration_ticks(self) -> Tick {
+        self.duration_ticks
     }
 }
 
@@ -184,6 +260,18 @@ impl ParallelEpochPlan {
 
     pub fn parallel_batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
         planned_batch_worker_slot_tick_summaries(&self.parallel_batches, self.parallel_worker_limit)
+    }
+
+    pub fn parallel_batch_planned_workers(&self) -> Vec<ParallelEpochPlannedWorkerRecord> {
+        collect_planned_workers(&self.parallel_batches)
+    }
+
+    pub fn parallel_batch_lane_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_planned_batch_lane_tick_summaries(&self.parallel_batches)
+    }
+
+    pub fn parallel_batch_ticks_for_lane(&self, lane: usize) -> Tick {
+        planned_batch_ticks_for_lane(&self.parallel_batches, lane)
     }
 
     pub fn parallel_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
@@ -274,6 +362,18 @@ impl RecordedRunSummary {
             &self.planned_batches,
             self.planned_parallel_worker_limit,
         )
+    }
+
+    pub fn planned_batch_planned_workers(&self) -> Vec<ParallelEpochPlannedWorkerRecord> {
+        collect_planned_workers(&self.planned_batches)
+    }
+
+    pub fn planned_batch_lane_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_planned_batch_lane_tick_summaries(&self.planned_batches)
+    }
+
+    pub fn planned_batch_ticks_for_lane(&self, lane: usize) -> Tick {
+        planned_batch_ticks_for_lane(&self.planned_batches, lane)
     }
 
     pub fn planned_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
@@ -424,6 +524,31 @@ impl RecordedConservativeRunSummary {
                 (worker_slot, active_ticks, idle_ticks)
             })
             .collect()
+    }
+
+    pub fn planned_batch_planned_workers(&self) -> Vec<ParallelEpochPlannedWorkerRecord> {
+        collect_planned_workers(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+        )
+    }
+
+    pub fn planned_batch_lane_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_planned_batch_lane_tick_summaries(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+        )
+    }
+
+    pub fn planned_batch_ticks_for_lane(&self, lane: usize) -> Tick {
+        planned_batch_ticks_for_lane(
+            self.epochs
+                .iter()
+                .flat_map(|epoch| epoch.planned_batches().iter()),
+            lane,
+        )
     }
 
     pub fn planned_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
@@ -659,6 +784,39 @@ fn active_planned_batch_worker_slot_tick_summaries(
         .into_iter()
         .map(|(worker_slot, active_ticks)| (worker_slot, active_ticks, 0))
         .collect()
+}
+
+fn collect_planned_workers<'a, I>(batches: I) -> Vec<ParallelEpochPlannedWorkerRecord>
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .flat_map(|batch| batch.planned_workers().iter().copied())
+        .collect()
+}
+
+fn collect_planned_batch_lane_tick_summaries<'a, I>(batches: I) -> Vec<(usize, Tick)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for worker in collect_planned_workers(batches) {
+        let ticks = summaries.entry(worker.lane()).or_default();
+        *ticks = ticks.saturating_add(worker.duration_ticks());
+    }
+    summaries.into_iter().collect()
+}
+
+fn planned_batch_ticks_for_lane<'a, I>(batches: I, lane: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    collect_planned_workers(batches)
+        .into_iter()
+        .filter(|worker| worker.lane() == lane)
+        .map(ParallelEpochPlannedWorkerRecord::duration_ticks)
+        .fold(0, Tick::saturating_add)
 }
 
 fn collect_planned_batch_partition_set_summaries<'a, I>(

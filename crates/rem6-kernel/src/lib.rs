@@ -12,12 +12,12 @@ pub use progress::{
 };
 pub use scheduler::{
     ConservativeRunSummary, EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord,
-    ParallelEpochPlan, ParallelEpochPlannedBatch, ParallelPartitionActivity,
-    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId,
-    PartitionFrontier, PartitionId, PartitionSnapshot, PartitionedScheduler, PendingEventSnapshot,
-    ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary, RunSummary,
-    ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord, SchedulerError,
+    ParallelEpochPlan, ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord,
+    ParallelPartitionActivity, ParallelProgressTransitionRecord, ParallelRemoteFlowRecord,
+    ParallelRemoteSendRecord, ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord,
+    PartitionEventId, PartitionFrontier, PartitionId, PartitionSnapshot, PartitionedScheduler,
+    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
+    RunSummary, ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord, SchedulerError,
     SchedulerSnapshot,
 };
 pub use wait_for::{
