@@ -460,12 +460,13 @@ summaries, duration-weighted worker-count tick summaries, exact worker-count
 batch and tick queries, minimum-worker batch and tick queries, total batch
 worker-ticks, and thresholded batch worker-tick queries. Planned and executed
 kernel batch records also expose their own start tick, horizon, duration ticks,
-and worker-tick occupancy, and planned epoch/run summaries expose the same
-duration-weighted worker-count buckets, tick queries, worker-tick queries,
-worker-capacity ticks, idle-worker ticks, and utilization ratios as typed
-pre-dispatch evidence. They also expose planned worker-slot active and idle
-tick summaries, so a runtime can audit planned load distribution across the
-worker pool before any callback executes. Higher layers do not need to
+and worker-tick occupancy. Planned and recorded epoch/run summaries expose the
+same duration-weighted worker-count buckets, tick queries, worker-tick queries,
+worker-capacity ticks, idle-worker ticks, utilization ratios, and
+per-worker-slot active and idle tick summaries as typed pre-dispatch and
+post-dispatch evidence. A runtime can audit planned load distribution before
+any callback executes, then compare it with the recorded worker occupancy after
+callbacks and remote wakeups run. Higher layers do not need to
 rediscover the same time window from worker records, rebuild planned occupancy
 from timeline records, or recompute planned worker capacity from
 scheduler-private worker limits.

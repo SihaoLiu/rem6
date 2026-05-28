@@ -1,4 +1,4 @@
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler};
 
 #[test]
 fn recorded_parallel_runs_report_exact_batch_worker_count_buckets() {
@@ -45,6 +45,28 @@ fn recorded_parallel_runs_report_exact_batch_worker_count_buckets() {
     assert_eq!(first_epoch.batch_worker_ticks_at_or_above(1), 12);
     assert_eq!(first_epoch.batch_worker_ticks_at_or_above(2), 8);
     assert_eq!(first_epoch.batch_worker_ticks_at_or_above(3), 0);
+    assert_eq!(first_epoch.batches()[0].worker_capacity_ticks(2), 8);
+    assert_eq!(first_epoch.batches()[0].idle_worker_ticks(2), 0);
+    assert_eq!(
+        first_epoch.batches()[0].utilization_ratio(2).unwrap(),
+        ParallelBatchUtilizationRatio::new(8, 8).unwrap()
+    );
+    assert_eq!(first_epoch.batches()[1].worker_capacity_ticks(2), 8);
+    assert_eq!(first_epoch.batches()[1].idle_worker_ticks(2), 4);
+    assert_eq!(
+        first_epoch.batches()[1].utilization_ratio(2).unwrap(),
+        ParallelBatchUtilizationRatio::new(4, 8).unwrap()
+    );
+    assert_eq!(first_epoch.batch_worker_capacity_ticks(), 16);
+    assert_eq!(first_epoch.batch_idle_worker_ticks(), 4);
+    assert_eq!(
+        first_epoch.batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 4, 4)]
+    );
+    assert_eq!(
+        first_epoch.batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(12, 16).unwrap()
+    );
 
     assert_eq!(second_epoch.batch_worker_count_summaries(), vec![(1, 1)]);
     assert_eq!(
@@ -71,6 +93,16 @@ fn recorded_parallel_runs_report_exact_batch_worker_count_buckets() {
     assert_eq!(run.batch_worker_ticks_at_or_above(1), 16);
     assert_eq!(run.batch_worker_ticks_at_or_above(2), 8);
     assert_eq!(run.batch_worker_ticks_at_or_above(3), 0);
+    assert_eq!(run.batch_worker_capacity_ticks(), 24);
+    assert_eq!(run.batch_idle_worker_ticks(), 8);
+    assert_eq!(
+        run.batch_worker_slot_tick_summaries(),
+        vec![(0, 12, 0), (1, 4, 8)]
+    );
+    assert_eq!(
+        run.batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(16, 24).unwrap()
+    );
 }
 
 #[test]

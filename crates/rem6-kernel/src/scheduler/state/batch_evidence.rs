@@ -181,6 +181,59 @@ where
         .fold(0, Tick::saturating_add)
 }
 
+pub(super) fn batch_worker_capacity_ticks<'a, I>(batches: I, worker_capacity: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .map(|batch| batch.worker_capacity_ticks(worker_capacity))
+        .fold(0, Tick::saturating_add)
+}
+
+pub(super) fn batch_idle_worker_ticks<'a, I>(batches: I, worker_capacity: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .map(|batch| batch.idle_worker_ticks(worker_capacity))
+        .fold(0, Tick::saturating_add)
+}
+
+pub(super) fn batch_worker_slot_tick_summaries(
+    batches: &[ParallelEpochBatchRecord],
+    worker_capacity: usize,
+) -> Vec<(usize, Tick, Tick)> {
+    if batches.is_empty() {
+        return Vec::new();
+    }
+    let capacity = batches
+        .iter()
+        .map(ParallelEpochBatchRecord::worker_count)
+        .fold(worker_capacity.max(1), usize::max);
+    let mut summaries: Vec<(Tick, Tick)> = vec![(0, 0); capacity];
+    for batch in batches {
+        let duration = batch.duration_ticks();
+        if duration == 0 {
+            continue;
+        }
+        for (worker_slot, summary) in summaries.iter_mut().enumerate() {
+            if worker_slot < batch.worker_count() {
+                summary.0 = summary.0.saturating_add(duration);
+            } else {
+                summary.1 = summary.1.saturating_add(duration);
+            }
+        }
+    }
+    summaries
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (active_ticks, idle_ticks))| *active_ticks != 0 || *idle_ticks != 0)
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
+}
+
 fn batch_worker_tick_count(batch: &ParallelEpochBatchRecord) -> Tick {
     batch.worker_ticks()
 }

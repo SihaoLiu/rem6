@@ -11,7 +11,8 @@ mod planned_batch;
 
 use self::batch_evidence::{
     batch_count_at_or_above, batch_count_for_partition_set, batch_count_for_worker_count,
-    batch_ticks_at_or_above, batch_ticks_for_worker_count, batch_worker_ticks,
+    batch_idle_worker_ticks, batch_ticks_at_or_above, batch_ticks_for_worker_count,
+    batch_worker_capacity_ticks, batch_worker_slot_tick_summaries, batch_worker_ticks,
     batch_worker_ticks_at_or_above, collect_batch_partition_set_summaries,
     collect_batch_partition_streak_summaries, collect_batch_worker_count_summaries,
     collect_batch_worker_count_tick_summaries, max_consecutive_batch_count_for_partition_set,
@@ -257,6 +258,26 @@ impl ParallelEpochBatchRecord {
     pub fn worker_ticks(&self) -> Tick {
         self.duration_ticks()
             .saturating_mul(self.worker_count() as Tick)
+    }
+
+    pub fn worker_capacity_ticks(&self, worker_capacity: usize) -> Tick {
+        self.duration_ticks()
+            .saturating_mul(worker_capacity.max(self.worker_count()) as Tick)
+    }
+
+    pub fn idle_worker_ticks(&self, worker_capacity: usize) -> Tick {
+        self.worker_capacity_ticks(worker_capacity)
+            .saturating_sub(self.worker_ticks())
+    }
+
+    pub fn utilization_ratio(
+        &self,
+        worker_capacity: usize,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.worker_ticks(),
+            self.worker_capacity_ticks(worker_capacity),
+        )
     }
 
     pub fn dispatches_for_partition(&self, partition: PartitionId) -> Vec<SchedulerDispatchRecord> {
@@ -1152,6 +1173,25 @@ impl RecordedRunSummary {
         batch_worker_ticks_at_or_above(&self.batches, minimum_worker_count)
     }
 
+    pub fn batch_worker_capacity_ticks(&self) -> Tick {
+        batch_worker_capacity_ticks(&self.batches, self.planned_parallel_worker_limit)
+    }
+
+    pub fn batch_idle_worker_ticks(&self) -> Tick {
+        batch_idle_worker_ticks(&self.batches, self.planned_parallel_worker_limit)
+    }
+
+    pub fn batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
+        batch_worker_slot_tick_summaries(&self.batches, self.planned_parallel_worker_limit)
+    }
+
+    pub fn batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.batch_worker_ticks(),
+            self.batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn empty_epoch_count(&self) -> usize {
         self.profile.empty_epoch_count()
     }
@@ -1526,6 +1566,43 @@ impl RecordedConservativeRunSummary {
         batch_worker_ticks_at_or_above(
             self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
             minimum_worker_count,
+        )
+    }
+
+    pub fn batch_worker_capacity_ticks(&self) -> Tick {
+        self.epochs
+            .iter()
+            .map(RecordedRunSummary::batch_worker_capacity_ticks)
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn batch_idle_worker_ticks(&self) -> Tick {
+        self.batch_worker_capacity_ticks()
+            .saturating_sub(self.batch_worker_ticks())
+    }
+
+    pub fn batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
+        let mut summaries = BTreeMap::<usize, (Tick, Tick)>::new();
+        for epoch in &self.epochs {
+            for (worker_slot, active_ticks, idle_ticks) in epoch.batch_worker_slot_tick_summaries()
+            {
+                let summary = summaries.entry(worker_slot).or_default();
+                summary.0 = summary.0.saturating_add(active_ticks);
+                summary.1 = summary.1.saturating_add(idle_ticks);
+            }
+        }
+        summaries
+            .into_iter()
+            .map(|(worker_slot, (active_ticks, idle_ticks))| {
+                (worker_slot, active_ticks, idle_ticks)
+            })
+            .collect()
+    }
+
+    pub fn batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.batch_worker_ticks(),
+            self.batch_worker_capacity_ticks(),
         )
     }
 
