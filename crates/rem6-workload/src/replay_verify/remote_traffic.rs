@@ -514,21 +514,21 @@ fn validate_full_system_remote_flow_merge_summary(
             continue;
         };
         if !remote_flow_covers_scoped_flow(merged_flow, scoped_flow) {
-            return Err(WorkloadError::InvalidParallelRemoteFlowMergeSummary {
-                scope: WorkloadParallelRemoteFlowScope::FullSystem,
-                source: scoped_flow.source().index(),
-                target: scoped_flow.target().index(),
-                merged_send_count: merged_flow.send_count(),
-                scoped_send_count: scoped_flow.send_count(),
-                merged_first_tick: Some(merged_flow.first_tick()),
-                scoped_first_tick: scoped_flow.first_tick(),
-                merged_last_tick: Some(merged_flow.last_tick()),
-                scoped_last_tick: scoped_flow.last_tick(),
-                merged_minimum_delay: merged_flow.minimum_delay(),
-                scoped_minimum_delay: scoped_flow.minimum_delay(),
-                merged_maximum_delay: merged_flow.maximum_delay(),
-                scoped_maximum_delay: scoped_flow.maximum_delay(),
-            });
+            return Err(WorkloadError::invalid_parallel_remote_flow_merge_summary(
+                WorkloadParallelRemoteFlowScope::FullSystem,
+                scoped_flow.source().index(),
+                scoped_flow.target().index(),
+                merged_flow.send_count(),
+                scoped_flow.send_count(),
+                Some(merged_flow.first_tick()),
+                scoped_flow.first_tick(),
+                Some(merged_flow.last_tick()),
+                scoped_flow.last_tick(),
+                merged_flow.minimum_delay(),
+                scoped_flow.minimum_delay(),
+                merged_flow.maximum_delay(),
+                scoped_flow.maximum_delay(),
+            ));
         }
     }
     Ok(())

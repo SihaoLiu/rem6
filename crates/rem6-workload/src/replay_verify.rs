@@ -634,24 +634,24 @@ pub(crate) fn verify_expected_fabric_lane_activity(
             return Err(missing_fabric_lane_activity_summary(expected));
         };
         if expected.below_minimum(&actual) {
-            return Err(WorkloadError::ExpectedFabricLaneActivityBelowMinimum {
-                link: expected.link().clone(),
-                virtual_network: expected.virtual_network(),
-                minimum_transfer_count: expected.minimum_transfer_count(),
-                actual_transfer_count: actual.transfer_count(),
-                minimum_byte_count: expected.minimum_byte_count(),
-                actual_byte_count: actual.byte_count(),
-                minimum_occupied_ticks: expected.minimum_occupied_ticks(),
-                actual_occupied_ticks: actual.occupied_ticks(),
-                minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
-                actual_queue_delay_ticks: actual.queue_delay_ticks(),
-                minimum_max_queue_delay_ticks: expected.minimum_max_queue_delay_ticks(),
-                actual_max_queue_delay_ticks: actual.max_queue_delay_ticks(),
-                required_first_tick: expected.required_first_tick(),
-                actual_first_tick: actual.first_tick(),
-                required_last_tick: expected.required_last_tick(),
-                actual_last_tick: actual.last_tick(),
-            });
+            return Err(WorkloadError::expected_fabric_lane_activity_below_minimum(
+                expected.link().clone(),
+                expected.virtual_network(),
+                expected.minimum_transfer_count(),
+                actual.transfer_count(),
+                expected.minimum_byte_count(),
+                actual.byte_count(),
+                expected.minimum_occupied_ticks(),
+                actual.occupied_ticks(),
+                expected.minimum_queue_delay_ticks(),
+                actual.queue_delay_ticks(),
+                expected.minimum_max_queue_delay_ticks(),
+                actual.max_queue_delay_ticks(),
+                expected.required_first_tick(),
+                actual.first_tick(),
+                expected.required_last_tick(),
+                actual.last_tick(),
+            ));
         }
         if let Some((maximum_queue_delay_ticks, maximum_max_queue_delay_ticks)) =
             expected.queue_delay_budget()
@@ -705,23 +705,21 @@ pub(crate) fn verify_expected_fabric_link_activity(
             return Err(missing_fabric_link_activity_summary(expected));
         };
         if expected.below_minimum(&actual) {
-            return Err(WorkloadError::ExpectedFabricLinkActivityBelowMinimum {
-                link: expected.link().clone(),
-                minimum_transfer_count: expected.minimum_transfer_count(),
-                actual_transfer_count: actual.transfer_count(),
-                minimum_active_virtual_network_count: expected
-                    .minimum_active_virtual_network_count(),
-                actual_active_virtual_network_count: actual.active_virtual_network_count(),
-                minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
-                actual_queue_delay_ticks: actual.queue_delay_ticks(),
-                minimum_contended_virtual_network_count: expected
-                    .minimum_contended_virtual_network_count(),
-                actual_contended_virtual_network_count: actual.contended_virtual_network_count(),
-                required_first_tick: expected.required_first_tick(),
-                actual_first_tick: actual.first_tick(),
-                required_last_tick: expected.required_last_tick(),
-                actual_last_tick: actual.last_tick(),
-            });
+            return Err(WorkloadError::expected_fabric_link_activity_below_minimum(
+                expected.link().clone(),
+                expected.minimum_transfer_count(),
+                actual.transfer_count(),
+                expected.minimum_active_virtual_network_count(),
+                actual.active_virtual_network_count(),
+                expected.minimum_queue_delay_ticks(),
+                actual.queue_delay_ticks(),
+                expected.minimum_contended_virtual_network_count(),
+                actual.contended_virtual_network_count(),
+                expected.required_first_tick(),
+                actual.first_tick(),
+                expected.required_last_tick(),
+                actual.last_tick(),
+            ));
         }
         if let Some((maximum_queue_delay_ticks, maximum_max_queue_delay_ticks)) =
             expected.queue_delay_budget()

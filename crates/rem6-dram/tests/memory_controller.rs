@@ -91,6 +91,11 @@ fn controller_with_targets() -> (DramMemoryController, MemoryTargetId, MemoryTar
 }
 
 #[test]
+fn dram_memory_error_stays_within_result_error_size_budget() {
+    assert!(std::mem::size_of::<DramMemoryError>() <= 128);
+}
+
+#[test]
 fn dram_memory_controller_routes_reads_and_returns_data_at_ready_cycle() {
     let (mut controller, low, high) = controller_with_targets();
 

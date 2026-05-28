@@ -198,21 +198,21 @@ fn workload_replay_plan_rejects_missing_or_underactive_fabric_link_activity() {
         .with_parallel_execution_summary(underactive_summary);
     assert_eq!(
         plan.verify_result(&underactive).unwrap_err(),
-        WorkloadError::ExpectedFabricLinkActivityBelowMinimum {
-            link: link("mesh_a"),
-            minimum_transfer_count: 4,
-            actual_transfer_count: 3,
-            minimum_active_virtual_network_count: 2,
-            actual_active_virtual_network_count: 1,
-            minimum_queue_delay_ticks: 6,
-            actual_queue_delay_ticks: 5,
-            minimum_contended_virtual_network_count: 1,
-            actual_contended_virtual_network_count: 0,
-            required_first_tick: None,
-            actual_first_tick: 0,
-            required_last_tick: None,
-            actual_last_tick: 8,
-        },
+        WorkloadError::expected_fabric_link_activity_below_minimum(
+            link("mesh_a"),
+            4,
+            3,
+            2,
+            1,
+            6,
+            5,
+            1,
+            0,
+            None,
+            0,
+            None,
+            8,
+        ),
     );
 }
 
@@ -240,21 +240,21 @@ fn workload_replay_plan_rejects_fabric_link_activity_outside_required_window() {
         .with_parallel_execution_summary(late_start_summary);
     assert_eq!(
         plan.verify_result(&late_start).unwrap_err(),
-        WorkloadError::ExpectedFabricLinkActivityBelowMinimum {
-            link: link("mesh_a"),
-            minimum_transfer_count: 4,
-            actual_transfer_count: 5,
-            minimum_active_virtual_network_count: 2,
-            actual_active_virtual_network_count: 2,
-            minimum_queue_delay_ticks: 6,
-            actual_queue_delay_ticks: 9,
-            minimum_contended_virtual_network_count: 1,
-            actual_contended_virtual_network_count: 1,
-            required_first_tick: Some(4),
-            actual_first_tick: 5,
-            required_last_tick: Some(16),
-            actual_last_tick: 18,
-        },
+        WorkloadError::expected_fabric_link_activity_below_minimum(
+            link("mesh_a"),
+            4,
+            5,
+            2,
+            2,
+            6,
+            9,
+            1,
+            1,
+            Some(4),
+            5,
+            Some(16),
+            18,
+        ),
     );
 
     let early_end_summary = WorkloadParallelExecutionSummary::default()
@@ -263,21 +263,21 @@ fn workload_replay_plan_rejects_fabric_link_activity_outside_required_window() {
         .with_parallel_execution_summary(early_end_summary);
     assert_eq!(
         plan.verify_result(&early_end).unwrap_err(),
-        WorkloadError::ExpectedFabricLinkActivityBelowMinimum {
-            link: link("mesh_a"),
-            minimum_transfer_count: 4,
-            actual_transfer_count: 5,
-            minimum_active_virtual_network_count: 2,
-            actual_active_virtual_network_count: 2,
-            minimum_queue_delay_ticks: 6,
-            actual_queue_delay_ticks: 9,
-            minimum_contended_virtual_network_count: 1,
-            actual_contended_virtual_network_count: 1,
-            required_first_tick: Some(4),
-            actual_first_tick: 3,
-            required_last_tick: Some(16),
-            actual_last_tick: 15,
-        },
+        WorkloadError::expected_fabric_link_activity_below_minimum(
+            link("mesh_a"),
+            4,
+            5,
+            2,
+            2,
+            6,
+            9,
+            1,
+            1,
+            Some(4),
+            3,
+            Some(16),
+            15,
+        ),
     );
 }
 

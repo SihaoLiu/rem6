@@ -19,11 +19,23 @@ pub enum DramMemoryError {
     },
     ProfileSnapshotMismatch {
         target: MemoryTargetId,
-        mismatch: DramProfileSnapshotMismatch,
+        mismatch: Box<DramProfileSnapshotMismatch>,
     },
     MissingDramTarget {
         target: MemoryTargetId,
     },
+}
+
+impl DramMemoryError {
+    pub(crate) fn profile_snapshot_mismatch(
+        target: MemoryTargetId,
+        mismatch: DramProfileSnapshotMismatch,
+    ) -> Self {
+        Self::ProfileSnapshotMismatch {
+            target,
+            mismatch: Box::new(mismatch),
+        }
+    }
 }
 
 impl fmt::Display for DramMemoryError {

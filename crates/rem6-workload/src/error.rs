@@ -19,9 +19,14 @@ use crate::{
 
 mod display;
 mod fabric_display;
+mod large_payload;
 mod parallel_partition;
 mod remote_traffic_mismatch;
 
+pub use large_payload::{
+    WorkloadFabricHopActivityBelowMinimumError, WorkloadFabricLaneActivityBelowMinimumError,
+    WorkloadFabricLinkActivityBelowMinimumError, WorkloadParallelRemoteFlowMergeSummaryError,
+};
 pub use parallel_partition::{
     WorkloadParallelPartitionActivityMergeSummary, WorkloadParallelPartitionCountMergeSummary,
 };
@@ -782,21 +787,7 @@ pub enum WorkloadError {
         minimum_delay: Tick,
         maximum_delay: Tick,
     },
-    InvalidParallelRemoteFlowMergeSummary {
-        scope: WorkloadParallelRemoteFlowScope,
-        source: u32,
-        target: u32,
-        merged_send_count: usize,
-        scoped_send_count: usize,
-        merged_first_tick: Option<Tick>,
-        scoped_first_tick: Tick,
-        merged_last_tick: Option<Tick>,
-        scoped_last_tick: Tick,
-        merged_minimum_delay: Option<Tick>,
-        scoped_minimum_delay: Option<Tick>,
-        merged_maximum_delay: Option<Tick>,
-        scoped_maximum_delay: Option<Tick>,
-    },
+    InvalidParallelRemoteFlowMergeSummary(Box<WorkloadParallelRemoteFlowMergeSummaryError>),
     MissingParallelRemoteTrafficAggregateFlow {
         scope: WorkloadParallelRemoteFlowScope,
         source: u32,
@@ -1415,23 +1406,7 @@ pub enum WorkloadError {
         required_first_tick: Option<Tick>,
         required_last_tick: Option<Tick>,
     },
-    ExpectedFabricHopActivityBelowMinimum {
-        hop_index: usize,
-        link: FabricLinkId,
-        virtual_network: VirtualNetworkId,
-        minimum_transfer_count: usize,
-        actual_transfer_count: usize,
-        minimum_byte_count: u64,
-        actual_byte_count: u64,
-        minimum_occupied_ticks: Tick,
-        actual_occupied_ticks: Tick,
-        minimum_queue_delay_ticks: Tick,
-        actual_queue_delay_ticks: Tick,
-        required_first_tick: Option<Tick>,
-        actual_first_tick: Tick,
-        required_last_tick: Option<Tick>,
-        actual_last_tick: Tick,
-    },
+    ExpectedFabricHopActivityBelowMinimum(Box<WorkloadFabricHopActivityBelowMinimumError>),
     ZeroExpectedFabricLaneActivity {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
@@ -1463,24 +1438,7 @@ pub enum WorkloadError {
         required_first_tick: Option<Tick>,
         required_last_tick: Option<Tick>,
     },
-    ExpectedFabricLaneActivityBelowMinimum {
-        link: FabricLinkId,
-        virtual_network: VirtualNetworkId,
-        minimum_transfer_count: usize,
-        actual_transfer_count: usize,
-        minimum_byte_count: u64,
-        actual_byte_count: u64,
-        minimum_occupied_ticks: Tick,
-        actual_occupied_ticks: Tick,
-        minimum_queue_delay_ticks: Tick,
-        actual_queue_delay_ticks: Tick,
-        minimum_max_queue_delay_ticks: Tick,
-        actual_max_queue_delay_ticks: Tick,
-        required_first_tick: Option<Tick>,
-        actual_first_tick: Tick,
-        required_last_tick: Option<Tick>,
-        actual_last_tick: Tick,
-    },
+    ExpectedFabricLaneActivityBelowMinimum(Box<WorkloadFabricLaneActivityBelowMinimumError>),
     ExpectedFabricLaneActivityAboveMaximum {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
@@ -1514,21 +1472,7 @@ pub enum WorkloadError {
         required_first_tick: Option<Tick>,
         required_last_tick: Option<Tick>,
     },
-    ExpectedFabricLinkActivityBelowMinimum {
-        link: FabricLinkId,
-        minimum_transfer_count: usize,
-        actual_transfer_count: usize,
-        minimum_active_virtual_network_count: usize,
-        actual_active_virtual_network_count: usize,
-        minimum_queue_delay_ticks: Tick,
-        actual_queue_delay_ticks: Tick,
-        minimum_contended_virtual_network_count: usize,
-        actual_contended_virtual_network_count: usize,
-        required_first_tick: Option<Tick>,
-        actual_first_tick: Tick,
-        required_last_tick: Option<Tick>,
-        actual_last_tick: Tick,
-    },
+    ExpectedFabricLinkActivityBelowMinimum(Box<WorkloadFabricLinkActivityBelowMinimumError>),
     ExpectedFabricLinkActivityAboveMaximum {
         link: FabricLinkId,
         maximum_queue_delay_ticks: Tick,

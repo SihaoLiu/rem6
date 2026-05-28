@@ -192,23 +192,23 @@ pub(crate) fn verify_expected_fabric_hop_activity(
             return Err(missing_fabric_hop_activity_summary(expected));
         };
         if expected.below_minimum(&actual) {
-            return Err(WorkloadError::ExpectedFabricHopActivityBelowMinimum {
-                hop_index: expected.hop_index(),
-                link: expected.link().clone(),
-                virtual_network: expected.virtual_network(),
-                minimum_transfer_count: expected.minimum_transfer_count(),
-                actual_transfer_count: actual.transfer_count,
-                minimum_byte_count: expected.minimum_byte_count(),
-                actual_byte_count: actual.byte_count,
-                minimum_occupied_ticks: expected.minimum_occupied_ticks(),
-                actual_occupied_ticks: actual.occupied_ticks,
-                minimum_queue_delay_ticks: expected.minimum_queue_delay_ticks(),
-                actual_queue_delay_ticks: actual.queue_delay_ticks,
-                required_first_tick: expected.required_first_tick(),
-                actual_first_tick: actual.first_tick,
-                required_last_tick: expected.required_last_tick(),
-                actual_last_tick: actual.last_tick,
-            });
+            return Err(WorkloadError::expected_fabric_hop_activity_below_minimum(
+                expected.hop_index(),
+                expected.link().clone(),
+                expected.virtual_network(),
+                expected.minimum_transfer_count(),
+                actual.transfer_count,
+                expected.minimum_byte_count(),
+                actual.byte_count,
+                expected.minimum_occupied_ticks(),
+                actual.occupied_ticks,
+                expected.minimum_queue_delay_ticks(),
+                actual.queue_delay_ticks,
+                expected.required_first_tick(),
+                actual.first_tick,
+                expected.required_last_tick(),
+                actual.last_tick,
+            ));
         }
     }
     Ok(())

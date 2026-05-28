@@ -825,7 +825,9 @@ Implementation evidence on 2026-05-26:
   data-cache, GPU DMA, or accelerator DMA evidence by send count, delivery tick
   window, or delay-bound window. A global remote-flow summary therefore cannot
   narrow away scoped cross-partition traffic while replay checks still pass from
-  derived lower-bound evidence.
+  derived lower-bound evidence. The detailed mismatch payload is boxed behind a
+  constructor, preserving typed diagnostics without making every workload
+  replay `Result` carry the largest remote-flow error inline.
 - Workload full-system exact remote-send merge validation now rejects explicit
   full-system send streams that omit scheduler, data-cache, GPU DMA, or
   accelerator DMA scoped sends. A global exact-send summary therefore cannot
@@ -1087,7 +1089,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
-| `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, bank-group geometry, activity, and profiles. DRAM snapshot restore rejects profile target, line-layout, geometry, timing, parallel-port, or NVM media-timing drift before rebuilt controller state can expose stale profile evidence. External DRAM simulators should be optional adapters. |
+| `configs/dram`, `ext/drampower`, `ext/dramsim2`, `ext/dramsim3`, `ext/dramsys` | `rem6-dram`, adapter crates | partial | rem6 has internal DRAM timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, bank-group geometry, activity, and profiles. DRAM snapshot restore rejects profile target, line-layout, geometry, timing, parallel-port, or NVM media-timing drift before rebuilt controller state can expose stale profile evidence, while boxing the large mismatch payload so rich diagnostics do not bloat every `Result` error path. External DRAM simulators should be optional adapters. |
 | `configs/nvm`, `src/mem/NVMInterface.py`, `src/mem/nvm_interface.*`, memory profile code | `rem6-memory`, `rem6-dram` | partial | NVM targets have typed controller/media-bank topology and can round-trip through manifests, checkpoints, and DRAM target activity metadata. DRAM activity profiles preserve typed read/write byte counts, and NVM target activity exposes persistent write access, byte counters, max pending NVM reads, max pending persistent writes, profile-level media timing, access-level persistent-ready cycles, checkpointed pending read/write completions, NVM read-buffer/write-queue wait-for diagnostics, manifest identity for NVM media timing, and restore-time rejection of profile media-timing drift without string stats. Richer NVM-specific bandwidth behavior remains open. |
 | HBM, LPDDR, DDR class profiles | `rem6-dram` | partial | The profile shape exists for DDR, HBM, LPDDR, and NVM, and checkpoint restore validates that profile metadata still matches the target, memory layout, controller geometry, timing, and parallel-port shape. A broader library of validated profiles is still needed. |
 
@@ -1291,8 +1293,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   same-bank-group burst spacing for bank-group memories, and gem5-like
   command-window bandwidth limits across row and data commands, plus
   target-local unique active port and bank coverage when DRAM activity windows
-  are merged. DRAM profile tests now expose target-sorted parallel resource
-  summaries for DDR, HBM, LPDDR, and NVM profiles, including port,
+  are merged. DRAM memory-controller tests also keep the public memory error
+  type within a bounded `Result` error-size budget, so rich typed profile drift
+  diagnostics do not make strict workspace linting fail. DRAM profile tests now
+  expose target-sorted parallel resource summaries for DDR, HBM, LPDDR, and NVM
+  profiles, including port,
   topology-unit, scheduler-bank, topology-bank, and bank-group capacity, and
   runtime activity profiles preserve profiled-target capacity denominators
   across marker windows even when no target is active. NVM profile tests

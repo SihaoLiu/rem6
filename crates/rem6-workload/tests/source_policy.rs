@@ -1,11 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rem6_workload::WorkloadError;
+
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_ERROR_DISPLAY_ROOT_LINES: usize = 1300;
 const MAX_REPLAY_VERIFY_ROOT_LINES: usize = 1300;
 const MAX_RESULT_ROOT_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
+const MAX_RESULT_ERROR_BYTES: usize = 128;
 
 #[test]
 fn workload_lib_rs_remains_a_facade() {
@@ -73,6 +76,11 @@ fn workload_source_files_stay_within_size_limit() {
         "source files exceed {MAX_SOURCE_LINES} lines: {}",
         oversized.join(", ")
     );
+}
+
+#[test]
+fn workload_error_stays_within_result_error_size_budget() {
+    assert!(std::mem::size_of::<WorkloadError>() <= MAX_RESULT_ERROR_BYTES);
 }
 
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {

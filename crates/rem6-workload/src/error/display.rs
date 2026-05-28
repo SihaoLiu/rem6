@@ -828,7 +828,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelRemoteTrafficFlowEndpoints { .. }
             | Self::InvalidParallelRemoteTrafficFlowTiming { .. }
             | Self::InvalidParallelRemoteTrafficFlowDelayBounds { .. }
-            | Self::InvalidParallelRemoteFlowMergeSummary { .. }
+            | Self::InvalidParallelRemoteFlowMergeSummary(_)
             | Self::MissingParallelRemoteTrafficAggregateFlow { .. }
             | Self::ParallelRemoteTrafficConsistencyMismatch(_)
             | Self::InvalidExpectedParallelRemoteFlowTimingWindow { .. }
@@ -1169,20 +1169,20 @@ impl fmt::Display for WorkloadError {
             | Self::DuplicateExpectedFabricHopActivity { .. }
             | Self::InvalidExpectedFabricHopActivityWindow { .. }
             | Self::MissingFabricHopActivitySummary { .. }
-            | Self::ExpectedFabricHopActivityBelowMinimum { .. }
+            | Self::ExpectedFabricHopActivityBelowMinimum(_)
             | Self::ZeroExpectedFabricLaneActivity { .. }
             | Self::DuplicateExpectedFabricLaneActivity { .. }
             | Self::InvalidExpectedFabricLaneActivityWindow { .. }
             | Self::InvalidExpectedFabricLaneActivityQueueDelayBudget { .. }
             | Self::MissingFabricLaneActivitySummary { .. }
-            | Self::ExpectedFabricLaneActivityBelowMinimum { .. }
+            | Self::ExpectedFabricLaneActivityBelowMinimum(_)
             | Self::ExpectedFabricLaneActivityAboveMaximum { .. }
             | Self::ZeroExpectedFabricLinkActivity { .. }
             | Self::DuplicateExpectedFabricLinkActivity { .. }
             | Self::InvalidExpectedFabricLinkActivityWindow { .. }
             | Self::InvalidExpectedFabricLinkActivityQueueDelayBudget { .. }
             | Self::MissingFabricLinkActivitySummary { .. }
-            | Self::ExpectedFabricLinkActivityBelowMinimum { .. }
+            | Self::ExpectedFabricLinkActivityBelowMinimum(_)
             | Self::ExpectedFabricLinkActivityAboveMaximum { .. }
             | Self::ZeroExpectedFabricVirtualNetworkActivity { .. }
             | Self::DuplicateExpectedFabricVirtualNetworkActivity { .. }

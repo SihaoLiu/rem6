@@ -150,5 +150,5 @@ fn profile_snapshot_mismatch(
     target: MemoryTargetId,
     mismatch: DramProfileSnapshotMismatch,
 ) -> DramMemoryError {
-    DramMemoryError::ProfileSnapshotMismatch { target, mismatch }
+    DramMemoryError::profile_snapshot_mismatch(target, mismatch)
 }

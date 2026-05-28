@@ -231,23 +231,23 @@ fn workload_replay_plan_rejects_missing_or_underactive_fabric_hop_activity() {
         .with_parallel_execution_summary(underactive_summary);
     assert_eq!(
         plan.verify_result(&underactive).unwrap_err(),
-        WorkloadError::ExpectedFabricHopActivityBelowMinimum {
-            hop_index: 1,
-            link: link("router_to_mem"),
-            virtual_network: vn(3),
-            minimum_transfer_count: 2,
-            actual_transfer_count: 1,
-            minimum_byte_count: 32,
-            actual_byte_count: 16,
-            minimum_occupied_ticks: 8,
-            actual_occupied_ticks: 4,
-            minimum_queue_delay_ticks: 0,
-            actual_queue_delay_ticks: 0,
-            required_first_tick: None,
-            actual_first_tick: 9,
-            required_last_tick: None,
-            actual_last_tick: 16,
-        },
+        WorkloadError::expected_fabric_hop_activity_below_minimum(
+            1,
+            link("router_to_mem"),
+            vn(3),
+            2,
+            1,
+            32,
+            16,
+            8,
+            4,
+            0,
+            0,
+            None,
+            9,
+            None,
+            16,
+        ),
     );
 }
 

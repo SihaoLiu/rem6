@@ -310,21 +310,21 @@ fn workload_replay_plan_rejects_weaker_full_system_remote_flow_count() {
 
     assert_eq!(
         plan.verify_result(&result).unwrap_err(),
-        WorkloadError::InvalidParallelRemoteFlowMergeSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
-            source: 0,
-            target: 1,
-            merged_send_count: 1,
-            scoped_send_count: 2,
-            merged_first_tick: Some(11),
-            scoped_first_tick: 11,
-            merged_last_tick: Some(11),
-            scoped_last_tick: 17,
-            merged_minimum_delay: None,
-            scoped_minimum_delay: None,
-            merged_maximum_delay: None,
-            scoped_maximum_delay: None,
-        },
+        WorkloadError::invalid_parallel_remote_flow_merge_summary(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            1,
+            2,
+            Some(11),
+            11,
+            Some(11),
+            17,
+            None,
+            None,
+            None,
+            None,
+        ),
     );
 }
 
@@ -371,21 +371,21 @@ fn workload_replay_plan_rejects_weaker_full_system_remote_flow_window_and_delay(
 
     assert_eq!(
         plan.verify_result(&result).unwrap_err(),
-        WorkloadError::InvalidParallelRemoteFlowMergeSummary {
-            scope: WorkloadParallelRemoteFlowScope::FullSystem,
-            source: 0,
-            target: 1,
-            merged_send_count: 2,
-            scoped_send_count: 2,
-            merged_first_tick: Some(12),
-            scoped_first_tick: 11,
-            merged_last_tick: Some(16),
-            scoped_last_tick: 17,
-            merged_minimum_delay: Some(8),
-            scoped_minimum_delay: Some(8),
-            merged_maximum_delay: Some(8),
-            scoped_maximum_delay: Some(10),
-        },
+        WorkloadError::invalid_parallel_remote_flow_merge_summary(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+            2,
+            Some(12),
+            11,
+            Some(16),
+            17,
+            Some(8),
+            Some(8),
+            Some(8),
+            Some(10),
+        ),
     );
 }
 
