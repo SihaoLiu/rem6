@@ -454,7 +454,10 @@ thresholded batch worker-tick queries, exact partition-set summaries, and
 same-partition-set streak summaries directly
 for CPU-scheduler, data-cache scheduler, and merged full-system scopes, so
 simulation diagnostics can inspect parallel occupancy before workload replay
-translates it into manifest evidence.
+translates it into manifest evidence. It also exposes recorded worker-capacity
+ticks, idle-worker ticks, utilization ratios, and per-worker-slot active/idle
+tick summaries for the same scopes, preserving the executed scheduler capacity
+that produced those occupancy records.
 The kernel recorded epoch and run summaries expose exact batch worker-count
 summaries, duration-weighted worker-count tick summaries, exact worker-count
 batch and tick queries, minimum-worker batch and tick queries, total batch

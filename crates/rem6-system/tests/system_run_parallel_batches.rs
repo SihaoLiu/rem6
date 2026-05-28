@@ -363,6 +363,50 @@ fn system_run_summarizes_parallel_batch_worker_and_partition_sets() {
         ]),
         1,
     );
+    assert_eq!(run.parallel_scheduler_batch_worker_capacity_ticks(), 16);
+    assert_eq!(run.parallel_scheduler_batch_idle_worker_ticks(), 4);
+    assert_eq!(
+        run.parallel_scheduler_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 4, 4)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(12, 16).unwrap(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_worker_capacity_ticks(),
+        8,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_idle_worker_ticks(),
+        0
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_worker_slot_tick_summaries(),
+        vec![(0, 4, 0), (1, 4, 0)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(8, 8).unwrap(),
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_capacity_ticks(),
+        24,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_idle_worker_ticks(),
+        4
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_slot_tick_summaries(),
+        vec![(0, 12, 0), (1, 8, 4)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(20, 24).unwrap(),
+    );
 }
 
 #[test]
@@ -562,6 +606,50 @@ fn system_run_exposes_scoped_parallel_batch_timeline() {
     assert_eq!(
         run.full_system_parallel_scheduler_batch_worker_ticks_at_or_above(3),
         0,
+    );
+    assert_eq!(run.parallel_scheduler_batch_worker_capacity_ticks(), 4);
+    assert_eq!(run.parallel_scheduler_batch_idle_worker_ticks(), 0);
+    assert_eq!(
+        run.parallel_scheduler_batch_worker_slot_tick_summaries(),
+        vec![(0, 4, 0)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(4, 4).unwrap(),
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_worker_capacity_ticks(),
+        16,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_idle_worker_ticks(),
+        0
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 8, 0)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(16, 16).unwrap(),
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_capacity_ticks(),
+        20,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_idle_worker_ticks(),
+        0
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_worker_slot_tick_summaries(),
+        vec![(0, 12, 0), (1, 8, 0)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(20, 20).unwrap(),
     );
     assert_eq!(
         run.parallel_scheduler_longest_batch_tick_streak_at_or_above(1),

@@ -508,6 +508,42 @@ impl RiscvSystemRun {
             .fold(0, Tick::saturating_add)
     }
 
+    pub fn parallel_scheduler_batch_worker_capacity_ticks(&self) -> Tick {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| {
+                batch_worker_capacity_ticks(epoch.batches(), epoch.plan().parallel_worker_limit())
+            })
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn parallel_scheduler_batch_idle_worker_ticks(&self) -> Tick {
+        self.parallel_scheduler_batch_worker_capacity_ticks()
+            .saturating_sub(self.parallel_scheduler_batch_worker_ticks())
+    }
+
+    pub fn parallel_scheduler_batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
+        collect_worker_slot_tick_summaries_from_summaries(
+            self.parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| {
+                    batch_worker_slot_tick_summaries(
+                        epoch.batches(),
+                        epoch.plan().parallel_worker_limit(),
+                    )
+                }),
+        )
+    }
+
+    pub fn parallel_scheduler_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.parallel_scheduler_batch_worker_ticks(),
+            self.parallel_scheduler_batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn parallel_scheduler_longest_batch_tick_streak_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -552,6 +588,37 @@ impl RiscvSystemRun {
         )
     }
 
+    pub fn data_cache_parallel_scheduler_batch_worker_capacity_ticks(&self) -> Tick {
+        self.data_cache_parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.batch_worker_capacity_ticks())
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_idle_worker_ticks(&self) -> Tick {
+        self.data_cache_parallel_scheduler_batch_worker_capacity_ticks()
+            .saturating_sub(self.data_cache_parallel_scheduler_batch_worker_ticks())
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        collect_worker_slot_tick_summaries_from_summaries(
+            self.data_cache_parallel_scheduler_epochs()
+                .into_iter()
+                .flat_map(|epoch| epoch.batch_worker_slot_tick_summaries()),
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.data_cache_parallel_scheduler_batch_worker_ticks(),
+            self.data_cache_parallel_scheduler_batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_longest_batch_tick_streak_at_or_above(
         &self,
         minimum_worker_count: usize,
@@ -590,6 +657,35 @@ impl RiscvSystemRun {
         self.parallel_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count)
             + self
                 .data_cache_parallel_scheduler_batch_worker_ticks_at_or_above(minimum_worker_count)
+    }
+
+    pub fn full_system_parallel_scheduler_batch_worker_capacity_ticks(&self) -> Tick {
+        self.parallel_scheduler_batch_worker_capacity_ticks()
+            .saturating_add(self.data_cache_parallel_scheduler_batch_worker_capacity_ticks())
+    }
+
+    pub fn full_system_parallel_scheduler_batch_idle_worker_ticks(&self) -> Tick {
+        self.full_system_parallel_scheduler_batch_worker_capacity_ticks()
+            .saturating_sub(self.full_system_parallel_scheduler_batch_worker_ticks())
+    }
+
+    pub fn full_system_parallel_scheduler_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        collect_worker_slot_tick_summaries_from_summaries(
+            self.parallel_scheduler_batch_worker_slot_tick_summaries()
+                .into_iter()
+                .chain(self.data_cache_parallel_scheduler_batch_worker_slot_tick_summaries()),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.full_system_parallel_scheduler_batch_worker_ticks(),
+            self.full_system_parallel_scheduler_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn full_system_parallel_scheduler_longest_batch_tick_streak_at_or_above(
@@ -877,6 +973,49 @@ fn batch_worker_ticks_at_or_above(
         .fold(0, Tick::saturating_add)
 }
 
+fn batch_worker_capacity_ticks(
+    batches: &[ParallelEpochBatchRecord],
+    worker_capacity: usize,
+) -> Tick {
+    batches
+        .iter()
+        .map(|batch| batch.worker_capacity_ticks(worker_capacity))
+        .fold(0, Tick::saturating_add)
+}
+
+fn batch_worker_slot_tick_summaries(
+    batches: &[ParallelEpochBatchRecord],
+    worker_capacity: usize,
+) -> Vec<(usize, Tick, Tick)> {
+    if batches.is_empty() {
+        return Vec::new();
+    }
+    let capacity = batches
+        .iter()
+        .map(ParallelEpochBatchRecord::worker_count)
+        .fold(worker_capacity.max(1), usize::max);
+    let mut summaries: Vec<(Tick, Tick)> = vec![(0, 0); capacity];
+    for batch in batches {
+        let duration = batch.duration_ticks();
+        if duration == 0 {
+            continue;
+        }
+        for (worker_slot, summary) in summaries.iter_mut().enumerate() {
+            if worker_slot < batch.worker_count() {
+                summary.0 = summary.0.saturating_add(duration);
+            } else {
+                summary.1 = summary.1.saturating_add(duration);
+            }
+        }
+    }
+    summaries
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (active_ticks, idle_ticks))| *active_ticks != 0 || *idle_ticks != 0)
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
+}
+
 fn longest_batch_tick_streak_at_or_above(
     records: impl IntoIterator<Item = RiscvSystemParallelBatchTimelineRecord>,
     minimum_worker_count: usize,
@@ -987,6 +1126,23 @@ fn collect_worker_count_tick_summaries_from_summaries(
         }
     }
     collected.into_iter().collect()
+}
+
+fn collect_worker_slot_tick_summaries_from_summaries(
+    summaries: impl IntoIterator<Item = (usize, Tick, Tick)>,
+) -> Vec<(usize, Tick, Tick)> {
+    let mut collected = BTreeMap::<usize, (Tick, Tick)>::new();
+    for (worker_slot, active_ticks, idle_ticks) in summaries {
+        if active_ticks != 0 || idle_ticks != 0 {
+            let stored = collected.entry(worker_slot).or_default();
+            stored.0 = stored.0.saturating_add(active_ticks);
+            stored.1 = stored.1.saturating_add(idle_ticks);
+        }
+    }
+    collected
+        .into_iter()
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
 }
 
 fn batch_count_at_or_above(
