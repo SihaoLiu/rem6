@@ -232,6 +232,7 @@ pub enum PciError {
         actual: PciMsiMessage,
     },
     SnapshotMsixCapabilityMismatch,
+    InvalidMsixCapabilitySnapshot,
     InvalidMsixCapabilityOffset {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -635,6 +636,9 @@ impl fmt::Display for PciError {
                     f,
                     "PCI snapshot MSI-X capability does not match this endpoint"
                 )
+            }
+            Self::InvalidMsixCapabilitySnapshot => {
+                write!(f, "PCI MSI-X capability snapshot is invalid")
             }
             Self::InvalidMsixCapabilityOffset { offset, size } => write!(
                 f,

@@ -229,6 +229,65 @@ fn pci_msix_snapshot_restore_preserves_table_and_pending_state() {
 }
 
 #[test]
+fn pci_endpoint_snapshot_exposes_msix_payload_for_checkpoint_audit() {
+    let mut endpoint = storage_endpoint();
+    install_msix(&mut endpoint);
+    program_msix_vector(&mut endpoint, 2, 0x0060);
+    endpoint.queue_msix_pending(2).unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payload = snapshot.msix_payload().unwrap();
+
+    assert_eq!(snapshot.validate_msix_payload(&payload), Ok(()));
+    let no_msix = storage_endpoint().snapshot();
+    assert_eq!(no_msix.msix_payload(), None);
+    assert_eq!(
+        no_msix.validate_msix_payload(&payload),
+        Err(PciError::SnapshotMsixCapabilityMismatch)
+    );
+
+    let different_table = {
+        let mut endpoint = storage_endpoint();
+        install_msix(&mut endpoint);
+        program_msix_vector(&mut endpoint, 2, 0x0070);
+        endpoint.queue_msix_pending(2).unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_table.validate_msix_payload(&payload),
+        Err(PciError::SnapshotMsixCapabilityMismatch)
+    );
+    let different_spec = {
+        let mut endpoint = storage_endpoint();
+        endpoint
+            .install_msix_capability(
+                PciMsixCapabilitySpec::new(
+                    PciConfigOffset::new(0x80).unwrap(),
+                    2,
+                    PciBarIndex::new(2).unwrap(),
+                    Address::new(0x200),
+                    PciBarIndex::new(2).unwrap(),
+                    Address::new(0x280),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_spec.validate_msix_payload(&payload),
+        Err(PciError::SnapshotMsixCapabilityMismatch)
+    );
+
+    let mut corrupted = payload;
+    corrupted.push(0);
+    assert_eq!(
+        snapshot.validate_msix_payload(&corrupted),
+        Err(PciError::InvalidMsixCapabilitySnapshot)
+    );
+}
+
+#[test]
 fn pci_msix_port_sends_enabled_vector_on_serial_scheduler() {
     let mut endpoint = storage_endpoint();
     install_msix(&mut endpoint);

@@ -802,6 +802,21 @@ impl PciEndpointConfigSnapshot {
             Err(PciError::SnapshotMsiCapabilityMismatch)
         }
     }
+
+    pub fn msix_payload(&self) -> Option<Vec<u8>> {
+        self.msix
+            .as_ref()
+            .map(msix::PciMsixCapabilityState::to_bytes)
+    }
+
+    pub fn validate_msix_payload(&self, payload: &[u8]) -> Result<(), PciError> {
+        let decoded = msix::PciMsixCapabilityState::from_bytes(payload)?;
+        if self.msix.as_ref() == Some(&decoded) {
+            Ok(())
+        } else {
+            Err(PciError::SnapshotMsixCapabilityMismatch)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

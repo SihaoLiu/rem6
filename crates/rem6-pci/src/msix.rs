@@ -24,6 +24,12 @@ const PCI_MSIX_TABLE_ENTRY_BYTES: u64 = 16;
 const PCI_MSIX_PBA_ENTRY_BYTES: u64 = 8;
 const PCI_MSIX_MAX_VECTORS: u16 = 2048;
 const PCI_MSIX_VECTOR_MASK_BIT: u32 = 1;
+const PCI_MSIX_SNAPSHOT_MAGIC: &[u8; 8] = b"R6PCMX01";
+const PCI_MSIX_SNAPSHOT_VERSION: u16 = 1;
+const PCI_MSIX_SNAPSHOT_ENABLED: u8 = 1 << 0;
+const PCI_MSIX_SNAPSHOT_FUNCTION_MASK: u8 = 1 << 1;
+const U16_BYTES: usize = 2;
+const U64_BYTES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciMsixCapabilitySpec {
@@ -152,6 +158,30 @@ impl PciMsixCapabilityState {
 
     pub(crate) const fn spec(&self) -> PciMsixCapabilitySpec {
         self.spec
+    }
+
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_MSIX_SNAPSHOT_MAGIC);
+        write_u16(&mut payload, PCI_MSIX_SNAPSHOT_VERSION);
+        write_u16(&mut payload, self.spec.offset().get());
+        write_u16(&mut payload, self.spec.vector_count());
+        payload.push(self.spec.table_bar().get());
+        payload.push(self.spec.pba_bar().get());
+        payload.push(self.snapshot_flags());
+        write_u64(&mut payload, self.spec.table_offset().get());
+        write_u64(&mut payload, self.spec.pba_offset().get());
+        for entry in &self.table {
+            payload.extend_from_slice(entry);
+        }
+        for word in &self.pba {
+            write_u64(&mut payload, *word);
+        }
+        payload
+    }
+
+    pub(crate) fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        decode_state(payload).ok_or(PciError::InvalidMsixCapabilitySnapshot)
     }
 
     pub(crate) fn install_into(&self, config: &mut [u8; PCI_CONFIG_SPACE_SIZE]) {
@@ -385,6 +415,128 @@ impl PciMsixCapabilityState {
         }
         Ok(())
     }
+
+    fn snapshot_flags(&self) -> u8 {
+        let mut flags = 0;
+        if self.enabled {
+            flags |= PCI_MSIX_SNAPSHOT_ENABLED;
+        }
+        if self.function_mask {
+            flags |= PCI_MSIX_SNAPSHOT_FUNCTION_MASK;
+        }
+        flags
+    }
+}
+
+fn decode_state(payload: &[u8]) -> Option<PciMsixCapabilityState> {
+    let mut cursor = 0;
+    let magic = read_exact(payload, &mut cursor, PCI_MSIX_SNAPSHOT_MAGIC.len())?;
+    if magic != PCI_MSIX_SNAPSHOT_MAGIC {
+        return None;
+    }
+    if read_u16(payload, &mut cursor)? != PCI_MSIX_SNAPSHOT_VERSION {
+        return None;
+    }
+    let offset = PciConfigOffset::new(read_u16(payload, &mut cursor)?).ok()?;
+    let vector_count = read_u16(payload, &mut cursor)?;
+    let table_bar = PciBarIndex::new(read_u8(payload, &mut cursor)?).ok()?;
+    let pba_bar = PciBarIndex::new(read_u8(payload, &mut cursor)?).ok()?;
+    let flags = read_u8(payload, &mut cursor)?;
+    let known_flags = PCI_MSIX_SNAPSHOT_ENABLED | PCI_MSIX_SNAPSHOT_FUNCTION_MASK;
+    if flags & !known_flags != 0 {
+        return None;
+    }
+    let table_offset = Address::new(read_u64(payload, &mut cursor)?);
+    let pba_offset = Address::new(read_u64(payload, &mut cursor)?);
+    let spec = PciMsixCapabilitySpec::new(
+        offset,
+        vector_count,
+        table_bar,
+        table_offset,
+        pba_bar,
+        pba_offset,
+    )
+    .ok()?;
+    let mut table = Vec::with_capacity(vector_count as usize);
+    for _ in 0..vector_count {
+        let entry = read_msix_table_entry(payload, &mut cursor)?;
+        if !msix_table_entry_is_valid(&entry) {
+            return None;
+        }
+        table.push(entry);
+    }
+    let pba_words = vector_count.div_ceil(64) as usize;
+    let mut pba = Vec::with_capacity(pba_words);
+    for _ in 0..pba_words {
+        pba.push(read_u64(payload, &mut cursor)?);
+    }
+    if cursor != payload.len() || !pba_tail_bits_are_valid(vector_count, &pba) {
+        return None;
+    }
+    Some(PciMsixCapabilityState {
+        spec,
+        enabled: flags & PCI_MSIX_SNAPSHOT_ENABLED != 0,
+        function_mask: flags & PCI_MSIX_SNAPSHOT_FUNCTION_MASK != 0,
+        table,
+        pba,
+    })
+}
+
+fn msix_table_entry_is_valid(entry: &[u8; PCI_MSIX_TABLE_ENTRY_BYTES as usize]) -> bool {
+    let lower = u32::from_le_bytes(entry[0..4].try_into().unwrap());
+    let vector_control = u32::from_le_bytes(entry[12..16].try_into().unwrap());
+    lower & 0x3 == 0 && vector_control & !PCI_MSIX_VECTOR_MASK_BIT == 0
+}
+
+fn pba_tail_bits_are_valid(vector_count: u16, pba: &[u64]) -> bool {
+    let trailing = vector_count % 64;
+    if trailing == 0 {
+        return true;
+    }
+    let Some(last) = pba.last() else {
+        return false;
+    };
+    let valid_mask = (1_u64 << trailing) - 1;
+    last & !valid_mask == 0
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u8(payload: &[u8], cursor: &mut usize) -> Option<u8> {
+    let byte = *payload.get(*cursor)?;
+    *cursor += 1;
+    Some(byte)
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Option<u16> {
+    let bytes = read_exact(payload, cursor, U16_BYTES)?;
+    Some(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u64(payload: &[u8], cursor: &mut usize) -> Option<u64> {
+    let bytes = read_exact(payload, cursor, U64_BYTES)?;
+    Some(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_msix_table_entry(
+    payload: &[u8],
+    cursor: &mut usize,
+) -> Option<[u8; PCI_MSIX_TABLE_ENTRY_BYTES as usize]> {
+    let bytes = read_exact(payload, cursor, PCI_MSIX_TABLE_ENTRY_BYTES as usize)?;
+    Some(bytes.try_into().unwrap())
+}
+
+fn read_exact<'a>(payload: &'a [u8], cursor: &mut usize, length: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(length)?;
+    let bytes = payload.get(*cursor..end)?;
+    *cursor = end;
+    Some(bytes)
 }
 
 impl PciEndpointConfig {
@@ -598,4 +750,116 @@ impl PciMsixPort {
 
 fn msix_capability_size() -> AccessSize {
     AccessSize::new(PCI_MSIX_CAPABILITY_SIZE).expect("MSI-X capability size is nonzero")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msix_spec(offset: u16) -> PciMsixCapabilitySpec {
+        PciMsixCapabilitySpec::new(
+            PciConfigOffset::new(offset).unwrap(),
+            4,
+            PciBarIndex::new(2).unwrap(),
+            Address::new(0x100),
+            PciBarIndex::new(2).unwrap(),
+            Address::new(0x180),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn msix_capability_state_codec_preserves_table_and_pending_bits() {
+        let spec = msix_spec(0x70);
+        let mut state = PciMsixCapabilityState::new(spec);
+        let mut config = [0; PCI_CONFIG_SPACE_SIZE];
+        state.install_into(&mut config);
+        state
+            .write_config(
+                PciConfigOffset::new(0x72).unwrap(),
+                &0xc000_u16.to_le_bytes(),
+                &mut config,
+            )
+            .unwrap();
+        state
+            .write_region(Address::new(0x120), &0xfee0_0123_u32.to_le_bytes())
+            .unwrap();
+        state
+            .write_region(Address::new(0x124), &0x0000_0001_u32.to_le_bytes())
+            .unwrap();
+        state
+            .write_region(Address::new(0x128), &0x0060_u32.to_le_bytes())
+            .unwrap();
+        state
+            .write_region(Address::new(0x12c), &1_u32.to_le_bytes())
+            .unwrap();
+        state.queue_pending(2).unwrap();
+
+        let decoded = PciMsixCapabilityState::from_bytes(&state.to_bytes()).unwrap();
+        let mut decoded_config = [0; PCI_CONFIG_SPACE_SIZE];
+        decoded.install_into(&mut decoded_config);
+
+        assert_eq!(decoded, state);
+        assert_eq!(&decoded_config[0x70..0x7c], &config[0x70..0x7c]);
+        assert_eq!(
+            decoded.read_region(Address::new(0x120), AccessSize::new(16).unwrap()),
+            state.read_region(Address::new(0x120), AccessSize::new(16).unwrap())
+        );
+        assert_eq!(
+            decoded.read_region(Address::new(0x180), AccessSize::new(8).unwrap()),
+            state.read_region(Address::new(0x180), AccessSize::new(8).unwrap())
+        );
+    }
+
+    #[test]
+    fn msix_capability_state_codec_rejects_invalid_payloads() {
+        let state = PciMsixCapabilityState::new(msix_spec(0x70));
+        let mut payload = state.to_bytes();
+
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&payload[..payload.len() - 1]),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+
+        payload.push(0);
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&payload),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+
+        let mut invalid_version = state.to_bytes();
+        invalid_version[8] = 0xff;
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&invalid_version),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+
+        let mut invalid_flags = state.to_bytes();
+        invalid_flags[16] = 0x80;
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&invalid_flags),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+
+        let mut invalid_bar = state.to_bytes();
+        invalid_bar[14] = 7;
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&invalid_bar),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+
+        let mut invalid_vector_control = state.to_bytes();
+        invalid_vector_control[45] = 2;
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&invalid_vector_control),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+
+        let mut invalid_pending_tail = state.to_bytes();
+        invalid_pending_tail[97] = 0x10;
+        assert_eq!(
+            PciMsixCapabilityState::from_bytes(&invalid_pending_tail),
+            Err(PciError::InvalidMsixCapabilitySnapshot)
+        );
+    }
 }

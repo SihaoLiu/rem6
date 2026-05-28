@@ -1435,9 +1435,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   invalid capability layouts, and serial plus parallel MSI delivery through
   typed rem6-interrupt routes. MSI-X tests cover typed
   capability table and PBA register exposure, BAR-local table programming,
-  vector and function masks, table plus pending-bit snapshot restore, invalid
-  and overlapping layout rejection, serial delivery, and masked parallel
-  delivery recording into the PBA. PCI source-policy tests keep the crate root
+  vector and function masks, table plus pending-bit snapshot restore, stable
+  payload encoding for endpoint checkpoint audit, invalid and overlapping
+  layout rejection, serial delivery, and masked parallel delivery recording
+  into the PBA. PCI source-policy tests keep the crate root
   below the facade budget and all source files below the hard module-size
   budget. Type-1 bridge tests cover typed bridge
   header fields, Expansion ROM reads and writes, Expansion ROM size probing,
@@ -1473,7 +1474,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   broader PCI config checkpoint restore mutates device state. MSI capability
   state now follows the same audit pattern for vector count, 64-bit and
   per-vector-mask support, enabled vectors, programmed address and data, and
-  mask and pending bits.
+  mask and pending bits. MSI-X capability state now does the same for table and
+  PBA BAR placement, enable and function-mask bits, table entries, and PBA
+  pending words while rejecting malformed table or out-of-range pending bits.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status
