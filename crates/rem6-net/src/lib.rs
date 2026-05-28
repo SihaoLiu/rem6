@@ -6,11 +6,13 @@ mod bus;
 mod dump;
 mod interface;
 mod switch;
+mod tap;
 
 pub use bus::*;
 pub use dump::*;
 pub use interface::*;
 pub use switch::*;
+pub use tap::*;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EthernetPacketHandle(u64);
@@ -861,6 +863,17 @@ pub enum NetworkError {
     EthernetInterfacePeerMissing {
         interface: EthernetInterfaceId,
     },
+    InvalidEthernetTapMaxFrameBytes {
+        max_frame_bytes: u32,
+    },
+    EthernetTapEmptyFrame,
+    EthernetTapFrameTooLarge {
+        frame_bytes: u32,
+        max_frame_bytes: u32,
+    },
+    EthernetTapFrameLengthOverflow {
+        frame_bytes: u64,
+    },
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
@@ -1065,6 +1078,22 @@ impl fmt::Display for NetworkError {
                 formatter,
                 "ethernet interface {} has no peer",
                 interface.index()
+            ),
+            Self::InvalidEthernetTapMaxFrameBytes { max_frame_bytes } => write!(
+                formatter,
+                "ethernet tap max frame bytes {max_frame_bytes} must be positive"
+            ),
+            Self::EthernetTapEmptyFrame => write!(formatter, "ethernet tap frame must be nonempty"),
+            Self::EthernetTapFrameTooLarge {
+                frame_bytes,
+                max_frame_bytes,
+            } => write!(
+                formatter,
+                "ethernet tap frame bytes {frame_bytes} exceeds maximum {max_frame_bytes}"
+            ),
+            Self::EthernetTapFrameLengthOverflow { frame_bytes } => write!(
+                formatter,
+                "ethernet tap frame bytes {frame_bytes} cannot fit in stub frame length"
             ),
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
