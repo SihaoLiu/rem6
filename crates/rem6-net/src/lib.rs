@@ -3,9 +3,11 @@ use std::error::Error;
 use std::fmt;
 
 mod bus;
+mod dump;
 mod switch;
 
 pub use bus::*;
+pub use dump::*;
 pub use switch::*;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -822,6 +824,20 @@ pub enum NetworkError {
         ticks_per_byte: u64,
     },
     EthernetBusSequenceOverflow,
+    InvalidEthernetPcapMaxCaptureBytes {
+        max_capture_bytes: u32,
+    },
+    InvalidEthernetPcapClock {
+        ticks_per_second: u64,
+    },
+    EthernetPcapTimestampOverflow {
+        tick: u64,
+        ticks_per_second: u64,
+    },
+    EthernetPcapPacketLengthOverflow {
+        payload_bytes: u64,
+    },
+    EthernetPcapSequenceOverflow,
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
@@ -968,6 +984,28 @@ impl fmt::Display for NetworkError {
             ),
             Self::EthernetBusSequenceOverflow => {
                 write!(formatter, "ethernet bus transmission sequence overflow")
+            }
+            Self::InvalidEthernetPcapMaxCaptureBytes { max_capture_bytes } => write!(
+                formatter,
+                "ethernet pcap max capture bytes {max_capture_bytes} must be positive"
+            ),
+            Self::InvalidEthernetPcapClock { ticks_per_second } => write!(
+                formatter,
+                "ethernet pcap ticks per second {ticks_per_second} must be positive"
+            ),
+            Self::EthernetPcapTimestampOverflow {
+                tick,
+                ticks_per_second,
+            } => write!(
+                formatter,
+                "ethernet pcap timestamp overflow for tick {tick} at {ticks_per_second} ticks per second"
+            ),
+            Self::EthernetPcapPacketLengthOverflow { payload_bytes } => write!(
+                formatter,
+                "ethernet pcap packet payload length {payload_bytes} cannot fit in pcap record"
+            ),
+            Self::EthernetPcapSequenceOverflow => {
+                write!(formatter, "ethernet pcap record sequence overflow")
             }
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
