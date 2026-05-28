@@ -77,6 +77,10 @@ impl PciLegacyInterruptMapper {
             })
     }
 
+    pub fn line_for_path(self, path: &PciLegacyInterruptPath) -> Result<InterruptLineId, PciError> {
+        self.line(path.root_function(), path.root_pin())
+    }
+
     pub fn route(
         self,
         function: PciFunctionAddress,
@@ -92,6 +96,74 @@ impl PciLegacyInterruptMapper {
             InterruptRoute::new(line, target, target_partition),
             signal_latency,
         )
+    }
+
+    pub fn route_for_path(
+        self,
+        path: &PciLegacyInterruptPath,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        signal_latency: Tick,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        let line = self.line_for_path(path)?;
+        PciLegacyInterruptRoute::new(
+            path.endpoint_function(),
+            path.endpoint_pin(),
+            InterruptRoute::new(line, target, target_partition),
+            signal_latency,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciLegacyInterruptPath {
+    endpoint_function: PciFunctionAddress,
+    endpoint_pin: PciInterruptPin,
+    root_function: PciFunctionAddress,
+    root_pin: PciInterruptPin,
+    upstream_bridges: Vec<PciFunctionAddress>,
+}
+
+impl PciLegacyInterruptPath {
+    pub fn new(
+        endpoint_function: PciFunctionAddress,
+        endpoint_pin: PciInterruptPin,
+    ) -> Result<Self, PciError> {
+        legacy_pin_index(endpoint_function, endpoint_pin)?;
+        Ok(Self {
+            endpoint_function,
+            endpoint_pin,
+            root_function: endpoint_function,
+            root_pin: endpoint_pin,
+            upstream_bridges: Vec::new(),
+        })
+    }
+
+    pub fn with_upstream_bridge(mut self, bridge_function: PciFunctionAddress) -> Self {
+        self.root_pin = swizzle_pin(self.root_pin, self.root_function.device());
+        self.root_function = bridge_function;
+        self.upstream_bridges.push(bridge_function);
+        self
+    }
+
+    pub const fn endpoint_function(&self) -> PciFunctionAddress {
+        self.endpoint_function
+    }
+
+    pub const fn endpoint_pin(&self) -> PciInterruptPin {
+        self.endpoint_pin
+    }
+
+    pub const fn root_function(&self) -> PciFunctionAddress {
+        self.root_function
+    }
+
+    pub const fn root_pin(&self) -> PciInterruptPin {
+        self.root_pin
+    }
+
+    pub fn upstream_bridges(&self) -> &[PciFunctionAddress] {
+        &self.upstream_bridges
     }
 }
 
@@ -253,5 +325,30 @@ fn legacy_pin_index(function: PciFunctionAddress, pin: PciInterruptPin) -> Resul
         PciInterruptPin::IntB => Ok(2),
         PciInterruptPin::IntC => Ok(3),
         PciInterruptPin::IntD => Ok(4),
+    }
+}
+
+fn swizzle_pin(pin: PciInterruptPin, device: u8) -> PciInterruptPin {
+    let index = legacy_pin_index_unchecked(pin);
+    pin_from_legacy_index(((index - 1 + u64::from(device)) % 4) + 1)
+}
+
+const fn legacy_pin_index_unchecked(pin: PciInterruptPin) -> u64 {
+    match pin {
+        PciInterruptPin::None => 0,
+        PciInterruptPin::IntA => 1,
+        PciInterruptPin::IntB => 2,
+        PciInterruptPin::IntC => 3,
+        PciInterruptPin::IntD => 4,
+    }
+}
+
+fn pin_from_legacy_index(index: u64) -> PciInterruptPin {
+    match index {
+        1 => PciInterruptPin::IntA,
+        2 => PciInterruptPin::IntB,
+        3 => PciInterruptPin::IntC,
+        4 => PciInterruptPin::IntD,
+        _ => unreachable!("legacy INTx pin index is modulo 1..=4"),
     }
 }

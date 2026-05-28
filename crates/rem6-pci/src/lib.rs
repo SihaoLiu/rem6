@@ -28,8 +28,8 @@ pub use bridge::{
 };
 pub use capability::PciRawCapabilitySpec;
 pub use interrupt::{
-    PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
-    PciLegacyInterruptRoute,
+    PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
+    PciLegacyInterruptPort, PciLegacyInterruptRoute,
 };
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};

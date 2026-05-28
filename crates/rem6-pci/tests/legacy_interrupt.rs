@@ -7,7 +7,7 @@ use rem6_interrupt::{
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_pci::{
     PciError, PciFunctionAddress, PciInterruptPin, PciLegacyInterruptMapper,
-    PciLegacyInterruptPolicy, PciLegacyInterruptPort,
+    PciLegacyInterruptPath, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
 };
 
 fn function(device: u8) -> PciFunctionAddress {
@@ -81,6 +81,39 @@ fn pci_legacy_interrupt_mapper_rejects_invalid_inputs_and_maps_policies() {
         mapper(PciLegacyInterruptPolicy::DevicePinModulo).line(pci_function, PciInterruptPin::IntA),
         Ok(InterruptLineId::new(35))
     );
+}
+
+#[test]
+fn pci_legacy_interrupt_mapper_swizzles_bridge_path_before_platform_line() {
+    let endpoint = PciFunctionAddress::new(2, 5, 0).unwrap();
+    let downstream_bridge = PciFunctionAddress::new(1, 1, 0).unwrap();
+    let root_bridge = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let path = PciLegacyInterruptPath::new(endpoint, PciInterruptPin::IntA)
+        .unwrap()
+        .with_upstream_bridge(downstream_bridge)
+        .with_upstream_bridge(root_bridge);
+
+    assert_eq!(path.endpoint_function(), endpoint);
+    assert_eq!(path.endpoint_pin(), PciInterruptPin::IntA);
+    assert_eq!(path.root_function(), root_bridge);
+    assert_eq!(path.root_pin(), PciInterruptPin::IntC);
+    assert_eq!(path.upstream_bridges(), &[downstream_bridge, root_bridge]);
+    assert_eq!(
+        PciLegacyInterruptPath::new(endpoint, PciInterruptPin::None),
+        Err(PciError::MissingLegacyInterruptPin { function: endpoint })
+    );
+
+    assert_eq!(
+        mapper(PciLegacyInterruptPolicy::PinModulo).line_for_path(&path),
+        Ok(InterruptLineId::new(34))
+    );
+    let route = mapper(PciLegacyInterruptPolicy::DevicePinModulo)
+        .route_for_path(&path, InterruptTargetId::new(0), PartitionId::new(0), 4)
+        .unwrap();
+    assert_eq!(route.function(), endpoint);
+    assert_eq!(route.pin(), PciInterruptPin::IntA);
+    assert_eq!(route.line(), InterruptLineId::new(35));
+    assert_eq!(route.signal_latency(), 4);
 }
 
 #[test]
