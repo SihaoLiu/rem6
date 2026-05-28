@@ -115,6 +115,137 @@ impl PciLegacyInterruptMapper {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PciLegacyInterruptRoutingEntry {
+    function: PciFunctionAddress,
+    pin: PciInterruptPin,
+    line: InterruptLineId,
+}
+
+impl PciLegacyInterruptRoutingEntry {
+    pub fn new(
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+        line: InterruptLineId,
+    ) -> Result<Self, PciError> {
+        legacy_pin_index(function, pin)?;
+        Ok(Self {
+            function,
+            pin,
+            line,
+        })
+    }
+
+    pub const fn function(self) -> PciFunctionAddress {
+        self.function
+    }
+
+    pub const fn pin(self) -> PciInterruptPin {
+        self.pin
+    }
+
+    pub const fn line(self) -> InterruptLineId {
+        self.line
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciLegacyInterruptRoutingTable {
+    fallback: PciLegacyInterruptMapper,
+    entries: Vec<PciLegacyInterruptRoutingEntry>,
+}
+
+impl PciLegacyInterruptRoutingTable {
+    pub fn new(fallback: PciLegacyInterruptMapper) -> Self {
+        Self {
+            fallback,
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn with_entry(mut self, entry: PciLegacyInterruptRoutingEntry) -> Result<Self, PciError> {
+        self.insert_entry(entry)?;
+        Ok(self)
+    }
+
+    pub fn insert_entry(&mut self, entry: PciLegacyInterruptRoutingEntry) -> Result<(), PciError> {
+        if self
+            .entries
+            .iter()
+            .any(|existing| existing.function == entry.function && existing.pin == entry.pin)
+        {
+            return Err(PciError::DuplicateLegacyInterruptRoutingEntry {
+                function: entry.function,
+                pin: entry.pin,
+            });
+        }
+
+        self.entries.push(entry);
+        Ok(())
+    }
+
+    pub const fn fallback(&self) -> PciLegacyInterruptMapper {
+        self.fallback
+    }
+
+    pub fn entries(&self) -> &[PciLegacyInterruptRoutingEntry] {
+        &self.entries
+    }
+
+    pub fn line(
+        &self,
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+    ) -> Result<InterruptLineId, PciError> {
+        legacy_pin_index(function, pin)?;
+        self.entries
+            .iter()
+            .find(|entry| entry.function == function && entry.pin == pin)
+            .map(|entry| entry.line)
+            .map_or_else(|| self.fallback.line(function, pin), Ok)
+    }
+
+    pub fn line_for_path(
+        &self,
+        path: &PciLegacyInterruptPath,
+    ) -> Result<InterruptLineId, PciError> {
+        self.line(path.root_function(), path.root_pin())
+    }
+
+    pub fn route(
+        &self,
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        signal_latency: Tick,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        let line = self.line(function, pin)?;
+        PciLegacyInterruptRoute::new(
+            function,
+            pin,
+            InterruptRoute::new(line, target, target_partition),
+            signal_latency,
+        )
+    }
+
+    pub fn route_for_path(
+        &self,
+        path: &PciLegacyInterruptPath,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        signal_latency: Tick,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        let line = self.line_for_path(path)?;
+        PciLegacyInterruptRoute::new(
+            path.endpoint_function(),
+            path.endpoint_pin(),
+            InterruptRoute::new(line, target, target_partition),
+            signal_latency,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciLegacyInterruptPath {
     endpoint_function: PciFunctionAddress,

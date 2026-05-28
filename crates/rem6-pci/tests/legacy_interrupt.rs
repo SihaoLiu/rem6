@@ -8,6 +8,7 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_pci::{
     PciError, PciFunctionAddress, PciInterruptPin, PciLegacyInterruptMapper,
     PciLegacyInterruptPath, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
+    PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable,
 };
 
 fn function(device: u8) -> PciFunctionAddress {
@@ -114,6 +115,62 @@ fn pci_legacy_interrupt_mapper_swizzles_bridge_path_before_platform_line() {
     assert_eq!(route.pin(), PciInterruptPin::IntA);
     assert_eq!(route.line(), InterruptLineId::new(35));
     assert_eq!(route.signal_latency(), 4);
+}
+
+#[test]
+fn pci_legacy_interrupt_routing_table_prefers_explicit_root_entries() {
+    let endpoint = PciFunctionAddress::new(2, 5, 0).unwrap();
+    let downstream_bridge = PciFunctionAddress::new(1, 1, 0).unwrap();
+    let root_bridge = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let path = PciLegacyInterruptPath::new(endpoint, PciInterruptPin::IntA)
+        .unwrap()
+        .with_upstream_bridge(downstream_bridge)
+        .with_upstream_bridge(root_bridge);
+    let explicit_entry = PciLegacyInterruptRoutingEntry::new(
+        root_bridge,
+        PciInterruptPin::IntC,
+        InterruptLineId::new(48),
+    )
+    .unwrap();
+    let table = PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DeviceModulo))
+        .with_entry(explicit_entry)
+        .unwrap();
+
+    assert_eq!(table.entries(), &[explicit_entry]);
+    assert_eq!(
+        table.line(root_bridge, PciInterruptPin::IntC),
+        Ok(InterruptLineId::new(48))
+    );
+    assert_eq!(
+        table.line(root_bridge, PciInterruptPin::IntD),
+        Ok(InterruptLineId::new(33))
+    );
+    assert_eq!(table.line_for_path(&path), Ok(InterruptLineId::new(48)));
+    assert_eq!(
+        PciLegacyInterruptRoutingEntry::new(
+            root_bridge,
+            PciInterruptPin::None,
+            InterruptLineId::new(49)
+        ),
+        Err(PciError::MissingLegacyInterruptPin {
+            function: root_bridge
+        })
+    );
+    assert_eq!(
+        table.clone().with_entry(explicit_entry),
+        Err(PciError::DuplicateLegacyInterruptRoutingEntry {
+            function: root_bridge,
+            pin: PciInterruptPin::IntC,
+        })
+    );
+
+    let route = table
+        .route_for_path(&path, InterruptTargetId::new(0), PartitionId::new(0), 3)
+        .unwrap();
+    assert_eq!(route.function(), endpoint);
+    assert_eq!(route.pin(), PciInterruptPin::IntA);
+    assert_eq!(route.line(), InterruptLineId::new(48));
+    assert_eq!(route.signal_latency(), 3);
 }
 
 #[test]

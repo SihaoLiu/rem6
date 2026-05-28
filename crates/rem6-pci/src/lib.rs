@@ -29,7 +29,8 @@ pub use bridge::{
 pub use capability::PciRawCapabilitySpec;
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
-    PciLegacyInterruptPort, PciLegacyInterruptRoute,
+    PciLegacyInterruptPort, PciLegacyInterruptRoute, PciLegacyInterruptRoutingEntry,
+    PciLegacyInterruptRoutingTable,
 };
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};
@@ -1221,6 +1222,10 @@ pub enum PciError {
         base: rem6_interrupt::InterruptLineId,
         index: u64,
     },
+    DuplicateLegacyInterruptRoutingEntry {
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+    },
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -1553,6 +1558,11 @@ impl fmt::Display for PciError {
                 "PCI legacy interrupt line base {} plus index {} overflows",
                 base.get(),
                 index
+            ),
+            Self::DuplicateLegacyInterruptRoutingEntry { function, pin } => write!(
+                f,
+                "PCI legacy interrupt routing entry for function {:?} pin {:?} already exists",
+                function, pin
             ),
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,
