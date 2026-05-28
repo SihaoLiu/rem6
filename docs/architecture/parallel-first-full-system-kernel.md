@@ -462,9 +462,12 @@ kernel batch records also expose their own start tick, horizon, duration ticks,
 and worker-tick occupancy, and planned epoch/run summaries expose the same
 duration-weighted worker-count buckets, tick queries, worker-tick queries,
 worker-capacity ticks, idle-worker ticks, and utilization ratios as typed
-pre-dispatch evidence. Higher layers do not need to rediscover the same time
-window from worker records, rebuild planned occupancy from timeline records, or
-recompute planned worker capacity from scheduler-private worker limits.
+pre-dispatch evidence. They also expose planned worker-slot active and idle
+tick summaries, so a runtime can audit planned load distribution across the
+worker pool before any callback executes. Higher layers do not need to
+rediscover the same time window from worker records, rebuild planned occupancy
+from timeline records, or recompute planned worker capacity from
+scheduler-private worker limits.
 The runtime scheduler itself remains the first source of parallel occupancy
 truth rather than relying on subsystem-specific reconstruction.
 Workload replay results preserve those planned capacity totals and derive

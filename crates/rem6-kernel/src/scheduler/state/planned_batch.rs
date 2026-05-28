@@ -182,6 +182,10 @@ impl ParallelEpochPlan {
         planned_batch_idle_worker_ticks(&self.parallel_batches, self.parallel_worker_limit)
     }
 
+    pub fn parallel_batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(&self.parallel_batches, self.parallel_worker_limit)
+    }
+
     pub fn parallel_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
         ParallelBatchUtilizationRatio::new(
             self.parallel_batch_worker_ticks(),
@@ -263,6 +267,13 @@ impl RecordedRunSummary {
 
     pub fn planned_batch_idle_worker_ticks(&self) -> Tick {
         planned_batch_idle_worker_ticks(&self.planned_batches, self.planned_parallel_worker_limit)
+    }
+
+    pub fn planned_batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(
+            &self.planned_batches,
+            self.planned_parallel_worker_limit,
+        )
     }
 
     pub fn planned_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
@@ -394,6 +405,25 @@ impl RecordedConservativeRunSummary {
     pub fn planned_batch_idle_worker_ticks(&self) -> Tick {
         self.planned_batch_worker_capacity_ticks()
             .saturating_sub(self.planned_batch_worker_ticks())
+    }
+
+    pub fn planned_batch_worker_slot_tick_summaries(&self) -> Vec<(usize, Tick, Tick)> {
+        let mut summaries = BTreeMap::<usize, (Tick, Tick)>::new();
+        for epoch in &self.epochs {
+            for (worker_slot, active_ticks, idle_ticks) in
+                epoch.planned_batch_worker_slot_tick_summaries()
+            {
+                let summary = summaries.entry(worker_slot).or_default();
+                summary.0 = summary.0.saturating_add(active_ticks);
+                summary.1 = summary.1.saturating_add(idle_ticks);
+            }
+        }
+        summaries
+            .into_iter()
+            .map(|(worker_slot, (active_ticks, idle_ticks))| {
+                (worker_slot, active_ticks, idle_ticks)
+            })
+            .collect()
     }
 
     pub fn planned_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
@@ -567,6 +597,39 @@ where
         .into_iter()
         .map(|batch| batch.idle_worker_ticks(worker_capacity))
         .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_worker_slot_tick_summaries(
+    batches: &[ParallelEpochPlannedBatch],
+    worker_capacity: usize,
+) -> Vec<(usize, Tick, Tick)> {
+    if batches.is_empty() {
+        return Vec::new();
+    }
+    let capacity = batches
+        .iter()
+        .map(ParallelEpochPlannedBatch::worker_count)
+        .fold(worker_capacity.max(1), usize::max);
+    let mut summaries: Vec<(Tick, Tick)> = vec![(0, 0); capacity];
+    for batch in batches {
+        let duration = batch.duration_ticks();
+        if duration == 0 {
+            continue;
+        }
+        for (worker_slot, summary) in summaries.iter_mut().enumerate() {
+            if worker_slot < batch.worker_count() {
+                summary.0 = summary.0.saturating_add(duration);
+            } else {
+                summary.1 = summary.1.saturating_add(duration);
+            }
+        }
+    }
+    summaries
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (active_ticks, idle_ticks))| *active_ticks != 0 || *idle_ticks != 0)
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
 }
 
 fn collect_planned_batch_partition_set_summaries<'a, I>(

@@ -110,6 +110,10 @@ fn scheduler_parallel_plan_exposes_planned_batch_occupancy_ticks() {
     assert_eq!(plan.parallel_batch_worker_capacity_ticks(), 14);
     assert_eq!(plan.parallel_batch_idle_worker_ticks(), 1);
     assert_eq!(
+        plan.parallel_batch_worker_slot_tick_summaries(),
+        vec![(0, 7, 0), (1, 6, 1)],
+    );
+    assert_eq!(
         plan.parallel_batch_utilization_ratio().unwrap(),
         ParallelBatchUtilizationRatio::new(13, 14).unwrap(),
     );
@@ -160,6 +164,10 @@ fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     assert_eq!(epoch.planned_batch_worker_ticks_at_or_above(2), 10);
     assert_eq!(epoch.planned_batch_worker_capacity_ticks(), 14);
     assert_eq!(epoch.planned_batch_idle_worker_ticks(), 2);
+    assert_eq!(
+        epoch.planned_batch_worker_slot_tick_summaries(),
+        vec![(0, 7, 0), (1, 5, 2)],
+    );
     assert_eq!(
         epoch.planned_batch_utilization_ratio().unwrap(),
         ParallelBatchUtilizationRatio::new(12, 14).unwrap(),
@@ -224,6 +232,10 @@ fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     assert_eq!(recorded.planned_batch_worker_ticks_at_or_above(2), 10);
     assert_eq!(recorded.planned_batch_worker_capacity_ticks(), 14);
     assert_eq!(recorded.planned_batch_idle_worker_ticks(), 2);
+    assert_eq!(
+        recorded.planned_batch_worker_slot_tick_summaries(),
+        vec![(0, 7, 0), (1, 5, 2)],
+    );
     assert_eq!(
         recorded.planned_batch_utilization_ratio().unwrap(),
         ParallelBatchUtilizationRatio::new(12, 14).unwrap(),
