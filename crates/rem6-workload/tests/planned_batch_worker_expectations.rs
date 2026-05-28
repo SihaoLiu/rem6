@@ -7,10 +7,12 @@ use rem6_workload::{
     WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
     WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
     WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
-    WorkloadExpectedPlannedParallelBatchUtilization, WorkloadId, WorkloadParallelBatchScope,
+    WorkloadExpectedPlannedParallelBatchUtilization,
+    WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadId, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerScope,
     WorkloadParallelExecutionSummary, WorkloadPlannedParallelBatchIdleExpectationError,
-    WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan, WorkloadResource,
+    WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadPlannedParallelBatchWorkerSlotExpectationError, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
@@ -261,6 +263,146 @@ fn workload_manifest_carries_planned_parallel_batch_idle_budget() {
 
     assert_eq!(
         plan.expected_planned_parallel_batch_idle_worker_ticks()
+            .len(),
+        1
+    );
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_checks_planned_parallel_batch_worker_slot_ticks() {
+    let plan = replay_plan()
+        .add_expected_planned_parallel_batch_worker_slot_ticks(
+            WorkloadExpectedPlannedParallelBatchWorkerSlotTicks::new(
+                WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                1,
+                6,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                6,
+                [partition(0), partition(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                6,
+                8,
+                [partition(0)],
+                1,
+            ),
+        ])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(16);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        result
+            .parallel_execution_summary()
+            .unwrap()
+            .parallel_scheduler_planned_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 6, 2)],
+    );
+    plan.verify_result(&result).unwrap();
+
+    let underactive = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0), partition(1)],
+                2,
+            ),
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                4,
+                8,
+                [partition(0)],
+                1,
+            ),
+        ])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(16);
+    let underactive_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive);
+
+    assert_eq!(
+        plan.verify_result(&underactive_result).unwrap_err(),
+        WorkloadError::PlannedParallelBatchWorkerSlotExpectation(
+            WorkloadPlannedParallelBatchWorkerSlotExpectationError::BelowMinimumActive {
+                scope: WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                worker_slot: 1,
+                minimum_active_ticks: 6,
+                actual_active_ticks: 4,
+            },
+        ),
+    );
+
+    let idle_plan = replay_plan()
+        .add_expected_planned_parallel_batch_worker_slot_ticks(
+            WorkloadExpectedPlannedParallelBatchWorkerSlotTicks::new(
+                WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                1,
+                0,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        idle_plan.verify_result(&underactive_result).unwrap_err(),
+        WorkloadError::PlannedParallelBatchWorkerSlotExpectation(
+            WorkloadPlannedParallelBatchWorkerSlotExpectationError::AboveMaximumIdle {
+                scope: WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                worker_slot: 1,
+                maximum_idle_ticks: 1,
+                actual_idle_ticks: 4,
+            },
+        ),
+    );
+}
+
+#[test]
+fn workload_manifest_carries_planned_parallel_batch_worker_slot_ticks() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("planned-worker-slot-manifest"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_planned_parallel_batch_worker_slot_ticks(
+                WorkloadExpectedPlannedParallelBatchWorkerSlotTicks::new(
+                    WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                    0,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            8,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(16);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.expected_planned_parallel_batch_worker_slot_ticks()
             .len(),
         1
     );

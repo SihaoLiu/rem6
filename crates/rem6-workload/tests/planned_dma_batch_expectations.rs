@@ -160,6 +160,10 @@ fn workload_summary_reports_planned_dma_batch_utilization() {
         summary.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
         24
     );
+    assert_eq!(
+        summary.dma_scheduler_planned_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 8, 0), (2, 0, 8)],
+    );
 }
 
 #[test]

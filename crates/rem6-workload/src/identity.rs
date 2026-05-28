@@ -22,7 +22,8 @@ use crate::{
     WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
     WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
     WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
-    WorkloadExpectedPlannedParallelBatchUtilization, WorkloadExpectedResourceActivity,
+    WorkloadExpectedPlannedParallelBatchUtilization,
+    WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
     WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
     WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
     WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
@@ -99,6 +100,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedPlannedParallelBatchUtilization],
     pub(crate) expected_planned_parallel_batch_idle_worker_ticks:
         &'a [WorkloadExpectedPlannedParallelBatchIdleWorkerTicks],
+    pub(crate) expected_planned_parallel_batch_worker_slot_ticks:
+        &'a [WorkloadExpectedPlannedParallelBatchWorkerSlotTicks],
     pub(crate) expected_parallel_batch_partition_sets:
         &'a [WorkloadExpectedParallelBatchPartitionSet],
     pub(crate) expected_parallel_batch_partition_streaks:
@@ -353,6 +356,15 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_planned_parallel_batch_idle_worker_ticks {
         hash_expected_planned_parallel_batch_idle_worker_ticks(&mut hash, *expected);
+    }
+    hash_u64(
+        &mut hash,
+        input
+            .expected_planned_parallel_batch_worker_slot_ticks
+            .len() as u64,
+    );
+    for expected in input.expected_planned_parallel_batch_worker_slot_ticks {
+        hash_expected_planned_parallel_batch_worker_slot_ticks(&mut hash, *expected);
     }
     hash_u64(
         &mut hash,
@@ -851,6 +863,16 @@ fn hash_expected_planned_parallel_batch_idle_worker_ticks(
 ) {
     hash_parallel_batch_worker_scope(hash, expected.scope());
     hash_u64(hash, expected.maximum_idle_worker_ticks());
+}
+
+fn hash_expected_planned_parallel_batch_worker_slot_ticks(
+    hash: &mut u64,
+    expected: WorkloadExpectedPlannedParallelBatchWorkerSlotTicks,
+) {
+    hash_parallel_batch_worker_scope(hash, expected.scope());
+    hash_u64(hash, expected.worker_slot() as u64);
+    hash_u64(hash, expected.minimum_active_ticks());
+    hash_u64(hash, expected.maximum_idle_ticks());
 }
 
 fn hash_expected_parallel_batch_partition_set(

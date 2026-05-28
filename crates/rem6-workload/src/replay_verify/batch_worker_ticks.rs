@@ -2,7 +2,8 @@ use rem6_kernel::ParallelBatchUtilizationRatio;
 
 use crate::{
     WorkloadError, WorkloadPlannedParallelBatchIdleExpectationError,
-    WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan, WorkloadResult,
+    WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadPlannedParallelBatchWorkerSlotExpectationError, WorkloadReplayPlan, WorkloadResult,
 };
 
 use super::{
@@ -253,6 +254,62 @@ pub(crate) fn verify_expected_planned_parallel_batch_idle_worker_ticks(
                     scope: expected.scope(),
                     maximum_idle_worker_ticks: expected.maximum_idle_worker_ticks(),
                     actual_idle_worker_ticks,
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_planned_parallel_batch_worker_slot_ticks(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_slots = plan.expected_planned_parallel_batch_worker_slot_ticks();
+    if expected_slots.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_slots[0];
+        return Err(WorkloadError::PlannedParallelBatchWorkerSlotExpectation(
+            WorkloadPlannedParallelBatchWorkerSlotExpectationError::MissingSummary {
+                scope: expected.scope(),
+                worker_slot: expected.worker_slot(),
+                minimum_active_ticks: expected.minimum_active_ticks(),
+                maximum_idle_ticks: expected.maximum_idle_ticks(),
+            },
+        ));
+    };
+
+    for expected in expected_slots {
+        let Some((actual_active_ticks, actual_idle_ticks)) = expected.actual_slot_ticks(summary)
+        else {
+            return Err(WorkloadError::PlannedParallelBatchWorkerSlotExpectation(
+                WorkloadPlannedParallelBatchWorkerSlotExpectationError::MissingSummary {
+                    scope: expected.scope(),
+                    worker_slot: expected.worker_slot(),
+                    minimum_active_ticks: expected.minimum_active_ticks(),
+                    maximum_idle_ticks: expected.maximum_idle_ticks(),
+                },
+            ));
+        };
+        if actual_active_ticks < expected.minimum_active_ticks() {
+            return Err(WorkloadError::PlannedParallelBatchWorkerSlotExpectation(
+                WorkloadPlannedParallelBatchWorkerSlotExpectationError::BelowMinimumActive {
+                    scope: expected.scope(),
+                    worker_slot: expected.worker_slot(),
+                    minimum_active_ticks: expected.minimum_active_ticks(),
+                    actual_active_ticks,
+                },
+            ));
+        }
+        if actual_idle_ticks > expected.maximum_idle_ticks() {
+            return Err(WorkloadError::PlannedParallelBatchWorkerSlotExpectation(
+                WorkloadPlannedParallelBatchWorkerSlotExpectationError::AboveMaximumIdle {
+                    scope: expected.scope(),
+                    worker_slot: expected.worker_slot(),
+                    maximum_idle_ticks: expected.maximum_idle_ticks(),
+                    actual_idle_ticks,
                 },
             ));
         }

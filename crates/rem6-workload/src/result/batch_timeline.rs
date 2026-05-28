@@ -473,6 +473,15 @@ impl WorkloadParallelExecutionSummary {
             .saturating_sub(self.parallel_scheduler_planned_batch_worker_ticks())
     }
 
+    pub fn parallel_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(
+            &self.parallel_scheduler_planned_batch_timeline,
+            self.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn parallel_scheduler_planned_batch_utilization_ratio(
         &self,
     ) -> Option<ParallelBatchUtilizationRatio> {
@@ -496,6 +505,15 @@ impl WorkloadParallelExecutionSummary {
             .saturating_sub(self.data_cache_parallel_scheduler_planned_batch_worker_ticks())
     }
 
+    pub fn data_cache_parallel_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(
+            &self.data_cache_parallel_scheduler_planned_batch_timeline,
+            self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn data_cache_parallel_scheduler_planned_batch_utilization_ratio(
         &self,
     ) -> Option<ParallelBatchUtilizationRatio> {
@@ -516,6 +534,15 @@ impl WorkloadParallelExecutionSummary {
     pub fn gpu_dma_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
         self.gpu_dma_scheduler_planned_batch_worker_capacity_ticks()
             .saturating_sub(self.gpu_dma_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn gpu_dma_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(
+            &self.gpu_dma_scheduler_planned_batch_timeline,
+            self.gpu_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn gpu_dma_scheduler_planned_batch_utilization_ratio(
@@ -541,6 +568,15 @@ impl WorkloadParallelExecutionSummary {
             .saturating_sub(self.accelerator_dma_scheduler_planned_batch_worker_ticks())
     }
 
+    pub fn accelerator_dma_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(
+            &self.accelerator_dma_scheduler_planned_batch_timeline,
+            self.accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
     pub fn accelerator_dma_scheduler_planned_batch_utilization_ratio(
         &self,
     ) -> Option<ParallelBatchUtilizationRatio> {
@@ -563,6 +599,16 @@ impl WorkloadParallelExecutionSummary {
     pub fn dma_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
         self.dma_scheduler_planned_batch_worker_capacity_ticks()
             .saturating_sub(self.dma_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn dma_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        let timeline = self.dma_scheduler_planned_batch_timeline();
+        planned_batch_worker_slot_tick_summaries(
+            &timeline,
+            self.dma_scheduler_planned_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn dma_scheduler_planned_batch_utilization_ratio(
@@ -599,6 +645,16 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
         self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks()
             .saturating_sub(self.full_system_parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        let timeline = self.full_system_parallel_scheduler_planned_batch_timeline();
+        planned_batch_worker_slot_tick_summaries(
+            &timeline,
+            self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_utilization_ratio(
@@ -975,6 +1031,56 @@ fn planned_batch_worker_ticks(records: &[WorkloadParallelBatchTimelineRecord]) -
                 .saturating_mul(record.worker_count() as Tick)
         })
         .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_worker_slot_tick_summaries(
+    records: &[WorkloadParallelBatchTimelineRecord],
+    worker_capacity_ticks: Tick,
+) -> Vec<(usize, Tick, Tick)> {
+    let records = records
+        .iter()
+        .filter(|record| record.has_record_shape())
+        .collect::<Vec<_>>();
+    let total_duration_ticks = records
+        .iter()
+        .map(|record| record.duration_ticks())
+        .fold(0, Tick::saturating_add);
+    if worker_capacity_ticks == 0
+        || total_duration_ticks == 0
+        || !worker_capacity_ticks.is_multiple_of(total_duration_ticks)
+    {
+        return Vec::new();
+    }
+    let worker_capacity = worker_capacity_ticks / total_duration_ticks;
+    let Some(worker_capacity) = usize::try_from(worker_capacity).ok() else {
+        return Vec::new();
+    };
+    let max_worker_count = records
+        .iter()
+        .map(|record| record.worker_count())
+        .max()
+        .unwrap_or(0);
+    if worker_capacity < max_worker_count {
+        return Vec::new();
+    }
+
+    let mut summaries: Vec<(Tick, Tick)> = vec![(0, 0); worker_capacity];
+    for record in records {
+        let duration_ticks = record.duration_ticks();
+        for (worker_slot, summary) in summaries.iter_mut().enumerate() {
+            if worker_slot < record.worker_count() {
+                summary.0 = summary.0.saturating_add(duration_ticks);
+            } else {
+                summary.1 = summary.1.saturating_add(duration_ticks);
+            }
+        }
+    }
+    summaries
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (active_ticks, idle_ticks))| *active_ticks != 0 || *idle_ticks != 0)
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
 }
 
 fn collect_batch_worker_count_tick_summaries(

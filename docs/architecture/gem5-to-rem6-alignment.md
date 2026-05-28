@@ -56,7 +56,10 @@ isolated bugs:
   post-run diagnostics keep the same pre-dispatch authority. Kernel planned
   epoch and run summaries also expose worker-slot active and idle tick
   summaries, so planned load distribution is visible before worker callbacks
-  run.
+  run. Workload manifests and replay plans can now require those planned
+  worker-slot active and idle tick budgets across CPU-scheduler, data-cache
+  scheduler, GPU DMA, accelerator DMA, combined DMA, and merged full-system
+  planned scopes.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -600,10 +603,11 @@ Implementation evidence on 2026-05-26:
 - Workload manifests and replay plans can now require minimum planned
   utilization ratios for CPU-scheduler, data-cache scheduler, GPU DMA,
   accelerator DMA, combined DMA, and merged full-system planned scopes.
-  They can also cap planned idle-worker ticks for the same scopes. Planned
-  worker capacity, idle ticks, and worker-ticks are therefore checked as
-  manifest-owned efficiency contracts instead of being reconstructed by
-  external scripts after a run.
+  They can also cap planned idle-worker ticks and per-worker-slot planned idle
+  ticks for the same scopes while requiring minimum active ticks for each
+  declared slot. Planned worker capacity, idle ticks, worker-ticks, and slot
+  load distribution are therefore checked as manifest-owned efficiency
+  contracts instead of being reconstructed by external scripts after a run.
 - Planned scheduler timelines now also feed exact partition-set, sustained
   partition-streak, active-partition, and per-partition activity contracts.
   Manifest checks can therefore require which partitions were naturally planned
