@@ -100,6 +100,15 @@ The following public sources shape this design:
 - gem5 branch predictor discussion identifies incomplete speculative history
   support and history unwinding as a source of misleading predictor results:
   <https://github.com/orgs/gem5/discussions/1341>
+- The May 2026 public gem5 issue sweep still shows open stats-reset test debt,
+  current syscall-emulation correctness gaps, RISC-V vector tracing failures,
+  and a multicore CHI LR/SC race report. rem6 treats these as evidence that
+  cross-subsystem behavior must remain typed, identity-preserving, and
+  regression-tested before parity claims:
+  <https://github.com/gem5/gem5/issues/1644>,
+  <https://github.com/gem5/gem5/issues/2754>,
+  <https://github.com/gem5/gem5/issues/2758>,
+  <https://github.com/gem5/gem5/issues/2688>
 
 ## Debt Map
 
@@ -188,7 +197,9 @@ The invariants below apply to production components in the workspace.
     Each run summary must expose enough information to explain where time went:
     scheduler epochs, empty epochs, active partitions, fabric transfers, DRAM
     accesses, coherence transactions, device work, host actions, and stop
-    reason.
+    reason. Activity-window merges must preserve resource identity when it is
+    available, so the same NoC lane, virtual network, DRAM bank, or port cannot
+    be counted twice as extra parallel hardware coverage.
 
 13. Backpressure is modeled explicitly.
     Queues, credits, MSHRs, transaction buffers, DRAM banks, NoC virtual

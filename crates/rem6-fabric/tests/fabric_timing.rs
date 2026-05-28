@@ -1,6 +1,6 @@
 use rem6_fabric::{
-    FabricError, FabricLinkId, FabricModel, FabricPacket, FabricPacketId, FabricPath,
-    FabricPathHop, VirtualNetworkId,
+    FabricError, FabricLaneActivity, FabricLinkActivity, FabricLinkId, FabricModel, FabricPacket,
+    FabricPacketId, FabricPath, FabricPathHop, FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 
@@ -19,6 +19,31 @@ fn link(name: &str) -> FabricLinkId {
 
 fn path(hops: impl IntoIterator<Item = FabricPathHop>) -> FabricPath {
     FabricPath::new(hops).unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lane_activity(
+    link: &str,
+    virtual_network: u16,
+    transfers: usize,
+    bytes: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    first_tick: u64,
+    last_tick: u64,
+) -> FabricLaneActivity {
+    FabricLaneActivity::new(
+        self::link(link),
+        VirtualNetworkId::new(virtual_network),
+        transfers,
+        bytes,
+        occupied_ticks,
+        queue_delay_ticks,
+        max_queue_delay_ticks,
+        first_tick,
+        last_tick,
+    )
 }
 
 #[test]
@@ -47,6 +72,97 @@ fn fabric_serializes_packets_on_shared_link_deterministically() {
         .unwrap();
     assert_eq!(later.arrival_tick(), 8);
     assert_eq!(later.hops()[0].start_tick(), 4);
+}
+
+#[test]
+fn fabric_link_activity_merge_window_preserves_unique_virtual_network_coverage() {
+    let first_lanes = [
+        lane_activity("mesh_merge_link", 1, 2, 32, 4, 0, 0, 0, 5),
+        lane_activity("mesh_merge_link", 2, 1, 16, 2, 7, 7, 1, 9),
+    ];
+    let second_lanes = [
+        lane_activity("mesh_merge_link", 2, 3, 48, 6, 11, 11, 10, 18),
+        lane_activity("mesh_merge_link", 3, 1, 16, 2, 0, 0, 12, 20),
+    ];
+    let first = FabricLinkActivity::from_lanes(first_lanes.iter())
+        .into_iter()
+        .next()
+        .unwrap();
+    let second = FabricLinkActivity::from_lanes(second_lanes.iter())
+        .into_iter()
+        .next()
+        .unwrap();
+
+    let merged = first.merge_window(second);
+
+    assert_eq!(merged.active_virtual_network_count(), 3);
+    assert_eq!(merged.contended_virtual_network_count(), 1);
+    assert_eq!(merged.transfer_count(), 7);
+    assert_eq!(merged.byte_count(), 112);
+    assert_eq!(merged.occupied_ticks(), 14);
+    assert_eq!(merged.queue_delay_ticks(), 18);
+    assert_eq!(merged.max_queue_delay_ticks(), 11);
+    assert_eq!(merged.first_tick(), 0);
+    assert_eq!(merged.last_tick(), 20);
+}
+
+#[test]
+fn fabric_virtual_network_activity_merge_window_preserves_unique_lane_coverage() {
+    let first_lanes = [
+        lane_activity("mesh_merge_a", 4, 2, 32, 4, 0, 0, 0, 5),
+        lane_activity("mesh_merge_b", 4, 1, 16, 2, 7, 7, 1, 9),
+    ];
+    let second_lanes = [
+        lane_activity("mesh_merge_b", 4, 3, 48, 6, 11, 11, 10, 18),
+        lane_activity("mesh_merge_c", 4, 1, 16, 2, 0, 0, 12, 20),
+    ];
+    let first = FabricVirtualNetworkActivity::from_lanes(first_lanes.iter())
+        .into_iter()
+        .next()
+        .unwrap();
+    let second = FabricVirtualNetworkActivity::from_lanes(second_lanes.iter())
+        .into_iter()
+        .next()
+        .unwrap();
+
+    let merged = first.merge_window(second);
+
+    assert_eq!(merged.active_lane_count(), 3);
+    assert_eq!(merged.contended_lane_count(), 1);
+    assert_eq!(merged.transfer_count(), 7);
+    assert_eq!(merged.byte_count(), 112);
+    assert_eq!(merged.occupied_ticks(), 14);
+    assert_eq!(merged.queue_delay_ticks(), 18);
+    assert_eq!(merged.max_queue_delay_ticks(), 11);
+    assert_eq!(merged.first_tick(), 0);
+    assert_eq!(merged.last_tick(), 20);
+}
+
+#[test]
+fn fabric_aggregate_activity_equality_uses_public_summary_values() {
+    let lanes = [
+        lane_activity("mesh_public_eq", 6, 2, 32, 4, 7, 7, 0, 5),
+        lane_activity("mesh_public_eq", 7, 1, 16, 2, 0, 0, 6, 9),
+    ];
+    let link_summary = FabricLinkActivity::from_lanes(lanes.iter())
+        .into_iter()
+        .next()
+        .unwrap();
+    let count_only_link =
+        FabricLinkActivity::new(link("mesh_public_eq"), 2, 3, 48, 6, 7, 7, 1, 0, 9);
+    assert_eq!(link_summary, count_only_link);
+
+    let vn_lanes = [
+        lane_activity("mesh_public_eq_a", 8, 2, 32, 4, 7, 7, 0, 5),
+        lane_activity("mesh_public_eq_b", 8, 1, 16, 2, 0, 0, 6, 9),
+    ];
+    let virtual_network_summary = FabricVirtualNetworkActivity::from_lanes(vn_lanes.iter())
+        .into_iter()
+        .next()
+        .unwrap();
+    let count_only_virtual_network =
+        FabricVirtualNetworkActivity::new(VirtualNetworkId::new(8), 2, 3, 48, 6, 7, 7, 1, 0, 9);
+    assert_eq!(virtual_network_summary, count_only_virtual_network);
 }
 
 #[test]
