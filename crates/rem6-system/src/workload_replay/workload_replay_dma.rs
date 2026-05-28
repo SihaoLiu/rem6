@@ -21,7 +21,8 @@ use super::{
     cached_memory_response,
     dma_scheduler_evidence::{
         dma_scheduler_batch_timeline, dma_scheduler_batch_worker_count_ticks,
-        dma_scheduler_batch_worker_counts, dma_scheduler_frontiers, dma_scheduler_remote_flows,
+        dma_scheduler_batch_worker_counts, dma_scheduler_frontiers,
+        dma_scheduler_recorded_batch_worker_slot_tick_summaries, dma_scheduler_remote_flows,
         dma_scheduler_remote_sends, DmaSchedulerEvidence,
     },
     RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
@@ -43,6 +44,8 @@ pub(super) struct WorkloadAcceleratorDmaActivity {
     pub(super) scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     pub(super) scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     pub(super) scheduler_batch_worker_count_ticks: Vec<(usize, Tick)>,
+    pub(super) scheduler_recorded_batch_worker_capacity_ticks: Tick,
+    pub(super) scheduler_recorded_batch_worker_slot_tick_summaries: Vec<(usize, Tick, Tick)>,
     pub(super) scheduler_initial_frontiers: Vec<PartitionFrontier>,
     pub(super) scheduler_final_frontiers: Vec<PartitionFrontier>,
     pub(super) scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
@@ -193,6 +196,12 @@ pub(super) fn run_accelerator_dma_copies(
         scheduler_batch_worker_count_ticks: dma_scheduler_batch_worker_count_ticks(
             scheduler_evidence.batch_worker_count_ticks,
         ),
+        scheduler_recorded_batch_worker_capacity_ticks: scheduler_evidence
+            .recorded_batch_worker_capacity_ticks,
+        scheduler_recorded_batch_worker_slot_tick_summaries:
+            dma_scheduler_recorded_batch_worker_slot_tick_summaries(
+                scheduler_evidence.recorded_batch_worker_slot_tick_summaries,
+            ),
         scheduler_initial_frontiers: dma_scheduler_frontiers(scheduler_evidence.initial_frontiers),
         scheduler_final_frontiers: dma_scheduler_frontiers(scheduler_evidence.final_frontiers),
         scheduler_remote_flows: dma_scheduler_remote_flows(scheduler_evidence.remote_flows),

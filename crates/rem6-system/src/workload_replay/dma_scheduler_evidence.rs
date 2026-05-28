@@ -18,6 +18,8 @@ pub(super) struct DmaSchedulerEvidence {
     pub(super) batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     pub(super) batch_worker_counts: BTreeMap<usize, usize>,
     pub(super) batch_worker_count_ticks: BTreeMap<usize, Tick>,
+    pub(super) recorded_batch_worker_capacity_ticks: Tick,
+    pub(super) recorded_batch_worker_slot_tick_summaries: BTreeMap<usize, (Tick, Tick)>,
     pub(super) initial_frontiers: Vec<PartitionFrontier>,
     pub(super) final_frontiers: Vec<PartitionFrontier>,
     pub(super) remote_flows: Vec<ParallelRemoteFlowRecord>,
@@ -34,6 +36,9 @@ impl DmaSchedulerEvidence {
         self.empty_epoch_count += run.empty_epoch_count();
         self.dispatch_count += run.dispatch_count();
         self.batch_count += run.batch_count();
+        self.recorded_batch_worker_capacity_ticks = self
+            .recorded_batch_worker_capacity_ticks
+            .saturating_add(run.batch_worker_capacity_ticks());
         self.batch_timeline.extend(
             run.batches()
                 .iter()
@@ -55,6 +60,14 @@ impl DmaSchedulerEvidence {
                 .entry(worker_count)
                 .or_default();
             *stored = stored.saturating_add(ticks);
+        }
+        for (worker_slot, active_ticks, idle_ticks) in run.batch_worker_slot_tick_summaries() {
+            let stored = self
+                .recorded_batch_worker_slot_tick_summaries
+                .entry(worker_slot)
+                .or_default();
+            stored.0 = stored.0.saturating_add(active_ticks);
+            stored.1 = stored.1.saturating_add(idle_ticks);
         }
     }
 }
@@ -136,6 +149,16 @@ pub(super) fn dma_scheduler_batch_worker_count_ticks(
     batch_worker_count_ticks
         .into_iter()
         .filter(|(worker_count, ticks)| *worker_count != 0 && *ticks != 0)
+        .collect()
+}
+
+pub(super) fn dma_scheduler_recorded_batch_worker_slot_tick_summaries(
+    summaries: BTreeMap<usize, (Tick, Tick)>,
+) -> Vec<(usize, Tick, Tick)> {
+    summaries
+        .into_iter()
+        .filter(|(_, (active_ticks, idle_ticks))| *active_ticks != 0 || *idle_ticks != 0)
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
         .collect()
 }
 

@@ -47,7 +47,6 @@ mod wait_for_node_windows;
 pub use wait_for_node_windows::{
     WorkloadWaitForBlockedNodeWindow, WorkloadWaitForTargetNodeWindow,
 };
-
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadDataCacheProtocol {
     Msi,
@@ -93,7 +92,6 @@ impl WorkloadDataCacheProtocolCount {
         self.run_count == 0
     }
 }
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadDramQosPrioritySummary {
     priority: QosPriority,
@@ -126,7 +124,6 @@ impl WorkloadDramQosPrioritySummary {
         self.access_count == 0 && self.byte_count == 0
     }
 }
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadDramQosRequestorSummary {
     requestor: QosRequestorId,
@@ -276,6 +273,9 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     full_system_parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     planned_batch_worker_capacity_ticks: batch_timeline::WorkloadPlannedBatchWorkerCapacityTicks,
+    recorded_batch_worker_capacity_ticks: batch_timeline::WorkloadRecordedBatchWorkerCapacityTicks,
+    recorded_batch_worker_slot_tick_summaries:
+        batch_timeline::WorkloadRecordedBatchWorkerSlotTickSummaries,
     full_system_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     full_system_parallel_scheduler_batch_partition_streaks:
         Vec<WorkloadParallelBatchPartitionStreak>,

@@ -101,6 +101,12 @@ pub(super) fn parallel_execution_summary(
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
         )
+        .with_parallel_scheduler_recorded_batch_worker_capacity_ticks(
+            run.parallel_scheduler_batch_worker_capacity_ticks(),
+        )
+        .with_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(
+            run.parallel_scheduler_batch_worker_slot_tick_summaries(),
+        )
         .with_parallel_scheduler_planned_batch_timeline(
             run.parallel_scheduler_planned_batch_timeline()
                 .into_iter()
@@ -164,6 +170,12 @@ pub(super) fn parallel_execution_summary(
             run.data_cache_parallel_scheduler_batch_timeline()
                 .into_iter()
                 .map(workload_parallel_batch_timeline_record),
+        )
+        .with_data_cache_parallel_scheduler_recorded_batch_worker_capacity_ticks(
+            run.data_cache_parallel_scheduler_batch_worker_capacity_ticks(),
+        )
+        .with_data_cache_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(
+            run.data_cache_parallel_scheduler_batch_worker_slot_tick_summaries(),
         )
         .with_data_cache_parallel_scheduler_planned_batch_timeline(
             run.data_cache_parallel_scheduler_planned_batch_timeline()
@@ -351,6 +363,18 @@ pub(super) fn parallel_execution_summary(
         .with_gpu_dma_scheduler_batch_timeline(
             activities.gpu_dma.scheduler_batch_timeline.iter().cloned(),
         )
+        .with_gpu_dma_scheduler_recorded_batch_worker_capacity_ticks(
+            activities
+                .gpu_dma
+                .scheduler_recorded_batch_worker_capacity_ticks,
+        )
+        .with_gpu_dma_scheduler_recorded_batch_worker_slot_tick_summaries(
+            activities
+                .gpu_dma
+                .scheduler_recorded_batch_worker_slot_tick_summaries
+                .iter()
+                .copied(),
+        )
         .with_gpu_dma_scheduler_frontiers(
             activities
                 .gpu_dma
@@ -469,6 +493,18 @@ pub(super) fn parallel_execution_summary(
                 .iter()
                 .cloned(),
         )
+        .with_accelerator_dma_scheduler_recorded_batch_worker_capacity_ticks(
+            activities
+                .accelerator_dma
+                .scheduler_recorded_batch_worker_capacity_ticks,
+        )
+        .with_accelerator_dma_scheduler_recorded_batch_worker_slot_tick_summaries(
+            activities
+                .accelerator_dma
+                .scheduler_recorded_batch_worker_slot_tick_summaries
+                .iter()
+                .copied(),
+        )
         .with_accelerator_dma_scheduler_frontiers(
             activities
                 .accelerator_dma
@@ -524,7 +560,6 @@ pub(super) fn parallel_execution_summary(
                 .cloned(),
         )
 }
-
 pub(super) fn livelock_transition_threshold(
     expected: &[WorkloadExpectedCleanParallelDiagnostics],
 ) -> Option<u64> {
@@ -533,7 +568,6 @@ pub(super) fn livelock_transition_threshold(
         .filter_map(|diagnostics| diagnostics.livelock_transition_threshold())
         .min()
 }
-
 fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDataCacheProtocol {
     match protocol {
         RiscvDataCacheProtocol::Msi => WorkloadDataCacheProtocol::Msi,
@@ -542,7 +576,6 @@ fn workload_data_cache_protocol(protocol: RiscvDataCacheProtocol) -> WorkloadDat
         RiscvDataCacheProtocol::Chi => WorkloadDataCacheProtocol::Chi,
     }
 }
-
 fn workload_parallel_batch_timeline_record(
     record: RiscvSystemParallelBatchTimelineRecord,
 ) -> WorkloadParallelBatchTimelineRecord {
@@ -554,7 +587,6 @@ fn workload_parallel_batch_timeline_record(
         record.worker_count(),
     )
 }
-
 fn workload_parallel_batch_scope(
     scope: RiscvSystemParallelBatchScope,
 ) -> WorkloadParallelBatchScope {
@@ -571,6 +603,10 @@ mod planned_batch_timeline_tests;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::workload_replay::{WorkloadGpuDmaActivity, WorkloadReplayActivityRefs};
+    use crate::workload_replay_heterogeneous::{WorkloadAcceleratorActivity, WorkloadGpuActivity};
+    use crate::{RiscvClusterTurn, RiscvSystemRunStopReason};
     use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
     use rem6_dram::{
         DramController, DramGeometry, DramQosRequest, DramQosSchedulingPolicy,
@@ -592,16 +628,9 @@ mod tests {
         WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
         WorkloadWaitForTargetNodeWindow,
     };
-
-    use super::*;
-    use crate::workload_replay::{WorkloadGpuDmaActivity, WorkloadReplayActivityRefs};
-    use crate::workload_replay_heterogeneous::{WorkloadAcceleratorActivity, WorkloadGpuActivity};
-    use crate::{RiscvClusterTurn, RiscvSystemRunStopReason};
-
     fn layout() -> CacheLineLayout {
         CacheLineLayout::new(64).unwrap()
     }
-
     fn request(agent: u32, address: u64, sequence: u64) -> MemoryRequest {
         MemoryRequest::read_shared(
             MemoryRequestId::new(AgentId::new(agent), sequence),
@@ -611,13 +640,11 @@ mod tests {
         )
         .unwrap()
     }
-
     fn expected_clean(
         scope: WorkloadParallelDiagnosticScope,
     ) -> WorkloadExpectedCleanParallelDiagnostics {
         WorkloadExpectedCleanParallelDiagnostics::new(scope)
     }
-
     #[test]
     fn livelock_transition_threshold_uses_lowest_declared_clean_threshold() {
         assert_eq!(
@@ -626,36 +653,29 @@ mod tests {
             )]),
             None,
         );
-
         let full_system = expected_clean(WorkloadParallelDiagnosticScope::FullSystem)
             .with_livelock_transition_threshold(5)
             .unwrap();
         let data_cache = expected_clean(WorkloadParallelDiagnosticScope::DataCache)
             .with_livelock_transition_threshold(3)
             .unwrap();
-
         assert_eq!(
             livelock_transition_threshold(&[full_system, data_cache]),
             Some(3),
         );
     }
-
     fn component_wait_node(name: &str) -> WaitForNode {
         WaitForNode::component(name).unwrap()
     }
-
     fn transaction_wait_node(name: &str) -> WaitForNode {
         WaitForNode::transaction(name).unwrap()
     }
-
     fn resource_wait_node(name: &str) -> WaitForNode {
         WaitForNode::resource(name).unwrap()
     }
-
     fn empty_coherence_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
         ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new())
     }
-
     fn batch_scheduler_turn(
         partitions: u32,
         worker_limit: usize,
@@ -664,7 +684,6 @@ mod tests {
         let mut turns = batch_scheduler_turns_at(partitions, worker_limit, 0, scheduled_partitions);
         turns.remove(0)
     }
-
     fn batch_scheduler_turns_at(
         partitions: u32,
         worker_limit: usize,
@@ -690,7 +709,6 @@ mod tests {
         }
         turns
     }
-
     fn data_cache_batch_run(
         partitions: u32,
         worker_limit: usize,
@@ -698,7 +716,6 @@ mod tests {
     ) -> ParallelCoherenceRunSummary {
         data_cache_batch_run_at(partitions, worker_limit, 0, scheduled_partitions)
     }
-
     fn data_cache_batch_run_at(
         partitions: u32,
         worker_limit: usize,
@@ -722,7 +739,6 @@ mod tests {
             empty_coherence_wait_for_graphs(),
         )
     }
-
     fn qos_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
         let mut controller = DramController::new(
             DramGeometry::new(4, 256, 64).unwrap(),
@@ -732,7 +748,6 @@ mod tests {
         let low = request(7, 0x0000, 50);
         let other = request(8, 0x0040, 51);
         let high = request(7, 0x0100, 52);
-
         controller
             .schedule_qos_batch_with_policy(
                 0,
@@ -747,10 +762,8 @@ mod tests {
                     .with_turnaround(DramQosTurnaroundPolicy::RequestOrder),
             )
             .unwrap();
-
         DramTargetActivity::new(target, controller.activity_profile())
     }
-
     #[test]
     fn parallel_execution_summary_copies_dram_qos_activity() {
         let topology = WorkloadTopology::new(
@@ -781,7 +794,6 @@ mod tests {
             },
             None,
         );
-
         assert!(summary.has_dram_qos_activity());
         assert_eq!(summary.dram_qos_access_count(), 3);
         assert_eq!(summary.dram_qos_byte_count(), 24);
@@ -803,7 +815,6 @@ mod tests {
             16,
         );
     }
-
     #[test]
     fn parallel_execution_summary_copies_dma_scheduler_empty_epochs() {
         let topology = WorkloadTopology::new(
@@ -839,7 +850,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(summary.gpu_dma_scheduler_empty_epoch_count(), 2);
         assert_eq!(summary.accelerator_dma_scheduler_empty_epoch_count(), 3);
         assert_eq!(summary.dma_scheduler_empty_epoch_count(), 5);
@@ -848,7 +858,6 @@ mod tests {
             5
         );
     }
-
     #[test]
     fn parallel_execution_summary_copies_dma_scheduler_frontiers() {
         let topology = WorkloadTopology::new(
@@ -890,7 +899,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.gpu_dma_scheduler_initial_frontiers(),
             &[gpu_initial],
@@ -904,7 +912,6 @@ mod tests {
             vec![gpu_initial, accelerator_initial],
         );
     }
-
     #[test]
     fn parallel_execution_summary_copies_dma_scheduler_remote_traffic() {
         let gpu_source = PartitionId::new(6);
@@ -955,7 +962,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.gpu_dma_scheduler_remote_flow_count(gpu_source, gpu_target),
             1,
@@ -981,7 +987,6 @@ mod tests {
         assert!(summary.has_full_system_parallel_scheduler_remote_flows());
         assert!(summary.has_full_system_parallel_scheduler_remote_sends());
     }
-
     #[test]
     fn parallel_execution_summary_copies_scheduler_remote_flows() {
         let source = PartitionId::new(0);
@@ -1021,7 +1026,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.parallel_scheduler_remote_flow_count(source, target),
             1
@@ -1080,7 +1084,6 @@ mod tests {
         assert_eq!(sends[0].order(), 0);
         assert!(summary.has_full_system_parallel_scheduler_remote_sends());
     }
-
     #[test]
     fn parallel_execution_summary_copies_full_system_batch_partition_streaks() {
         let cpu = PartitionId::new(1);
@@ -1113,7 +1116,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.full_system_parallel_scheduler_batch_partition_streaks(),
             vec![WorkloadParallelBatchPartitionStreak::new([cpu, cache], 2)],
@@ -1125,7 +1127,6 @@ mod tests {
             2,
         );
     }
-
     #[test]
     fn parallel_execution_summary_copies_scoped_batch_timeline() {
         let cpu = PartitionId::new(1);
@@ -1158,7 +1159,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.full_system_parallel_scheduler_batch_timeline(),
             vec![
@@ -1179,7 +1179,6 @@ mod tests {
             ],
         );
     }
-
     #[test]
     fn parallel_execution_summary_copies_scheduler_progress_transitions() {
         let source = PartitionId::new(0);
@@ -1224,7 +1223,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(summary.parallel_scheduler_progress_transition_count(), 1);
         assert_eq!(summary.parallel_scheduler_livelock_diagnostic_count(), 0);
         assert!(!summary.has_parallel_scheduler_livelock_diagnostics());
@@ -1247,7 +1245,6 @@ mod tests {
             scheduler_transitions[0].kind(),
             LivelockTransitionKind::SchedulerEpoch,
         );
-
         let data_cache_transitions = summary.data_cache_parallel_scheduler_progress_transitions();
         assert_eq!(data_cache_transitions.len(), 1);
         assert_eq!(data_cache_transitions[0].partition(), data_cache);
@@ -1257,7 +1254,6 @@ mod tests {
             data_cache_transitions[0].kind(),
             LivelockTransitionKind::QueueRotation,
         );
-
         let full_system_transitions = summary.full_system_progress_transitions();
         assert_eq!(full_system_transitions.len(), 2);
         assert_eq!(full_system_transitions[0], scheduler_transitions[0]);
@@ -1265,7 +1261,6 @@ mod tests {
         assert_eq!(summary.full_system_livelock_diagnostic_count(), 0);
         assert!(!summary.has_full_system_diagnostics());
     }
-
     #[test]
     fn parallel_execution_summary_uses_livelock_transition_threshold() {
         let source = PartitionId::new(0);
@@ -1312,7 +1307,6 @@ mod tests {
             },
             Some(2),
         );
-
         assert_eq!(summary.parallel_scheduler_progress_transition_count(), 2);
         assert_eq!(summary.parallel_scheduler_livelock_diagnostic_count(), 1);
         assert_eq!(
@@ -1327,7 +1321,6 @@ mod tests {
         assert_eq!(summary.full_system_livelock_diagnostic_count(), 2);
         assert!(summary.has_full_system_diagnostics());
     }
-
     #[test]
     fn parallel_execution_summary_preserves_livelock_diagnostic_records() {
         let cpu = PartitionId::new(0);
@@ -1378,7 +1371,6 @@ mod tests {
             },
             Some(2),
         );
-
         assert!(summary.parallel_scheduler_livelock_diagnostics().is_empty());
         assert!(summary
             .data_cache_parallel_scheduler_livelock_diagnostics()
@@ -1400,7 +1392,6 @@ mod tests {
         assert_eq!(diagnostics[0].last_transition_tick(), 3);
         assert_eq!(summary.full_system_livelock_diagnostic_count(), 1);
     }
-
     #[test]
     fn parallel_execution_summary_preserves_cross_subsystem_deadlocks() {
         let packet = transaction_wait_node("fabric.packet.42");
@@ -1441,7 +1432,6 @@ mod tests {
         let accelerator = WorkloadAcceleratorActivity::default();
         let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
         assert_eq!(run.full_system_deadlock_diagnostic_count(), 1);
-
         let summary = parallel_execution_summary(
             &run,
             &topology,
@@ -1453,7 +1443,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(summary.resource_deadlock_diagnostic_count(), 0);
         assert_eq!(summary.data_cache_deadlock_diagnostic_count(), 0);
         assert_eq!(summary.full_system_wait_for_edge_count(), 2);
@@ -1552,7 +1541,6 @@ mod tests {
         assert_eq!(summary.full_system_deadlock_diagnostic_count(), 1);
         assert!(summary.has_full_system_diagnostics());
     }
-
     #[test]
     fn parallel_execution_summary_preserves_compute_and_dma_wait_for_edge_kinds() {
         let mut gpu_wait_for = WaitForGraph::new();
@@ -1617,7 +1605,6 @@ mod tests {
             )],
             ..WorkloadAcceleratorDmaActivity::default()
         };
-
         let summary = parallel_execution_summary(
             &run,
             &topology,
@@ -1629,7 +1616,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.compute_wait_for_edge_count_by_kind(WaitForEdgeKind::Resource),
             1,
@@ -1675,7 +1661,6 @@ mod tests {
         );
         assert_eq!(summary.full_system_wait_for_edge_count(), 4);
     }
-
     #[test]
     fn parallel_execution_summary_copies_data_cache_scheduler_frontiers() {
         let data_cache_run = data_cache_run_with_progress(PartitionId::new(2));
@@ -1696,7 +1681,6 @@ mod tests {
         let gpu_dma = WorkloadGpuDmaActivity::default();
         let accelerator = WorkloadAcceleratorActivity::default();
         let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
-
         let summary = parallel_execution_summary(
             &run,
             &topology,
@@ -1708,7 +1692,6 @@ mod tests {
             },
             None,
         );
-
         assert_eq!(
             summary.data_cache_parallel_scheduler_initial_frontiers(),
             run.data_cache_parallel_scheduler_initial_frontiers()
@@ -1720,7 +1703,6 @@ mod tests {
                 .as_slice(),
         );
     }
-
     fn data_cache_run_with_progress(partition: PartitionId) -> ParallelCoherenceRunSummary {
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 4, 1).unwrap();
         let subject = component_wait_node("data-cache-scheduler");
@@ -1729,7 +1711,6 @@ mod tests {
                 context.record_progress_transition(subject, LivelockTransitionKind::QueueRotation);
             })
             .unwrap();
-
         ParallelCoherenceRunSummary::new(
             scheduler.run_until_idle_parallel_recorded().unwrap(),
             0,
@@ -1740,7 +1721,6 @@ mod tests {
             empty_coherence_wait_for_graphs(),
         )
     }
-
     fn data_cache_run_with_repeated_progress(
         partition: PartitionId,
         transition_count: usize,
@@ -1752,7 +1732,6 @@ mod tests {
             transition_count,
         )
     }
-
     fn data_cache_run_with_repeated_progress_for_subject(
         partition: PartitionId,
         tick: u64,
@@ -1770,7 +1749,6 @@ mod tests {
                 }
             })
             .unwrap();
-
         ParallelCoherenceRunSummary::new(
             scheduler.run_until_idle_parallel_recorded().unwrap(),
             0,

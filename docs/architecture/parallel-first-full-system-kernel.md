@@ -479,6 +479,11 @@ Workload replay results preserve those planned capacity totals and derive
 planned worker-tick, idle-worker-tick, and utilization-ratio evidence beside
 the planned timelines, so manifest and replay diagnostics can audit planned
 parallel efficiency without access to live scheduler internals. Workload
+results also retain recorded worker-capacity ticks, idle-worker ticks,
+utilization ratios, and per-worker-slot active/idle summaries for executed
+CPU-scheduler, data-cache scheduler, DMA scheduler, and merged full-system
+scopes, so post-run artifacts keep the scheduler capacity evidence separate
+from stricter multi-worker parallel-evidence contracts. Workload
 manifests and replay plans can require minimum planned utilization ratios for
 CPU-scheduler, data-cache scheduler, GPU DMA, accelerator DMA, combined DMA,
 and merged full-system planned scopes, plus maximum planned idle-worker-tick

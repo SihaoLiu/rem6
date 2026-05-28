@@ -1,6 +1,8 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
-use rem6_workload::WorkloadTopology;
+use rem6_workload::{
+    WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord, WorkloadTopology,
+};
 
 use super::{
     parallel_execution_summary, workload_parallel_batch_timeline_record,
@@ -36,6 +38,16 @@ fn data_cache_batch_run_at(
         Vec::new(),
         empty_coherence_wait_for_graphs(),
     )
+}
+
+fn workload_batch_record(
+    scope: WorkloadParallelBatchScope,
+    start_tick: u64,
+    horizon: u64,
+    partitions: impl IntoIterator<Item = PartitionId>,
+    worker_count: usize,
+) -> WorkloadParallelBatchTimelineRecord {
+    WorkloadParallelBatchTimelineRecord::new(scope, start_tick, horizon, partitions, worker_count)
 }
 
 #[test]
@@ -179,5 +191,168 @@ fn parallel_execution_summary_copies_planned_batch_timeline() {
             run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
         )
         .unwrap(),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_recorded_batch_worker_ticks(),
+        run.parallel_scheduler_batch_worker_ticks(),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_recorded_batch_worker_capacity_ticks(),
+        run.parallel_scheduler_batch_worker_capacity_ticks(),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_recorded_batch_idle_worker_ticks(),
+        run.parallel_scheduler_batch_idle_worker_ticks(),
+    );
+    assert_eq!(
+        summary.parallel_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        run.parallel_scheduler_batch_worker_slot_tick_summaries(),
+    );
+    assert_eq!(
+        summary
+            .parallel_scheduler_recorded_batch_utilization_ratio()
+            .unwrap(),
+        run.parallel_scheduler_batch_utilization_ratio().unwrap(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_recorded_batch_worker_ticks(),
+        run.data_cache_parallel_scheduler_batch_worker_ticks(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_recorded_batch_worker_capacity_ticks(),
+        run.data_cache_parallel_scheduler_batch_worker_capacity_ticks(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_recorded_batch_idle_worker_ticks(),
+        run.data_cache_parallel_scheduler_batch_idle_worker_ticks(),
+    );
+    assert_eq!(
+        summary.data_cache_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        run.data_cache_parallel_scheduler_batch_worker_slot_tick_summaries(),
+    );
+    assert_eq!(
+        summary
+            .data_cache_parallel_scheduler_recorded_batch_utilization_ratio()
+            .unwrap(),
+        run.data_cache_parallel_scheduler_batch_utilization_ratio()
+            .unwrap(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_worker_ticks(),
+        run.full_system_parallel_scheduler_batch_worker_ticks(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_worker_capacity_ticks(),
+        run.full_system_parallel_scheduler_batch_worker_capacity_ticks(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_idle_worker_ticks(),
+        run.full_system_parallel_scheduler_batch_idle_worker_ticks(),
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        run.full_system_parallel_scheduler_batch_worker_slot_tick_summaries(),
+    );
+    assert_eq!(
+        summary
+            .full_system_parallel_scheduler_recorded_batch_utilization_ratio()
+            .unwrap(),
+        run.full_system_parallel_scheduler_batch_utilization_ratio()
+            .unwrap(),
+    );
+}
+
+#[test]
+fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
+    let cpu = PartitionId::new(0);
+    let gpu = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+    let accelerator = PartitionId::new(3);
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
+    scheduler.schedule_parallel_at(cpu, 0, |_| {}).unwrap();
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+    let recorded = scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let run = RiscvSystemRun::new(
+        vec![RiscvClusterTurn::parallel_scheduler(plan, recorded)],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 16 },
+    );
+    let topology = WorkloadTopology::new(
+        1,
+        1,
+        1,
+        rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+    )
+    .unwrap();
+    let gpu_activity = WorkloadGpuActivity::default();
+    let gpu_dma = WorkloadGpuDmaActivity {
+        scheduler_batch_timeline: vec![workload_batch_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            0,
+            4,
+            [gpu, memory],
+            2,
+        )],
+        scheduler_recorded_batch_worker_capacity_ticks: 12,
+        scheduler_recorded_batch_worker_slot_tick_summaries: vec![(0, 4, 0), (1, 4, 0), (2, 0, 4)],
+        ..WorkloadGpuDmaActivity::default()
+    };
+    let accelerator_activity = WorkloadAcceleratorActivity::default();
+    let accelerator_dma = WorkloadAcceleratorDmaActivity {
+        scheduler_batch_timeline: vec![workload_batch_record(
+            WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+            4,
+            8,
+            [accelerator],
+            1,
+        )],
+        scheduler_recorded_batch_worker_capacity_ticks: 8,
+        scheduler_recorded_batch_worker_slot_tick_summaries: vec![(0, 4, 0), (1, 0, 4)],
+        ..WorkloadAcceleratorDmaActivity::default()
+    };
+    let summary = parallel_execution_summary(
+        &run,
+        &topology,
+        WorkloadReplayActivityRefs {
+            gpu: &gpu_activity,
+            gpu_dma: &gpu_dma,
+            accelerator: &accelerator_activity,
+            accelerator_dma: &accelerator_dma,
+        },
+        None,
+    );
+
+    assert_eq!(summary.gpu_dma_scheduler_recorded_batch_worker_ticks(), 8);
+    assert_eq!(
+        summary.gpu_dma_scheduler_recorded_batch_worker_capacity_ticks(),
+        12,
+    );
+    assert_eq!(
+        summary.gpu_dma_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        vec![(0, 4, 0), (1, 4, 0), (2, 0, 4)],
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_recorded_batch_worker_ticks(),
+        4,
+    );
+    assert_eq!(
+        summary.accelerator_dma_scheduler_recorded_batch_worker_capacity_ticks(),
+        8,
+    );
+    assert_eq!(
+        summary.dma_scheduler_recorded_batch_worker_capacity_ticks(),
+        20,
+    );
+    assert_eq!(
+        summary.dma_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 4, 4), (2, 0, 4)],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_worker_capacity_ticks(),
+        28,
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        vec![(0, 12, 0), (1, 4, 8), (2, 0, 4)],
     );
 }

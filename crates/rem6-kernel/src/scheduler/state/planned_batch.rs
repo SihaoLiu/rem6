@@ -583,6 +583,9 @@ fn planned_batch_worker_capacity_ticks<'a, I>(batches: I, worker_capacity: usize
 where
     I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
 {
+    if worker_capacity == usize::MAX {
+        return planned_batch_worker_ticks(batches);
+    }
     batches
         .into_iter()
         .map(|batch| batch.worker_capacity_ticks(worker_capacity))
@@ -593,6 +596,9 @@ fn planned_batch_idle_worker_ticks<'a, I>(batches: I, worker_capacity: usize) ->
 where
     I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
 {
+    if worker_capacity == usize::MAX {
+        return 0;
+    }
     batches
         .into_iter()
         .map(|batch| batch.idle_worker_ticks(worker_capacity))
@@ -605,6 +611,9 @@ fn planned_batch_worker_slot_tick_summaries(
 ) -> Vec<(usize, Tick, Tick)> {
     if batches.is_empty() {
         return Vec::new();
+    }
+    if worker_capacity == usize::MAX {
+        return active_planned_batch_worker_slot_tick_summaries(batches);
     }
     let capacity = batches
         .iter()
@@ -629,6 +638,26 @@ fn planned_batch_worker_slot_tick_summaries(
         .enumerate()
         .filter(|(_, (active_ticks, idle_ticks))| *active_ticks != 0 || *idle_ticks != 0)
         .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
+}
+
+fn active_planned_batch_worker_slot_tick_summaries(
+    batches: &[ParallelEpochPlannedBatch],
+) -> Vec<(usize, Tick, Tick)> {
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for batch in batches {
+        let duration = batch.duration_ticks();
+        if duration == 0 {
+            continue;
+        }
+        for worker_slot in 0..batch.worker_count() {
+            let active_ticks = summaries.entry(worker_slot).or_default();
+            *active_ticks = active_ticks.saturating_add(duration);
+        }
+    }
+    summaries
+        .into_iter()
+        .map(|(worker_slot, active_ticks)| (worker_slot, active_ticks, 0))
         .collect()
 }
 

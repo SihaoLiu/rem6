@@ -1,6 +1,44 @@
 use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler};
 
 #[test]
+fn unbounded_worker_limit_reports_observed_batch_capacity() {
+    let mut scheduler = PartitionedScheduler::new(3).unwrap();
+
+    for partition in [
+        PartitionId::new(0),
+        PartitionId::new(1),
+        PartitionId::new(2),
+    ] {
+        scheduler
+            .schedule_parallel_at(partition, 0, |_| {})
+            .unwrap();
+    }
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    assert_eq!(plan.parallel_worker_limit(), usize::MAX);
+    assert_eq!(plan.parallel_batch_worker_capacity_ticks(), 3);
+    assert_eq!(plan.parallel_batch_idle_worker_ticks(), 0);
+    assert_eq!(
+        plan.parallel_batch_worker_slot_tick_summaries(),
+        vec![(0, 1, 0), (1, 1, 0), (2, 1, 0)]
+    );
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.batch_worker_capacity_ticks(), 3);
+    assert_eq!(run.batch_idle_worker_ticks(), 0);
+    assert_eq!(
+        run.batch_worker_slot_tick_summaries(),
+        vec![(0, 1, 0), (1, 1, 0), (2, 1, 0)]
+    );
+    assert_eq!(
+        run.batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(3, 3).unwrap()
+    );
+}
+
+#[test]
 fn recorded_parallel_runs_report_exact_batch_worker_count_buckets() {
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 4, 2).unwrap();
 
