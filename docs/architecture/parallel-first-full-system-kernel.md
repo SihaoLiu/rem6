@@ -141,7 +141,11 @@ The invariants below apply to production components in the workspace.
 3. Remote messages require lookahead.
    A remote message must respect the scheduler's minimum remote delay. A model
    that needs zero-delay coupling must be modeled inside one partition or must
-   use a specialized synchronizing primitive with explicit tests.
+   use a specialized synchronizing primitive with explicit tests. Remote
+   scheduling must also reject delivery ticks that are older than the target
+   partition clock at the start of the parallel epoch, so mixed serial and
+   parallel execution cannot hide schedule-in-the-past failures until a later
+   merge point.
 
 4. Local events and remote messages remain distinct.
    A local pipeline event can occur below the remote lookahead. A remote message

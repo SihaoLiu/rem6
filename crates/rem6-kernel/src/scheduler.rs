@@ -840,6 +840,11 @@ impl PartitionedScheduler {
     ) -> Result<ParallelBatchResult, SchedulerError> {
         let partition_count = self.partition_count();
         let min_remote_delay = self.min_remote_delay;
+        let partition_nows = self
+            .partitions
+            .iter()
+            .map(|queue| queue.now)
+            .collect::<Vec<_>>();
         let mut partition_queues = Vec::with_capacity(ready_partitions.len());
         let mut workers = Vec::with_capacity(ready_partitions.len());
 
@@ -865,6 +870,7 @@ impl PartitionedScheduler {
 
         let (results, first_error) = thread::scope(|scope| {
             let mut handles = Vec::with_capacity(partition_queues.len());
+            let partition_nows = partition_nows.as_slice();
 
             for (index, partition, queue) in partition_queues {
                 handles.push((
@@ -877,6 +883,7 @@ impl PartitionedScheduler {
                             horizon,
                             min_remote_delay,
                             partition_count,
+                            partition_nows,
                         )
                     }),
                 ));
@@ -1100,6 +1107,7 @@ pub struct ParallelSchedulerContext<'a> {
     next_progress_order: &'a mut u64,
     partition: PartitionId,
     partition_count: u32,
+    partition_nows: &'a [Tick],
     min_remote_delay: Tick,
     now: Tick,
 }
@@ -1190,6 +1198,14 @@ impl ParallelSchedulerContext<'_> {
                 now: self.now,
                 delay,
             })?;
+        let target_now = self.partition_nows[target.index() as usize];
+        if tick < target_now {
+            return Err(SchedulerError::InThePast {
+                partition: target,
+                now: target_now,
+                requested: tick,
+            });
+        }
         let order = *self.next_remote_order;
         *self.next_remote_order += 1;
         self.remote_events.push(RemoteScheduledEvent {
@@ -1252,6 +1268,7 @@ fn run_parallel_partition(
     horizon: Tick,
     min_remote_delay: Tick,
     partition_count: u32,
+    partition_nows: &[Tick],
 ) -> ParallelPartitionResult {
     let mut executed_events = 0;
     let mut next_remote_order = queue.next_remote_order;
@@ -1301,6 +1318,7 @@ fn run_parallel_partition(
                         next_progress_order: &mut next_progress_order,
                         partition,
                         partition_count,
+                        partition_nows,
                         min_remote_delay,
                         now: event.tick,
                     };
