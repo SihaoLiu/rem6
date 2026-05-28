@@ -373,7 +373,7 @@ crate owns one reason to change and exposes typed data to adjacent crates.
 | `rem6-cpu` | CPU front ends, architectural state, core clusters, instruction events, and data or instruction memory requests. |
 | `rem6-gpu` | GPU command submission, compute units, workgroups, DMA, traces, and checkpointable device state. |
 | `rem6-accelerator` | Accelerator command engines, NPU-style jobs, DMA, traces, and checkpointable device state. |
-| `rem6-net` | Ethernet packet payloads, wire-length metadata, packet FIFO capacity, reservation, slack, fixed full-duplex link timing, deterministic delay variation, explicit transmission records, delivery drain, and snapshot state. |
+| `rem6-net` | Ethernet packet payloads, wire-length metadata, packet FIFO capacity, reservation, slack, fixed full-duplex link timing, deterministic delay variation, explicit transmission records, delivery drain, learning-switch forwarding, and snapshot state. |
 | `rem6-mmio` | MMIO address decoding, register banks, device register semantics, and access errors. |
 | `rem6-interrupt` | Interrupt controller state, routing, pending delivery, and checkpointable interrupt metadata. |
 | `rem6-timer` | Timer MMIO, programmed events, interrupt emission, and checkpointable timer state. |

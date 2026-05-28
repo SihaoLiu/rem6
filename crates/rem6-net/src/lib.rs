@@ -2,6 +2,10 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
+mod switch;
+
+pub use switch::*;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EthernetPacketHandle(u64);
 
@@ -795,6 +799,16 @@ pub enum NetworkError {
         link_delay_ticks: u64,
     },
     EthernetLinkSequenceOverflow,
+    InvalidEthernetSwitchPortCount {
+        port_count: u16,
+    },
+    UnknownEthernetSwitchPort {
+        port: EthernetSwitchPortId,
+        port_count: usize,
+    },
+    EthernetFrameTooShort {
+        payload_bytes: u64,
+    },
 }
 
 impl fmt::Display for NetworkError {
@@ -892,6 +906,19 @@ impl fmt::Display for NetworkError {
             Self::EthernetLinkSequenceOverflow => {
                 write!(formatter, "ethernet link transmission sequence overflow")
             }
+            Self::InvalidEthernetSwitchPortCount { port_count } => write!(
+                formatter,
+                "ethernet switch port count {port_count} must be positive"
+            ),
+            Self::UnknownEthernetSwitchPort { port, port_count } => write!(
+                formatter,
+                "unknown ethernet switch port {} for switch with {port_count} ports",
+                port.index()
+            ),
+            Self::EthernetFrameTooShort { payload_bytes } => write!(
+                formatter,
+                "ethernet frame has {payload_bytes} bytes and is too short for MAC addresses"
+            ),
         }
     }
 }
