@@ -29,7 +29,8 @@ pub use capability::PciRawCapabilitySpec;
 pub use error::PciError;
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
-    PciLegacyInterruptPort, PciLegacyInterruptRoute, PciLegacyInterruptRoutingEntry,
+    PciLegacyInterruptPort, PciLegacyInterruptRoute, PciLegacyInterruptRouter,
+    PciLegacyInterruptRouterSnapshot, PciLegacyInterruptRoutingEntry,
     PciLegacyInterruptRoutingTable, PciLegacyInterruptRoutingTableSnapshot,
 };
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};

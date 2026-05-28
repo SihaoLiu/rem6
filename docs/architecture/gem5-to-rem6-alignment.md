@@ -1398,10 +1398,12 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 - PCI tests cover typed legacy INTx line mapping, invalid interrupt-pin and
   zero-line rejection, bridge path swizzling across upstream functions,
   explicit root routing-table entries with fallback policies, deterministic
-  routing-table ordering, snapshot/restore of platform routing tables, endpoint
-  identity preservation after root-line mapping, serial and parallel endpoint
-  post/clear delivery through rem6-interrupt, and observable delivery errors
-  when a parallel clear targets a mismatched source. PCI config and host tests cover
+  routing-table ordering, snapshot/restore of platform routing tables, typed
+  router construction of endpoint-facing ports from bridge-swizzled paths,
+  idempotent interrupt-controller route registration, endpoint identity
+  preservation after root-line mapping, serial and parallel endpoint post/clear
+  delivery through rem6-interrupt, and observable delivery errors when a
+  parallel clear targets a mismatched source. PCI config and host tests cover
   64-bit memory BAR lower
   and upper config dwords, upper-slot reservation, invalid BAR pairing, one
   active logical range per 64-bit BAR pair, and host memory-space mapping of

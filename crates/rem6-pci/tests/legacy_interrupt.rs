@@ -8,7 +8,7 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_pci::{
     PciError, PciFunctionAddress, PciInterruptPin, PciLegacyInterruptMapper,
     PciLegacyInterruptPath, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
-    PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable,
+    PciLegacyInterruptRouter, PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable,
     PciLegacyInterruptRoutingTableSnapshot,
 };
 
@@ -242,6 +242,114 @@ fn pci_legacy_interrupt_routing_table_snapshots_sorted_entries() {
     assert_eq!(
         restored.line(root_b, PciInterruptPin::IntA),
         Ok(InterruptLineId::new(32))
+    );
+}
+
+#[test]
+fn pci_legacy_interrupt_router_builds_ports_from_snapshot_routes() {
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let endpoint = PciFunctionAddress::new(2, 5, 0).unwrap();
+    let downstream_bridge = PciFunctionAddress::new(1, 1, 0).unwrap();
+    let root_bridge = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let path = PciLegacyInterruptPath::new(endpoint, PciInterruptPin::IntA)
+        .unwrap()
+        .with_upstream_bridge(downstream_bridge)
+        .with_upstream_bridge(root_bridge);
+    let explicit_entry = PciLegacyInterruptRoutingEntry::new(
+        root_bridge,
+        PciInterruptPin::IntC,
+        InterruptLineId::new(48),
+    )
+    .unwrap();
+    let fallback_entry = PciLegacyInterruptRoutingEntry::new(
+        root_bridge,
+        PciInterruptPin::IntD,
+        InterruptLineId::new(49),
+    )
+    .unwrap();
+    let table = PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DeviceModulo))
+        .with_entry(explicit_entry)
+        .unwrap();
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let mut router = PciLegacyInterruptRouter::new(
+        table,
+        InterruptTargetId::new(0),
+        cpu,
+        2,
+        Arc::clone(&controller),
+    )
+    .unwrap();
+
+    let route = router.route_for_path(&path).unwrap();
+    assert_eq!(route.function(), endpoint);
+    assert_eq!(route.pin(), PciInterruptPin::IntA);
+    assert_eq!(route.line(), InterruptLineId::new(48));
+
+    let snapshot = router.snapshot();
+    let mut mismatched_router = PciLegacyInterruptRouter::new(
+        PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DeviceModulo)),
+        InterruptTargetId::new(0),
+        cpu,
+        3,
+        Arc::clone(&controller),
+    )
+    .unwrap();
+    assert_eq!(
+        mismatched_router.restore(&snapshot),
+        Err(PciError::SnapshotLegacyInterruptRouterMismatch)
+    );
+
+    router.insert_entry(fallback_entry).unwrap();
+    assert_eq!(
+        router.line(root_bridge, PciInterruptPin::IntD),
+        Ok(InterruptLineId::new(49))
+    );
+    router.restore(&snapshot).unwrap();
+    assert_eq!(
+        router.line(root_bridge, PciInterruptPin::IntD),
+        Ok(InterruptLineId::new(33))
+    );
+
+    let port = router.port_for_path(&path).unwrap();
+    assert_eq!(port.function(), endpoint);
+    assert_eq!(port.pin(), PciInterruptPin::IntA);
+    assert_eq!(port.line(), InterruptLineId::new(48));
+    assert_eq!(
+        controller
+            .lock()
+            .unwrap()
+            .route(InterruptLineId::new(48))
+            .copied(),
+        Some(InterruptRoute::new(
+            InterruptLineId::new(48),
+            InterruptTargetId::new(0),
+            cpu,
+        ))
+    );
+
+    let same_line_port = router.port(root_bridge, PciInterruptPin::IntC).unwrap();
+    assert_eq!(same_line_port.line(), InterruptLineId::new(48));
+    let source = InterruptSourceId::new(84);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(pci, 6, move |context| {
+            port.post(context, source).unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            8,
+            InterruptLineId::new(48),
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
     );
 }
 

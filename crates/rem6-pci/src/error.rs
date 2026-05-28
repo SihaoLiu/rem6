@@ -144,6 +144,7 @@ pub enum PciError {
         function: PciFunctionAddress,
         pin: PciInterruptPin,
     },
+    SnapshotLegacyInterruptRouterMismatch,
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -482,6 +483,12 @@ impl fmt::Display for PciError {
                 "PCI legacy interrupt routing entry for function {:?} pin {:?} already exists",
                 function, pin
             ),
+            Self::SnapshotLegacyInterruptRouterMismatch => {
+                write!(
+                    f,
+                    "PCI legacy interrupt router snapshot does not match this router"
+                )
+            }
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,
                 "PCI config write at {:#x} for {} bytes targets read-only state",

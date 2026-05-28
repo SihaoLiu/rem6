@@ -305,6 +305,215 @@ impl PciLegacyInterruptRoutingTable {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciLegacyInterruptRouterSnapshot {
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+    signal_latency: Tick,
+    routing_table: PciLegacyInterruptRoutingTableSnapshot,
+}
+
+impl PciLegacyInterruptRouterSnapshot {
+    pub fn new(
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        signal_latency: Tick,
+        routing_table: PciLegacyInterruptRoutingTableSnapshot,
+    ) -> Result<Self, PciError> {
+        InterruptLineChannel::new(
+            InterruptRoute::new(
+                routing_table.fallback().base_line(),
+                target,
+                target_partition,
+            ),
+            signal_latency,
+        )
+        .map_err(PciError::Interrupt)?;
+
+        Ok(Self {
+            target,
+            target_partition,
+            signal_latency,
+            routing_table,
+        })
+    }
+
+    pub const fn target(&self) -> InterruptTargetId {
+        self.target
+    }
+
+    pub const fn target_partition(&self) -> PartitionId {
+        self.target_partition
+    }
+
+    pub const fn signal_latency(&self) -> Tick {
+        self.signal_latency
+    }
+
+    pub const fn routing_table(&self) -> &PciLegacyInterruptRoutingTableSnapshot {
+        &self.routing_table
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PciLegacyInterruptRouter {
+    routing_table: PciLegacyInterruptRoutingTable,
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+    signal_latency: Tick,
+    controller: Arc<Mutex<InterruptController>>,
+}
+
+impl PciLegacyInterruptRouter {
+    pub fn new(
+        routing_table: PciLegacyInterruptRoutingTable,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        signal_latency: Tick,
+        controller: Arc<Mutex<InterruptController>>,
+    ) -> Result<Self, PciError> {
+        InterruptLineChannel::new(
+            InterruptRoute::new(
+                routing_table.fallback().base_line(),
+                target,
+                target_partition,
+            ),
+            signal_latency,
+        )
+        .map_err(PciError::Interrupt)?;
+
+        Ok(Self {
+            routing_table,
+            target,
+            target_partition,
+            signal_latency,
+            controller,
+        })
+    }
+
+    pub const fn routing_table(&self) -> &PciLegacyInterruptRoutingTable {
+        &self.routing_table
+    }
+
+    pub const fn target(&self) -> InterruptTargetId {
+        self.target
+    }
+
+    pub const fn target_partition(&self) -> PartitionId {
+        self.target_partition
+    }
+
+    pub const fn signal_latency(&self) -> Tick {
+        self.signal_latency
+    }
+
+    pub fn controller(&self) -> Arc<Mutex<InterruptController>> {
+        Arc::clone(&self.controller)
+    }
+
+    pub fn insert_entry(&mut self, entry: PciLegacyInterruptRoutingEntry) -> Result<(), PciError> {
+        self.routing_table.insert_entry(entry)
+    }
+
+    pub fn snapshot(&self) -> PciLegacyInterruptRouterSnapshot {
+        PciLegacyInterruptRouterSnapshot {
+            target: self.target,
+            target_partition: self.target_partition,
+            signal_latency: self.signal_latency,
+            routing_table: self.routing_table.snapshot(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &PciLegacyInterruptRouterSnapshot) -> Result<(), PciError> {
+        if self.target != snapshot.target
+            || self.target_partition != snapshot.target_partition
+            || self.signal_latency != snapshot.signal_latency
+        {
+            return Err(PciError::SnapshotLegacyInterruptRouterMismatch);
+        }
+
+        self.routing_table.restore(snapshot.routing_table());
+        Ok(())
+    }
+
+    pub fn line(
+        &self,
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+    ) -> Result<InterruptLineId, PciError> {
+        self.routing_table.line(function, pin)
+    }
+
+    pub fn line_for_path(
+        &self,
+        path: &PciLegacyInterruptPath,
+    ) -> Result<InterruptLineId, PciError> {
+        self.routing_table.line_for_path(path)
+    }
+
+    pub fn route(
+        &self,
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        self.routing_table.route(
+            function,
+            pin,
+            self.target,
+            self.target_partition,
+            self.signal_latency,
+        )
+    }
+
+    pub fn route_for_path(
+        &self,
+        path: &PciLegacyInterruptPath,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        self.routing_table.route_for_path(
+            path,
+            self.target,
+            self.target_partition,
+            self.signal_latency,
+        )
+    }
+
+    pub fn port(
+        &self,
+        function: PciFunctionAddress,
+        pin: PciInterruptPin,
+    ) -> Result<PciLegacyInterruptPort, PciError> {
+        let route = self.route(function, pin)?;
+        self.port_for_route(route)
+    }
+
+    pub fn port_for_path(
+        &self,
+        path: &PciLegacyInterruptPath,
+    ) -> Result<PciLegacyInterruptPort, PciError> {
+        let route = self.route_for_path(path)?;
+        self.port_for_route(route)
+    }
+
+    fn port_for_route(
+        &self,
+        route: PciLegacyInterruptRoute,
+    ) -> Result<PciLegacyInterruptPort, PciError> {
+        self.register_route(route.interrupt_route())?;
+        PciLegacyInterruptPort::new(route, Arc::clone(&self.controller))
+    }
+
+    fn register_route(&self, route: InterruptRoute) -> Result<(), PciError> {
+        let mut controller = self.controller.lock().unwrap();
+        if controller.route(route.line()).copied() == Some(route) {
+            return Ok(());
+        }
+
+        controller
+            .register_route(route)
+            .map_err(PciError::Interrupt)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciLegacyInterruptPath {
     endpoint_function: PciFunctionAddress,
     endpoint_pin: PciInterruptPin,
