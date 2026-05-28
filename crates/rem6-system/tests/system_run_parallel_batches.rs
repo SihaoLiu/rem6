@@ -1,6 +1,6 @@
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_cpu::RiscvClusterTurn;
-use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForGraph};
+use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
 use rem6_system::{RiscvSystemParallelBatchScope, RiscvSystemRun, RiscvSystemRunStopReason};
 
 fn empty_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
@@ -198,6 +198,16 @@ fn system_run_preserves_planned_parallel_batches_before_remote_wakeups() {
         10,
     );
     assert_eq!(
+        run.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        14,
+    );
+    assert_eq!(run.parallel_scheduler_planned_batch_idle_worker_ticks(), 2);
+    assert_eq!(
+        run.parallel_scheduler_planned_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(12, 14).unwrap(),
+    );
+    assert_eq!(
         run.parallel_scheduler_planned_batch_count_for_partition_set([cpu2]),
         1,
     );
@@ -220,6 +230,19 @@ fn system_run_preserves_planned_parallel_batches_before_remote_wakeups() {
     assert_eq!(
         run.full_system_parallel_scheduler_planned_batch_worker_ticks_at_or_above(2),
         10,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        14,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_idle_worker_ticks(),
+        2,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_planned_batch_utilization_ratio()
+            .unwrap(),
+        ParallelBatchUtilizationRatio::new(12, 14).unwrap(),
     );
 
     assert_eq!(

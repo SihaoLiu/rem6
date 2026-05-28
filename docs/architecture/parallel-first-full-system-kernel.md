@@ -460,9 +460,11 @@ batch and tick queries, minimum-worker batch and tick queries, total batch
 worker-ticks, and thresholded batch worker-tick queries. Planned and executed
 kernel batch records also expose their own start tick, horizon, duration ticks,
 and worker-tick occupancy, and planned epoch/run summaries expose the same
-duration-weighted worker-count buckets, tick queries, and worker-tick queries
-as executed summaries. Higher layers do not need to rediscover the same time
-window from worker records or rebuild planned occupancy from timeline records.
+duration-weighted worker-count buckets, tick queries, worker-tick queries,
+worker-capacity ticks, idle-worker ticks, and utilization ratios as typed
+pre-dispatch evidence. Higher layers do not need to rediscover the same time
+window from worker records, rebuild planned occupancy from timeline records, or
+recompute planned worker capacity from scheduler-private worker limits.
 The runtime scheduler itself remains the first source of parallel occupancy
 truth rather than relying on subsystem-specific reconstruction.
 Workload results retain explicit merged full-system streak evidence instead of

@@ -1,4 +1,6 @@
-use rem6_kernel::{PartitionId, PartitionedScheduler, ReadyPartition};
+use rem6_kernel::{
+    ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, ReadyPartition,
+};
 
 #[test]
 fn scheduler_parallel_plan_exposes_worker_limited_batch_shape_without_dispatching() {
@@ -84,9 +86,17 @@ fn scheduler_parallel_plan_exposes_planned_batch_occupancy_ticks() {
     assert_eq!(batches[0].start_tick(), 0);
     assert_eq!(batches[0].duration_ticks(), 6);
     assert_eq!(batches[0].worker_ticks(), 12);
+    assert_eq!(batches[0].worker_capacity_ticks(2), 12);
+    assert_eq!(batches[0].idle_worker_ticks(2), 0);
     assert_eq!(batches[1].start_tick(), 5);
     assert_eq!(batches[1].duration_ticks(), 1);
     assert_eq!(batches[1].worker_ticks(), 1);
+    assert_eq!(batches[1].worker_capacity_ticks(2), 2);
+    assert_eq!(batches[1].idle_worker_ticks(2), 1);
+    assert_eq!(
+        batches[1].utilization_ratio(2).unwrap(),
+        ParallelBatchUtilizationRatio::new(1, 2).unwrap(),
+    );
     assert_eq!(
         plan.parallel_batch_worker_count_tick_summaries(),
         vec![(1, 1), (2, 6)],
@@ -97,6 +107,12 @@ fn scheduler_parallel_plan_exposes_planned_batch_occupancy_ticks() {
     assert_eq!(plan.parallel_batch_worker_ticks(), 13);
     assert_eq!(plan.parallel_batch_worker_ticks_at_or_above(1), 13);
     assert_eq!(plan.parallel_batch_worker_ticks_at_or_above(2), 12);
+    assert_eq!(plan.parallel_batch_worker_capacity_ticks(), 14);
+    assert_eq!(plan.parallel_batch_idle_worker_ticks(), 1);
+    assert_eq!(
+        plan.parallel_batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(13, 14).unwrap(),
+    );
 }
 
 #[test]
@@ -142,6 +158,12 @@ fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     assert_eq!(epoch.planned_batch_worker_ticks(), 12);
     assert_eq!(epoch.planned_batch_worker_ticks_at_or_above(1), 12);
     assert_eq!(epoch.planned_batch_worker_ticks_at_or_above(2), 10);
+    assert_eq!(epoch.planned_batch_worker_capacity_ticks(), 14);
+    assert_eq!(epoch.planned_batch_idle_worker_ticks(), 2);
+    assert_eq!(
+        epoch.planned_batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(12, 14).unwrap(),
+    );
     assert_eq!(
         epoch.planned_batch_partition_set_summaries(),
         vec![
@@ -200,6 +222,12 @@ fn recorded_parallel_run_preserves_planned_batch_shape_before_remote_wakeups() {
     assert_eq!(recorded.planned_batch_worker_ticks(), 12);
     assert_eq!(recorded.planned_batch_worker_ticks_at_or_above(1), 12);
     assert_eq!(recorded.planned_batch_worker_ticks_at_or_above(2), 10);
+    assert_eq!(recorded.planned_batch_worker_capacity_ticks(), 14);
+    assert_eq!(recorded.planned_batch_idle_worker_ticks(), 2);
+    assert_eq!(
+        recorded.planned_batch_utilization_ratio().unwrap(),
+        ParallelBatchUtilizationRatio::new(12, 14).unwrap(),
+    );
     assert_eq!(
         recorded.planned_batch_count_for_partition_set([PartitionId::new(2)]),
         1,

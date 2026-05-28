@@ -11,13 +11,14 @@ pub use progress::{
     ProgressMonitorError, ProgressMonitorSnapshot, ProgressWindowSnapshot,
 };
 pub use scheduler::{
-    ConservativeRunSummary, EpochPlan, ParallelEpochBatchRecord, ParallelEpochPlan,
-    ParallelEpochPlannedBatch, ParallelPartitionActivity, ParallelProgressTransitionRecord,
-    ParallelRemoteFlowRecord, ParallelRemoteSendRecord, ParallelRunProfile,
-    ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId, PartitionFrontier,
-    PartitionId, PartitionSnapshot, PartitionedScheduler, PendingEventSnapshot, ReadyPartition,
-    RecordedConservativeRunSummary, RecordedRunSummary, RunSummary, ScheduledEventKind,
-    SchedulerContext, SchedulerDispatchRecord, SchedulerError, SchedulerSnapshot,
+    ConservativeRunSummary, EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord,
+    ParallelEpochPlan, ParallelEpochPlannedBatch, ParallelPartitionActivity,
+    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
+    ParallelRunProfile, ParallelSchedulerContext, ParallelWorkerRecord, PartitionEventId,
+    PartitionFrontier, PartitionId, PartitionSnapshot, PartitionedScheduler, PendingEventSnapshot,
+    ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary, RunSummary,
+    ScheduledEventKind, SchedulerContext, SchedulerDispatchRecord, SchedulerError,
+    SchedulerSnapshot,
 };
 pub use wait_for::{
     DeadlockDiagnostic, WaitForBlockedNodeWindow, WaitForEdge, WaitForEdgeKind,

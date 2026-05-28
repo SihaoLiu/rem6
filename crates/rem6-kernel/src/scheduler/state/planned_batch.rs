@@ -14,6 +14,38 @@ pub struct ParallelEpochPlannedBatch {
     ready_partitions: Vec<ReadyPartition>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParallelBatchUtilizationRatio {
+    numerator: Tick,
+    denominator: Tick,
+}
+
+impl ParallelBatchUtilizationRatio {
+    pub const fn new(numerator: Tick, denominator: Tick) -> Option<Self> {
+        if denominator == 0 {
+            None
+        } else {
+            Some(Self {
+                numerator,
+                denominator,
+            })
+        }
+    }
+
+    pub const fn numerator(self) -> Tick {
+        self.numerator
+    }
+
+    pub const fn denominator(self) -> Tick {
+        self.denominator
+    }
+
+    pub fn meets_or_exceeds(self, minimum: Self) -> bool {
+        u128::from(self.numerator) * u128::from(minimum.denominator)
+            >= u128::from(minimum.numerator) * u128::from(self.denominator)
+    }
+}
+
 impl ParallelEpochPlannedBatch {
     pub fn new(horizon: Tick, ready_partitions: Vec<ReadyPartition>) -> Self {
         Self {
@@ -66,6 +98,26 @@ impl ParallelEpochPlannedBatch {
     pub fn worker_ticks(&self) -> Tick {
         self.duration_ticks()
             .saturating_mul(self.worker_count() as Tick)
+    }
+
+    pub fn worker_capacity_ticks(&self, worker_capacity: usize) -> Tick {
+        self.duration_ticks()
+            .saturating_mul(worker_capacity.max(self.worker_count()) as Tick)
+    }
+
+    pub fn idle_worker_ticks(&self, worker_capacity: usize) -> Tick {
+        self.worker_capacity_ticks(worker_capacity)
+            .saturating_sub(self.worker_ticks())
+    }
+
+    pub fn utilization_ratio(
+        &self,
+        worker_capacity: usize,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.worker_ticks(),
+            self.worker_capacity_ticks(worker_capacity),
+        )
     }
 }
 
@@ -120,6 +172,21 @@ impl ParallelEpochPlan {
 
     pub fn parallel_batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
         planned_batch_worker_ticks_at_or_above(&self.parallel_batches, minimum_worker_count)
+    }
+
+    pub fn parallel_batch_worker_capacity_ticks(&self) -> Tick {
+        planned_batch_worker_capacity_ticks(&self.parallel_batches, self.parallel_worker_limit)
+    }
+
+    pub fn parallel_batch_idle_worker_ticks(&self) -> Tick {
+        planned_batch_idle_worker_ticks(&self.parallel_batches, self.parallel_worker_limit)
+    }
+
+    pub fn parallel_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.parallel_batch_worker_ticks(),
+            self.parallel_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn parallel_batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
@@ -185,6 +252,24 @@ impl RecordedRunSummary {
 
     pub fn planned_batch_worker_ticks_at_or_above(&self, minimum_worker_count: usize) -> Tick {
         planned_batch_worker_ticks_at_or_above(&self.planned_batches, minimum_worker_count)
+    }
+
+    pub fn planned_batch_worker_capacity_ticks(&self) -> Tick {
+        planned_batch_worker_capacity_ticks(
+            &self.planned_batches,
+            self.planned_parallel_worker_limit,
+        )
+    }
+
+    pub fn planned_batch_idle_worker_ticks(&self) -> Tick {
+        planned_batch_idle_worker_ticks(&self.planned_batches, self.planned_parallel_worker_limit)
+    }
+
+    pub fn planned_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.planned_batch_worker_ticks(),
+            self.planned_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn planned_batch_partition_set_summaries(&self) -> Vec<(Vec<PartitionId>, usize)> {
@@ -296,6 +381,25 @@ impl RecordedConservativeRunSummary {
                 .iter()
                 .flat_map(|epoch| epoch.planned_batches().iter()),
             minimum_worker_count,
+        )
+    }
+
+    pub fn planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.epochs
+            .iter()
+            .map(RecordedRunSummary::planned_batch_worker_capacity_ticks)
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.planned_batch_worker_ticks())
+    }
+
+    pub fn planned_batch_utilization_ratio(&self) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.planned_batch_worker_ticks(),
+            self.planned_batch_worker_capacity_ticks(),
         )
     }
 
@@ -442,6 +546,26 @@ where
         .into_iter()
         .filter(|batch| batch.worker_count() >= minimum_worker_count)
         .map(ParallelEpochPlannedBatch::worker_ticks)
+        .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_worker_capacity_ticks<'a, I>(batches: I, worker_capacity: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .map(|batch| batch.worker_capacity_ticks(worker_capacity))
+        .fold(0, Tick::saturating_add)
+}
+
+fn planned_batch_idle_worker_ticks<'a, I>(batches: I, worker_capacity: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochPlannedBatch>,
+{
+    batches
+        .into_iter()
+        .map(|batch| batch.idle_worker_ticks(worker_capacity))
         .fold(0, Tick::saturating_add)
 }
 

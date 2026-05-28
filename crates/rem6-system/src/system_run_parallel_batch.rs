@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::{RiscvClusterParallelBatchTimelineRecord, RiscvClusterSchedulerEpoch};
-use rem6_kernel::{ParallelEpochBatchRecord, ParallelEpochPlannedBatch, PartitionId, Tick};
+use rem6_kernel::{
+    ParallelBatchUtilizationRatio, ParallelEpochBatchRecord, ParallelEpochPlannedBatch,
+    PartitionId, Tick,
+};
 
 use crate::RiscvSystemRun;
 
@@ -333,6 +336,69 @@ impl RiscvSystemRun {
                     minimum_worker_count,
                 ),
             )
+    }
+
+    pub fn parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.plan().parallel_batch_worker_capacity_ticks())
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.data_cache_parallel_scheduler_epochs()
+            .into_iter()
+            .map(|epoch| epoch.planned_batch_worker_capacity_ticks())
+            .fold(0, Tick::saturating_add)
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(&self) -> Tick {
+        self.parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_add(
+                self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+            )
+    }
+
+    pub fn parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.data_cache_parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_idle_worker_ticks(&self) -> Tick {
+        self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks()
+            .saturating_sub(self.full_system_parallel_scheduler_planned_batch_worker_ticks())
+    }
+
+    pub fn parallel_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.parallel_scheduler_planned_batch_worker_ticks(),
+            self.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
+    pub fn data_cache_parallel_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.data_cache_parallel_scheduler_planned_batch_worker_ticks(),
+            self.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
+    }
+
+    pub fn full_system_parallel_scheduler_planned_batch_utilization_ratio(
+        &self,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        ParallelBatchUtilizationRatio::new(
+            self.full_system_parallel_scheduler_planned_batch_worker_ticks(),
+            self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+        )
     }
 
     pub fn parallel_scheduler_planned_batch_partition_set_summaries(
