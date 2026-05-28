@@ -319,6 +319,35 @@ impl SystemActionExecutor {
         }
     }
 
+    pub fn with_pci_host_checkpoint_bank(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        pci_host_checkpoints: PciHostCheckpointBank,
+    ) -> Self {
+        Self {
+            stats,
+            checkpoints,
+            captured_manifests: BTreeMap::new(),
+            accelerator_checkpoints: None,
+            msi_bank_checkpoints: None,
+            fabric_checkpoints: None,
+            gpu_checkpoints: None,
+            riscv_checkpoints: None,
+            scheduler_checkpoints: None,
+            memory_checkpoints: None,
+            dram_memory_checkpoints: None,
+            interrupt_controller_checkpoints: None,
+            clint_checkpoints: None,
+            timer_checkpoints: None,
+            uart_checkpoints: None,
+            pci_host_checkpoints: Some(pci_host_checkpoints),
+            virtio_split_queue_checkpoints: None,
+            execution_modes: BTreeMap::new(),
+            guest_host_call_responses: BTreeMap::new(),
+            execution_mode_checkpoint_registered: false,
+        }
+    }
+
     pub fn with_checkpoint_banks(
         stats: StatsRegistry,
         checkpoints: CheckpointRegistry,

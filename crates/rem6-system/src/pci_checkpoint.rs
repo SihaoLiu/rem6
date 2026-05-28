@@ -170,23 +170,41 @@ impl PciHostCheckpointBank {
             .collect()
     }
 
+    pub fn decode_all_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Vec<PciHostCheckpointRecord>, PciHostCheckpointError> {
+        self.ports
+            .values()
+            .map(|port| port.decode_from(registry))
+            .collect()
+    }
+
     pub fn restore_all_from(
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<PciHostCheckpointRecord>, PciHostCheckpointError> {
         self.validate_restore_from(registry)?;
-        self.ports
-            .values()
-            .map(|port| port.restore_from(registry))
-            .collect()
+        let records = self.decode_all_from(registry)?;
+        for record in &records {
+            let port = self
+                .ports
+                .get(record.component())
+                .expect("decoded PCI host checkpoint record has registered port");
+            port.validate_topology(record.topology())?;
+        }
+        Ok(records)
     }
 
     pub fn validate_restore_from(
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<(), PciHostCheckpointError> {
-        for port in self.ports.values() {
-            let record = port.decode_from(registry)?;
+        for record in self.decode_all_from(registry)? {
+            let port = self
+                .ports
+                .get(record.component())
+                .expect("decoded PCI host checkpoint record has registered port");
             port.validate_topology(record.topology())?;
         }
         Ok(())

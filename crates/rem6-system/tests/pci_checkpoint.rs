@@ -60,6 +60,21 @@ fn host_with_endpoint() -> PciHostBridge {
     host
 }
 
+fn host_with_other_endpoint() -> PciHostBridge {
+    let aperture = PciConfigAperture::ecam(Address::new(0x4000_0000), 3).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x2000_0000),
+        Address::new(0x9000_0000),
+        Address::new(0xb000_0000),
+    );
+    let bridge_function = PciFunctionAddress::new(0, 3, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(2, 4, 0).unwrap();
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+    host.register_bridge(bridge(bridge_function, 2)).unwrap();
+    host.register_endpoint(endpoint(endpoint_function)).unwrap();
+    host
+}
+
 fn host_missing_endpoint() -> PciHostBridge {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 2).unwrap();
     let bases = PciHostAddressBases::new(
@@ -97,6 +112,33 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
     );
     assert_eq!(port.restore_from(&registry).unwrap(), captured);
     assert_eq!(live.lock().unwrap().topology_snapshot(), topology);
+}
+
+#[test]
+fn pci_host_checkpoint_bank_decodes_records_for_manifest_audit() {
+    let first = Arc::new(Mutex::new(host_with_endpoint()));
+    let second = Arc::new(Mutex::new(host_with_other_endpoint()));
+    let first_component = CheckpointComponentId::new("pci.host0").unwrap();
+    let second_component = CheckpointComponentId::new("pci.host1").unwrap();
+    let first_topology = first.lock().unwrap().topology_snapshot();
+    let second_topology = second.lock().unwrap().topology_snapshot();
+    let bank = PciHostCheckpointBank::new([
+        PciHostCheckpointPort::new(second_component.clone(), Arc::clone(&second)),
+        PciHostCheckpointPort::new(first_component.clone(), Arc::clone(&first)),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+
+    assert_eq!(
+        bank.decode_all_from(&registry).unwrap(),
+        vec![
+            PciHostCheckpointRecord::new(first_component, first_topology),
+            PciHostCheckpointRecord::new(second_component, second_topology),
+        ]
+    );
 }
 
 #[test]
@@ -171,4 +213,46 @@ fn system_action_executor_checkpoints_and_prevalidates_pci_host_topology() {
         live.lock().unwrap().topology_snapshot(),
         missing_endpoint_topology
     );
+}
+
+#[test]
+fn system_action_executor_constructs_with_pci_host_checkpoint_bank() {
+    let live = Arc::new(Mutex::new(host_with_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let bank = PciHostCheckpointBank::new([PciHostCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&live),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor = SystemActionExecutor::with_pci_host_checkpoint_bank(
+        StatsRegistry::new(),
+        checkpoints,
+        bank,
+    );
+
+    let checkpoint = HostActionRecord::new(
+        31,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(5),
+        GuestSourceId::new(9),
+        HostAction::Checkpoint {
+            label: "pci-constructor".to_string(),
+        },
+    );
+    let SystemActionOutcome::Checkpoint { manifest, .. } = executor.apply(&checkpoint).unwrap()
+    else {
+        panic!("checkpoint outcome expected");
+    };
+
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "host-topology")
+    }));
+    assert!(executor.pci_host_checkpoint_bank().is_some());
 }
