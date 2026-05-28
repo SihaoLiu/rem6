@@ -239,3 +239,41 @@ fn workload_parallel_execution_summary_uses_scoped_recorded_capacity_when_explic
         ParallelBatchUtilizationRatio::new(12, 20).unwrap(),
     );
 }
+
+#[test]
+fn workload_parallel_execution_summary_uses_scoped_recorded_slots_when_explicit_full_system_is_weaker(
+) {
+    let cpu = partition(0);
+    let cache = partition(1);
+    let gpu = partition(2);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [cpu],
+            1,
+        )])
+        .with_parallel_scheduler_recorded_batch_worker_capacity_ticks(8)
+        .with_parallel_scheduler_recorded_batch_worker_slot_tick_summaries([(0, 4, 0), (1, 0, 4)])
+        .with_gpu_dma_scheduler_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::GpuDmaScheduler,
+            4,
+            8,
+            [gpu, cache],
+            2,
+        )])
+        .with_gpu_dma_scheduler_recorded_batch_worker_capacity_ticks(12)
+        .with_gpu_dma_scheduler_recorded_batch_worker_slot_tick_summaries([
+            (0, 4, 0),
+            (1, 4, 0),
+            (2, 0, 4),
+        ])
+        .with_full_system_parallel_scheduler_recorded_batch_worker_capacity_ticks(20)
+        .with_full_system_parallel_scheduler_recorded_batch_worker_slot_tick_summaries([(0, 4, 0)]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 4, 4), (2, 0, 4)],
+    );
+}

@@ -969,23 +969,19 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(
         &self,
     ) -> Vec<(usize, Tick, Tick)> {
-        if !self
-            .recorded_batch_worker_slot_tick_summaries
-            .full_system_parallel_scheduler
-            .is_empty()
-        {
-            return self
-                .recorded_batch_worker_slot_tick_summaries
-                .full_system_parallel_scheduler
-                .clone();
-        }
-        collect_batch_worker_slot_tick_summaries(
+        let scoped_summaries = collect_batch_worker_slot_tick_summaries(
             self.parallel_scheduler_recorded_batch_worker_slot_tick_summaries()
                 .into_iter()
                 .chain(
                     self.data_cache_parallel_scheduler_recorded_batch_worker_slot_tick_summaries(),
                 )
                 .chain(self.dma_scheduler_recorded_batch_worker_slot_tick_summaries()),
+        );
+        collect_strongest_batch_worker_slot_tick_summaries(
+            &self
+                .recorded_batch_worker_slot_tick_summaries
+                .full_system_parallel_scheduler,
+            &scoped_summaries,
         )
     }
 
@@ -1448,6 +1444,25 @@ fn collect_batch_worker_slot_tick_summaries(
         let summary = by_worker_slot.entry(worker_slot).or_default();
         summary.0 = summary.0.saturating_add(active_ticks);
         summary.1 = summary.1.saturating_add(idle_ticks);
+    }
+    by_worker_slot
+        .into_iter()
+        .map(|(worker_slot, (active_ticks, idle_ticks))| (worker_slot, active_ticks, idle_ticks))
+        .collect()
+}
+
+fn collect_strongest_batch_worker_slot_tick_summaries(
+    left: &[(usize, Tick, Tick)],
+    right: &[(usize, Tick, Tick)],
+) -> Vec<(usize, Tick, Tick)> {
+    let mut by_worker_slot = BTreeMap::<usize, (Tick, Tick)>::new();
+    for (worker_slot, active_ticks, idle_ticks) in left.iter().chain(right.iter()).copied() {
+        if active_ticks == 0 && idle_ticks == 0 {
+            continue;
+        }
+        let summary = by_worker_slot.entry(worker_slot).or_default();
+        summary.0 = summary.0.max(active_ticks);
+        summary.1 = summary.1.max(idle_ticks);
     }
     by_worker_slot
         .into_iter()

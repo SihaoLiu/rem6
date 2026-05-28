@@ -741,6 +741,11 @@ Implementation evidence on 2026-05-26:
   accelerator DMA recorded capacities. Runtime utilization and idle summaries
   therefore cannot hide executed device-side worker slack behind a weaker
   global capacity counter.
+- Explicit recorded full-system worker-slot summaries are also merged with
+  scoped CPU-scheduler, data-cache, GPU DMA, and accelerator DMA slot summaries
+  by retaining the strongest active and idle tick evidence per slot. A runtime
+  full-system summary therefore cannot hide device-side worker slots merely by
+  publishing a shorter global slot list.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global
