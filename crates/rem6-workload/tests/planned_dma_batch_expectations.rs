@@ -4,10 +4,12 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadError, WorkloadExpectedParallelBatchPartitionSet,
     WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
+    WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization, WorkloadId,
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchTimelineScope,
     WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    WorkloadPlannedParallelBatchIdleExpectationError,
     WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
@@ -376,6 +378,61 @@ fn workload_replay_plan_checks_planned_dma_utilization_contracts() {
                 minimum_denominator: 2,
                 actual_numerator: 8,
                 actual_denominator: 20,
+            },
+        ),
+    );
+}
+
+#[test]
+fn workload_replay_plan_checks_planned_dma_idle_budget() {
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        0,
+        4,
+        [partition(10), partition(11)],
+        2,
+    );
+    let accelerator = timeline_record(
+        WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+        4,
+        8,
+        [partition(20), partition(21)],
+        2,
+    );
+    let plan = replay_plan()
+        .add_expected_planned_parallel_batch_idle_worker_ticks(
+            WorkloadExpectedPlannedParallelBatchIdleWorkerTicks::new(
+                WorkloadParallelBatchWorkerScope::PlannedDmaScheduler,
+                8,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_planned_batch_timeline([gpu.clone()])
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(12)
+        .with_accelerator_dma_scheduler_planned_batch_timeline([accelerator.clone()])
+        .with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(12);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let idle_heavy = WorkloadParallelExecutionSummary::default()
+        .with_gpu_dma_scheduler_planned_batch_timeline([gpu])
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(16)
+        .with_accelerator_dma_scheduler_planned_batch_timeline([accelerator])
+        .with_accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(16);
+    let idle_heavy_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(idle_heavy);
+
+    assert_eq!(
+        plan.verify_result(&idle_heavy_result).unwrap_err(),
+        WorkloadError::PlannedParallelBatchIdleExpectation(
+            WorkloadPlannedParallelBatchIdleExpectationError::AboveMaximum {
+                scope: WorkloadParallelBatchWorkerScope::PlannedDmaScheduler,
+                maximum_idle_worker_ticks: 8,
+                actual_idle_worker_ticks: 16,
             },
         ),
     );

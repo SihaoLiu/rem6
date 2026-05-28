@@ -6,10 +6,12 @@ use rem6_workload::{
     WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
     WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
     WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization, WorkloadId, WorkloadParallelBatchScope,
     WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelExecutionSummary, WorkloadPlannedParallelBatchUtilizationExpectationError,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadParallelExecutionSummary, WorkloadPlannedParallelBatchIdleExpectationError,
+    WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -159,6 +161,109 @@ fn workload_manifest_carries_planned_parallel_batch_utilization_expectation() {
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
 
     assert_eq!(plan.expected_planned_parallel_batch_utilization().len(), 1);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_checks_planned_parallel_batch_idle_budget() {
+    let plan = replay_plan()
+        .add_expected_planned_parallel_batch_idle_worker_ticks(
+            WorkloadExpectedPlannedParallelBatchIdleWorkerTicks::new(
+                WorkloadParallelBatchWorkerScope::PlannedFullSystem,
+                4,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(10)
+        .with_data_cache_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            4,
+            8,
+            [partition(2), partition(3)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(10);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let idle_heavy = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            4,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(12)
+        .with_data_cache_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            4,
+            8,
+            [partition(2), partition(3)],
+            2,
+        )])
+        .with_data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(12);
+    let idle_heavy_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(idle_heavy);
+
+    assert_eq!(
+        plan.verify_result(&idle_heavy_result).unwrap_err(),
+        WorkloadError::PlannedParallelBatchIdleExpectation(
+            WorkloadPlannedParallelBatchIdleExpectationError::AboveMaximum {
+                scope: WorkloadParallelBatchWorkerScope::PlannedFullSystem,
+                maximum_idle_worker_ticks: 4,
+                actual_idle_worker_ticks: 8,
+            },
+        ),
+    );
+}
+
+#[test]
+fn workload_manifest_carries_planned_parallel_batch_idle_budget() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("planned-idle-manifest"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_planned_parallel_batch_idle_worker_ticks(
+                WorkloadExpectedPlannedParallelBatchIdleWorkerTicks::new(
+                    WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([timeline_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            8,
+            [partition(0), partition(1)],
+            2,
+        )])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(16);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.expected_planned_parallel_batch_idle_worker_ticks()
+            .len(),
+        1
+    );
     plan.verify_result(&result).unwrap();
 }
 

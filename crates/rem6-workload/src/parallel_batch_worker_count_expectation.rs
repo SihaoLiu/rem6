@@ -520,6 +520,12 @@ pub struct WorkloadExpectedPlannedParallelBatchUtilization {
     minimum_denominator: Tick,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedPlannedParallelBatchIdleWorkerTicks {
+    scope: WorkloadParallelBatchWorkerScope,
+    maximum_idle_worker_ticks: Tick,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkloadPlannedParallelBatchUtilizationExpectationError {
     InvalidScope {
@@ -542,6 +548,25 @@ pub enum WorkloadPlannedParallelBatchUtilizationExpectationError {
         minimum_denominator: Tick,
         actual_numerator: Tick,
         actual_denominator: Tick,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadPlannedParallelBatchIdleExpectationError {
+    InvalidScope {
+        scope: WorkloadParallelBatchWorkerScope,
+    },
+    Duplicate {
+        scope: WorkloadParallelBatchWorkerScope,
+    },
+    MissingSummary {
+        scope: WorkloadParallelBatchWorkerScope,
+        maximum_idle_worker_ticks: Tick,
+    },
+    AboveMaximum {
+        scope: WorkloadParallelBatchWorkerScope,
+        maximum_idle_worker_ticks: Tick,
+        actual_idle_worker_ticks: Tick,
     },
 }
 
@@ -587,6 +612,40 @@ impl fmt::Display for WorkloadPlannedParallelBatchUtilizationExpectationError {
     }
 }
 
+impl fmt::Display for WorkloadPlannedParallelBatchIdleExpectationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidScope { scope } => write!(
+                formatter,
+                "expected planned parallel batch idle scope {} must expose planned worker capacity",
+                scope.as_str()
+            ),
+            Self::Duplicate { scope } => write!(
+                formatter,
+                "expected {} planned parallel batch idle budget is already declared",
+                scope.as_str()
+            ),
+            Self::MissingSummary {
+                scope,
+                maximum_idle_worker_ticks,
+            } => write!(
+                formatter,
+                "missing planned parallel batch idle summary for {} with maximum {maximum_idle_worker_ticks} idle worker-ticks",
+                scope.as_str()
+            ),
+            Self::AboveMaximum {
+                scope,
+                maximum_idle_worker_ticks,
+                actual_idle_worker_ticks,
+            } => write!(
+                formatter,
+                "expected {} planned parallel batch idle worker-ticks to stay at or below {maximum_idle_worker_ticks}, got {actual_idle_worker_ticks}",
+                scope.as_str()
+            ),
+        }
+    }
+}
+
 impl WorkloadExpectedPlannedParallelBatchUtilization {
     pub fn new(
         scope: impl Into<WorkloadParallelBatchWorkerScope>,
@@ -594,15 +653,7 @@ impl WorkloadExpectedPlannedParallelBatchUtilization {
         minimum_denominator: Tick,
     ) -> Result<Self, WorkloadError> {
         let scope = scope.into();
-        if !matches!(
-            scope,
-            WorkloadParallelBatchWorkerScope::PlannedScheduler
-                | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
-                | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
-                | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
-                | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
-                | WorkloadParallelBatchWorkerScope::PlannedFullSystem
-        ) {
+        if !is_planned_capacity_scope(scope) {
             return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
                 WorkloadPlannedParallelBatchUtilizationExpectationError::InvalidScope { scope },
             ));
@@ -661,6 +712,82 @@ impl WorkloadExpectedPlannedParallelBatchUtilization {
             _ => None,
         }
     }
+}
+
+impl WorkloadExpectedPlannedParallelBatchIdleWorkerTicks {
+    pub fn new(
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
+        maximum_idle_worker_ticks: Tick,
+    ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
+        if !is_planned_capacity_scope(scope) {
+            return Err(WorkloadError::PlannedParallelBatchIdleExpectation(
+                WorkloadPlannedParallelBatchIdleExpectationError::InvalidScope { scope },
+            ));
+        }
+        Ok(Self {
+            scope,
+            maximum_idle_worker_ticks,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
+        self.scope
+    }
+
+    pub const fn maximum_idle_worker_ticks(self) -> Tick {
+        self.maximum_idle_worker_ticks
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) fn actual_idle_worker_ticks(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<Tick> {
+        let (capacity, idle) = match self.scope {
+            WorkloadParallelBatchWorkerScope::PlannedScheduler => (
+                summary.parallel_scheduler_planned_batch_worker_capacity_ticks(),
+                summary.parallel_scheduler_planned_batch_idle_worker_ticks(),
+            ),
+            WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => (
+                summary.data_cache_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+                summary.data_cache_parallel_scheduler_planned_batch_idle_worker_ticks(),
+            ),
+            WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler => (
+                summary.gpu_dma_scheduler_planned_batch_worker_capacity_ticks(),
+                summary.gpu_dma_scheduler_planned_batch_idle_worker_ticks(),
+            ),
+            WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler => (
+                summary.accelerator_dma_scheduler_planned_batch_worker_capacity_ticks(),
+                summary.accelerator_dma_scheduler_planned_batch_idle_worker_ticks(),
+            ),
+            WorkloadParallelBatchWorkerScope::PlannedDmaScheduler => (
+                summary.dma_scheduler_planned_batch_worker_capacity_ticks(),
+                summary.dma_scheduler_planned_batch_idle_worker_ticks(),
+            ),
+            WorkloadParallelBatchWorkerScope::PlannedFullSystem => (
+                summary.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
+                summary.full_system_parallel_scheduler_planned_batch_idle_worker_ticks(),
+            ),
+            _ => return None,
+        };
+        (capacity != 0).then_some(idle)
+    }
+}
+
+const fn is_planned_capacity_scope(scope: WorkloadParallelBatchWorkerScope) -> bool {
+    matches!(
+        scope,
+        WorkloadParallelBatchWorkerScope::PlannedScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedDmaScheduler
+            | WorkloadParallelBatchWorkerScope::PlannedFullSystem
+    )
 }
 
 fn planned_batch_count_for_worker_count(
@@ -737,6 +864,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedPlannedParallelBatchUtilization] {
         &self.expected_planned_parallel_batch_utilization
+    }
+
+    pub fn expected_planned_parallel_batch_idle_worker_ticks(
+        &self,
+    ) -> &[WorkloadExpectedPlannedParallelBatchIdleWorkerTicks] {
+        &self.expected_planned_parallel_batch_idle_worker_ticks
     }
 }
 
@@ -868,6 +1001,28 @@ impl WorkloadManifestBuilder {
         self.expected_planned_parallel_batch_utilization
             .push(expected);
         self.expected_planned_parallel_batch_utilization
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_planned_parallel_batch_idle_worker_ticks(
+        mut self,
+        expected: WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_planned_parallel_batch_idle_worker_ticks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::PlannedParallelBatchIdleExpectation(
+                WorkloadPlannedParallelBatchIdleExpectationError::Duplicate {
+                    scope: expected.scope(),
+                },
+            ));
+        }
+        self.expected_planned_parallel_batch_idle_worker_ticks
+            .push(expected);
+        self.expected_planned_parallel_batch_idle_worker_ticks
             .sort_by_key(|expected| expected.sort_key());
         Ok(self)
     }
@@ -1039,5 +1194,33 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedPlannedParallelBatchUtilization] {
         &self.expected_planned_parallel_batch_utilization
+    }
+
+    pub fn add_expected_planned_parallel_batch_idle_worker_ticks(
+        mut self,
+        expected: WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_planned_parallel_batch_idle_worker_ticks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::PlannedParallelBatchIdleExpectation(
+                WorkloadPlannedParallelBatchIdleExpectationError::Duplicate {
+                    scope: expected.scope(),
+                },
+            ));
+        }
+        self.expected_planned_parallel_batch_idle_worker_ticks
+            .push(expected);
+        self.expected_planned_parallel_batch_idle_worker_ticks
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_planned_parallel_batch_idle_worker_ticks(
+        &self,
+    ) -> &[WorkloadExpectedPlannedParallelBatchIdleWorkerTicks] {
+        &self.expected_planned_parallel_batch_idle_worker_ticks
     }
 }

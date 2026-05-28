@@ -9,10 +9,10 @@ use crate::{
     WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
-    WorkloadParallelSchedulerScope, WorkloadPlannedParallelBatchUtilizationExpectationError,
-    WorkloadResourceAcquisitionField, WorkloadResourceActivityScope,
-    WorkloadResourceConstructionField, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
+    WorkloadParallelSchedulerScope, WorkloadPlannedParallelBatchIdleExpectationError,
+    WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadResourceAcquisitionField,
+    WorkloadResourceActivityScope, WorkloadResourceConstructionField, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
     WorkloadStatsHistoryExpectationError, WorkloadSuiteIdentity,
 };
 
@@ -1167,6 +1167,7 @@ pub enum WorkloadError {
     PlannedParallelBatchUtilizationExpectation(
         WorkloadPlannedParallelBatchUtilizationExpectationError,
     ),
+    PlannedParallelBatchIdleExpectation(WorkloadPlannedParallelBatchIdleExpectationError),
     InvalidExpectedParallelBatchPartitionSet {
         scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,

@@ -27,10 +27,10 @@ use crate::{
     WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
     WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
     WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchUtilization,
-    WorkloadExpectedResourceActivity, WorkloadExpectedStatsHistory, WorkloadHostEvent,
-    WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadManifestIdentity, WorkloadResource,
-    WorkloadResult, WorkloadTopology,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
+    WorkloadExpectedPlannedParallelBatchUtilization, WorkloadExpectedResourceActivity,
+    WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadLinuxBootHandoff, WorkloadManifest,
+    WorkloadManifestIdentity, WorkloadResource, WorkloadResult, WorkloadTopology,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,6 +94,8 @@ pub struct WorkloadReplayPlan {
     pub(crate) expected_parallel_batch_worker_ticks: Vec<WorkloadExpectedParallelBatchWorkerTicks>,
     pub(crate) expected_planned_parallel_batch_utilization:
         Vec<WorkloadExpectedPlannedParallelBatchUtilization>,
+    pub(crate) expected_planned_parallel_batch_idle_worker_ticks:
+        Vec<WorkloadExpectedPlannedParallelBatchIdleWorkerTicks>,
     pub(crate) expected_parallel_batch_partition_sets:
         Vec<WorkloadExpectedParallelBatchPartitionSet>,
     pub(crate) expected_parallel_batch_partition_streaks:
@@ -207,6 +209,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_planned_parallel_batch_utilization: manifest
                 .expected_planned_parallel_batch_utilization()
+                .to_vec(),
+            expected_planned_parallel_batch_idle_worker_ticks: manifest
+                .expected_planned_parallel_batch_idle_worker_ticks()
                 .to_vec(),
             expected_parallel_batch_partition_sets: manifest
                 .expected_parallel_batch_partition_sets()
@@ -645,6 +650,7 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_parallel_batch_worker_tick_streaks(self, result)?;
         replay_verify::verify_expected_parallel_batch_worker_ticks(self, result)?;
         replay_verify::verify_expected_planned_parallel_batch_utilization(self, result)?;
+        replay_verify::verify_expected_planned_parallel_batch_idle_worker_ticks(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         replay_verify::verify_expected_parallel_batch_timeline_records(self, result)?;

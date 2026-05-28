@@ -473,7 +473,8 @@ the planned timelines, so manifest and replay diagnostics can audit planned
 parallel efficiency without access to live scheduler internals. Workload
 manifests and replay plans can require minimum planned utilization ratios for
 CPU-scheduler, data-cache scheduler, GPU DMA, accelerator DMA, combined DMA,
-and merged full-system planned scopes, binding multicore and heterogeneous
+and merged full-system planned scopes, plus maximum planned idle-worker-tick
+budgets for the same scopes. This binds multicore and heterogeneous
 pre-dispatch efficiency into workload identity instead of leaving it as a
 post-run script check.
 Workload results retain explicit merged full-system streak evidence instead of

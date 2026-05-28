@@ -597,9 +597,10 @@ Implementation evidence on 2026-05-26:
 - Workload manifests and replay plans can now require minimum planned
   utilization ratios for CPU-scheduler, data-cache scheduler, GPU DMA,
   accelerator DMA, combined DMA, and merged full-system planned scopes.
-  Planned worker capacity, idle ticks, and worker-ticks are therefore checked
-  as one manifest-owned ratio instead of being reconstructed by external
-  scripts after a run.
+  They can also cap planned idle-worker ticks for the same scopes. Planned
+  worker capacity, idle ticks, and worker-ticks are therefore checked as
+  manifest-owned efficiency contracts instead of being reconstructed by
+  external scripts after a run.
 - Planned scheduler timelines now also feed exact partition-set, sustained
   partition-streak, active-partition, and per-partition activity contracts.
   Manifest checks can therefore require which partitions were naturally planned

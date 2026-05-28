@@ -1,8 +1,8 @@
 use rem6_kernel::ParallelBatchUtilizationRatio;
 
 use crate::{
-    WorkloadError, WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan,
-    WorkloadResult,
+    WorkloadError, WorkloadPlannedParallelBatchIdleExpectationError,
+    WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan, WorkloadResult,
 };
 
 use super::{
@@ -213,6 +213,46 @@ pub(crate) fn verify_expected_planned_parallel_batch_utilization(
                     minimum_denominator: expected.minimum_denominator(),
                     actual_numerator: actual.numerator(),
                     actual_denominator: actual.denominator(),
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_planned_parallel_batch_idle_worker_ticks(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_idle = plan.expected_planned_parallel_batch_idle_worker_ticks();
+    if expected_idle.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_idle[0];
+        return Err(WorkloadError::PlannedParallelBatchIdleExpectation(
+            WorkloadPlannedParallelBatchIdleExpectationError::MissingSummary {
+                scope: expected.scope(),
+                maximum_idle_worker_ticks: expected.maximum_idle_worker_ticks(),
+            },
+        ));
+    };
+
+    for expected in expected_idle {
+        let Some(actual_idle_worker_ticks) = expected.actual_idle_worker_ticks(summary) else {
+            return Err(WorkloadError::PlannedParallelBatchIdleExpectation(
+                WorkloadPlannedParallelBatchIdleExpectationError::MissingSummary {
+                    scope: expected.scope(),
+                    maximum_idle_worker_ticks: expected.maximum_idle_worker_ticks(),
+                },
+            ));
+        };
+        if actual_idle_worker_ticks > expected.maximum_idle_worker_ticks() {
+            return Err(WorkloadError::PlannedParallelBatchIdleExpectation(
+                WorkloadPlannedParallelBatchIdleExpectationError::AboveMaximum {
+                    scope: expected.scope(),
+                    maximum_idle_worker_ticks: expected.maximum_idle_worker_ticks(),
+                    actual_idle_worker_ticks,
                 },
             ));
         }
