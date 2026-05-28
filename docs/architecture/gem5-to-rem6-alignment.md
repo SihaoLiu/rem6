@@ -355,8 +355,15 @@ Implementation evidence on 2026-05-28:
   multi-descriptor fragments, preserve pending fragment buffers across
   snapshots, reject nested or mismatched completions with typed errors, enqueue
   complete packets into the TX FIFO, and post TX DMA plus TX-full interrupts.
-  The remaining SINIC descriptor-memory backend, checksum offload, and full
-  PCI/MMIO binding remain open.
+- `rem6-net` also exposes that SINIC state through a typed `rem6-mmio` device
+  window: register width and access permissions match the gem5 SINIC register
+  table, interrupt-status reads clear pending bits, command writes can post
+  software interrupts, RX/TX data writes create explicit DMA copy plans,
+  RX/TX done and wait reads merge DMA completion status with live FIFO state,
+  and the device participates in serial and parallel MMIO bus routing with
+  typed `MmioError` failures instead of panic paths. The remaining SINIC
+  descriptor-memory backend, checksum offload, and full PCI endpoint binding
+  remain open.
 
 Implementation evidence on 2026-05-26:
 

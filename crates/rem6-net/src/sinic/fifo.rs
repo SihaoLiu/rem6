@@ -5,6 +5,7 @@ use crate::{
     EthernetInterfaceId, EthernetInterfaceRegistry, EthernetInterfaceSendRecord, EthernetPacket,
     NetworkError, SinicDataDescriptor, SinicDoneStatus, SinicError, SinicInterruptRecord,
     SinicInterrupts, SinicRegisterBlock, SinicRegisterBlockSnapshot, SinicRegisterParams,
+    SinicRxStatus,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +44,10 @@ pub struct SinicFifoDevice {
     rx_fifo: SinicPacketQueue,
     tx_fifo: SinicPacketQueue,
     rx_low: bool,
+    rx_data_descriptor: SinicDataDescriptor,
+    tx_data_descriptor: SinicDataDescriptor,
+    rx_dma_done: SinicDoneStatus,
+    tx_dma_done: SinicDoneStatus,
     rx_dma_offset: u64,
     rx_dma_pending: Option<SinicDmaCopyPlan>,
     tx_dma_buffer: Vec<u8>,
@@ -63,6 +68,10 @@ impl SinicFifoDevice {
             ),
             registers,
             rx_low: true,
+            rx_data_descriptor: SinicDataDescriptor::from_bits(0),
+            tx_data_descriptor: SinicDataDescriptor::from_bits(0),
+            rx_dma_done: SinicDoneStatus::new(),
+            tx_dma_done: SinicDoneStatus::new(),
             rx_dma_offset: 0,
             rx_dma_pending: None,
             tx_dma_buffer: Vec::new(),
@@ -239,6 +248,7 @@ impl SinicFifoDevice {
                 direction: SinicDmaDirection::Receive,
             });
         }
+        self.rx_data_descriptor = descriptor;
         let Some(packet) = self.rx_fifo.front() else {
             return Ok(None);
         };
@@ -265,6 +275,7 @@ impl SinicFifoDevice {
             self.rx_dma_offset,
             zero_candidate,
         );
+        self.rx_dma_done = SinicDoneStatus::new().with_busy(true);
         self.rx_dma_pending = Some(plan.clone());
         Ok(Some(plan))
     }
@@ -313,6 +324,7 @@ impl SinicFifoDevice {
             .with_complete(true)
             .with_more(remaining_packet_bytes != 0)
             .with_copy_len(copy_len_for_status)?;
+        self.rx_dma_done = done_status;
         let mut interrupt_record = Some(self.registers.post_interrupt(
             SinicInterrupts::RX_DMA,
             current_tick,
@@ -345,6 +357,7 @@ impl SinicFifoDevice {
                 direction: SinicDmaDirection::Transmit,
             });
         }
+        self.tx_data_descriptor = descriptor;
         let descriptor_len = descriptor.byte_len();
         if descriptor_len == 0 {
             return Err(SinicError::DmaCopyLengthZero {
@@ -358,6 +371,7 @@ impl SinicFifoDevice {
             self.tx_dma_buffer.len() as u64,
             false,
         );
+        self.tx_dma_done = SinicDoneStatus::new().with_busy(true);
         self.tx_dma_pending = Some(plan.clone());
         Ok(plan)
     }
@@ -389,6 +403,7 @@ impl SinicFifoDevice {
             let done_status = SinicDoneStatus::new()
                 .with_complete(true)
                 .with_copy_len(plan.copy_len)?;
+            self.tx_dma_done = done_status;
             let interrupt_record = Some(self.registers.post_interrupt(
                 SinicInterrupts::TX_DMA,
                 current_tick,
@@ -420,6 +435,7 @@ impl SinicFifoDevice {
         let done_status = SinicDoneStatus::new()
             .with_complete(true)
             .with_copy_len(plan.copy_len)?;
+        self.tx_dma_done = done_status;
         let interrupt_record = Some(merge_interrupt_records(
             enqueue_record.interrupt_record,
             dma_record,
@@ -437,7 +453,7 @@ impl SinicFifoDevice {
     }
 
     pub fn rx_done_status(&self) -> SinicDoneStatus {
-        SinicDoneStatus::new()
+        SinicDoneStatus::from_bits(self.rx_dma_done.bits())
             .with_packets(saturating_u16(self.rx_packet_count()))
             .with_empty(self.rx_fifo.is_empty())
             .with_high(self.rx_fifo.occupied_bytes() > self.registers.rx_fifo_high() as u64)
@@ -445,10 +461,30 @@ impl SinicFifoDevice {
     }
 
     pub fn tx_done_status(&self) -> SinicDoneStatus {
-        SinicDoneStatus::new()
+        SinicDoneStatus::from_bits(self.tx_dma_done.bits())
             .with_packets(saturating_u16(self.tx_packet_count()))
             .with_full(self.tx_fifo.available_bytes() < self.registers.tx_max_copy() as u64)
             .with_low(self.tx_fifo.occupied_bytes() < self.registers.tx_fifo_low() as u64)
+    }
+
+    pub fn rx_status(&self) -> SinicRxStatus {
+        let busy = u16::from(self.rx_dma_pending.is_some());
+        let mapped = u16::from(self.rx_dma_offset > 0 || self.rx_dma_pending.is_some());
+        let dirty = u16::from(self.rx_dma_offset > 0);
+        let head = if self.rx_dma_offset > 0 { 0 } else { u16::MAX };
+        SinicRxStatus::new()
+            .with_dirty(dirty)
+            .with_mapped(mapped)
+            .with_busy(busy)
+            .with_head(head)
+    }
+
+    pub const fn rx_data_descriptor(&self) -> SinicDataDescriptor {
+        self.rx_data_descriptor
+    }
+
+    pub const fn tx_data_descriptor(&self) -> SinicDataDescriptor {
+        self.tx_data_descriptor
     }
 
     pub fn rx_packet_count(&self) -> usize {
@@ -467,6 +503,12 @@ impl SinicFifoDevice {
         self.tx_fifo.occupied_bytes()
     }
 
+    pub fn reset(&mut self) -> Result<(), SinicError> {
+        let params = self.registers.params();
+        *self = Self::new(params)?;
+        Ok(())
+    }
+
     fn rx_zero_or_delay_copy_enabled(&self) -> bool {
         let config_bits = self.registers.config_bits();
         (config_bits & SinicRegisterBlock::CONFIG_ZERO_COPY) != 0
@@ -479,6 +521,10 @@ impl SinicFifoDevice {
             rx_fifo: self.rx_fifo.clone(),
             tx_fifo: self.tx_fifo.clone(),
             rx_low: self.rx_low,
+            rx_data_descriptor: self.rx_data_descriptor,
+            tx_data_descriptor: self.tx_data_descriptor,
+            rx_dma_done: self.rx_dma_done,
+            tx_dma_done: self.tx_dma_done,
             rx_dma_offset: self.rx_dma_offset,
             rx_dma_pending: self.rx_dma_pending.clone(),
             tx_dma_buffer: self.tx_dma_buffer.clone(),
@@ -491,6 +537,10 @@ impl SinicFifoDevice {
         self.rx_fifo = snapshot.rx_fifo.clone();
         self.tx_fifo = snapshot.tx_fifo.clone();
         self.rx_low = snapshot.rx_low;
+        self.rx_data_descriptor = snapshot.rx_data_descriptor;
+        self.tx_data_descriptor = snapshot.tx_data_descriptor;
+        self.rx_dma_done = snapshot.rx_dma_done;
+        self.tx_dma_done = snapshot.tx_dma_done;
         self.rx_dma_offset = snapshot.rx_dma_offset;
         self.rx_dma_pending = snapshot.rx_dma_pending.clone();
         self.tx_dma_buffer = snapshot.tx_dma_buffer.clone();
@@ -745,10 +795,24 @@ pub struct SinicFifoDeviceSnapshot {
     rx_fifo: SinicPacketQueue,
     tx_fifo: SinicPacketQueue,
     rx_low: bool,
+    rx_data_descriptor: SinicDataDescriptor,
+    tx_data_descriptor: SinicDataDescriptor,
+    rx_dma_done: SinicDoneStatus,
+    tx_dma_done: SinicDoneStatus,
     rx_dma_offset: u64,
     rx_dma_pending: Option<SinicDmaCopyPlan>,
     tx_dma_buffer: Vec<u8>,
     tx_dma_pending: Option<SinicDmaCopyPlan>,
+}
+
+impl SinicFifoDeviceSnapshot {
+    pub fn rx_packet_count(&self) -> usize {
+        self.rx_fifo.packet_count()
+    }
+
+    pub fn tx_packet_count(&self) -> usize {
+        self.tx_fifo.packet_count()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

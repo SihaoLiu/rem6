@@ -4,7 +4,10 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 
 #[path = "sinic/fifo.rs"]
 mod fifo;
+#[path = "sinic/mmio.rs"]
+mod mmio;
 pub use fifo::*;
+pub use mmio::*;
 
 use crate::NetworkError;
 
@@ -567,6 +570,9 @@ pub struct SinicRegisterBlock {
 }
 
 impl SinicRegisterBlock {
+    pub const COMMAND_RESET: u32 = 1 << 0;
+    pub const COMMAND_INTR: u32 = 1 << 1;
+
     pub const CONFIG_RX_EN: u32 = 1 << 0;
     pub const CONFIG_TX_EN: u32 = 1 << 1;
     pub const CONFIG_INT_EN: u32 = 1 << 2;
@@ -597,6 +603,10 @@ impl SinicRegisterBlock {
 
     pub const fn config_bits(&self) -> u32 {
         self.config_bits
+    }
+
+    pub const fn params(&self) -> SinicRegisterParams {
+        self.params
     }
 
     pub const fn rx_enabled(&self) -> bool {
@@ -657,6 +667,10 @@ impl SinicRegisterBlock {
 
     pub const fn tx_max_copy(&self) -> u32 {
         self.params.tx_max_copy
+    }
+
+    pub const fn rx_max_intr(&self) -> u32 {
+        self.params.rx_max_intr
     }
 
     pub const fn zero_copy_size(&self) -> u32 {
