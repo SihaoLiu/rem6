@@ -9,36 +9,22 @@ use crate::{
     WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
     WorkloadParallelDiagnosticScope, WorkloadParallelFrontierStage,
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
-    WorkloadParallelSchedulerScope, WorkloadResourceAcquisitionField,
-    WorkloadResourceActivityScope, WorkloadResourceConstructionField, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
+    WorkloadParallelSchedulerScope, WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadResourceAcquisitionField, WorkloadResourceActivityScope,
+    WorkloadResourceConstructionField, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
     WorkloadStatsHistoryExpectationError, WorkloadSuiteIdentity,
 };
 
 mod display;
 mod fabric_display;
 mod parallel_partition;
+mod remote_traffic_mismatch;
 
 pub use parallel_partition::{
     WorkloadParallelPartitionActivityMergeSummary, WorkloadParallelPartitionCountMergeSummary,
 };
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkloadParallelRemoteTrafficConsistencyMismatch {
-    pub scope: WorkloadParallelRemoteFlowScope,
-    pub source: u32,
-    pub target: u32,
-    pub flow_send_count: usize,
-    pub send_record_count: usize,
-    pub flow_first_tick: Tick,
-    pub send_first_tick: Option<Tick>,
-    pub flow_last_tick: Tick,
-    pub send_last_tick: Option<Tick>,
-    pub flow_minimum_delay: Option<Tick>,
-    pub send_minimum_delay: Option<Tick>,
-    pub flow_maximum_delay: Option<Tick>,
-    pub send_maximum_delay: Option<Tick>,
-}
+pub use remote_traffic_mismatch::WorkloadParallelRemoteTrafficConsistencyMismatch;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
@@ -1178,6 +1164,9 @@ pub enum WorkloadError {
         minimum_worker_ticks: Tick,
         actual_worker_ticks: Tick,
     },
+    PlannedParallelBatchUtilizationExpectation(
+        WorkloadPlannedParallelBatchUtilizationExpectationError,
+    ),
     InvalidExpectedParallelBatchPartitionSet {
         scope: WorkloadParallelBatchPartitionScope,
         partitions: Vec<u32>,

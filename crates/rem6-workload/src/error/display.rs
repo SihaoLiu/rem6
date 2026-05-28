@@ -1048,6 +1048,9 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelPartitionCountMergeSummary(_) => {
                 format_parallel_batch_error(self, formatter)
             }
+            Self::PlannedParallelBatchUtilizationExpectation(error) => {
+                write!(formatter, "{error}")
+            }
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(
                 formatter,
                 "expected {} clean parallel diagnostics is already declared",

@@ -45,6 +45,7 @@ pub(crate) use batch_worker_ticks::{
     verify_expected_parallel_batch_worker_tick_buckets,
     verify_expected_parallel_batch_worker_tick_streaks,
     verify_expected_parallel_batch_worker_ticks,
+    verify_expected_planned_parallel_batch_utilization,
 };
 pub(crate) use frontier::verify_expected_parallel_frontiers;
 pub(crate) use partition_activity::{

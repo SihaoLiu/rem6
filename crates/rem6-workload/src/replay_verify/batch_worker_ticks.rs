@@ -1,4 +1,9 @@
-use crate::{WorkloadError, WorkloadReplayPlan, WorkloadResult};
+use rem6_kernel::ParallelBatchUtilizationRatio;
+
+use crate::{
+    WorkloadError, WorkloadPlannedParallelBatchUtilizationExpectationError, WorkloadReplayPlan,
+    WorkloadResult,
+};
 
 use super::{
     validate_worker_scope_batch_timeline_evidence,
@@ -161,6 +166,55 @@ pub(crate) fn verify_expected_parallel_batch_worker_ticks(
                     actual_worker_ticks,
                 },
             );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_planned_parallel_batch_utilization(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_utilization = plan.expected_planned_parallel_batch_utilization();
+    if expected_utilization.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_utilization[0];
+        return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+            WorkloadPlannedParallelBatchUtilizationExpectationError::MissingSummary {
+                scope: expected.scope(),
+                minimum_numerator: expected.minimum_numerator(),
+                minimum_denominator: expected.minimum_denominator(),
+            },
+        ));
+    };
+
+    for expected in expected_utilization {
+        let minimum = ParallelBatchUtilizationRatio::new(
+            expected.minimum_numerator(),
+            expected.minimum_denominator(),
+        )
+        .expect("planned utilization expectation rejects zero denominators");
+        let Some(actual) = expected.actual_utilization(summary) else {
+            return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+                WorkloadPlannedParallelBatchUtilizationExpectationError::MissingSummary {
+                    scope: expected.scope(),
+                    minimum_numerator: expected.minimum_numerator(),
+                    minimum_denominator: expected.minimum_denominator(),
+                },
+            ));
+        };
+        if !actual.meets_or_exceeds(minimum) {
+            return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+                WorkloadPlannedParallelBatchUtilizationExpectationError::BelowMinimum {
+                    scope: expected.scope(),
+                    minimum_numerator: expected.minimum_numerator(),
+                    minimum_denominator: expected.minimum_denominator(),
+                    actual_numerator: actual.numerator(),
+                    actual_denominator: actual.denominator(),
+                },
+            ));
         }
     }
     Ok(())

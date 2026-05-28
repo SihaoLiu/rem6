@@ -470,7 +470,11 @@ truth rather than relying on subsystem-specific reconstruction.
 Workload replay results preserve those planned capacity totals and derive
 planned worker-tick, idle-worker-tick, and utilization-ratio evidence beside
 the planned timelines, so manifest and replay diagnostics can audit planned
-parallel efficiency without access to live scheduler internals.
+parallel efficiency without access to live scheduler internals. Workload
+manifests and replay plans can require minimum planned utilization ratios for
+CPU-scheduler, data-cache scheduler, and merged full-system planned scopes,
+binding multicore pre-dispatch efficiency into workload identity instead of
+leaving it as a post-run script check.
 Workload results retain explicit merged full-system streak evidence instead of
 reconstructing it only from CPU-scheduler and data-cache-scheduler summaries, so
 same-partition-set batches that cross subsystem boundaries remain visible to

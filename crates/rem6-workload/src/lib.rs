@@ -72,7 +72,8 @@ pub use parallel_batch_timeline_expectation::{
 pub use parallel_batch_worker_count_expectation::{
     WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
     WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
-    WorkloadExpectedParallelBatchWorkerTicks, WorkloadParallelBatchWorkerScope,
+    WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedPlannedParallelBatchUtilization,
+    WorkloadParallelBatchWorkerScope, WorkloadPlannedParallelBatchUtilizationExpectationError,
 };
 pub use parallel_diagnostic_expectation::{
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedParallelWaitForBlockedNodeWindow,
@@ -204,6 +205,8 @@ pub struct WorkloadManifest {
         Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_worker_tick_streaks: Vec<WorkloadExpectedParallelBatchWorkerTickStreak>,
     expected_parallel_batch_worker_ticks: Vec<WorkloadExpectedParallelBatchWorkerTicks>,
+    expected_planned_parallel_batch_utilization:
+        Vec<WorkloadExpectedPlannedParallelBatchUtilization>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -415,6 +418,8 @@ pub struct WorkloadManifestBuilder {
         Vec<WorkloadExpectedParallelBatchWorkerTickActivity>,
     expected_parallel_batch_worker_tick_streaks: Vec<WorkloadExpectedParallelBatchWorkerTickStreak>,
     expected_parallel_batch_worker_ticks: Vec<WorkloadExpectedParallelBatchWorkerTicks>,
+    expected_planned_parallel_batch_utilization:
+        Vec<WorkloadExpectedPlannedParallelBatchUtilization>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -469,6 +474,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_worker_tick_activity: Vec::new(),
             expected_parallel_batch_worker_tick_streaks: Vec::new(),
             expected_parallel_batch_worker_ticks: Vec::new(),
+            expected_planned_parallel_batch_utilization: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_batch_timeline_records: Vec::new(),
@@ -945,6 +951,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_worker_tick_streaks: &self
                 .expected_parallel_batch_worker_tick_streaks,
             expected_parallel_batch_worker_ticks: &self.expected_parallel_batch_worker_ticks,
+            expected_planned_parallel_batch_utilization: &self
+                .expected_planned_parallel_batch_utilization,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
                 .expected_parallel_batch_partition_streaks,
@@ -1010,6 +1018,8 @@ impl WorkloadManifestBuilder {
             expected_parallel_batch_worker_tick_streaks: self
                 .expected_parallel_batch_worker_tick_streaks,
             expected_parallel_batch_worker_ticks: self.expected_parallel_batch_worker_ticks,
+            expected_planned_parallel_batch_utilization: self
+                .expected_planned_parallel_batch_utilization,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
                 .expected_parallel_batch_partition_streaks,

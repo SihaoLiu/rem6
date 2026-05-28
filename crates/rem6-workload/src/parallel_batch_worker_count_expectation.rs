@@ -1,4 +1,6 @@
-use rem6_kernel::Tick;
+use std::fmt;
+
+use rem6_kernel::{ParallelBatchUtilizationRatio, Tick};
 
 use crate::{
     parallel_batch::{
@@ -511,6 +513,144 @@ impl WorkloadExpectedParallelBatchWorkerTicks {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedPlannedParallelBatchUtilization {
+    scope: WorkloadParallelBatchWorkerScope,
+    minimum_numerator: Tick,
+    minimum_denominator: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadPlannedParallelBatchUtilizationExpectationError {
+    InvalidScope {
+        scope: WorkloadParallelBatchWorkerScope,
+    },
+    ZeroDenominator {
+        scope: WorkloadParallelBatchWorkerScope,
+    },
+    Duplicate {
+        scope: WorkloadParallelBatchWorkerScope,
+    },
+    MissingSummary {
+        scope: WorkloadParallelBatchWorkerScope,
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+    },
+    BelowMinimum {
+        scope: WorkloadParallelBatchWorkerScope,
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+        actual_numerator: Tick,
+        actual_denominator: Tick,
+    },
+}
+
+impl fmt::Display for WorkloadPlannedParallelBatchUtilizationExpectationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidScope { scope } => write!(
+                formatter,
+                "expected planned parallel batch utilization scope {} must expose planned worker capacity",
+                scope.as_str()
+            ),
+            Self::ZeroDenominator { scope } => write!(
+                formatter,
+                "expected {} planned parallel batch utilization must use a nonzero denominator",
+                scope.as_str()
+            ),
+            Self::Duplicate { scope } => write!(
+                formatter,
+                "expected {} planned parallel batch utilization is already declared",
+                scope.as_str()
+            ),
+            Self::MissingSummary {
+                scope,
+                minimum_numerator,
+                minimum_denominator,
+            } => write!(
+                formatter,
+                "missing planned parallel batch utilization summary for {} with minimum {minimum_numerator}/{minimum_denominator}",
+                scope.as_str()
+            ),
+            Self::BelowMinimum {
+                scope,
+                minimum_numerator,
+                minimum_denominator,
+                actual_numerator,
+                actual_denominator,
+            } => write!(
+                formatter,
+                "expected {} planned parallel batch utilization to reach at least {minimum_numerator}/{minimum_denominator}, got {actual_numerator}/{actual_denominator}",
+                scope.as_str()
+            ),
+        }
+    }
+}
+
+impl WorkloadExpectedPlannedParallelBatchUtilization {
+    pub fn new(
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
+        minimum_numerator: Tick,
+        minimum_denominator: Tick,
+    ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
+        if !matches!(
+            scope,
+            WorkloadParallelBatchWorkerScope::PlannedScheduler
+                | WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler
+                | WorkloadParallelBatchWorkerScope::PlannedFullSystem
+        ) {
+            return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+                WorkloadPlannedParallelBatchUtilizationExpectationError::InvalidScope { scope },
+            ));
+        }
+        if minimum_denominator == 0 {
+            return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+                WorkloadPlannedParallelBatchUtilizationExpectationError::ZeroDenominator { scope },
+            ));
+        }
+        Ok(Self {
+            scope,
+            minimum_numerator,
+            minimum_denominator,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
+        self.scope
+    }
+
+    pub const fn minimum_numerator(self) -> Tick {
+        self.minimum_numerator
+    }
+
+    pub const fn minimum_denominator(self) -> Tick {
+        self.minimum_denominator
+    }
+
+    pub(crate) const fn sort_key(self) -> u8 {
+        self.scope.sort_rank()
+    }
+
+    pub(crate) fn actual_utilization(
+        self,
+        summary: &WorkloadParallelExecutionSummary,
+    ) -> Option<ParallelBatchUtilizationRatio> {
+        match self.scope {
+            WorkloadParallelBatchWorkerScope::PlannedScheduler => {
+                summary.parallel_scheduler_planned_batch_utilization_ratio()
+            }
+            WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => {
+                summary.data_cache_parallel_scheduler_planned_batch_utilization_ratio()
+            }
+            WorkloadParallelBatchWorkerScope::PlannedFullSystem => {
+                summary.full_system_parallel_scheduler_planned_batch_utilization_ratio()
+            }
+            _ => None,
+        }
+    }
+}
+
 fn planned_batch_count_for_worker_count(
     scope: WorkloadParallelBatchWorkerScope,
     summary: &WorkloadParallelExecutionSummary,
@@ -579,6 +719,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedParallelBatchWorkerTicks] {
         &self.expected_parallel_batch_worker_ticks
+    }
+
+    pub fn expected_planned_parallel_batch_utilization(
+        &self,
+    ) -> &[WorkloadExpectedPlannedParallelBatchUtilization] {
+        &self.expected_planned_parallel_batch_utilization
     }
 }
 
@@ -688,6 +834,28 @@ impl WorkloadManifestBuilder {
         }
         self.expected_parallel_batch_worker_ticks.push(expected);
         self.expected_parallel_batch_worker_ticks
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_planned_parallel_batch_utilization(
+        mut self,
+        expected: WorkloadExpectedPlannedParallelBatchUtilization,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_planned_parallel_batch_utilization
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+                WorkloadPlannedParallelBatchUtilizationExpectationError::Duplicate {
+                    scope: expected.scope(),
+                },
+            ));
+        }
+        self.expected_planned_parallel_batch_utilization
+            .push(expected);
+        self.expected_planned_parallel_batch_utilization
             .sort_by_key(|expected| expected.sort_key());
         Ok(self)
     }
@@ -831,5 +999,33 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedParallelBatchWorkerTicks] {
         &self.expected_parallel_batch_worker_ticks
+    }
+
+    pub fn add_expected_planned_parallel_batch_utilization(
+        mut self,
+        expected: WorkloadExpectedPlannedParallelBatchUtilization,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_planned_parallel_batch_utilization
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::PlannedParallelBatchUtilizationExpectation(
+                WorkloadPlannedParallelBatchUtilizationExpectationError::Duplicate {
+                    scope: expected.scope(),
+                },
+            ));
+        }
+        self.expected_planned_parallel_batch_utilization
+            .push(expected);
+        self.expected_planned_parallel_batch_utilization
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_planned_parallel_batch_utilization(
+        &self,
+    ) -> &[WorkloadExpectedPlannedParallelBatchUtilization] {
+        &self.expected_planned_parallel_batch_utilization
     }
 }
