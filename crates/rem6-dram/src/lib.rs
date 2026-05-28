@@ -1656,9 +1656,12 @@ impl DramMemoryController {
         &self,
         marker: &DramMemoryActivityMarker,
     ) -> DramMemoryActivityProfile {
-        DramMemoryActivityProfile::from_target_activities(
-            self.target_activities_since(marker).iter(),
-        )
+        let activities = self
+            .dram
+            .keys()
+            .filter_map(|target| self.target_activity_since(marker, *target))
+            .collect::<Vec<_>>();
+        DramMemoryActivityProfile::from_target_activities(activities.iter())
     }
 
     pub fn target_wait_for_graph_since(

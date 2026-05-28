@@ -365,7 +365,7 @@ crate owns one reason to change and exposes typed data to adjacent crates.
 | `rem6-transport` | Memory and control transactions over topology endpoints, route validation, batch submission, and transport traces. |
 | `rem6-fabric` | NoC or fabric timing, virtual networks, lane activity, route resource use, and link-level backpressure. |
 | `rem6-memory` | Addresses, access sizes, request identities, line layout, partitioned stores, and generic memory transactions. |
-| `rem6-dram` | DRAM-class timing, geometry, bank or channel activity, target profiles, profile-derived parallel resource capacity, and memory service latency. |
+| `rem6-dram` | DRAM-class timing, geometry, bank or channel activity, target profiles, profile-derived parallel resource capacity, runtime capacity denominators, and memory service latency. |
 | `rem6-cache` | Cache controller behavior independent from system topology, including hits, misses, replacement, and controller resources. |
 | `rem6-directory` | Directory state and sharer or owner bookkeeping that does not require a full-system harness. |
 | `rem6-protocol-*` | Coherence protocol state machines and transition rules. |
@@ -651,6 +651,7 @@ fabric, DRAM channel, HBM stack, LPDDR channel, or DDR controller must expose:
 - contention source;
 - virtual network or traffic class;
 - service profile;
+- profile-derived capacity denominators beside active-resource counts;
 - unique active-resource coverage when activity windows are merged;
 - active-resource lower bounds that preserve the strongest target, port, bank,
   lane, or wait-target evidence instead of collapsing a resource class to a

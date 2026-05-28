@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
 
-use crate::{DramAccess, DramAccessKind, DramMemoryTechnology, ExternalMemoryProfile};
+use crate::{
+    DramAccess, DramAccessKind, DramMemoryTechnology, ExternalMemoryParallelResourceSummary,
+    ExternalMemoryProfile,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramActivityMarker {
@@ -593,6 +596,11 @@ impl DramTargetActivity {
         self.memory_profile.as_ref()
     }
 
+    pub fn parallel_resource_summary(&self) -> Option<ExternalMemoryParallelResourceSummary> {
+        self.memory_profile
+            .map(|profile| profile.parallel_resource_summary())
+    }
+
     pub fn profile(&self) -> DramActivityProfile {
         self.profile.clone()
     }
@@ -639,6 +647,12 @@ impl DramTargetActivity {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DramMemoryActivityProfile {
     active_target_count: usize,
+    profiled_target_count: usize,
+    profile_parallel_port_capacity: u64,
+    profile_topology_unit_capacity: u64,
+    profile_scheduler_bank_capacity: u64,
+    profile_topology_bank_capacity: u64,
+    profile_scheduler_bank_group_capacity: u64,
     profile: DramActivityProfile,
 }
 
@@ -649,20 +663,67 @@ impl DramMemoryActivityProfile {
     {
         let mut active_target_count = 0;
         let mut profile = DramActivityProfile::default();
+        let mut profiled_target_count = 0;
+        let mut profile_parallel_port_capacity = 0_u64;
+        let mut profile_topology_unit_capacity = 0_u64;
+        let mut profile_scheduler_bank_capacity = 0_u64;
+        let mut profile_topology_bank_capacity = 0_u64;
+        let mut profile_scheduler_bank_group_capacity = 0_u64;
         for activity in activities {
-            if !activity.profile().is_empty() {
+            if let Some(summary) = activity.parallel_resource_summary() {
+                profiled_target_count += 1;
+                profile_parallel_port_capacity += u64::from(summary.parallel_port_count());
+                profile_topology_unit_capacity += u64::from(summary.topology_unit_count());
+                profile_scheduler_bank_capacity += u64::from(summary.scheduler_bank_count());
+                profile_topology_bank_capacity += u64::from(summary.total_topology_bank_count());
+                profile_scheduler_bank_group_capacity += summary
+                    .scheduler_bank_group_count()
+                    .map(u64::from)
+                    .unwrap_or(0);
+            }
+            if !activity.profile.is_empty() {
                 active_target_count += 1;
-                profile.add_independent_target_profile(&activity.profile());
+                profile.add_independent_target_profile(&activity.profile);
             }
         }
         Self {
             active_target_count,
+            profiled_target_count,
+            profile_parallel_port_capacity,
+            profile_topology_unit_capacity,
+            profile_scheduler_bank_capacity,
+            profile_topology_bank_capacity,
+            profile_scheduler_bank_group_capacity,
             profile,
         }
     }
 
     pub const fn active_target_count(&self) -> usize {
         self.active_target_count
+    }
+
+    pub const fn profiled_target_count(&self) -> usize {
+        self.profiled_target_count
+    }
+
+    pub const fn profile_parallel_port_capacity(&self) -> u64 {
+        self.profile_parallel_port_capacity
+    }
+
+    pub const fn profile_topology_unit_capacity(&self) -> u64 {
+        self.profile_topology_unit_capacity
+    }
+
+    pub const fn profile_scheduler_bank_capacity(&self) -> u64 {
+        self.profile_scheduler_bank_capacity
+    }
+
+    pub const fn profile_topology_bank_capacity(&self) -> u64 {
+        self.profile_topology_bank_capacity
+    }
+
+    pub const fn profile_scheduler_bank_group_capacity(&self) -> u64 {
+        self.profile_scheduler_bank_group_capacity
     }
 
     pub const fn active_port_count(&self) -> usize {

@@ -395,6 +395,10 @@ fn dram_memory_controller_reports_profile_metadata_in_target_activity() {
         activity.memory_profile().unwrap().technology(),
         DramMemoryTechnology::Nvm,
     );
+    assert_eq!(
+        activity.parallel_resource_summary().unwrap(),
+        profile.parallel_resource_summary(),
+    );
     assert_eq!(activity.profile().access_count(), 1);
 }
 
@@ -425,6 +429,53 @@ fn dram_memory_controller_lists_profile_parallel_resource_summaries_by_target() 
     assert!(controller
         .profile_parallel_resource_summary(target(42))
         .is_none());
+}
+
+#[test]
+fn dram_memory_activity_profile_summarizes_profile_parallel_capacity() {
+    let grouped_geometry = geometry().with_bank_groups(4).unwrap();
+    let ddr =
+        ExternalMemoryProfile::ddr(target(50), layout(), 2, 2, grouped_geometry, timing()).unwrap();
+    let hbm =
+        ExternalMemoryProfile::hbm(target(51), layout(), 2, 4, grouped_geometry, timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(hbm).unwrap();
+    controller.add_profile(ddr).unwrap();
+    for (profile, base) in [(ddr, 0x0000), (hbm, 0x8000)] {
+        controller
+            .map_region(
+                profile.target(),
+                Address::new(base),
+                AccessSize::new(0x4000).unwrap(),
+            )
+            .unwrap();
+        controller
+            .insert_line(profile.target(), Address::new(base), vec![0x5a; 64])
+            .unwrap();
+    }
+    controller.accept(10, &read(0x0008, 90)).unwrap();
+
+    let profile = controller.activity_profile();
+
+    assert_eq!(profile.active_target_count(), 1);
+    assert_eq!(profile.profiled_target_count(), 2);
+    assert_eq!(profile.profile_parallel_port_capacity(), 10);
+    assert_eq!(profile.profile_topology_unit_capacity(), 12);
+    assert_eq!(profile.profile_scheduler_bank_capacity(), 160);
+    assert_eq!(profile.profile_topology_bank_capacity(), 192);
+    assert_eq!(profile.profile_scheduler_bank_group_capacity(), 40);
+
+    let marker = controller.mark_activity();
+    let since_marker = controller.activity_profile_since(&marker);
+
+    assert_eq!(since_marker.active_target_count(), 0);
+    assert_eq!(since_marker.profiled_target_count(), 2);
+    assert_eq!(since_marker.profile_parallel_port_capacity(), 10);
+    assert_eq!(since_marker.profile_topology_unit_capacity(), 12);
+    assert_eq!(since_marker.profile_scheduler_bank_capacity(), 160);
+    assert_eq!(since_marker.profile_topology_bank_capacity(), 192);
+    assert_eq!(since_marker.profile_scheduler_bank_group_capacity(), 40);
+    assert!(since_marker.is_empty());
 }
 
 #[test]
