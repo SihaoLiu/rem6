@@ -52,6 +52,296 @@ impl EthernetPacket {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum EthernetLinkDirection {
+    LeftToRight,
+    RightToLeft,
+}
+
+impl fmt::Display for EthernetLinkDirection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LeftToRight => write!(formatter, "left-to-right"),
+            Self::RightToLeft => write!(formatter, "right-to-left"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EthernetLinkTiming {
+    ticks_per_byte: u64,
+    link_delay_ticks: u64,
+}
+
+impl EthernetLinkTiming {
+    pub fn new(ticks_per_byte: u64, link_delay_ticks: u64) -> Result<Self, NetworkError> {
+        if ticks_per_byte == 0 {
+            return Err(NetworkError::InvalidEthernetLinkRate { ticks_per_byte });
+        }
+        Ok(Self {
+            ticks_per_byte,
+            link_delay_ticks,
+        })
+    }
+
+    pub const fn ticks_per_byte(&self) -> u64 {
+        self.ticks_per_byte
+    }
+
+    pub const fn link_delay_ticks(&self) -> u64 {
+        self.link_delay_ticks
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EthernetFullDuplexLink {
+    timing: EthernetLinkTiming,
+    next_sequence: u64,
+    left_to_right: EthernetLinkLane,
+    right_to_left: EthernetLinkLane,
+}
+
+impl EthernetFullDuplexLink {
+    pub const fn new(timing: EthernetLinkTiming) -> Self {
+        Self {
+            timing,
+            next_sequence: 0,
+            left_to_right: EthernetLinkLane::new(),
+            right_to_left: EthernetLinkLane::new(),
+        }
+    }
+
+    pub const fn timing(&self) -> EthernetLinkTiming {
+        self.timing
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn is_busy(&self, direction: EthernetLinkDirection, tick: u64) -> bool {
+        self.busy_until_tick(direction)
+            .is_some_and(|busy_until_tick| tick < busy_until_tick)
+    }
+
+    pub fn busy_until_tick(&self, direction: EthernetLinkDirection) -> Option<u64> {
+        self.lane(direction).busy_until_tick
+    }
+
+    pub fn pending_delivery_count(&self) -> usize {
+        self.left_to_right
+            .pending_deliveries
+            .len()
+            .saturating_add(self.right_to_left.pending_deliveries.len())
+    }
+
+    pub fn transmit(
+        &mut self,
+        direction: EthernetLinkDirection,
+        packet: EthernetPacket,
+        request_tick: u64,
+    ) -> Result<EthernetTransmission, NetworkError> {
+        if let Some(busy_until_tick) = self.busy_until_tick(direction) {
+            if request_tick < busy_until_tick {
+                return Err(NetworkError::EthernetLinkBusy {
+                    direction,
+                    request_tick,
+                    busy_until_tick,
+                });
+            }
+        }
+
+        let serialization_ticks = self
+            .timing
+            .ticks_per_byte
+            .checked_mul(packet.wire_length_bytes())
+            .and_then(|ticks| ticks.checked_add(1))
+            .ok_or(NetworkError::EthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes: packet.wire_length_bytes(),
+                ticks_per_byte: self.timing.ticks_per_byte,
+                link_delay_ticks: self.timing.link_delay_ticks,
+            })?;
+        let serialization_done_tick = request_tick.checked_add(serialization_ticks).ok_or(
+            NetworkError::EthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes: packet.wire_length_bytes(),
+                ticks_per_byte: self.timing.ticks_per_byte,
+                link_delay_ticks: self.timing.link_delay_ticks,
+            },
+        )?;
+        let delivery_tick = serialization_done_tick
+            .checked_add(self.timing.link_delay_ticks)
+            .ok_or(NetworkError::EthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes: packet.wire_length_bytes(),
+                ticks_per_byte: self.timing.ticks_per_byte,
+                link_delay_ticks: self.timing.link_delay_ticks,
+            })?;
+
+        let transmission = EthernetTransmission {
+            sequence: self.next_sequence,
+            direction,
+            request_tick,
+            serialization_done_tick,
+            delivery_tick,
+            packet,
+        };
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(NetworkError::EthernetLinkSequenceOverflow)?;
+
+        let lane = self.lane_mut(direction);
+        lane.busy_until_tick = Some(serialization_done_tick);
+        lane.pending_deliveries.push_back(transmission.clone());
+        Ok(transmission)
+    }
+
+    pub fn drain_ready_deliveries(&mut self, up_to_tick: u64) -> Vec<EthernetTransmission> {
+        let mut ready = Vec::new();
+        self.left_to_right.drain_ready(up_to_tick, &mut ready);
+        self.right_to_left.drain_ready(up_to_tick, &mut ready);
+        ready.sort_by_key(|delivery| (delivery.delivery_tick, delivery.sequence));
+        ready
+    }
+
+    pub fn snapshot(&self) -> EthernetFullDuplexLinkSnapshot {
+        EthernetFullDuplexLinkSnapshot {
+            timing: self.timing,
+            next_sequence: self.next_sequence,
+            left_to_right: self.left_to_right.clone(),
+            right_to_left: self.right_to_left.clone(),
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &EthernetFullDuplexLinkSnapshot,
+    ) -> Result<(), NetworkError> {
+        self.timing = snapshot.timing;
+        self.next_sequence = snapshot.next_sequence;
+        self.left_to_right = snapshot.left_to_right.clone();
+        self.right_to_left = snapshot.right_to_left.clone();
+        Ok(())
+    }
+
+    fn lane(&self, direction: EthernetLinkDirection) -> &EthernetLinkLane {
+        match direction {
+            EthernetLinkDirection::LeftToRight => &self.left_to_right,
+            EthernetLinkDirection::RightToLeft => &self.right_to_left,
+        }
+    }
+
+    fn lane_mut(&mut self, direction: EthernetLinkDirection) -> &mut EthernetLinkLane {
+        match direction {
+            EthernetLinkDirection::LeftToRight => &mut self.left_to_right,
+            EthernetLinkDirection::RightToLeft => &mut self.right_to_left,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EthernetFullDuplexLinkSnapshot {
+    timing: EthernetLinkTiming,
+    next_sequence: u64,
+    left_to_right: EthernetLinkLane,
+    right_to_left: EthernetLinkLane,
+}
+
+impl EthernetFullDuplexLinkSnapshot {
+    pub const fn timing(&self) -> EthernetLinkTiming {
+        self.timing
+    }
+
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    pub fn pending_delivery_count(&self) -> usize {
+        self.left_to_right
+            .pending_deliveries
+            .len()
+            .saturating_add(self.right_to_left.pending_deliveries.len())
+    }
+
+    pub fn busy_until_tick(&self, direction: EthernetLinkDirection) -> Option<u64> {
+        match direction {
+            EthernetLinkDirection::LeftToRight => self.left_to_right.busy_until_tick,
+            EthernetLinkDirection::RightToLeft => self.right_to_left.busy_until_tick,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EthernetTransmission {
+    sequence: u64,
+    direction: EthernetLinkDirection,
+    request_tick: u64,
+    serialization_done_tick: u64,
+    delivery_tick: u64,
+    packet: EthernetPacket,
+}
+
+impl EthernetTransmission {
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn direction(&self) -> EthernetLinkDirection {
+        self.direction
+    }
+
+    pub const fn request_tick(&self) -> u64 {
+        self.request_tick
+    }
+
+    pub const fn serialization_done_tick(&self) -> u64 {
+        self.serialization_done_tick
+    }
+
+    pub const fn delivery_tick(&self) -> u64 {
+        self.delivery_tick
+    }
+
+    pub const fn packet(&self) -> &EthernetPacket {
+        &self.packet
+    }
+
+    pub fn into_packet(self) -> EthernetPacket {
+        self.packet
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EthernetLinkLane {
+    busy_until_tick: Option<u64>,
+    pending_deliveries: VecDeque<EthernetTransmission>,
+}
+
+impl EthernetLinkLane {
+    const fn new() -> Self {
+        Self {
+            busy_until_tick: None,
+            pending_deliveries: VecDeque::new(),
+        }
+    }
+
+    fn drain_ready(&mut self, up_to_tick: u64, ready: &mut Vec<EthernetTransmission>) {
+        while self
+            .pending_deliveries
+            .front()
+            .is_some_and(|delivery| delivery.delivery_tick <= up_to_tick)
+        {
+            let delivery = self
+                .pending_deliveries
+                .pop_front()
+                .expect("ready ethernet link delivery exists");
+            ready.push(delivery);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EthernetPacketFifo {
     capacity_bytes: u64,
@@ -382,6 +672,21 @@ pub enum NetworkError {
         reserved_bytes: u64,
     },
     PacketSequenceOverflow,
+    InvalidEthernetLinkRate {
+        ticks_per_byte: u64,
+    },
+    EthernetLinkBusy {
+        direction: EthernetLinkDirection,
+        request_tick: u64,
+        busy_until_tick: u64,
+    },
+    EthernetLinkTimingOverflow {
+        request_tick: u64,
+        wire_length_bytes: u64,
+        ticks_per_byte: u64,
+        link_delay_ticks: u64,
+    },
+    EthernetLinkSequenceOverflow,
 }
 
 impl fmt::Display for NetworkError {
@@ -448,6 +753,30 @@ impl fmt::Display for NetworkError {
                 "ethernet packet FIFO snapshot occupancy is invalid: capacity {capacity_bytes}, occupied {occupied_bytes}, reserved {reserved_bytes}"
             ),
             Self::PacketSequenceOverflow => write!(formatter, "ethernet packet FIFO sequence overflow"),
+            Self::InvalidEthernetLinkRate { ticks_per_byte } => write!(
+                formatter,
+                "ethernet link ticks per byte {ticks_per_byte} must be positive"
+            ),
+            Self::EthernetLinkBusy {
+                direction,
+                request_tick,
+                busy_until_tick,
+            } => write!(
+                formatter,
+                "ethernet link {direction} is busy at tick {request_tick} until tick {busy_until_tick}"
+            ),
+            Self::EthernetLinkTimingOverflow {
+                request_tick,
+                wire_length_bytes,
+                ticks_per_byte,
+                link_delay_ticks,
+            } => write!(
+                formatter,
+                "ethernet link timing overflow for request tick {request_tick}, wire length {wire_length_bytes}, ticks per byte {ticks_per_byte}, link delay {link_delay_ticks}"
+            ),
+            Self::EthernetLinkSequenceOverflow => {
+                write!(formatter, "ethernet link transmission sequence overflow")
+            }
         }
     }
 }
