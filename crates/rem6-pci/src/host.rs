@@ -10,6 +10,12 @@ use crate::{
     PciLegacyInterruptPath, PCI_CONFIG_FUNCTIONS_PER_BUS, PCI_CONFIG_SPACE_SIZE,
 };
 
+const PCI_HOST_TOPOLOGY_MAGIC: &[u8; 8] = b"R6PHTOP1";
+const PCI_HOST_TOPOLOGY_VERSION: u16 = 1;
+const U16_BYTES: usize = 2;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciConfigAperture {
     base: Address,
@@ -166,6 +172,102 @@ impl PciDecodedConfigAddress {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciHostBridgeTopologySnapshot {
+    aperture: PciConfigAperture,
+    address_bases: PciHostAddressBases,
+    bridge_functions: Vec<PciFunctionAddress>,
+    endpoint_functions: Vec<PciFunctionAddress>,
+}
+
+impl PciHostBridgeTopologySnapshot {
+    pub fn new(
+        aperture: PciConfigAperture,
+        address_bases: PciHostAddressBases,
+        bridge_functions: Vec<PciFunctionAddress>,
+        endpoint_functions: Vec<PciFunctionAddress>,
+    ) -> Result<Self, PciError> {
+        if !strictly_increasing_functions(&bridge_functions)
+            || !strictly_increasing_functions(&endpoint_functions)
+            || !functions_fit_aperture(aperture, &bridge_functions)
+            || !functions_fit_aperture(aperture, &endpoint_functions)
+        {
+            return Err(PciError::InvalidHostBridgeTopologySnapshot);
+        }
+        Ok(Self {
+            aperture,
+            address_bases,
+            bridge_functions,
+            endpoint_functions,
+        })
+    }
+
+    pub const fn aperture(&self) -> PciConfigAperture {
+        self.aperture
+    }
+
+    pub const fn address_bases(&self) -> PciHostAddressBases {
+        self.address_bases
+    }
+
+    pub fn bridge_functions(&self) -> &[PciFunctionAddress] {
+        &self.bridge_functions
+    }
+
+    pub fn endpoint_functions(&self) -> &[PciFunctionAddress] {
+        &self.endpoint_functions
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_HOST_TOPOLOGY_MAGIC);
+        write_u16(&mut payload, PCI_HOST_TOPOLOGY_VERSION);
+        write_u64(&mut payload, self.aperture.base().get());
+        payload.push(self.aperture.bus_count());
+        payload.push(self.aperture.device_bits());
+        write_u64(&mut payload, self.address_bases.io_base().get());
+        write_u64(&mut payload, self.address_bases.memory_base().get());
+        write_u64(
+            &mut payload,
+            self.address_bases.prefetchable_memory_base().get(),
+        );
+        write_functions(&mut payload, &self.bridge_functions);
+        write_functions(&mut payload, &self.endpoint_functions);
+        payload
+    }
+
+    pub fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        let mut cursor = 0;
+        let magic = read_exact(payload, &mut cursor, PCI_HOST_TOPOLOGY_MAGIC.len())?;
+        if magic != PCI_HOST_TOPOLOGY_MAGIC {
+            return Err(PciError::InvalidHostBridgeTopologySnapshot);
+        }
+        let version = read_u16(payload, &mut cursor)?;
+        if version != PCI_HOST_TOPOLOGY_VERSION {
+            return Err(PciError::InvalidHostBridgeTopologySnapshot);
+        }
+        let aperture_base = read_u64(payload, &mut cursor)?;
+        let bus_count = read_u8(payload, &mut cursor)?;
+        let device_bits = read_u8(payload, &mut cursor)?;
+        let address_bases = PciHostAddressBases::new(
+            Address::new(read_u64(payload, &mut cursor)?),
+            Address::new(read_u64(payload, &mut cursor)?),
+            Address::new(read_u64(payload, &mut cursor)?),
+        );
+        let bridge_functions = read_functions(payload, &mut cursor)?;
+        let endpoint_functions = read_functions(payload, &mut cursor)?;
+        if cursor != payload.len() {
+            return Err(PciError::InvalidHostBridgeTopologySnapshot);
+        }
+        Self::new(
+            PciConfigAperture::new(Address::new(aperture_base), bus_count, device_bits)?,
+            address_bases,
+            bridge_functions,
+            endpoint_functions,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciHostBridgeSnapshot {
     aperture: PciConfigAperture,
     address_bases: PciHostAddressBases,
@@ -188,6 +290,15 @@ impl PciHostBridgeSnapshot {
 
     pub fn endpoints(&self) -> &BTreeMap<PciFunctionAddress, PciEndpointConfigSnapshot> {
         &self.endpoints
+    }
+
+    pub fn topology_snapshot(&self) -> PciHostBridgeTopologySnapshot {
+        PciHostBridgeTopologySnapshot {
+            aperture: self.aperture,
+            address_bases: self.address_bases,
+            bridge_functions: self.bridges.keys().copied().collect(),
+            endpoint_functions: self.endpoints.keys().copied().collect(),
+        }
     }
 }
 
@@ -272,6 +383,26 @@ impl PciHostBridge {
         self.endpoint_mut(function)
             .ok_or(PciError::MissingEndpoint { function })?
             .assign_legacy_interrupt_line(line)
+    }
+
+    pub fn topology_snapshot(&self) -> PciHostBridgeTopologySnapshot {
+        PciHostBridgeTopologySnapshot {
+            aperture: self.aperture,
+            address_bases: self.address_bases,
+            bridge_functions: self.bridges.keys().copied().collect(),
+            endpoint_functions: self.endpoints.keys().copied().collect(),
+        }
+    }
+
+    pub fn validate_topology_snapshot(
+        &self,
+        snapshot: &PciHostBridgeTopologySnapshot,
+    ) -> Result<(), PciError> {
+        if self.topology_snapshot() == *snapshot {
+            Ok(())
+        } else {
+            Err(PciError::SnapshotHostBridgeMismatch)
+        }
     }
 
     pub fn snapshot(&self) -> PciHostBridgeSnapshot {
@@ -479,4 +610,85 @@ fn checked_base_plus_offset(base: Address, offset: Address) -> Result<Address, P
         .checked_add(offset.get())
         .map(Address::new)
         .ok_or(PciError::HostAddressOverflow { base, offset })
+}
+
+fn strictly_increasing_functions(functions: &[PciFunctionAddress]) -> bool {
+    functions.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+fn functions_fit_aperture(aperture: PciConfigAperture, functions: &[PciFunctionAddress]) -> bool {
+    functions
+        .iter()
+        .all(|function| function.bus() < aperture.bus_count())
+}
+
+fn write_functions(payload: &mut Vec<u8>, functions: &[PciFunctionAddress]) {
+    write_u32(payload, functions.len() as u32);
+    for function in functions {
+        payload.push(function.bus());
+        payload.push(function.device());
+        payload.push(function.function());
+    }
+}
+
+fn read_functions(payload: &[u8], cursor: &mut usize) -> Result<Vec<PciFunctionAddress>, PciError> {
+    let count = read_u32(payload, cursor)? as usize;
+    let mut functions = Vec::with_capacity(count);
+    for _ in 0..count {
+        let bus = read_u8(payload, cursor)?;
+        let device = read_u8(payload, cursor)?;
+        let function = read_u8(payload, cursor)?;
+        functions.push(PciFunctionAddress::new(bus, device, function)?);
+    }
+    Ok(functions)
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u8(payload: &[u8], cursor: &mut usize) -> Result<u8, PciError> {
+    let byte = *payload
+        .get(*cursor)
+        .ok_or(PciError::InvalidHostBridgeTopologySnapshot)?;
+    *cursor += 1;
+    Ok(byte)
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Result<u16, PciError> {
+    let bytes = read_exact(payload, cursor, U16_BYTES)?;
+    Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u32(payload: &[u8], cursor: &mut usize) -> Result<u32, PciError> {
+    let bytes = read_exact(payload, cursor, U32_BYTES)?;
+    Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u64(payload: &[u8], cursor: &mut usize) -> Result<u64, PciError> {
+    let bytes = read_exact(payload, cursor, U64_BYTES)?;
+    Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_exact<'a>(
+    payload: &'a [u8],
+    cursor: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], PciError> {
+    let end = cursor
+        .checked_add(length)
+        .ok_or(PciError::InvalidHostBridgeTopologySnapshot)?;
+    let bytes = payload
+        .get(*cursor..end)
+        .ok_or(PciError::InvalidHostBridgeTopologySnapshot)?;
+    *cursor = end;
+    Ok(bytes)
 }

@@ -1453,7 +1453,12 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   host aperture, config-address decoder, host BAR range mapper, bridge-window
   forwarding, INTx path derivation, and host snapshot/restore live in a focused
   host module, leaving the crate root as a facade instead of letting PCI
-  topology code accumulate beside endpoint and capability code.
+  topology code accumulate beside endpoint and capability code. PCI host
+  topology snapshots now have a stable byte codec for checkpoint preflight:
+  encoded payloads preserve aperture shape, host address bases, sorted bridge
+  and endpoint functions, reject malformed or out-of-aperture functions, and
+  can be compared against a live host before a broader checkpoint restore
+  mutates device state.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status

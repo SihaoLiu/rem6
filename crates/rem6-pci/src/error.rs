@@ -159,6 +159,7 @@ pub enum PciError {
     },
     SnapshotLegacyInterruptRouterMismatch,
     SnapshotHostBridgeMismatch,
+    InvalidHostBridgeTopologySnapshot,
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -521,6 +522,9 @@ impl fmt::Display for PciError {
             }
             Self::SnapshotHostBridgeMismatch => {
                 write!(f, "PCI host bridge snapshot does not match this host")
+            }
+            Self::InvalidHostBridgeTopologySnapshot => {
+                write!(f, "PCI host bridge topology snapshot is invalid")
             }
             Self::ReadOnlyConfigWrite { offset, size } => write!(
                 f,

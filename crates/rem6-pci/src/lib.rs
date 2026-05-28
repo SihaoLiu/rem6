@@ -27,7 +27,10 @@ pub use bridge::{
 };
 pub use capability::PciRawCapabilitySpec;
 pub use error::PciError;
-pub use host::{PciConfigAperture, PciDecodedConfigAddress, PciHostBridge, PciHostBridgeSnapshot};
+pub use host::{
+    PciConfigAperture, PciDecodedConfigAddress, PciHostBridge, PciHostBridgeSnapshot,
+    PciHostBridgeTopologySnapshot,
+};
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
     PciLegacyInterruptPort, PciLegacyInterruptRoute, PciLegacyInterruptRouter,
