@@ -86,6 +86,7 @@ pub enum PciError {
         size: AccessSize,
     },
     SnapshotRawCapabilityMismatch,
+    InvalidRawCapabilitySnapshot,
     InvalidPowerManagementCapabilityOffset {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -403,6 +404,9 @@ impl fmt::Display for PciError {
             ),
             Self::SnapshotRawCapabilityMismatch => {
                 write!(f, "PCI snapshot raw capabilities do not match this endpoint")
+            }
+            Self::InvalidRawCapabilitySnapshot => {
+                write!(f, "PCI raw capability snapshot is invalid")
             }
             Self::InvalidPowerManagementCapabilityOffset { offset, size } => write!(
                 f,

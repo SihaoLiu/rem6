@@ -6,6 +6,9 @@ use crate::{
 };
 
 const PCI_CAPABILITY_MIN_OFFSET: u16 = 0x40;
+const PCI_RAW_CAPABILITY_SNAPSHOT_MAGIC: &[u8; 8] = b"R6PCRAW1";
+const PCI_RAW_CAPABILITY_SNAPSHOT_VERSION: u16 = 1;
+const U16_BYTES: usize = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciRawCapabilitySpec {
@@ -64,11 +67,64 @@ impl PciRawCapabilityState {
         &self.spec
     }
 
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_RAW_CAPABILITY_SNAPSHOT_MAGIC);
+        write_u16(&mut payload, PCI_RAW_CAPABILITY_SNAPSHOT_VERSION);
+        write_u16(&mut payload, self.spec.offset().get());
+        write_u16(&mut payload, self.spec.bytes().len() as u16);
+        payload.extend_from_slice(self.spec.bytes());
+        payload
+    }
+
+    pub(crate) fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        decode_raw_capability_state(payload).ok_or(PciError::InvalidRawCapabilitySnapshot)
+    }
+
     pub(crate) fn install_into(&self, config: &mut [u8]) {
         let start = self.spec.offset().as_usize();
         let end = start + self.spec.bytes().len();
         config[start..end].copy_from_slice(self.spec.bytes());
     }
+}
+
+fn decode_raw_capability_state(payload: &[u8]) -> Option<PciRawCapabilityState> {
+    let mut cursor = 0;
+    let magic = read_exact(
+        payload,
+        &mut cursor,
+        PCI_RAW_CAPABILITY_SNAPSHOT_MAGIC.len(),
+    )?;
+    if magic != PCI_RAW_CAPABILITY_SNAPSHOT_MAGIC {
+        return None;
+    }
+    if read_u16(payload, &mut cursor)? != PCI_RAW_CAPABILITY_SNAPSHOT_VERSION {
+        return None;
+    }
+    let offset = PciConfigOffset::new(read_u16(payload, &mut cursor)?).ok()?;
+    let size = read_u16(payload, &mut cursor)? as usize;
+    let bytes = read_exact(payload, &mut cursor, size)?.to_vec();
+    if cursor != payload.len() || bytes.get(1).copied() != Some(0) {
+        return None;
+    }
+    let spec = PciRawCapabilitySpec::new(offset, bytes).ok()?;
+    Some(PciRawCapabilityState { spec })
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Option<u16> {
+    let bytes = read_exact(payload, cursor, U16_BYTES)?;
+    Some(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_exact<'a>(payload: &'a [u8], cursor: &mut usize, length: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(length)?;
+    let bytes = payload.get(*cursor..end)?;
+    *cursor = end;
+    Some(bytes)
 }
 
 impl PciEndpointConfig {
@@ -79,6 +135,85 @@ impl PciEndpointConfig {
         self.raw_capabilities.push(state);
         self.rebuild_capability_list();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw_capability(offset: u16) -> PciRawCapabilitySpec {
+        PciRawCapabilitySpec::new(
+            PciConfigOffset::new(offset).unwrap(),
+            [0x09, 0xff, 0x10, 0x08, 0xaa, 0xbb, 0xcc, 0xdd],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn raw_capability_state_codec_preserves_canonical_vendor_bytes() {
+        let state = PciRawCapabilityState::new(raw_capability(0x60));
+        let decoded = PciRawCapabilityState::from_bytes(&state.to_bytes()).unwrap();
+
+        assert_eq!(decoded, state);
+        assert_eq!(decoded.spec().offset(), PciConfigOffset::new(0x60).unwrap());
+        assert_eq!(
+            decoded.spec().bytes(),
+            &[0x09, 0x00, 0x10, 0x08, 0xaa, 0xbb, 0xcc, 0xdd]
+        );
+    }
+
+    #[test]
+    fn raw_capability_state_codec_rejects_invalid_payloads() {
+        let state = PciRawCapabilityState::new(raw_capability(0x60));
+        let mut payload = state.to_bytes();
+
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&payload[..payload.len() - 1]),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
+
+        payload.push(0);
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&payload),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
+
+        let mut invalid_magic = state.to_bytes();
+        invalid_magic[0] = 0;
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&invalid_magic),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
+
+        let mut invalid_version = state.to_bytes();
+        invalid_version[8] = 0xff;
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&invalid_version),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
+
+        let mut invalid_offset = state.to_bytes();
+        invalid_offset[10] = 0x3c;
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&invalid_offset),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
+
+        let mut invalid_size = state.to_bytes();
+        invalid_size[12] = 1;
+        invalid_size.truncate(15);
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&invalid_size),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
+
+        let mut invalid_next_pointer = state.to_bytes();
+        invalid_next_pointer[15] = 0x80;
+        assert_eq!(
+            PciRawCapabilityState::from_bytes(&invalid_next_pointer),
+            Err(PciError::InvalidRawCapabilitySnapshot)
+        );
     }
 }
 

@@ -1425,8 +1425,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   Capability-list tests cover ordered PM plus PCIe plus MSI chaining, MSI plus
   MSI-X chaining, next-pointer preservation across capability control writes,
   raw read-only vendor-specific capability installation, raw capability
-  next-pointer ownership, raw snapshot shape checks, raw capability invalid
-  offset and size rejection, PMCSR snapshot restore, PCIe
+  next-pointer ownership, raw snapshot shape checks, raw stable payload
+  encoding for endpoint checkpoint audit, raw capability invalid offset and
+  size rejection, PMCSR snapshot restore, PCIe
   device/link/slot/root/capability2 control/status snapshot restore, PCIe
   stable payload encoding for endpoint checkpoint audit, PCIe read-only device
   and slot capability rejection, and overlap rejection without mutating
@@ -1468,19 +1469,22 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   component order, and `SystemActionExecutor` can be constructed directly with
   an attached PCI host checkpoint bank. Full PCI configuration checkpoint bytes
   remain dependent on per-capability state codecs; rem6 does not pretend that
-  topology-only payloads restore full PCI configuration state. PM capability
-  state now has the first exposed byte codec: endpoint snapshots can emit a PM
+  topology-only payloads restore full PCI configuration state. Raw capability
+  state now has a stable byte codec for vendor capability audit, preserving the
+  canonical capability bytes while rejecting nonzero next-pointer bytes because
+  the endpoint capability registry owns chain reconstruction. PM capability
+  state exposes the same byte-codec pattern: endpoint snapshots can emit a PM
   payload and validate a candidate payload against the typed PM spec plus
   current PMCSR, rejecting malformed bytes or live-snapshot mismatches before a
   broader PCI config checkpoint restore mutates device state. PCIe capability
-  state now follows the same audit pattern for capability identity,
+  state follows the same audit pattern for capability identity,
   device/link/slot/root/capability2 declared fields, and all writable
-  control/status registers. MSI capability state now follows the same audit
-  pattern for vector count, 64-bit and per-vector-mask support, enabled
-  vectors, programmed address and data, and mask and pending bits. MSI-X
-  capability state now does the same for table and PBA BAR placement, enable
-  and function-mask bits, table entries, and PBA pending words while rejecting
-  malformed table or out-of-range pending bits.
+  control/status registers. MSI capability state follows the same audit pattern
+  for vector count, 64-bit and per-vector-mask support, enabled vectors,
+  programmed address and data, and mask and pending bits. MSI-X capability
+  state does the same for table and PBA BAR placement, enable and function-mask
+  bits, table entries, and PBA pending words while rejecting malformed table or
+  out-of-range pending bits.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status

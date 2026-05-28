@@ -775,6 +775,25 @@ impl PciEndpointConfigSnapshot {
         self.class
     }
 
+    pub fn raw_capability_payloads(&self) -> Vec<Vec<u8>> {
+        self.raw_capabilities
+            .iter()
+            .map(capability::PciRawCapabilityState::to_bytes)
+            .collect()
+    }
+
+    pub fn validate_raw_capability_payloads(&self, payloads: &[Vec<u8>]) -> Result<(), PciError> {
+        let decoded = payloads
+            .iter()
+            .map(|payload| capability::PciRawCapabilityState::from_bytes(payload))
+            .collect::<Result<Vec<_>, _>>()?;
+        if self.raw_capabilities == decoded {
+            Ok(())
+        } else {
+            Err(PciError::SnapshotRawCapabilityMismatch)
+        }
+    }
+
     pub fn power_management_payload(&self) -> Option<Vec<u8>> {
         self.pm
             .as_ref()

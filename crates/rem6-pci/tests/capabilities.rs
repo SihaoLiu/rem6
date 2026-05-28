@@ -255,6 +255,83 @@ fn pci_endpoint_raw_capability_links_read_only_bytes_and_snapshots_shape() {
 }
 
 #[test]
+fn pci_endpoint_snapshot_exposes_raw_capability_payloads_for_checkpoint_audit() {
+    let mut endpoint = storage_endpoint();
+    endpoint
+        .install_raw_capability(virtio_shared_memory_cap(0x60))
+        .unwrap();
+    endpoint
+        .install_raw_capability(
+            PciRawCapabilitySpec::new(
+                PciConfigOffset::new(0x80).unwrap(),
+                [0x09, 0xff, 0x04, 0x01],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payloads = snapshot.raw_capability_payloads();
+
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(snapshot.validate_raw_capability_payloads(&payloads), Ok(()));
+    let no_raw = storage_endpoint().snapshot();
+    assert_eq!(no_raw.raw_capability_payloads(), Vec::<Vec<u8>>::new());
+    assert_eq!(
+        no_raw.validate_raw_capability_payloads(&payloads),
+        Err(PciError::SnapshotRawCapabilityMismatch)
+    );
+
+    let different_order = {
+        let mut endpoint = storage_endpoint();
+        endpoint
+            .install_raw_capability(
+                PciRawCapabilitySpec::new(
+                    PciConfigOffset::new(0x80).unwrap(),
+                    [0x09, 0xff, 0x04, 0x01],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        endpoint
+            .install_raw_capability(virtio_shared_memory_cap(0x60))
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_order.validate_raw_capability_payloads(&payloads),
+        Err(PciError::SnapshotRawCapabilityMismatch)
+    );
+    let different_bytes = {
+        let mut endpoint = storage_endpoint();
+        endpoint
+            .install_raw_capability(virtio_shared_memory_cap(0x60))
+            .unwrap();
+        endpoint
+            .install_raw_capability(
+                PciRawCapabilitySpec::new(
+                    PciConfigOffset::new(0x80).unwrap(),
+                    [0x09, 0xff, 0x04, 0x02],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_bytes.validate_raw_capability_payloads(&payloads),
+        Err(PciError::SnapshotRawCapabilityMismatch)
+    );
+
+    let mut corrupted = payloads;
+    corrupted[0].push(0);
+    assert_eq!(
+        snapshot.validate_raw_capability_payloads(&corrupted),
+        Err(PciError::InvalidRawCapabilitySnapshot)
+    );
+}
+
+#[test]
 fn pci_endpoint_power_management_capability_links_writes_and_snapshots_pmcsr() {
     let mut endpoint = storage_endpoint();
 
