@@ -894,6 +894,39 @@ pub enum NetworkError {
         actual_bytes: u64,
     },
     DistributedEthernetSequenceOverflow,
+    InvalidDistributedEthernetReceiveWindow {
+        previous_sync_tick: u64,
+        next_sync_tick: u64,
+    },
+    DistributedEthernetReceiveMessageNotData {
+        kind: DistributedEthernetMessageKind,
+    },
+    DistributedEthernetReceiveTimingOverflow {
+        send_tick: u64,
+        send_delay_ticks: u64,
+        link_delay_ticks: u64,
+    },
+    DistributedEthernetReceiveWindowTooSmall {
+        previous_receive_tick: u64,
+        send_delay_ticks: u64,
+        receive_tick: u64,
+    },
+    DistributedEthernetReceiveMissed {
+        current_tick: u64,
+        receive_tick: u64,
+    },
+    DistributedEthernetReceiveOutOfOrder {
+        queued_ready_tick: u64,
+        receive_tick: u64,
+    },
+    DistributedEthernetSendOutsideReceiveWindow {
+        send_tick: u64,
+        previous_sync_tick: u64,
+    },
+    DistributedEthernetReceiveInsideSyncWindow {
+        receive_tick: u64,
+        next_sync_tick: u64,
+    },
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
@@ -1144,6 +1177,61 @@ impl fmt::Display for NetworkError {
             Self::DistributedEthernetSequenceOverflow => {
                 write!(formatter, "distributed ethernet record sequence overflow")
             }
+            Self::InvalidDistributedEthernetReceiveWindow {
+                previous_sync_tick,
+                next_sync_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet receive window previous sync tick {previous_sync_tick} must be before next sync tick {next_sync_tick}"
+            ),
+            Self::DistributedEthernetReceiveMessageNotData { kind } => write!(
+                formatter,
+                "distributed ethernet receive scheduler expected data message, got {kind:?}"
+            ),
+            Self::DistributedEthernetReceiveTimingOverflow {
+                send_tick,
+                send_delay_ticks,
+                link_delay_ticks,
+            } => write!(
+                formatter,
+                "distributed ethernet receive timing overflow for send tick {send_tick}, send delay {send_delay_ticks}, link delay {link_delay_ticks}"
+            ),
+            Self::DistributedEthernetReceiveWindowTooSmall {
+                previous_receive_tick,
+                send_delay_ticks,
+                receive_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet receive window is too small: previous receive tick {previous_receive_tick}, send delay {send_delay_ticks}, receive tick {receive_tick}"
+            ),
+            Self::DistributedEthernetReceiveMissed {
+                current_tick,
+                receive_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet receive tick {receive_tick} is not after current tick {current_tick}"
+            ),
+            Self::DistributedEthernetReceiveOutOfOrder {
+                queued_ready_tick,
+                receive_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet receive tick {receive_tick} is before queued ready tick {queued_ready_tick}"
+            ),
+            Self::DistributedEthernetSendOutsideReceiveWindow {
+                send_tick,
+                previous_sync_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet send tick {send_tick} is not after previous sync tick {previous_sync_tick}"
+            ),
+            Self::DistributedEthernetReceiveInsideSyncWindow {
+                receive_tick,
+                next_sync_tick,
+            } => write!(
+                formatter,
+                "distributed ethernet receive tick {receive_tick} is not after next sync tick {next_sync_tick}"
+            ),
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
                 "ethernet switch port count {port_count} must be positive"

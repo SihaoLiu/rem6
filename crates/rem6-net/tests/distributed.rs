@@ -1,6 +1,7 @@
 use rem6_net::{
     DistributedEthernetCodec, DistributedEthernetHeader, DistributedEthernetMessage,
-    DistributedEthernetMessageKind, DistributedEthernetReqType, EthernetPacket, NetworkError,
+    DistributedEthernetMessageKind, DistributedEthernetReceiveScheduler,
+    DistributedEthernetReceiveWindow, DistributedEthernetReqType, EthernetPacket, NetworkError,
 };
 
 fn packet(bytes: &[u8]) -> EthernetPacket {
@@ -174,4 +175,195 @@ fn distributed_ethernet_codec_snapshot_restores_sequence_and_records() {
             .need_checkpoint(),
         Some(DistributedEthernetReqType::Immediate)
     );
+}
+
+#[test]
+fn distributed_ethernet_receive_scheduler_orders_packets_by_typed_ticks() {
+    let mut scheduler = DistributedEthernetReceiveScheduler::new(3);
+    let window = DistributedEthernetReceiveWindow::new(9, 17).unwrap();
+
+    let first = scheduler
+        .push_data(
+            DistributedEthernetMessage::data(10, 5, packet(&[1, 2])).unwrap(),
+            11,
+            Some(window),
+        )
+        .unwrap();
+    assert_eq!(first.send_tick(), 10);
+    assert_eq!(first.send_delay_ticks(), 5);
+    assert_eq!(first.receive_tick(), 18);
+    assert_eq!(scheduler.next_receive_tick(), Some(18));
+
+    let second = scheduler
+        .push_data(
+            DistributedEthernetMessage::data(16, 4, packet(&[3])).unwrap(),
+            12,
+            Some(window),
+        )
+        .unwrap();
+    assert_eq!(second.receive_tick(), 23);
+    assert_eq!(scheduler.pending_count(), 2);
+
+    assert!(scheduler.pop_ready(17).unwrap().is_none());
+    let first_delivery = scheduler.pop_ready(18).unwrap().unwrap();
+    assert_eq!(first_delivery.delivery_tick(), 18);
+    assert_eq!(first_delivery.packet().payload(), &[1, 2]);
+    assert_eq!(scheduler.previous_receive_tick(), 18);
+    assert_eq!(scheduler.next_receive_tick(), Some(23));
+
+    let second_delivery = scheduler.pop_ready(23).unwrap().unwrap();
+    assert_eq!(second_delivery.delivery_tick(), 23);
+    assert_eq!(second_delivery.packet().payload(), &[3]);
+    assert_eq!(scheduler.pending_count(), 0);
+}
+
+#[test]
+fn distributed_ethernet_receive_scheduler_rejects_bad_windows_and_messages() {
+    let mut scheduler = DistributedEthernetReceiveScheduler::new(3);
+    let window = DistributedEthernetReceiveWindow::new(9, 17).unwrap();
+
+    assert!(matches!(
+        DistributedEthernetReceiveWindow::new(10, 10),
+        Err(NetworkError::InvalidDistributedEthernetReceiveWindow {
+            previous_sync_tick: 10,
+            next_sync_tick: 10,
+        })
+    ));
+    assert!(matches!(
+        scheduler.push_data(
+            DistributedEthernetMessage::sync_ack(
+                10,
+                20,
+                DistributedEthernetReqType::None,
+                DistributedEthernetReqType::None,
+                DistributedEthernetReqType::None,
+            ),
+            9,
+            Some(window),
+        ),
+        Err(NetworkError::DistributedEthernetReceiveMessageNotData {
+            kind: DistributedEthernetMessageKind::SyncAck,
+        })
+    ));
+    assert!(matches!(
+        scheduler.push_data(
+            DistributedEthernetMessage::data(9, 5, packet(&[1])).unwrap(),
+            10,
+            Some(window),
+        ),
+        Err(NetworkError::DistributedEthernetSendOutsideReceiveWindow {
+            send_tick: 9,
+            previous_sync_tick: 9,
+        })
+    ));
+    assert!(matches!(
+        scheduler.push_data(
+            DistributedEthernetMessage::data(10, 2, packet(&[1])).unwrap(),
+            10,
+            Some(DistributedEthernetReceiveWindow::new(9, 20).unwrap()),
+        ),
+        Err(NetworkError::DistributedEthernetReceiveInsideSyncWindow {
+            receive_tick: 15,
+            next_sync_tick: 20,
+        })
+    ));
+}
+
+#[test]
+fn distributed_ethernet_receive_scheduler_rejects_missed_and_out_of_order_packets() {
+    let mut scheduler = DistributedEthernetReceiveScheduler::new(3);
+
+    assert!(matches!(
+        scheduler.push_data(
+            DistributedEthernetMessage::data(10, 2, packet(&[1])).unwrap(),
+            15,
+            None,
+        ),
+        Err(NetworkError::DistributedEthernetReceiveMissed {
+            current_tick: 15,
+            receive_tick: 15,
+        })
+    ));
+
+    scheduler
+        .push_data(
+            DistributedEthernetMessage::data(20, 20, packet(&[2])).unwrap(),
+            10,
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        scheduler.push_data(
+            DistributedEthernetMessage::data(21, 5, packet(&[3])).unwrap(),
+            10,
+            None,
+        ),
+        Err(NetworkError::DistributedEthernetReceiveOutOfOrder {
+            queued_ready_tick: 40,
+            receive_tick: 29,
+        })
+    ));
+
+    let mut scheduler = DistributedEthernetReceiveScheduler::new(3);
+    scheduler
+        .push_data(
+            DistributedEthernetMessage::data(10, 5, packet(&[4])).unwrap(),
+            9,
+            None,
+        )
+        .unwrap();
+    scheduler.pop_ready(18).unwrap().unwrap();
+    assert!(matches!(
+        scheduler.push_data(
+            DistributedEthernetMessage::data(12, 10, packet(&[5])).unwrap(),
+            19,
+            None,
+        ),
+        Err(NetworkError::DistributedEthernetReceiveWindowTooSmall {
+            previous_receive_tick: 18,
+            send_delay_ticks: 10,
+            receive_tick: 25,
+        })
+    ));
+}
+
+#[test]
+fn distributed_ethernet_receive_scheduler_snapshot_restore_resumes_pending_packets() {
+    let mut scheduler = DistributedEthernetReceiveScheduler::new(2);
+    scheduler
+        .push_data(
+            DistributedEthernetMessage::data(
+                30,
+                7,
+                packet(&[0xaa]).with_wire_length_bytes(9).unwrap(),
+            )
+            .unwrap(),
+            20,
+            None,
+        )
+        .unwrap();
+    let snapshot = scheduler.snapshot();
+
+    scheduler
+        .push_data(
+            DistributedEthernetMessage::data(40, 2, packet(&[0xbb])).unwrap(),
+            21,
+            None,
+        )
+        .unwrap();
+    assert_eq!(scheduler.pending_count(), 2);
+
+    scheduler.restore(&snapshot).unwrap();
+    assert_eq!(scheduler.pending_count(), 1);
+    assert_eq!(scheduler.next_receive_tick(), Some(39));
+
+    let resumed = scheduler.resume_after_restore(100).unwrap();
+    assert_eq!(resumed, 1);
+    assert_eq!(scheduler.next_receive_tick(), Some(100));
+    let delivery = scheduler.pop_ready(100).unwrap().unwrap();
+    assert_eq!(delivery.delivery_tick(), 100);
+    assert_eq!(delivery.send_tick(), 100);
+    assert_eq!(delivery.send_delay_ticks(), 9);
+    assert_eq!(delivery.packet().payload(), &[0xaa]);
+    assert_eq!(scheduler.pending_count(), 0);
 }

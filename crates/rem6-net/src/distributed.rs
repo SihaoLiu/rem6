@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::{EthernetPacket, NetworkError};
 
 const MAGIC: [u8; 4] = *b"R6DN";
@@ -428,4 +430,336 @@ fn read_u64(bytes: &[u8], start: usize) -> u64 {
         bytes[start + 6],
         bytes[start + 7],
     ])
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetReceiveWindow {
+    previous_sync_tick: u64,
+    next_sync_tick: u64,
+}
+
+impl DistributedEthernetReceiveWindow {
+    pub fn new(previous_sync_tick: u64, next_sync_tick: u64) -> Result<Self, NetworkError> {
+        if previous_sync_tick >= next_sync_tick {
+            return Err(NetworkError::InvalidDistributedEthernetReceiveWindow {
+                previous_sync_tick,
+                next_sync_tick,
+            });
+        }
+        Ok(Self {
+            previous_sync_tick,
+            next_sync_tick,
+        })
+    }
+
+    pub const fn previous_sync_tick(&self) -> u64 {
+        self.previous_sync_tick
+    }
+
+    pub const fn next_sync_tick(&self) -> u64 {
+        self.next_sync_tick
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetReceiveScheduler {
+    link_delay_ticks: u64,
+    previous_receive_tick: u64,
+    pending: VecDeque<DistributedEthernetReceiveDescriptor>,
+}
+
+impl DistributedEthernetReceiveScheduler {
+    pub const fn new(link_delay_ticks: u64) -> Self {
+        Self {
+            link_delay_ticks,
+            previous_receive_tick: 0,
+            pending: VecDeque::new(),
+        }
+    }
+
+    pub const fn link_delay_ticks(&self) -> u64 {
+        self.link_delay_ticks
+    }
+
+    pub const fn previous_receive_tick(&self) -> u64 {
+        self.previous_receive_tick
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn next_receive_tick(&self) -> Option<u64> {
+        self.pending
+            .front()
+            .map(|descriptor| descriptor.receive_tick)
+    }
+
+    pub fn push_data(
+        &mut self,
+        message: DistributedEthernetMessage,
+        current_tick: u64,
+        window: Option<DistributedEthernetReceiveWindow>,
+    ) -> Result<DistributedEthernetReceiveRecord, NetworkError> {
+        if message.kind() != DistributedEthernetMessageKind::Data {
+            return Err(NetworkError::DistributedEthernetReceiveMessageNotData {
+                kind: message.kind(),
+            });
+        }
+        let send_tick = message.send_tick();
+        let send_delay_ticks = message
+            .send_delay_ticks()
+            .expect("distributed ethernet data message has send delay");
+        let receive_tick = self.receive_tick(send_tick, send_delay_ticks, current_tick)?;
+        if let Some(window) = window {
+            self.validate_receive_window(window, send_tick, receive_tick)?;
+        }
+        if let Some(front) = self.pending.front() {
+            let queued_ready_tick = front.send_tick.checked_add(front.send_delay_ticks).ok_or(
+                NetworkError::DistributedEthernetReceiveTimingOverflow {
+                    send_tick: front.send_tick,
+                    send_delay_ticks: front.send_delay_ticks,
+                    link_delay_ticks: self.link_delay_ticks,
+                },
+            )?;
+            if queued_ready_tick > receive_tick {
+                return Err(NetworkError::DistributedEthernetReceiveOutOfOrder {
+                    queued_ready_tick,
+                    receive_tick,
+                });
+            }
+        }
+
+        let packet = message
+            .packet()
+            .expect("distributed ethernet data message has packet")
+            .clone();
+        let descriptor = DistributedEthernetReceiveDescriptor {
+            send_tick,
+            send_delay_ticks,
+            receive_tick,
+            packet,
+        };
+        self.pending.push_back(descriptor.clone());
+        Ok(DistributedEthernetReceiveRecord {
+            send_tick,
+            send_delay_ticks,
+            link_delay_ticks: self.link_delay_ticks,
+            receive_tick,
+            packet: descriptor.packet,
+        })
+    }
+
+    pub fn pop_ready(
+        &mut self,
+        current_tick: u64,
+    ) -> Result<Option<DistributedEthernetReceiveDelivery>, NetworkError> {
+        let Some(front) = self.pending.front() else {
+            return Ok(None);
+        };
+        if front.receive_tick > current_tick {
+            return Ok(None);
+        }
+        let descriptor = self
+            .pending
+            .pop_front()
+            .expect("distributed ethernet receive descriptor exists");
+        self.previous_receive_tick = current_tick;
+        Ok(Some(DistributedEthernetReceiveDelivery {
+            send_tick: descriptor.send_tick,
+            send_delay_ticks: descriptor.send_delay_ticks,
+            receive_tick: descriptor.receive_tick,
+            delivery_tick: current_tick,
+            packet: descriptor.packet,
+        }))
+    }
+
+    pub fn resume_after_restore(&mut self, current_tick: u64) -> Result<usize, NetworkError> {
+        let count = self.pending.len();
+        for (index, descriptor) in self.pending.iter_mut().enumerate() {
+            descriptor.send_tick = current_tick;
+            descriptor.send_delay_ticks = descriptor.packet.wire_length_bytes();
+            descriptor.receive_tick = if index == 0 {
+                current_tick
+            } else {
+                current_tick
+                    .checked_add(descriptor.send_delay_ticks)
+                    .and_then(|tick| tick.checked_add(self.link_delay_ticks))
+                    .ok_or(NetworkError::DistributedEthernetReceiveTimingOverflow {
+                        send_tick: current_tick,
+                        send_delay_ticks: descriptor.send_delay_ticks,
+                        link_delay_ticks: self.link_delay_ticks,
+                    })?
+            };
+        }
+        Ok(count)
+    }
+
+    pub fn snapshot(&self) -> DistributedEthernetReceiveSchedulerSnapshot {
+        DistributedEthernetReceiveSchedulerSnapshot {
+            link_delay_ticks: self.link_delay_ticks,
+            previous_receive_tick: self.previous_receive_tick,
+            pending: self.pending.clone(),
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &DistributedEthernetReceiveSchedulerSnapshot,
+    ) -> Result<(), NetworkError> {
+        self.link_delay_ticks = snapshot.link_delay_ticks;
+        self.previous_receive_tick = snapshot.previous_receive_tick;
+        self.pending = snapshot.pending.clone();
+        Ok(())
+    }
+
+    fn receive_tick(
+        &self,
+        send_tick: u64,
+        send_delay_ticks: u64,
+        current_tick: u64,
+    ) -> Result<u64, NetworkError> {
+        let receive_tick = send_tick
+            .checked_add(send_delay_ticks)
+            .and_then(|tick| tick.checked_add(self.link_delay_ticks))
+            .ok_or(NetworkError::DistributedEthernetReceiveTimingOverflow {
+                send_tick,
+                send_delay_ticks,
+                link_delay_ticks: self.link_delay_ticks,
+            })?;
+        let minimum_receive_tick = self
+            .previous_receive_tick
+            .checked_add(send_delay_ticks)
+            .ok_or(NetworkError::DistributedEthernetReceiveTimingOverflow {
+                send_tick,
+                send_delay_ticks,
+                link_delay_ticks: self.link_delay_ticks,
+            })?;
+        if minimum_receive_tick > receive_tick {
+            return Err(NetworkError::DistributedEthernetReceiveWindowTooSmall {
+                previous_receive_tick: self.previous_receive_tick,
+                send_delay_ticks,
+                receive_tick,
+            });
+        }
+        if receive_tick <= current_tick {
+            return Err(NetworkError::DistributedEthernetReceiveMissed {
+                current_tick,
+                receive_tick,
+            });
+        }
+        Ok(receive_tick)
+    }
+
+    fn validate_receive_window(
+        &self,
+        window: DistributedEthernetReceiveWindow,
+        send_tick: u64,
+        receive_tick: u64,
+    ) -> Result<(), NetworkError> {
+        if send_tick <= window.previous_sync_tick {
+            return Err(NetworkError::DistributedEthernetSendOutsideReceiveWindow {
+                send_tick,
+                previous_sync_tick: window.previous_sync_tick,
+            });
+        }
+        if receive_tick <= window.next_sync_tick {
+            return Err(NetworkError::DistributedEthernetReceiveInsideSyncWindow {
+                receive_tick,
+                next_sync_tick: window.next_sync_tick,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetReceiveRecord {
+    send_tick: u64,
+    send_delay_ticks: u64,
+    link_delay_ticks: u64,
+    receive_tick: u64,
+    packet: EthernetPacket,
+}
+
+impl DistributedEthernetReceiveRecord {
+    pub const fn send_tick(&self) -> u64 {
+        self.send_tick
+    }
+
+    pub const fn send_delay_ticks(&self) -> u64 {
+        self.send_delay_ticks
+    }
+
+    pub const fn link_delay_ticks(&self) -> u64 {
+        self.link_delay_ticks
+    }
+
+    pub const fn receive_tick(&self) -> u64 {
+        self.receive_tick
+    }
+
+    pub const fn packet(&self) -> &EthernetPacket {
+        &self.packet
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetReceiveDelivery {
+    send_tick: u64,
+    send_delay_ticks: u64,
+    receive_tick: u64,
+    delivery_tick: u64,
+    packet: EthernetPacket,
+}
+
+impl DistributedEthernetReceiveDelivery {
+    pub const fn send_tick(&self) -> u64 {
+        self.send_tick
+    }
+
+    pub const fn send_delay_ticks(&self) -> u64 {
+        self.send_delay_ticks
+    }
+
+    pub const fn receive_tick(&self) -> u64 {
+        self.receive_tick
+    }
+
+    pub const fn delivery_tick(&self) -> u64 {
+        self.delivery_tick
+    }
+
+    pub const fn packet(&self) -> &EthernetPacket {
+        &self.packet
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DistributedEthernetReceiveSchedulerSnapshot {
+    link_delay_ticks: u64,
+    previous_receive_tick: u64,
+    pending: VecDeque<DistributedEthernetReceiveDescriptor>,
+}
+
+impl DistributedEthernetReceiveSchedulerSnapshot {
+    pub const fn link_delay_ticks(&self) -> u64 {
+        self.link_delay_ticks
+    }
+
+    pub const fn previous_receive_tick(&self) -> u64 {
+        self.previous_receive_tick
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DistributedEthernetReceiveDescriptor {
+    send_tick: u64,
+    send_delay_ticks: u64,
+    receive_tick: u64,
+    packet: EthernetPacket,
 }
