@@ -1,4 +1,6 @@
-use rem6_boot::{BootElfArchitecture, BootElfClass, BootElfOperatingSystem, BootImage};
+use rem6_boot::{
+    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem, BootImage,
+};
 use rem6_workload::{WorkloadBootImage, WorkloadId, WorkloadManifest};
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -11,6 +13,18 @@ fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_u64_be(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_be_bytes());
 }
 
 fn elf64_image(machine: u16) -> Vec<u8> {
@@ -36,6 +50,33 @@ fn elf64_image(machine: u16) -> Vec<u8> {
     write_u64(&mut bytes, 96, 4);
     write_u64(&mut bytes, 104, 4);
     write_u64(&mut bytes, 112, 0x1000);
+    bytes[0x100..0x104].copy_from_slice(&[0x13, 0x05, 0x00, 0x00]);
+    bytes
+}
+
+fn elf64_be_image(machine: u16) -> Vec<u8> {
+    let mut bytes = vec![0; 0x104];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 2;
+    bytes[6] = 1;
+    write_u16_be(&mut bytes, 16, 2);
+    write_u16_be(&mut bytes, 18, machine);
+    write_u32_be(&mut bytes, 20, 1);
+    write_u64_be(&mut bytes, 24, 0x8004);
+    write_u64_be(&mut bytes, 32, 64);
+    write_u16_be(&mut bytes, 52, 64);
+    write_u16_be(&mut bytes, 54, 56);
+    write_u16_be(&mut bytes, 56, 1);
+
+    write_u32_be(&mut bytes, 64, 1);
+    write_u32_be(&mut bytes, 68, 5);
+    write_u64_be(&mut bytes, 72, 0x100);
+    write_u64_be(&mut bytes, 80, 0x8000);
+    write_u64_be(&mut bytes, 88, 0x8000);
+    write_u64_be(&mut bytes, 96, 4);
+    write_u64_be(&mut bytes, 104, 4);
+    write_u64_be(&mut bytes, 112, 0x1000);
     bytes[0x100..0x104].copy_from_slice(&[0x13, 0x05, 0x00, 0x00]);
     bytes
 }
@@ -79,6 +120,28 @@ fn workload_manifest_identity_includes_elf_metadata() {
     let x86_manifest = WorkloadManifest::builder(id("same"), x86).build().unwrap();
 
     assert_ne!(riscv_manifest.identity(), x86_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_endian_metadata() {
+    let little = BootImage::from_elf(&elf64_image(2)).unwrap();
+    let big = BootImage::from_elf(&elf64_be_image(2)).unwrap();
+
+    assert_eq!(little.entry(), big.entry());
+    assert_eq!(little.segments(), big.segments());
+    assert_eq!(
+        little.elf_metadata().unwrap().endian(),
+        BootElfEndian::Little
+    );
+    assert_eq!(big.elf_metadata().unwrap().endian(), BootElfEndian::Big);
+    assert_ne!(little.elf_metadata(), big.elf_metadata());
+
+    let little_manifest = WorkloadManifest::builder(id("same"), little)
+        .build()
+        .unwrap();
+    let big_manifest = WorkloadManifest::builder(id("same"), big).build().unwrap();
+
+    assert_ne!(little_manifest.identity(), big_manifest.identity());
 }
 
 #[test]

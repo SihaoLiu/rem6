@@ -12,6 +12,7 @@ const ELF32_SECTION_HEADER_SIZE: u16 = 40;
 const ELF_CLASS_32: u8 = 1;
 const ELF_CLASS_64: u8 = 2;
 const ELF_DATA_LITTLE: u8 = 1;
+const ELF_DATA_BIG: u8 = 2;
 const ELF_VERSION_CURRENT: u8 = 1;
 const ELF_OSABI_LINUX: u8 = 3;
 const ELF_OSABI_SOLARIS: u8 = 6;
@@ -32,6 +33,56 @@ const EM_SPARCV9: u16 = 43;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
 const EM_RISCV: u16 = 243;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootElfEndian {
+    Little,
+    Big,
+}
+
+impl BootElfEndian {
+    const fn from_encoding(encoding: u8) -> Option<Self> {
+        match encoding {
+            ELF_DATA_LITTLE => Some(Self::Little),
+            ELF_DATA_BIG => Some(Self::Big),
+            _ => None,
+        }
+    }
+
+    const fn encoding(self) -> u8 {
+        match self {
+            Self::Little => ELF_DATA_LITTLE,
+            Self::Big => ELF_DATA_BIG,
+        }
+    }
+
+    const fn read_u16(self, data: [u8; 2]) -> u16 {
+        match self {
+            Self::Little => u16::from_le_bytes(data),
+            Self::Big => u16::from_be_bytes(data),
+        }
+    }
+
+    const fn read_u32(self, data: [u8; 4]) -> u32 {
+        match self {
+            Self::Little => u32::from_le_bytes(data),
+            Self::Big => u32::from_be_bytes(data),
+        }
+    }
+
+    const fn read_u64(self, data: [u8; 8]) -> u64 {
+        match self {
+            Self::Little => u64::from_le_bytes(data),
+            Self::Big => u64::from_be_bytes(data),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ElfIdent {
+    class: u8,
+    endian: BootElfEndian,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BootElfClass {
@@ -117,6 +168,7 @@ impl BootElfArchitecture {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BootElfMetadata {
     class: BootElfClass,
+    endian: BootElfEndian,
     machine: u16,
     os_abi: u8,
     flags: u32,
@@ -127,6 +179,7 @@ pub struct BootElfMetadata {
 impl BootElfMetadata {
     const fn from_header(
         class: BootElfClass,
+        endian: BootElfEndian,
         machine: u16,
         os_abi: u8,
         flags: u32,
@@ -135,6 +188,7 @@ impl BootElfMetadata {
     ) -> Self {
         Self {
             class,
+            endian,
             machine,
             os_abi,
             flags,
@@ -145,6 +199,10 @@ impl BootElfMetadata {
 
     pub const fn class(&self) -> BootElfClass {
         self.class
+    }
+
+    pub const fn endian(&self) -> BootElfEndian {
+        self.endian
     }
 
     pub const fn machine(&self) -> u16 {
@@ -169,16 +227,21 @@ impl BootElfMetadata {
 }
 
 pub(crate) fn parse_elf(bytes: &[u8]) -> Result<BootImage, BootError> {
-    match detect_elf_class(bytes)? {
-        ELF_CLASS_32 => parse_elf32_le(bytes),
-        ELF_CLASS_64 => parse_elf64_le(bytes),
+    let ident = detect_elf_ident(bytes)?;
+    match ident.class {
+        ELF_CLASS_32 => parse_elf32(bytes, ident.endian),
+        ELF_CLASS_64 => parse_elf64(bytes, ident.endian),
         class => Err(invalid_elf(BootElfError::UnsupportedClass { class })),
     }
 }
 
 pub(crate) fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
-    validate_elf_ident(bytes, ELF_CLASS_64)?;
-    let header_size = read_u16(bytes, 52)?;
+    parse_elf64(bytes, BootElfEndian::Little)
+}
+
+fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootError> {
+    validate_elf_ident(bytes, ELF_CLASS_64, endian)?;
+    let header_size = read_u16(bytes, 52, endian)?;
     if header_size as usize != ELF64_HEADER_SIZE {
         return Err(invalid_elf(BootElfError::UnsupportedHeaderSize {
             expected: ELF64_HEADER_SIZE as u16,
@@ -186,7 +249,7 @@ pub(crate) fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         }));
     }
 
-    let program_header_size = read_u16(bytes, 54)?;
+    let program_header_size = read_u16(bytes, 54, endian)?;
     if program_header_size != ELF64_PROGRAM_HEADER_SIZE {
         return Err(invalid_elf(BootElfError::UnsupportedProgramHeaderSize {
             expected: ELF64_PROGRAM_HEADER_SIZE,
@@ -195,13 +258,13 @@ pub(crate) fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     }
 
     let os_abi = bytes[7];
-    let machine = read_u16(bytes, 18)?;
-    let flags = read_u32(bytes, 48)?;
+    let machine = read_u16(bytes, 18, endian)?;
+    let flags = read_u32(bytes, 48, endian)?;
     let operating_system =
-        detect_elf_operating_system(bytes, BootElfClass::Class64, machine, os_abi, flags)?;
-    let entry = Address::new(read_u64(bytes, 24)?);
-    let program_header_offset = read_u64(bytes, 32)?;
-    let program_header_count = read_u16(bytes, 56)?;
+        detect_elf_operating_system(bytes, BootElfClass::Class64, endian, machine, os_abi, flags)?;
+    let entry = Address::new(read_u64(bytes, 24, endian)?);
+    let program_header_offset = read_u64(bytes, 32, endian)?;
+    let program_header_count = read_u16(bytes, 56, endian)?;
     let table_size = (program_header_size as u64)
         .checked_mul(program_header_count as u64)
         .ok_or_else(|| {
@@ -221,6 +284,7 @@ pub(crate) fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
 
     let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
         BootElfClass::Class64,
+        endian,
         machine,
         os_abi,
         flags,
@@ -230,15 +294,15 @@ pub(crate) fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let header_offset = program_header_offset + index as u64 * program_header_size as u64;
-        let kind = read_u32_at_u64(bytes, header_offset)?;
+        let kind = read_u32_at_u64(bytes, header_offset, endian)?;
         if kind != PT_LOAD {
             continue;
         }
 
-        let file_offset = read_u64_at_u64(bytes, header_offset + 8)?;
-        let physical = read_u64_at_u64(bytes, header_offset + 24)?;
-        let file_size = read_u64_at_u64(bytes, header_offset + 32)?;
-        let memory_size = read_u64_at_u64(bytes, header_offset + 40)?;
+        let file_offset = read_u64_at_u64(bytes, header_offset + 8, endian)?;
+        let physical = read_u64_at_u64(bytes, header_offset + 24, endian)?;
+        let file_size = read_u64_at_u64(bytes, header_offset + 32, endian)?;
+        let memory_size = read_u64_at_u64(bytes, header_offset + 40, endian)?;
         if memory_size == 0 {
             continue;
         }
@@ -303,8 +367,12 @@ pub(crate) fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
 }
 
 pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
-    validate_elf_ident(bytes, ELF_CLASS_32)?;
-    let header_size = read_u16(bytes, 40)?;
+    parse_elf32(bytes, BootElfEndian::Little)
+}
+
+fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootError> {
+    validate_elf_ident(bytes, ELF_CLASS_32, endian)?;
+    let header_size = read_u16(bytes, 40, endian)?;
     if header_size as usize != ELF32_HEADER_SIZE {
         return Err(invalid_elf(BootElfError::UnsupportedHeaderSize {
             expected: ELF32_HEADER_SIZE as u16,
@@ -312,7 +380,7 @@ pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         }));
     }
 
-    let program_header_size = read_u16(bytes, 42)?;
+    let program_header_size = read_u16(bytes, 42, endian)?;
     if program_header_size != ELF32_PROGRAM_HEADER_SIZE {
         return Err(invalid_elf(BootElfError::UnsupportedProgramHeaderSize {
             expected: ELF32_PROGRAM_HEADER_SIZE,
@@ -321,13 +389,13 @@ pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     }
 
     let os_abi = bytes[7];
-    let machine = read_u16(bytes, 18)?;
-    let flags = read_u32(bytes, 36)?;
+    let machine = read_u16(bytes, 18, endian)?;
+    let flags = read_u32(bytes, 36, endian)?;
     let operating_system =
-        detect_elf_operating_system(bytes, BootElfClass::Class32, machine, os_abi, flags)?;
-    let entry = Address::new(u64::from(read_u32(bytes, 24)?));
-    let program_header_offset = u64::from(read_u32(bytes, 28)?);
-    let program_header_count = read_u16(bytes, 44)?;
+        detect_elf_operating_system(bytes, BootElfClass::Class32, endian, machine, os_abi, flags)?;
+    let entry = Address::new(u64::from(read_u32(bytes, 24, endian)?));
+    let program_header_offset = u64::from(read_u32(bytes, 28, endian)?);
+    let program_header_count = read_u16(bytes, 44, endian)?;
     let table_size = (program_header_size as u64)
         .checked_mul(program_header_count as u64)
         .ok_or_else(|| {
@@ -347,6 +415,7 @@ pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
 
     let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
         BootElfClass::Class32,
+        endian,
         machine,
         os_abi,
         flags,
@@ -356,15 +425,15 @@ pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let header_offset = program_header_offset + index as u64 * program_header_size as u64;
-        let kind = read_u32_at_u64(bytes, header_offset)?;
+        let kind = read_u32_at_u64(bytes, header_offset, endian)?;
         if kind != PT_LOAD {
             continue;
         }
 
-        let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4)?);
-        let physical = u64::from(read_u32_at_u64(bytes, header_offset + 12)?);
-        let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16)?);
-        let memory_size = u64::from(read_u32_at_u64(bytes, header_offset + 20)?);
+        let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?);
+        let physical = u64::from(read_u32_at_u64(bytes, header_offset + 12, endian)?);
+        let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?);
+        let memory_size = u64::from(read_u32_at_u64(bytes, header_offset + 20, endian)?);
         if memory_size == 0 {
             continue;
         }
@@ -442,15 +511,26 @@ pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     Ok(image)
 }
 
-fn validate_elf_ident(bytes: &[u8], expected_class: u8) -> Result<(), BootError> {
-    let class = detect_elf_class(bytes)?;
-    if class != expected_class {
-        return Err(invalid_elf(BootElfError::UnsupportedClass { class }));
+fn validate_elf_ident(
+    bytes: &[u8],
+    expected_class: u8,
+    expected_endian: BootElfEndian,
+) -> Result<(), BootError> {
+    let ident = detect_elf_ident(bytes)?;
+    if ident.class != expected_class {
+        return Err(invalid_elf(BootElfError::UnsupportedClass {
+            class: ident.class,
+        }));
+    }
+    if ident.endian != expected_endian {
+        return Err(invalid_elf(BootElfError::UnsupportedEncoding {
+            encoding: ident.endian.encoding(),
+        }));
     }
     Ok(())
 }
 
-fn detect_elf_class(bytes: &[u8]) -> Result<u8, BootError> {
+fn detect_elf_ident(bytes: &[u8]) -> Result<ElfIdent, BootError> {
     let ident = read_exact(bytes, 0, 16)?;
     if &ident[0..4] != b"\x7fELF" {
         return Err(invalid_elf(BootElfError::BadMagic));
@@ -459,17 +539,17 @@ fn detect_elf_class(bytes: &[u8]) -> Result<u8, BootError> {
     if !matches!(class, ELF_CLASS_32 | ELF_CLASS_64) {
         return Err(invalid_elf(BootElfError::UnsupportedClass { class }));
     }
-    if ident[5] != ELF_DATA_LITTLE {
+    let Some(endian) = BootElfEndian::from_encoding(ident[5]) else {
         return Err(invalid_elf(BootElfError::UnsupportedEncoding {
             encoding: ident[5],
         }));
-    }
+    };
     if ident[6] != ELF_VERSION_CURRENT {
         return Err(invalid_elf(BootElfError::UnsupportedVersion {
             version: ident[6],
         }));
     }
-    Ok(class)
+    Ok(ElfIdent { class, endian })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -483,6 +563,7 @@ struct ElfSectionHeader {
 fn detect_elf_operating_system(
     bytes: &[u8],
     class: BootElfClass,
+    endian: BootElfEndian,
     machine: u16,
     os_abi: u8,
     flags: u32,
@@ -492,26 +573,28 @@ fn detect_elf_operating_system(
         return Ok(header_os);
     }
 
-    Ok(detect_elf_operating_system_from_sections(bytes, class)?.unwrap_or(header_os))
+    Ok(detect_elf_operating_system_from_sections(bytes, class, endian)?.unwrap_or(header_os))
 }
 
 fn detect_elf_operating_system_from_sections(
     bytes: &[u8],
     class: BootElfClass,
+    endian: BootElfEndian,
 ) -> Result<Option<BootElfOperatingSystem>, BootError> {
     match class {
-        BootElfClass::Class32 => detect_elf32_operating_system_from_sections(bytes),
-        BootElfClass::Class64 => detect_elf64_operating_system_from_sections(bytes),
+        BootElfClass::Class32 => detect_elf32_operating_system_from_sections(bytes, endian),
+        BootElfClass::Class64 => detect_elf64_operating_system_from_sections(bytes, endian),
     }
 }
 
 fn detect_elf64_operating_system_from_sections(
     bytes: &[u8],
+    endian: BootElfEndian,
 ) -> Result<Option<BootElfOperatingSystem>, BootError> {
-    let section_table_offset = read_u64(bytes, 40)?;
-    let section_header_size = read_u16(bytes, 58)?;
-    let section_count = read_u16(bytes, 60)?;
-    let string_section = read_u16(bytes, 62)?;
+    let section_table_offset = read_u64(bytes, 40, endian)?;
+    let section_header_size = read_u16(bytes, 58, endian)?;
+    let section_count = read_u16(bytes, 60, endian)?;
+    let string_section = read_u16(bytes, 62, endian)?;
     if section_table_offset == 0
         || section_count == 0
         || string_section == 0
@@ -532,6 +615,7 @@ fn detect_elf64_operating_system_from_sections(
         section_table_offset,
         section_header_size,
         string_section,
+        endian,
     )?;
     let string_table = checked_file_range(bytes, string_header.offset, string_header.size)
         .map_err(|_| {
@@ -543,10 +627,15 @@ fn detect_elf64_operating_system_from_sections(
         })?;
 
     for index in 1..section_count {
-        let section =
-            read_elf64_section_header(bytes, section_table_offset, section_header_size, index)?;
+        let section = read_elf64_section_header(
+            bytes,
+            section_table_offset,
+            section_header_size,
+            index,
+            endian,
+        )?;
         if let Some(operating_system) =
-            detect_section_operating_system(bytes, string_table, section)?
+            detect_section_operating_system(bytes, string_table, section, endian)?
         {
             return Ok(Some(operating_system));
         }
@@ -556,11 +645,12 @@ fn detect_elf64_operating_system_from_sections(
 
 fn detect_elf32_operating_system_from_sections(
     bytes: &[u8],
+    endian: BootElfEndian,
 ) -> Result<Option<BootElfOperatingSystem>, BootError> {
-    let section_table_offset = u64::from(read_u32(bytes, 32)?);
-    let section_header_size = read_u16(bytes, 46)?;
-    let section_count = read_u16(bytes, 48)?;
-    let string_section = read_u16(bytes, 50)?;
+    let section_table_offset = u64::from(read_u32(bytes, 32, endian)?);
+    let section_header_size = read_u16(bytes, 46, endian)?;
+    let section_count = read_u16(bytes, 48, endian)?;
+    let string_section = read_u16(bytes, 50, endian)?;
     if section_table_offset == 0
         || section_count == 0
         || string_section == 0
@@ -581,6 +671,7 @@ fn detect_elf32_operating_system_from_sections(
         section_table_offset,
         section_header_size,
         string_section,
+        endian,
     )?;
     let string_table = checked_file_range(bytes, string_header.offset, string_header.size)
         .map_err(|_| {
@@ -592,10 +683,15 @@ fn detect_elf32_operating_system_from_sections(
         })?;
 
     for index in 1..section_count {
-        let section =
-            read_elf32_section_header(bytes, section_table_offset, section_header_size, index)?;
+        let section = read_elf32_section_header(
+            bytes,
+            section_table_offset,
+            section_header_size,
+            index,
+            endian,
+        )?;
         if let Some(operating_system) =
-            detect_section_operating_system(bytes, string_table, section)?
+            detect_section_operating_system(bytes, string_table, section, endian)?
         {
             return Ok(Some(operating_system));
         }
@@ -633,13 +729,14 @@ fn read_elf64_section_header(
     table_offset: u64,
     header_size: u16,
     index: u16,
+    endian: BootElfEndian,
 ) -> Result<ElfSectionHeader, BootError> {
     let base = table_offset + u64::from(index) * u64::from(header_size);
     Ok(ElfSectionHeader {
-        name: read_u32_at_u64(bytes, base)?,
-        kind: read_u32_at_u64(bytes, base + 4)?,
-        offset: read_u64_at_u64(bytes, base + 24)?,
-        size: read_u64_at_u64(bytes, base + 32)?,
+        name: read_u32_at_u64(bytes, base, endian)?,
+        kind: read_u32_at_u64(bytes, base + 4, endian)?,
+        offset: read_u64_at_u64(bytes, base + 24, endian)?,
+        size: read_u64_at_u64(bytes, base + 32, endian)?,
     })
 }
 
@@ -648,13 +745,14 @@ fn read_elf32_section_header(
     table_offset: u64,
     header_size: u16,
     index: u16,
+    endian: BootElfEndian,
 ) -> Result<ElfSectionHeader, BootError> {
     let base = table_offset + u64::from(index) * u64::from(header_size);
     Ok(ElfSectionHeader {
-        name: read_u32_at_u64(bytes, base)?,
-        kind: read_u32_at_u64(bytes, base + 4)?,
-        offset: u64::from(read_u32_at_u64(bytes, base + 16)?),
-        size: u64::from(read_u32_at_u64(bytes, base + 20)?),
+        name: read_u32_at_u64(bytes, base, endian)?,
+        kind: read_u32_at_u64(bytes, base + 4, endian)?,
+        offset: u64::from(read_u32_at_u64(bytes, base + 16, endian)?),
+        size: u64::from(read_u32_at_u64(bytes, base + 20, endian)?),
     })
 }
 
@@ -662,6 +760,7 @@ fn detect_section_operating_system(
     bytes: &[u8],
     string_table: &[u8],
     section: ElfSectionHeader,
+    endian: BootElfEndian,
 ) -> Result<Option<BootElfOperatingSystem>, BootError> {
     if section.kind == SHT_NOTE
         && section_name_matches(string_table, section.name, b".note.ABI-tag")
@@ -675,19 +774,18 @@ fn detect_section_operating_system(
                 })
             })?;
         if section_data.len() >= 20 {
-            return Ok(
-                match u32::from_le_bytes([
-                    section_data[16],
-                    section_data[17],
-                    section_data[18],
-                    section_data[19],
-                ]) {
-                    0 => Some(BootElfOperatingSystem::Linux),
-                    2 => Some(BootElfOperatingSystem::Solaris),
-                    3 => Some(BootElfOperatingSystem::FreeBsd),
-                    _ => None,
-                },
-            );
+            let os = endian.read_u32([
+                section_data[16],
+                section_data[17],
+                section_data[18],
+                section_data[19],
+            ]);
+            return Ok(match os {
+                0 => Some(BootElfOperatingSystem::Linux),
+                2 => Some(BootElfOperatingSystem::Solaris),
+                3 => Some(BootElfOperatingSystem::FreeBsd),
+                _ => None,
+            });
         }
     }
 
@@ -714,17 +812,17 @@ fn section_name_matches(string_table: &[u8], name_offset: u32, expected: &[u8]) 
     &rest[..end] == expected
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, BootError> {
+fn read_u16(bytes: &[u8], offset: usize, endian: BootElfEndian) -> Result<u16, BootError> {
     let data = read_exact(bytes, offset, 2)?;
-    Ok(u16::from_le_bytes([data[0], data[1]]))
+    Ok(endian.read_u16([data[0], data[1]]))
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, BootError> {
+fn read_u32(bytes: &[u8], offset: usize, endian: BootElfEndian) -> Result<u32, BootError> {
     let data = read_exact(bytes, offset, 4)?;
-    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+    Ok(endian.read_u32([data[0], data[1], data[2], data[3]]))
 }
 
-fn read_u32_at_u64(bytes: &[u8], offset: u64) -> Result<u32, BootError> {
+fn read_u32_at_u64(bytes: &[u8], offset: u64, endian: BootElfEndian) -> Result<u32, BootError> {
     let offset = usize::try_from(offset).map_err(|_| {
         invalid_elf(BootElfError::TruncatedField {
             offset,
@@ -733,17 +831,17 @@ fn read_u32_at_u64(bytes: &[u8], offset: u64) -> Result<u32, BootError> {
         })
     })?;
     let data = read_exact(bytes, offset, 4)?;
-    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+    Ok(endian.read_u32([data[0], data[1], data[2], data[3]]))
 }
 
-fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, BootError> {
+fn read_u64(bytes: &[u8], offset: usize, endian: BootElfEndian) -> Result<u64, BootError> {
     let data = read_exact(bytes, offset, 8)?;
-    Ok(u64::from_le_bytes([
+    Ok(endian.read_u64([
         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]))
 }
 
-fn read_u64_at_u64(bytes: &[u8], offset: u64) -> Result<u64, BootError> {
+fn read_u64_at_u64(bytes: &[u8], offset: u64, endian: BootElfEndian) -> Result<u64, BootError> {
     let offset = usize::try_from(offset).map_err(|_| {
         invalid_elf(BootElfError::TruncatedField {
             offset,
@@ -751,7 +849,7 @@ fn read_u64_at_u64(bytes: &[u8], offset: u64) -> Result<u64, BootError> {
             image_size: bytes.len() as u64,
         })
     })?;
-    read_u64(bytes, offset)
+    read_u64(bytes, offset, endian)
 }
 
 fn read_exact(bytes: &[u8], offset: usize, size: usize) -> Result<&[u8], BootError> {

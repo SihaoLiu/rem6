@@ -1,6 +1,6 @@
 use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfError, BootElfOperatingSystem, BootError, BootImage,
-    BootLineWrite, BootLoadReport,
+    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfError, BootElfOperatingSystem,
+    BootError, BootImage, BootLineWrite, BootLoadReport,
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, LineMemoryStore, MemoryError,
@@ -25,6 +25,18 @@ fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_u64_be(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_be_bytes());
 }
 
 #[derive(Clone, Copy)]
@@ -109,6 +121,90 @@ fn elf32_image(entry: u32, headers: &[ElfProgramHeaderSpec], data: &[(usize, &[u
         write_u32(&mut bytes, base + 20, header.memory_size as u32);
         write_u32(&mut bytes, base + 24, 5);
         write_u32(&mut bytes, base + 28, 0x1000);
+    }
+
+    for (offset, payload) in data {
+        bytes[*offset..*offset + payload.len()].copy_from_slice(payload);
+    }
+    bytes
+}
+
+fn elf64_be_image(
+    entry: u64,
+    machine: u16,
+    headers: &[ElfProgramHeaderSpec],
+    data: &[(usize, &[u8])],
+) -> Vec<u8> {
+    let mut size = 64 + headers.len() * 56;
+    for (offset, bytes) in data {
+        size = size.max(offset + bytes.len());
+    }
+    let mut bytes = vec![0; size];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 2;
+    bytes[6] = 1;
+    write_u16_be(&mut bytes, 16, 2);
+    write_u16_be(&mut bytes, 18, machine);
+    write_u32_be(&mut bytes, 20, 1);
+    write_u64_be(&mut bytes, 24, entry);
+    write_u64_be(&mut bytes, 32, 64);
+    write_u16_be(&mut bytes, 52, 64);
+    write_u16_be(&mut bytes, 54, 56);
+    write_u16_be(&mut bytes, 56, headers.len() as u16);
+
+    for (index, header) in headers.iter().enumerate() {
+        let base = 64 + index * 56;
+        write_u32_be(&mut bytes, base, header.kind);
+        write_u32_be(&mut bytes, base + 4, 5);
+        write_u64_be(&mut bytes, base + 8, header.offset);
+        write_u64_be(&mut bytes, base + 16, header.physical);
+        write_u64_be(&mut bytes, base + 24, header.physical);
+        write_u64_be(&mut bytes, base + 32, header.file_size);
+        write_u64_be(&mut bytes, base + 40, header.memory_size);
+        write_u64_be(&mut bytes, base + 48, 0x1000);
+    }
+
+    for (offset, payload) in data {
+        bytes[*offset..*offset + payload.len()].copy_from_slice(payload);
+    }
+    bytes
+}
+
+fn elf32_be_image(
+    entry: u32,
+    machine: u16,
+    headers: &[ElfProgramHeaderSpec],
+    data: &[(usize, &[u8])],
+) -> Vec<u8> {
+    let mut size = 52 + headers.len() * 32;
+    for (offset, bytes) in data {
+        size = size.max(offset + bytes.len());
+    }
+    let mut bytes = vec![0; size];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 1;
+    bytes[5] = 2;
+    bytes[6] = 1;
+    write_u16_be(&mut bytes, 16, 2);
+    write_u16_be(&mut bytes, 18, machine);
+    write_u32_be(&mut bytes, 20, 1);
+    write_u32_be(&mut bytes, 24, entry);
+    write_u32_be(&mut bytes, 28, 52);
+    write_u16_be(&mut bytes, 40, 52);
+    write_u16_be(&mut bytes, 42, 32);
+    write_u16_be(&mut bytes, 44, headers.len() as u16);
+
+    for (index, header) in headers.iter().enumerate() {
+        let base = 52 + index * 32;
+        write_u32_be(&mut bytes, base, header.kind);
+        write_u32_be(&mut bytes, base + 4, header.offset as u32);
+        write_u32_be(&mut bytes, base + 8, header.physical as u32);
+        write_u32_be(&mut bytes, base + 12, header.physical as u32);
+        write_u32_be(&mut bytes, base + 16, header.file_size as u32);
+        write_u32_be(&mut bytes, base + 20, header.memory_size as u32);
+        write_u32_be(&mut bytes, base + 24, 5);
+        write_u32_be(&mut bytes, base + 28, 0x1000);
     }
 
     for (offset, payload) in data {
@@ -339,6 +435,61 @@ fn boot_image_detects_little_endian_elf_class() {
 }
 
 #[test]
+fn boot_image_detects_big_endian_elf_class() {
+    let elf64 = elf64_be_image(
+        0x400008,
+        2,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x400000,
+            file_size: 4,
+            memory_size: 6,
+        }],
+        &[(0x100, &[0xde, 0xad, 0xbe, 0xef])],
+    );
+    let image64 = BootImage::from_elf(&elf64).unwrap();
+
+    assert_eq!(image64.entry(), Address::new(0x400008));
+    assert_eq!(
+        image64.segments()[0].range().start(),
+        Address::new(0x400000)
+    );
+    assert_eq!(
+        image64.segments()[0].data(),
+        &[0xde, 0xad, 0xbe, 0xef, 0, 0],
+    );
+    assert_eq!(
+        image64.elf_metadata().unwrap().architecture(),
+        BootElfArchitecture::Sparc64,
+    );
+    assert_eq!(image64.elf_metadata().unwrap().endian(), BootElfEndian::Big);
+
+    let elf32 = elf32_be_image(
+        0x1000,
+        8,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x2000,
+            file_size: 3,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0xaa, 0xbb, 0xcc])],
+    );
+    let image32 = BootImage::from_elf(&elf32).unwrap();
+
+    assert_eq!(image32.entry(), Address::new(0x1000));
+    assert_eq!(image32.segments()[0].range().start(), Address::new(0x2000));
+    assert_eq!(image32.segments()[0].data(), &[0xaa, 0xbb, 0xcc, 0]);
+    assert_eq!(
+        image32.elf_metadata().unwrap().architecture(),
+        BootElfArchitecture::Mips,
+    );
+    assert_eq!(image32.elf_metadata().unwrap().endian(), BootElfEndian::Big);
+}
+
+#[test]
 fn boot_image_detects_unsupported_elf_encoding() {
     let mut elf = elf64_image(
         0x8000,
@@ -351,12 +502,12 @@ fn boot_image_detects_unsupported_elf_encoding() {
         }],
         &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
     );
-    elf[5] = 2;
+    elf[5] = 3;
 
     assert_eq!(
         BootImage::from_elf(&elf).unwrap_err(),
         BootError::InvalidElf {
-            reason: BootElfError::UnsupportedEncoding { encoding: 2 },
+            reason: BootElfError::UnsupportedEncoding { encoding: 3 },
         },
     );
 }

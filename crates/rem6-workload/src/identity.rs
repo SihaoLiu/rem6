@@ -1,4 +1,6 @@
-use rem6_boot::{BootElfArchitecture, BootElfClass, BootElfMetadata, BootElfOperatingSystem};
+use rem6_boot::{
+    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfMetadata, BootElfOperatingSystem,
+};
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
@@ -1086,6 +1088,7 @@ fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
         Some(metadata) => {
             hash_u64(hash, 1);
             hash_elf_class(hash, metadata.class());
+            hash_elf_endian(hash, metadata.endian());
             hash_u64(hash, u64::from(metadata.machine()));
             hash_u64(hash, u64::from(metadata.os_abi()));
             hash_u64(hash, u64::from(metadata.flags()));
@@ -1100,6 +1103,14 @@ fn hash_elf_class(hash: &mut u64, class: BootElfClass) {
     let value = match class {
         BootElfClass::Class32 => 1,
         BootElfClass::Class64 => 2,
+    };
+    hash_u64(hash, value);
+}
+
+fn hash_elf_endian(hash: &mut u64, endian: BootElfEndian) {
+    let value = match endian {
+        BootElfEndian::Little => 1,
+        BootElfEndian::Big => 2,
     };
     hash_u64(hash, value);
 }
