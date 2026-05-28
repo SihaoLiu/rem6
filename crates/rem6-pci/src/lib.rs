@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use rem6_interrupt::InterruptLineId;
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 mod bar;
@@ -248,7 +249,18 @@ pub enum PciInterruptPin {
 }
 
 impl PciInterruptPin {
-    const fn config_value(self) -> u8 {
+    pub const fn from_config_value(value: u8) -> Result<Self, PciError> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::IntA),
+            2 => Ok(Self::IntB),
+            3 => Ok(Self::IntC),
+            4 => Ok(Self::IntD),
+            _ => Err(PciError::InvalidLegacyInterruptPinValue { value }),
+        }
+    }
+
+    pub const fn config_value(self) -> u8 {
         match self {
             Self::None => 0,
             Self::IntA => 1,
@@ -346,6 +358,25 @@ impl PciEndpointConfig {
 
     pub const fn class(&self) -> PciClassCode {
         self.class
+    }
+
+    pub const fn legacy_interrupt_line(&self) -> u8 {
+        self.config[PCI_INTERRUPT_LINE_OFFSET]
+    }
+
+    pub fn legacy_interrupt_pin(&self) -> Result<PciInterruptPin, PciError> {
+        PciInterruptPin::from_config_value(self.config[PCI_INTERRUPT_PIN_OFFSET])
+    }
+
+    pub fn legacy_interrupt_path(&self) -> Result<PciLegacyInterruptPath, PciError> {
+        PciLegacyInterruptPath::new(self.function, self.legacy_interrupt_pin()?)
+    }
+
+    pub fn assign_legacy_interrupt_line(&mut self, line: InterruptLineId) -> Result<(), PciError> {
+        let line = u8::try_from(line.get())
+            .map_err(|_| PciError::LegacyInterruptConfigLineOverflow { line })?;
+        self.config[PCI_INTERRUPT_LINE_OFFSET] = line;
+        Ok(())
     }
 
     pub fn install_bar(&mut self, spec: PciBarSpec) -> Result<(), PciError> {

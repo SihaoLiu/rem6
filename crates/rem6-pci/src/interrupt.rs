@@ -8,7 +8,7 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, SchedulerContext, Tick,
 };
 
-use crate::{PciError, PciFunctionAddress, PciInterruptPin};
+use crate::{PciEndpointConfig, PciError, PciFunctionAddress, PciInterruptPin};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PciLegacyInterruptPolicy {
@@ -476,6 +476,13 @@ impl PciLegacyInterruptRouter {
         )
     }
 
+    pub fn route_for_endpoint(
+        &self,
+        endpoint: &PciEndpointConfig,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        self.route_for_path(&endpoint.legacy_interrupt_path()?)
+    }
+
     pub fn port(
         &self,
         function: PciFunctionAddress,
@@ -491,6 +498,23 @@ impl PciLegacyInterruptRouter {
     ) -> Result<PciLegacyInterruptPort, PciError> {
         let route = self.route_for_path(path)?;
         self.port_for_route(route)
+    }
+
+    pub fn port_for_endpoint(
+        &self,
+        endpoint: &PciEndpointConfig,
+    ) -> Result<PciLegacyInterruptPort, PciError> {
+        let route = self.route_for_endpoint(endpoint)?;
+        self.port_for_route(route)
+    }
+
+    pub fn assign_endpoint_interrupt_line(
+        &self,
+        endpoint: &mut PciEndpointConfig,
+    ) -> Result<PciLegacyInterruptRoute, PciError> {
+        let route = self.route_for_endpoint(endpoint)?;
+        endpoint.assign_legacy_interrupt_line(route.line())?;
+        Ok(route)
     }
 
     fn port_for_route(

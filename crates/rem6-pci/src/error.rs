@@ -136,9 +136,15 @@ pub enum PciError {
     MissingLegacyInterruptPin {
         function: PciFunctionAddress,
     },
+    InvalidLegacyInterruptPinValue {
+        value: u8,
+    },
     LegacyInterruptLineOverflow {
         base: rem6_interrupt::InterruptLineId,
         index: u64,
+    },
+    LegacyInterruptConfigLineOverflow {
+        line: rem6_interrupt::InterruptLineId,
     },
     DuplicateLegacyInterruptRoutingEntry {
         function: PciFunctionAddress,
@@ -472,11 +478,19 @@ impl fmt::Display for PciError {
             Self::MissingLegacyInterruptPin { function } => {
                 write!(f, "PCI function {:?} has no legacy interrupt pin", function)
             }
+            Self::InvalidLegacyInterruptPinValue { value } => {
+                write!(f, "PCI legacy interrupt pin value {value} is outside 0..=4")
+            }
             Self::LegacyInterruptLineOverflow { base, index } => write!(
                 f,
                 "PCI legacy interrupt line base {} plus index {} overflows",
                 base.get(),
                 index
+            ),
+            Self::LegacyInterruptConfigLineOverflow { line } => write!(
+                f,
+                "PCI legacy interrupt line {} cannot fit in config-space line byte",
+                line.get()
             ),
             Self::DuplicateLegacyInterruptRoutingEntry { function, pin } => write!(
                 f,

@@ -6,10 +6,10 @@ use rem6_interrupt::{
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_pci::{
-    PciError, PciFunctionAddress, PciInterruptPin, PciLegacyInterruptMapper,
-    PciLegacyInterruptPath, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
-    PciLegacyInterruptRouter, PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable,
-    PciLegacyInterruptRoutingTableSnapshot,
+    PciClassCode, PciDeviceIdentity, PciEndpointConfig, PciError, PciFunctionAddress,
+    PciInterruptPin, PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
+    PciLegacyInterruptPort, PciLegacyInterruptRouter, PciLegacyInterruptRoutingEntry,
+    PciLegacyInterruptRoutingTable, PciLegacyInterruptRoutingTableSnapshot,
 };
 
 fn function(device: u8) -> PciFunctionAddress {
@@ -345,6 +345,61 @@ fn pci_legacy_interrupt_router_builds_ports_from_snapshot_routes() {
         &[InterruptEvent::routed(
             8,
             InterruptLineId::new(48),
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+}
+
+#[test]
+fn pci_legacy_interrupt_router_builds_ports_from_endpoint_config() {
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let mut endpoint = PciEndpointConfig::new(
+        PciFunctionAddress::new(0, 6, 0).unwrap(),
+        PciDeviceIdentity::new(0x1234, 0xabcd),
+        PciClassCode::new(0x02, 0x00, 0x01, 0x07),
+    )
+    .with_interrupt(14, PciInterruptPin::IntB);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let router = PciLegacyInterruptRouter::new(
+        PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DevicePinModulo)),
+        InterruptTargetId::new(0),
+        cpu,
+        2,
+        Arc::clone(&controller),
+    )
+    .unwrap();
+
+    let route = router.route_for_endpoint(&endpoint).unwrap();
+    assert_eq!(route.function(), endpoint.function());
+    assert_eq!(route.pin(), PciInterruptPin::IntB);
+    assert_eq!(route.line(), InterruptLineId::new(35));
+
+    let assigned_route = router
+        .assign_endpoint_interrupt_line(&mut endpoint)
+        .unwrap();
+    assert_eq!(assigned_route, route);
+    assert_eq!(endpoint.legacy_interrupt_line(), 35);
+
+    let port = router.port_for_endpoint(&endpoint).unwrap();
+    let source = InterruptSourceId::new(85);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(pci, 7, move |context| {
+            port.post(context, source).unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            9,
+            InterruptLineId::new(35),
             InterruptTargetId::new(0),
             cpu,
             source,

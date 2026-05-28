@@ -1,3 +1,4 @@
+use rem6_interrupt::InterruptLineId;
 use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciClassCode, PciConfigOffset,
@@ -53,6 +54,61 @@ fn pci_endpoint_config_exposes_type0_identity_and_rejects_read_only_writes() {
             offset: PciConfigOffset::new(0x00).unwrap(),
             size: AccessSize::new(2).unwrap(),
         })
+    );
+}
+
+#[test]
+fn pci_endpoint_config_exposes_typed_legacy_interrupt_path() {
+    let endpoint = network_endpoint();
+
+    assert_eq!(endpoint.legacy_interrupt_line(), 11);
+    assert_eq!(endpoint.legacy_interrupt_pin(), Ok(PciInterruptPin::IntA));
+    let path = endpoint.legacy_interrupt_path().unwrap();
+    assert_eq!(path.endpoint_function(), endpoint.function());
+    assert_eq!(path.endpoint_pin(), PciInterruptPin::IntA);
+    assert_eq!(path.root_function(), endpoint.function());
+    assert_eq!(path.root_pin(), PciInterruptPin::IntA);
+    assert!(path.upstream_bridges().is_empty());
+
+    let mut reassigned = endpoint.clone();
+    reassigned
+        .write_config(PciConfigOffset::new(0x3c).unwrap(), &[17])
+        .unwrap();
+    assert_eq!(reassigned.legacy_interrupt_line(), 17);
+    assert_eq!(reassigned.legacy_interrupt_pin(), Ok(PciInterruptPin::IntA));
+    reassigned
+        .assign_legacy_interrupt_line(InterruptLineId::new(48))
+        .unwrap();
+    assert_eq!(reassigned.legacy_interrupt_line(), 48);
+    assert_eq!(
+        reassigned.read_config(
+            PciConfigOffset::new(0x3c).unwrap(),
+            AccessSize::new(1).unwrap()
+        ),
+        Ok(vec![48])
+    );
+    assert_eq!(
+        reassigned.assign_legacy_interrupt_line(InterruptLineId::new(256)),
+        Err(PciError::LegacyInterruptConfigLineOverflow {
+            line: InterruptLineId::new(256),
+        })
+    );
+
+    let no_pin = PciEndpointConfig::new(
+        PciFunctionAddress::new(0, 4, 0).unwrap(),
+        PciDeviceIdentity::new(0x1234, 0xabcd),
+        PciClassCode::new(0x02, 0x00, 0x01, 0x07),
+    );
+    assert_eq!(no_pin.legacy_interrupt_pin(), Ok(PciInterruptPin::None));
+    assert_eq!(
+        no_pin.legacy_interrupt_path(),
+        Err(PciError::MissingLegacyInterruptPin {
+            function: no_pin.function(),
+        })
+    );
+    assert_eq!(
+        PciInterruptPin::from_config_value(5),
+        Err(PciError::InvalidLegacyInterruptPinValue { value: 5 })
     );
 }
 

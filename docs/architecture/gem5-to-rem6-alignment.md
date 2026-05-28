@@ -1399,8 +1399,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   zero-line rejection, bridge path swizzling across upstream functions,
   explicit root routing-table entries with fallback policies, deterministic
   routing-table ordering, snapshot/restore of platform routing tables, typed
-  router construction of endpoint-facing ports from bridge-swizzled paths,
-  idempotent interrupt-controller route registration, endpoint identity
+  endpoint config accessors for legacy interrupt line/pin fields, router
+  construction of endpoint-facing ports from endpoint config or bridge-swizzled
+  paths, typed assignment of resolved routing lines back into endpoint config
+  space, idempotent interrupt-controller route registration, endpoint identity
   preservation after root-line mapping, serial and parallel endpoint post/clear
   delivery through rem6-interrupt, and observable delivery errors when a
   parallel clear targets a mismatched source. PCI config and host tests cover
