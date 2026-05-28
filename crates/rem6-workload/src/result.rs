@@ -18,7 +18,7 @@ use crate::parallel_batch::{
     parallel_batch_streak_count_for_partition_set, strongest_parallel_batch_count,
     total_parallel_batch_activity_worker_count, WorkloadParallelBatchPartitionSet,
     WorkloadParallelBatchPartitionStreak, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord,
 };
 use crate::result_collect::{
     collect_parallel_partition_activities, collect_parallel_remote_flow_evidence,
@@ -33,6 +33,7 @@ use crate::result_partition_activity::{
 };
 mod batch_timeline;
 mod batch_worker_count;
+mod batch_worker_lane;
 mod data_cache;
 mod fabric_activity;
 mod full_system_parallel;
@@ -42,8 +43,10 @@ mod progress;
 mod progress_dma;
 mod remote_endpoints;
 mod wait_for_diagnostics;
+mod wait_for_edge_kind_window;
 mod wait_for_node_windows;
 
+pub use wait_for_edge_kind_window::WorkloadWaitForEdgeKindWindow;
 pub use wait_for_node_windows::{
     WorkloadWaitForBlockedNodeWindow, WorkloadWaitForTargetNodeWindow,
 };
@@ -157,67 +160,6 @@ impl WorkloadDramQosRequestorSummary {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct WorkloadWaitForEdgeKindWindow {
-    kind: WaitForEdgeKind,
-    edge_count: usize,
-    first_tick: Tick,
-    last_tick: Tick,
-}
-
-impl WorkloadWaitForEdgeKindWindow {
-    pub const fn new(
-        kind: WaitForEdgeKind,
-        edge_count: usize,
-        first_tick: Tick,
-        last_tick: Tick,
-    ) -> Self {
-        let stored_first_tick = if first_tick <= last_tick {
-            first_tick
-        } else {
-            last_tick
-        };
-        let stored_last_tick = if first_tick <= last_tick {
-            last_tick
-        } else {
-            first_tick
-        };
-        Self {
-            kind,
-            edge_count,
-            first_tick: stored_first_tick,
-            last_tick: stored_last_tick,
-        }
-    }
-
-    pub const fn kind(&self) -> WaitForEdgeKind {
-        self.kind
-    }
-
-    pub const fn edge_count(&self) -> usize {
-        self.edge_count
-    }
-
-    pub const fn first_tick(&self) -> Tick {
-        self.first_tick
-    }
-
-    pub const fn last_tick(&self) -> Tick {
-        self.last_tick
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.edge_count == 0
-    }
-
-    pub(crate) fn merge(&mut self, other: Self) {
-        debug_assert_eq!(self.kind, other.kind);
-        self.edge_count = self.edge_count.saturating_add(other.edge_count);
-        self.first_tick = self.first_tick.min(other.first_tick);
-        self.last_tick = self.last_tick.max(other.last_tick);
-    }
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorkloadParallelExecutionSummary {
     scheduler_epoch_count: usize,
@@ -234,6 +176,7 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_progress_transitions: Vec<ParallelProgressTransitionRecord>,
     parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    parallel_scheduler_planned_batch_worker_lanes: Vec<WorkloadParallelBatchWorkerLaneRecord>,
     parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     parallel_scheduler_batch_partition_streaks: Vec<WorkloadParallelBatchPartitionStreak>,
@@ -258,6 +201,8 @@ pub struct WorkloadParallelExecutionSummary {
     data_cache_parallel_scheduler_total_workers: usize,
     data_cache_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     data_cache_parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    data_cache_parallel_scheduler_planned_batch_worker_lanes:
+        Vec<WorkloadParallelBatchWorkerLaneRecord>,
     data_cache_parallel_scheduler_batch_worker_counts: Vec<WorkloadParallelBatchWorkerCount>,
     data_cache_parallel_scheduler_batch_partition_sets: Vec<WorkloadParallelBatchPartitionSet>,
     data_cache_parallel_scheduler_batch_partition_streaks:
@@ -272,6 +217,8 @@ pub struct WorkloadParallelExecutionSummary {
     full_system_parallel_scheduler_batch_worker_tick_streaks: Vec<(usize, Tick)>,
     full_system_parallel_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     full_system_parallel_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    full_system_parallel_scheduler_planned_batch_worker_lanes:
+        Vec<WorkloadParallelBatchWorkerLaneRecord>,
     planned_batch_worker_capacity_ticks: batch_timeline::WorkloadPlannedBatchWorkerCapacityTicks,
     recorded_batch_worker_capacity_ticks: batch_timeline::WorkloadRecordedBatchWorkerCapacityTicks,
     recorded_batch_worker_slot_tick_summaries:
@@ -368,6 +315,7 @@ pub struct WorkloadParallelExecutionSummary {
     active_gpu_dma_device_count: usize,
     gpu_dma_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     gpu_dma_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    gpu_dma_scheduler_planned_batch_worker_lanes: Vec<WorkloadParallelBatchWorkerLaneRecord>,
     gpu_dma_scheduler_epoch_count: usize,
     gpu_dma_scheduler_empty_epoch_count: usize,
     gpu_dma_scheduler_dispatch_count: usize,
@@ -406,6 +354,8 @@ pub struct WorkloadParallelExecutionSummary {
     active_accelerator_dma_device_count: usize,
     accelerator_dma_scheduler_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
     accelerator_dma_scheduler_planned_batch_timeline: Vec<WorkloadParallelBatchTimelineRecord>,
+    accelerator_dma_scheduler_planned_batch_worker_lanes:
+        Vec<WorkloadParallelBatchWorkerLaneRecord>,
     accelerator_dma_scheduler_epoch_count: usize,
     accelerator_dma_scheduler_empty_epoch_count: usize,
     accelerator_dma_scheduler_dispatch_count: usize,

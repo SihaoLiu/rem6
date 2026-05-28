@@ -29,6 +29,7 @@ use crate::{
     WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
     WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization,
+    WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
     WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadLinuxBootHandoff, WorkloadManifest,
     WorkloadManifestIdentity, WorkloadResource, WorkloadResult, WorkloadTopology,
@@ -99,6 +100,8 @@ pub struct WorkloadReplayPlan {
         Vec<WorkloadExpectedPlannedParallelBatchIdleWorkerTicks>,
     pub(crate) expected_planned_parallel_batch_worker_slot_ticks:
         Vec<WorkloadExpectedPlannedParallelBatchWorkerSlotTicks>,
+    pub(crate) expected_planned_parallel_batch_worker_lane_partition_ticks:
+        Vec<WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks>,
     pub(crate) expected_parallel_batch_partition_sets:
         Vec<WorkloadExpectedParallelBatchPartitionSet>,
     pub(crate) expected_parallel_batch_partition_streaks:
@@ -218,6 +221,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_planned_parallel_batch_worker_slot_ticks: manifest
                 .expected_planned_parallel_batch_worker_slot_ticks()
+                .to_vec(),
+            expected_planned_parallel_batch_worker_lane_partition_ticks: manifest
+                .expected_planned_parallel_batch_worker_lane_partition_ticks()
                 .to_vec(),
             expected_parallel_batch_partition_sets: manifest
                 .expected_parallel_batch_partition_sets()
@@ -658,6 +664,9 @@ impl WorkloadReplayPlan {
         replay_verify::verify_expected_planned_parallel_batch_utilization(self, result)?;
         replay_verify::verify_expected_planned_parallel_batch_idle_worker_ticks(self, result)?;
         replay_verify::verify_expected_planned_parallel_batch_worker_slot_ticks(self, result)?;
+        replay_verify::verify_expected_planned_parallel_batch_worker_lane_partition_ticks(
+            self, result,
+        )?;
         replay_verify::verify_expected_parallel_batch_partition_sets(self, result)?;
         replay_verify::verify_expected_parallel_batch_partition_streaks(self, result)?;
         replay_verify::verify_expected_parallel_batch_timeline_records(self, result)?;

@@ -8,10 +8,13 @@ use rem6_workload::{
     WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
     WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization,
+    WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadId, WorkloadParallelBatchScope,
-    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelExecutionSummary, WorkloadPlannedParallelBatchIdleExpectationError,
+    WorkloadParallelBatchTimelineRecord, WorkloadParallelBatchWorkerLaneRecord,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelExecutionSummary,
+    WorkloadPlannedParallelBatchIdleExpectationError,
     WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError,
     WorkloadPlannedParallelBatchWorkerSlotExpectationError, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
@@ -63,6 +66,16 @@ fn timeline_record(
     worker_count: usize,
 ) -> WorkloadParallelBatchTimelineRecord {
     WorkloadParallelBatchTimelineRecord::new(scope, start_tick, horizon, partitions, worker_count)
+}
+
+fn planned_lane_record(
+    scope: WorkloadParallelBatchScope,
+    lane: usize,
+    partition: PartitionId,
+    start_tick: u64,
+    horizon: u64,
+) -> WorkloadParallelBatchWorkerLaneRecord {
+    WorkloadParallelBatchWorkerLaneRecord::new(scope, lane, partition, start_tick, horizon)
 }
 
 #[test]
@@ -367,6 +380,168 @@ fn workload_replay_plan_checks_planned_parallel_batch_worker_slot_ticks() {
             },
         ),
     );
+}
+
+#[test]
+fn workload_summary_preserves_planned_parallel_batch_worker_lane_records() {
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_worker_lanes([
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 1, partition(1), 2, 8),
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 0, partition(0), 0, 8),
+        ])
+        .with_data_cache_parallel_scheduler_planned_batch_worker_lanes([planned_lane_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            0,
+            partition(2),
+            8,
+            12,
+        )]);
+
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_lanes(),
+        &[
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 0, partition(0), 0, 8,),
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 1, partition(1), 2, 8,),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_lanes(),
+        vec![
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 0, partition(0), 0, 8,),
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 1, partition(1), 2, 8,),
+            planned_lane_record(
+                WorkloadParallelBatchScope::DataCacheScheduler,
+                0,
+                partition(2),
+                8,
+                12,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_lane_tick_summaries(),
+        vec![(0, 8), (1, 6)],
+    );
+    assert_eq!(
+        summary.parallel_scheduler_planned_batch_worker_lane_partition_ticks(1, partition(1)),
+        6,
+    );
+}
+
+#[test]
+fn workload_replay_plan_checks_planned_parallel_batch_worker_lane_partition_ticks() {
+    let plan = replay_plan()
+        .add_expected_planned_parallel_batch_worker_lane_partition_ticks(
+            WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks::new(
+                WorkloadParallelBatchWorkerScope::PlannedFullSystem,
+                1,
+                partition(1),
+                6,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_worker_lanes([
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 0, partition(0), 0, 8),
+            planned_lane_record(WorkloadParallelBatchScope::Scheduler, 1, partition(1), 2, 8),
+        ])
+        .with_data_cache_parallel_scheduler_planned_batch_worker_lanes([planned_lane_record(
+            WorkloadParallelBatchScope::DataCacheScheduler,
+            0,
+            partition(2),
+            8,
+            12,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    plan.verify_result(&result).unwrap();
+
+    let wrong_partition = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_worker_lanes([planned_lane_record(
+            WorkloadParallelBatchScope::Scheduler,
+            1,
+            partition(2),
+            2,
+            8,
+        )]);
+    let wrong_partition_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(wrong_partition);
+
+    assert_eq!(
+        plan.verify_result(&wrong_partition_result).unwrap_err(),
+        WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+            WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::BelowMinimum {
+                scope: WorkloadParallelBatchWorkerScope::PlannedFullSystem,
+                worker_lane: 1,
+                partition: partition(1),
+                minimum_ticks: 6,
+                actual_ticks: 0,
+            },
+        ),
+    );
+}
+
+#[test]
+fn workload_planned_parallel_batch_worker_lane_partition_ticks_reject_zero_minimum() {
+    let error = WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks::new(
+        WorkloadParallelBatchWorkerScope::PlannedScheduler,
+        0,
+        partition(0),
+        0,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+            WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::ZeroMinimumTicks {
+                scope: WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                worker_lane: 0,
+                partition: partition(0),
+            },
+        ),
+    );
+}
+
+#[test]
+fn workload_manifest_carries_planned_parallel_batch_worker_lane_partition_ticks() {
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("planned-worker-lane-manifest"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_planned_parallel_batch_worker_lane_partition_ticks(
+                WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks::new(
+                    WorkloadParallelBatchWorkerScope::PlannedScheduler,
+                    0,
+                    partition(0),
+                    8,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_worker_lanes([planned_lane_record(
+            WorkloadParallelBatchScope::Scheduler,
+            0,
+            partition(0),
+            0,
+            8,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.expected_planned_parallel_batch_worker_lane_partition_ticks()
+            .len(),
+        1
+    );
+    plan.verify_result(&result).unwrap();
 }
 
 #[test]

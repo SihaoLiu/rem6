@@ -3,6 +3,7 @@ use rem6_kernel::ParallelBatchUtilizationRatio;
 use crate::{
     WorkloadError, WorkloadPlannedParallelBatchIdleExpectationError,
     WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError,
     WorkloadPlannedParallelBatchWorkerSlotExpectationError, WorkloadReplayPlan, WorkloadResult,
 };
 
@@ -312,6 +313,58 @@ pub(crate) fn verify_expected_planned_parallel_batch_worker_slot_ticks(
                     actual_idle_ticks,
                 },
             ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_expected_planned_parallel_batch_worker_lane_partition_ticks(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let expected_lanes = plan.expected_planned_parallel_batch_worker_lane_partition_ticks();
+    if expected_lanes.is_empty() {
+        return Ok(());
+    }
+    let Some(summary) = result.parallel_execution_summary() else {
+        let expected = expected_lanes[0];
+        return Err(
+            WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::MissingSummary {
+                    scope: expected.scope(),
+                    worker_lane: expected.worker_lane(),
+                    partition: expected.partition(),
+                    minimum_ticks: expected.minimum_ticks(),
+                },
+            ),
+        );
+    };
+
+    for expected in expected_lanes {
+        let Some(actual_ticks) = expected.actual_ticks(summary) else {
+            return Err(
+                WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::MissingSummary {
+                        scope: expected.scope(),
+                        worker_lane: expected.worker_lane(),
+                        partition: expected.partition(),
+                        minimum_ticks: expected.minimum_ticks(),
+                    },
+                ),
+            );
+        };
+        if actual_ticks < expected.minimum_ticks() {
+            return Err(
+                WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::BelowMinimum {
+                        scope: expected.scope(),
+                        worker_lane: expected.worker_lane(),
+                        partition: expected.partition(),
+                        minimum_ticks: expected.minimum_ticks(),
+                        actual_ticks,
+                    },
+                ),
+            );
         }
     }
     Ok(())

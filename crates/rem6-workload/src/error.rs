@@ -11,6 +11,7 @@ use crate::{
     WorkloadParallelProgressTransitionExpectationError, WorkloadParallelRemoteFlowScope,
     WorkloadParallelSchedulerScope, WorkloadPlannedParallelBatchIdleExpectationError,
     WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError,
     WorkloadPlannedParallelBatchWorkerSlotExpectationError, WorkloadResourceAcquisitionField,
     WorkloadResourceActivityScope, WorkloadResourceConstructionField, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
@@ -1162,6 +1163,9 @@ pub enum WorkloadError {
     PlannedParallelBatchIdleExpectation(WorkloadPlannedParallelBatchIdleExpectationError),
     PlannedParallelBatchWorkerSlotExpectation(
         WorkloadPlannedParallelBatchWorkerSlotExpectationError,
+    ),
+    PlannedParallelBatchWorkerLanePartitionExpectation(
+        WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError,
     ),
     InvalidExpectedParallelBatchPartitionSet {
         scope: WorkloadParallelBatchPartitionScope,

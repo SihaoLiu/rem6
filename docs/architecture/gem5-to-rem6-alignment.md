@@ -56,9 +56,11 @@ isolated bugs:
   horizon, and duration, so the simulator can audit which host worker would own
   each ready partition before callbacks run instead of proving multicore use
   only from aggregate occupancy. Workload replay summaries carry planned
-  capacity totals into result artifacts and derive planned worker-ticks, idle
-  ticks, and utilization ratios from the preserved planned timelines, so replay
-  diagnostics keep the same pre-dispatch authority. Workload results
+  capacity totals and planned worker-lane records into result artifacts, derive
+  planned worker-ticks, idle ticks, utilization ratios, and per-lane ticks from
+  preserved planned evidence, and let replay contracts require a specific
+  planned lane to cover a specific partition for a minimum tick budget. Replay
+  diagnostics therefore keep the same pre-dispatch authority. Workload results
   also carry recorded worker-capacity ticks, idle-worker ticks, utilization
   ratios, and per-worker-slot active/idle summaries separately from
   multi-worker parallel-evidence contracts. Kernel recorded
@@ -66,10 +68,10 @@ isolated bugs:
   utilization, and worker-slot occupancy evidence after callbacks and remote
   wakeups run, and `RiscvSystemRun` carries that recorded capacity evidence for
   CPU-scheduler, data-cache scheduler, and merged full-system scopes. Workload
-  manifests and replay plans can now require those planned
-  worker-slot active and idle tick budgets across CPU-scheduler, data-cache
-  scheduler, GPU DMA, accelerator DMA, combined DMA, and merged full-system
-  planned scopes.
+  manifests and replay plans can now require those planned worker-slot active
+  and idle tick budgets, plus planned worker-lane partition coverage, across
+  CPU-scheduler, data-cache scheduler, GPU DMA, accelerator DMA, combined DMA,
+  and merged full-system planned scopes.
   Heterogeneous DMA scheduler work also keeps exact typed batch timelines for
   GPU and accelerator read/write scheduler runs, so full-system occupancy
   checks and dedicated DMA scheduler timeline checks can validate when DMA work
@@ -659,6 +661,12 @@ Implementation evidence on 2026-05-26:
   scheduler can therefore prove planned multicore occupancy before spawning
   worker threads, avoiding gem5-style reliance on post-hoc global event-queue
   traces to infer parallelism.
+- Workload planned-batch summaries now preserve scoped planned worker-lane
+  records for CPU scheduler, data-cache scheduler, GPU DMA, accelerator DMA,
+  combined DMA, and merged full-system views. Replay plans can require a
+  particular host lane to own a particular partition for a minimum number of
+  planned ticks, so pre-dispatch multicore evidence survives into workload
+  artifacts instead of disappearing after kernel planning.
 - Recorded parallel runs now preserve that planned batch shape alongside the
   actual executed batches. Epoch and run summaries expose planned worker-count
   histograms, partition-set histograms, total planned workers, maximum planned

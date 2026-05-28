@@ -39,6 +39,16 @@ pub struct WorkloadParallelBatchTimelineRecord {
     worker_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WorkloadParallelBatchWorkerLaneRecord {
+    scope: WorkloadParallelBatchScope,
+    lane: usize,
+    partition: PartitionId,
+    start_tick: Tick,
+    horizon: Tick,
+    duration_ticks: Tick,
+}
+
 impl WorkloadParallelBatchTimelineRecord {
     pub fn new(
         scope: WorkloadParallelBatchScope,
@@ -90,6 +100,53 @@ impl WorkloadParallelBatchTimelineRecord {
 
     pub fn is_parallel_evidence(&self) -> bool {
         !self.is_empty() && self.worker_count >= 2 && self.partitions.len() >= 2
+    }
+}
+
+impl WorkloadParallelBatchWorkerLaneRecord {
+    pub const fn new(
+        scope: WorkloadParallelBatchScope,
+        lane: usize,
+        partition: PartitionId,
+        start_tick: Tick,
+        horizon: Tick,
+    ) -> Self {
+        Self {
+            scope,
+            lane,
+            partition,
+            start_tick,
+            horizon,
+            duration_ticks: horizon.saturating_sub(start_tick),
+        }
+    }
+
+    pub const fn scope(self) -> WorkloadParallelBatchScope {
+        self.scope
+    }
+
+    pub const fn lane(self) -> usize {
+        self.lane
+    }
+
+    pub const fn partition(self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn start_tick(self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn horizon(self) -> Tick {
+        self.horizon
+    }
+
+    pub const fn duration_ticks(self) -> Tick {
+        self.duration_ticks
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.horizon <= self.start_tick
     }
 }
 
@@ -226,6 +283,52 @@ pub(crate) fn collect_parallel_batch_timeline(
         .collect::<Vec<_>>();
     sort_parallel_batch_timeline(&mut timeline);
     timeline
+}
+
+pub(crate) fn collect_parallel_batch_worker_lane_records(
+    records: impl IntoIterator<Item = WorkloadParallelBatchWorkerLaneRecord>,
+) -> Vec<WorkloadParallelBatchWorkerLaneRecord> {
+    let mut records = records
+        .into_iter()
+        .filter(|record| !record.is_empty())
+        .collect::<Vec<_>>();
+    records.sort_by_key(|record| {
+        (
+            record.start_tick(),
+            record.horizon(),
+            record.scope().sort_rank(),
+            record.lane(),
+            record.partition(),
+        )
+    });
+    records
+}
+
+pub(crate) fn collect_parallel_batch_worker_lane_tick_summaries(
+    records: impl IntoIterator<Item = WorkloadParallelBatchWorkerLaneRecord>,
+) -> Vec<(usize, Tick)> {
+    let mut by_lane = BTreeMap::<usize, Tick>::new();
+    for record in records {
+        if record.is_empty() {
+            continue;
+        }
+        let ticks = by_lane.entry(record.lane()).or_default();
+        *ticks = ticks.saturating_add(record.duration_ticks());
+    }
+    by_lane.into_iter().collect()
+}
+
+pub(crate) fn parallel_batch_worker_lane_partition_ticks(
+    records: impl IntoIterator<Item = WorkloadParallelBatchWorkerLaneRecord>,
+    lane: usize,
+    partition: PartitionId,
+) -> Tick {
+    records
+        .into_iter()
+        .filter(|record| !record.is_empty())
+        .filter(|record| record.lane() == lane && record.partition() == partition)
+        .map(WorkloadParallelBatchWorkerLaneRecord::duration_ticks)
+        .fold(0, Tick::saturating_add)
 }
 
 pub(crate) fn collect_parallel_batch_worker_counts_from_timeline(

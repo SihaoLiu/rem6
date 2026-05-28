@@ -1,6 +1,6 @@
 use std::fmt;
 
-use rem6_kernel::{ParallelBatchUtilizationRatio, Tick};
+use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, Tick};
 
 use crate::{
     parallel_batch::{
@@ -534,6 +534,14 @@ pub struct WorkloadExpectedPlannedParallelBatchWorkerSlotTicks {
     maximum_idle_ticks: Tick,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks {
+    scope: WorkloadParallelBatchWorkerScope,
+    worker_lane: usize,
+    partition: PartitionId,
+    minimum_ticks: Tick,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkloadPlannedParallelBatchUtilizationExpectationError {
     InvalidScope {
@@ -604,6 +612,36 @@ pub enum WorkloadPlannedParallelBatchWorkerSlotExpectationError {
         worker_slot: usize,
         maximum_idle_ticks: Tick,
         actual_idle_ticks: Tick,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError {
+    InvalidScope {
+        scope: WorkloadParallelBatchWorkerScope,
+    },
+    Duplicate {
+        scope: WorkloadParallelBatchWorkerScope,
+        worker_lane: usize,
+        partition: PartitionId,
+    },
+    ZeroMinimumTicks {
+        scope: WorkloadParallelBatchWorkerScope,
+        worker_lane: usize,
+        partition: PartitionId,
+    },
+    MissingSummary {
+        scope: WorkloadParallelBatchWorkerScope,
+        worker_lane: usize,
+        partition: PartitionId,
+        minimum_ticks: Tick,
+    },
+    BelowMinimum {
+        scope: WorkloadParallelBatchWorkerScope,
+        worker_lane: usize,
+        partition: PartitionId,
+        minimum_ticks: Tick,
+        actual_ticks: Tick,
     },
 }
 
@@ -725,6 +763,61 @@ impl fmt::Display for WorkloadPlannedParallelBatchWorkerSlotExpectationError {
                 formatter,
                 "expected {} planned parallel batch worker slot {worker_slot} idle ticks to stay at or below {maximum_idle_ticks}, got {actual_idle_ticks}",
                 scope.as_str()
+            ),
+        }
+    }
+}
+
+impl fmt::Display for WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidScope { scope } => write!(
+                formatter,
+                "expected planned parallel batch worker lane scope {} must expose planned worker lanes",
+                scope.as_str()
+            ),
+            Self::Duplicate {
+                scope,
+                worker_lane,
+                partition,
+            } => write!(
+                formatter,
+                "expected {} planned parallel batch worker lane {worker_lane} partition {} is already declared",
+                scope.as_str(),
+                partition.index()
+            ),
+            Self::ZeroMinimumTicks {
+                scope,
+                worker_lane,
+                partition,
+            } => write!(
+                formatter,
+                "expected {} planned parallel batch worker lane {worker_lane} partition {} must require at least one tick",
+                scope.as_str(),
+                partition.index()
+            ),
+            Self::MissingSummary {
+                scope,
+                worker_lane,
+                partition,
+                minimum_ticks,
+            } => write!(
+                formatter,
+                "missing planned parallel batch worker lane summary for {} lane {worker_lane} partition {} with at least {minimum_ticks} ticks",
+                scope.as_str(),
+                partition.index()
+            ),
+            Self::BelowMinimum {
+                scope,
+                worker_lane,
+                partition,
+                minimum_ticks,
+                actual_ticks,
+            } => write!(
+                formatter,
+                "expected {} planned parallel batch worker lane {worker_lane} partition {} ticks to reach at least {minimum_ticks}, got {actual_ticks}",
+                scope.as_str(),
+                partition.index()
             ),
         }
     }
@@ -935,6 +1028,104 @@ impl WorkloadExpectedPlannedParallelBatchWorkerSlotTicks {
     }
 }
 
+impl WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks {
+    pub fn new(
+        scope: impl Into<WorkloadParallelBatchWorkerScope>,
+        worker_lane: usize,
+        partition: PartitionId,
+        minimum_ticks: Tick,
+    ) -> Result<Self, WorkloadError> {
+        let scope = scope.into();
+        if !is_planned_capacity_scope(scope) {
+            return Err(
+                WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::InvalidScope {
+                        scope,
+                    },
+                ),
+            );
+        }
+        if minimum_ticks == 0 {
+            return Err(
+                WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::ZeroMinimumTicks {
+                        scope,
+                        worker_lane,
+                        partition,
+                    },
+                ),
+            );
+        }
+        Ok(Self {
+            scope,
+            worker_lane,
+            partition,
+            minimum_ticks,
+        })
+    }
+
+    pub const fn scope(self) -> WorkloadParallelBatchWorkerScope {
+        self.scope
+    }
+
+    pub const fn worker_lane(self) -> usize {
+        self.worker_lane
+    }
+
+    pub const fn partition(self) -> PartitionId {
+        self.partition
+    }
+
+    pub const fn minimum_ticks(self) -> Tick {
+        self.minimum_ticks
+    }
+
+    pub(crate) const fn sort_key(self) -> (u8, usize, u32) {
+        (
+            self.scope.sort_rank(),
+            self.worker_lane,
+            self.partition.index(),
+        )
+    }
+
+    pub(crate) fn actual_ticks(self, summary: &WorkloadParallelExecutionSummary) -> Option<Tick> {
+        let ticks = match self.scope {
+            WorkloadParallelBatchWorkerScope::PlannedScheduler => summary
+                .parallel_scheduler_planned_batch_worker_lane_partition_ticks(
+                    self.worker_lane,
+                    self.partition,
+                ),
+            WorkloadParallelBatchWorkerScope::PlannedDataCacheScheduler => summary
+                .data_cache_parallel_scheduler_planned_batch_worker_lane_partition_ticks(
+                    self.worker_lane,
+                    self.partition,
+                ),
+            WorkloadParallelBatchWorkerScope::PlannedGpuDmaScheduler => summary
+                .gpu_dma_scheduler_planned_batch_worker_lane_partition_ticks(
+                    self.worker_lane,
+                    self.partition,
+                ),
+            WorkloadParallelBatchWorkerScope::PlannedAcceleratorDmaScheduler => summary
+                .accelerator_dma_scheduler_planned_batch_worker_lane_partition_ticks(
+                    self.worker_lane,
+                    self.partition,
+                ),
+            WorkloadParallelBatchWorkerScope::PlannedDmaScheduler => summary
+                .dma_scheduler_planned_batch_worker_lane_partition_ticks(
+                    self.worker_lane,
+                    self.partition,
+                ),
+            WorkloadParallelBatchWorkerScope::PlannedFullSystem => summary
+                .full_system_parallel_scheduler_planned_batch_worker_lane_partition_ticks(
+                    self.worker_lane,
+                    self.partition,
+                ),
+            _ => return None,
+        };
+        Some(ticks)
+    }
+}
+
 const fn is_planned_capacity_scope(scope: WorkloadParallelBatchWorkerScope) -> bool {
     matches!(
         scope,
@@ -1033,6 +1224,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedPlannedParallelBatchWorkerSlotTicks] {
         &self.expected_planned_parallel_batch_worker_slot_ticks
+    }
+
+    pub fn expected_planned_parallel_batch_worker_lane_partition_ticks(
+        &self,
+    ) -> &[WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks] {
+        &self.expected_planned_parallel_batch_worker_lane_partition_ticks
     }
 }
 
@@ -1209,6 +1406,32 @@ impl WorkloadManifestBuilder {
         self.expected_planned_parallel_batch_worker_slot_ticks
             .push(expected);
         self.expected_planned_parallel_batch_worker_slot_ticks
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn add_expected_planned_parallel_batch_worker_lane_partition_ticks(
+        mut self,
+        expected: WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_planned_parallel_batch_worker_lane_partition_ticks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::Duplicate {
+                        scope: expected.scope(),
+                        worker_lane: expected.worker_lane(),
+                        partition: expected.partition(),
+                    },
+                ),
+            );
+        }
+        self.expected_planned_parallel_batch_worker_lane_partition_ticks
+            .push(expected);
+        self.expected_planned_parallel_batch_worker_lane_partition_ticks
             .sort_by_key(|expected| expected.sort_key());
         Ok(self)
     }
@@ -1437,5 +1660,37 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedPlannedParallelBatchWorkerSlotTicks] {
         &self.expected_planned_parallel_batch_worker_slot_ticks
+    }
+
+    pub fn add_expected_planned_parallel_batch_worker_lane_partition_ticks(
+        mut self,
+        expected: WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_planned_parallel_batch_worker_lane_partition_ticks
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(
+                WorkloadError::PlannedParallelBatchWorkerLanePartitionExpectation(
+                    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError::Duplicate {
+                        scope: expected.scope(),
+                        worker_lane: expected.worker_lane(),
+                        partition: expected.partition(),
+                    },
+                ),
+            );
+        }
+        self.expected_planned_parallel_batch_worker_lane_partition_ticks
+            .push(expected);
+        self.expected_planned_parallel_batch_worker_lane_partition_ticks
+            .sort_by_key(|expected| expected.sort_key());
+        Ok(self)
+    }
+
+    pub fn expected_planned_parallel_batch_worker_lane_partition_ticks(
+        &self,
+    ) -> &[WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks] {
+        &self.expected_planned_parallel_batch_worker_lane_partition_ticks
     }
 }

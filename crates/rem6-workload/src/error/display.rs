@@ -1055,6 +1055,9 @@ impl fmt::Display for WorkloadError {
             Self::PlannedParallelBatchWorkerSlotExpectation(error) => {
                 write!(formatter, "{error}")
             }
+            Self::PlannedParallelBatchWorkerLanePartitionExpectation(error) => {
+                write!(formatter, "{error}")
+            }
             Self::DuplicateExpectedCleanParallelDiagnostics { scope } => write!(
                 formatter,
                 "expected {} clean parallel diagnostics is already declared",

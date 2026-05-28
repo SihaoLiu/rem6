@@ -60,7 +60,7 @@ pub use manifest_identity::WorkloadManifestIdentity;
 pub use parallel_batch::{
     WorkloadParallelBatchPartitionSet, WorkloadParallelBatchPartitionStreak,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
-    WorkloadParallelBatchWorkerCount,
+    WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord,
 };
 pub use parallel_batch_partition_expectation::{
     WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
@@ -74,9 +74,11 @@ pub use parallel_batch_worker_count_expectation::{
     WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
     WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization,
+    WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadParallelBatchWorkerScope,
     WorkloadPlannedParallelBatchIdleExpectationError,
     WorkloadPlannedParallelBatchUtilizationExpectationError,
+    WorkloadPlannedParallelBatchWorkerLanePartitionExpectationError,
     WorkloadPlannedParallelBatchWorkerSlotExpectationError,
 };
 pub use parallel_diagnostic_expectation::{
@@ -216,6 +218,8 @@ pub struct WorkloadManifest {
         Vec<WorkloadExpectedPlannedParallelBatchIdleWorkerTicks>,
     expected_planned_parallel_batch_worker_slot_ticks:
         Vec<WorkloadExpectedPlannedParallelBatchWorkerSlotTicks>,
+    expected_planned_parallel_batch_worker_lane_partition_ticks:
+        Vec<WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -433,6 +437,8 @@ pub struct WorkloadManifestBuilder {
         Vec<WorkloadExpectedPlannedParallelBatchIdleWorkerTicks>,
     expected_planned_parallel_batch_worker_slot_ticks:
         Vec<WorkloadExpectedPlannedParallelBatchWorkerSlotTicks>,
+    expected_planned_parallel_batch_worker_lane_partition_ticks:
+        Vec<WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks>,
     expected_parallel_batch_partition_sets: Vec<WorkloadExpectedParallelBatchPartitionSet>,
     expected_parallel_batch_partition_streaks: Vec<WorkloadExpectedParallelBatchPartitionStreak>,
     expected_parallel_batch_timeline_records: Vec<WorkloadExpectedParallelBatchTimelineRecord>,
@@ -490,6 +496,7 @@ impl WorkloadManifestBuilder {
             expected_planned_parallel_batch_utilization: Vec::new(),
             expected_planned_parallel_batch_idle_worker_ticks: Vec::new(),
             expected_planned_parallel_batch_worker_slot_ticks: Vec::new(),
+            expected_planned_parallel_batch_worker_lane_partition_ticks: Vec::new(),
             expected_parallel_batch_partition_sets: Vec::new(),
             expected_parallel_batch_partition_streaks: Vec::new(),
             expected_parallel_batch_timeline_records: Vec::new(),
@@ -972,6 +979,8 @@ impl WorkloadManifestBuilder {
                 .expected_planned_parallel_batch_idle_worker_ticks,
             expected_planned_parallel_batch_worker_slot_ticks: &self
                 .expected_planned_parallel_batch_worker_slot_ticks,
+            expected_planned_parallel_batch_worker_lane_partition_ticks: &self
+                .expected_planned_parallel_batch_worker_lane_partition_ticks,
             expected_parallel_batch_partition_sets: &self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: &self
                 .expected_parallel_batch_partition_streaks,
@@ -1043,6 +1052,8 @@ impl WorkloadManifestBuilder {
                 .expected_planned_parallel_batch_idle_worker_ticks,
             expected_planned_parallel_batch_worker_slot_ticks: self
                 .expected_planned_parallel_batch_worker_slot_ticks,
+            expected_planned_parallel_batch_worker_lane_partition_ticks: self
+                .expected_planned_parallel_batch_worker_lane_partition_ticks,
             expected_parallel_batch_partition_sets: self.expected_parallel_batch_partition_sets,
             expected_parallel_batch_partition_streaks: self
                 .expected_parallel_batch_partition_streaks,

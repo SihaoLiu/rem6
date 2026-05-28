@@ -47,6 +47,7 @@ pub(crate) use batch_worker_ticks::{
     verify_expected_parallel_batch_worker_ticks,
     verify_expected_planned_parallel_batch_idle_worker_ticks,
     verify_expected_planned_parallel_batch_utilization,
+    verify_expected_planned_parallel_batch_worker_lane_partition_ticks,
     verify_expected_planned_parallel_batch_worker_slot_ticks,
 };
 pub(crate) use frontier::verify_expected_parallel_frontiers;
