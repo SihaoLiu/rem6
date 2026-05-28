@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 
+#[path = "sinic/checksum.rs"]
+mod checksum;
 #[path = "sinic/fifo.rs"]
 mod fifo;
 #[path = "sinic/memory.rs"]

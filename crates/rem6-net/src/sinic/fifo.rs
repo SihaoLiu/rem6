@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
+use super::checksum;
 use crate::{
     EthernetInterfaceId, EthernetInterfaceRegistry, EthernetInterfaceSendRecord, EthernetPacket,
     NetworkError, SinicDataDescriptor, SinicDoneStatus, SinicError, SinicInterruptRecord,
@@ -292,13 +293,11 @@ impl SinicFifoDevice {
                 direction: SinicDmaDirection::Receive,
             })?;
         let copied_bytes = u64::from(plan.copy_len);
-        let packet_len = self
-            .rx_fifo
-            .front()
-            .ok_or(SinicError::PacketQueueEmpty {
-                queue: SinicQueueKind::Receive,
-            })?
-            .payload_len();
+        let packet = self.rx_fifo.front().ok_or(SinicError::PacketQueueEmpty {
+            queue: SinicQueueKind::Receive,
+        })?;
+        let packet_len = packet.payload_len();
+        let checksum_status = checksum::rx_done_status(packet.payload(), SinicDoneStatus::new());
         let copied_end = plan.packet_offset.saturating_add(copied_bytes);
         let remaining_packet_bytes = packet_len.saturating_sub(copied_end);
 
@@ -320,7 +319,7 @@ impl SinicFifoDevice {
         } else {
             saturating_u32(remaining_packet_bytes)
         };
-        let done_status = SinicDoneStatus::new()
+        let done_status = checksum_status
             .with_complete(true)
             .with_more(remaining_packet_bytes != 0)
             .with_copy_len(copy_len_for_status)?;
@@ -453,6 +452,9 @@ impl SinicFifoDevice {
 
         let mut assembled = self.tx_dma_buffer.clone();
         assembled.extend_from_slice(bytes);
+        if plan.checksum() {
+            checksum::apply_tx_checksum(&mut assembled);
+        }
         let packet = EthernetPacket::new(assembled).map_err(network_error)?;
         let packet_bytes = packet.payload_len();
         self.tx_fifo.check_push(&packet)?;

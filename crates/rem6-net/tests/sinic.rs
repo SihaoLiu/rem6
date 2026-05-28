@@ -516,6 +516,80 @@ fn sinic_dma_rx_copy_records_partial_more_then_packet_completion() {
 }
 
 #[test]
+fn sinic_dma_rx_completion_reports_ipv4_tcp_checksum_status() {
+    let mut device = SinicFifoDevice::new(
+        SinicRegisterParams::default()
+            .with_fifo_limits(128, 128, 16, 16, 96, 96)
+            .with_interrupt_mask(SinicInterrupts::RX_DMA),
+    )
+    .unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_RX_EN,
+            1,
+        )
+        .unwrap();
+    let frame = ipv4_tcp_frame(&[0xde, 0xad, 0xbe, 0xef]);
+    device.receive_from_wire(packet(&frame), 2, 0).unwrap();
+
+    device
+        .begin_rx_dma_copy(SinicDataDescriptor::new(0x3000, frame.len() as u32).unwrap())
+        .unwrap()
+        .unwrap();
+    let complete = device.complete_rx_dma_copy(3, 0).unwrap();
+
+    assert_eq!(
+        complete.done_status().bits(),
+        SinicDoneStatus::new()
+            .with_complete(true)
+            .with_ip_packet(true)
+            .with_tcp_packet(true)
+            .with_copy_len(frame.len() as u32)
+            .unwrap()
+            .bits()
+    );
+}
+
+#[test]
+fn sinic_dma_rx_completion_reports_ipv4_udp_checksum_errors() {
+    let mut device = SinicFifoDevice::new(
+        SinicRegisterParams::default()
+            .with_fifo_limits(128, 128, 16, 16, 96, 96)
+            .with_interrupt_mask(SinicInterrupts::RX_DMA),
+    )
+    .unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_RX_EN,
+            1,
+        )
+        .unwrap();
+    let mut frame = ipv4_udp_frame(&[0xca, 0xfe, 0xba, 0xbe]);
+    frame[IPV4_UDP_CHECKSUM_OFFSET] ^= 0x01;
+    device.receive_from_wire(packet(&frame), 2, 0).unwrap();
+
+    device
+        .begin_rx_dma_copy(SinicDataDescriptor::new(0x3000, frame.len() as u32).unwrap())
+        .unwrap()
+        .unwrap();
+    let complete = device.complete_rx_dma_copy(3, 0).unwrap();
+
+    assert_eq!(
+        complete.done_status().bits(),
+        SinicDoneStatus::new()
+            .with_complete(true)
+            .with_ip_packet(true)
+            .with_udp_packet(true)
+            .with_udp_error(true)
+            .with_copy_len(frame.len() as u32)
+            .unwrap()
+            .bits()
+    );
+}
+
+#[test]
 fn sinic_dma_tx_copy_accumulates_fragments_and_posts_dma_interrupts() {
     let params = SinicRegisterParams::default()
         .with_fifo_limits(16, 6, 4, 2, 12, 12)
@@ -577,6 +651,82 @@ fn sinic_dma_tx_copy_accumulates_fragments_and_posts_dma_interrupts() {
 }
 
 #[test]
+fn sinic_dma_tx_checksum_descriptor_fills_ipv4_tcp_checksum() {
+    let mut device = SinicFifoDevice::new(
+        SinicRegisterParams::default()
+            .with_fifo_limits(128, 128, 16, 16, 96, 96)
+            .with_interrupt_mask(SinicInterrupts::TX_DMA),
+    )
+    .unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_TX_EN,
+            1,
+        )
+        .unwrap();
+    let frame = ipv4_tcp_frame_with_blank_checksums(&[0xde, 0xad, 0xbe, 0xef]);
+
+    device
+        .begin_tx_dma_copy(
+            SinicDataDescriptor::new(0x3000, frame.len() as u32)
+                .unwrap()
+                .with_checksum(true),
+        )
+        .unwrap();
+    let complete = device.complete_tx_dma_copy(&frame, 2, 0).unwrap();
+    assert!(complete.packet_complete());
+
+    let sent = transmit_single(&mut device);
+    let payload = sent.send_record().packet().payload();
+    assert_ne!(u16_at(payload, IPV4_HEADER_CHECKSUM_OFFSET), 0);
+    assert_ne!(u16_at(payload, IPV4_TCP_CHECKSUM_OFFSET), 0);
+    assert_eq!(
+        internet_checksum(&payload[ETHERNET_HEADER_LEN..ETHERNET_HEADER_LEN + IPV4_HEADER_LEN]),
+        0
+    );
+    assert_eq!(ipv4_transport_checksum(payload), 0);
+}
+
+#[test]
+fn sinic_dma_tx_checksum_descriptor_fills_ipv4_udp_checksum() {
+    let mut device = SinicFifoDevice::new(
+        SinicRegisterParams::default()
+            .with_fifo_limits(128, 128, 16, 16, 96, 96)
+            .with_interrupt_mask(SinicInterrupts::TX_DMA),
+    )
+    .unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_TX_EN,
+            1,
+        )
+        .unwrap();
+    let frame = ipv4_udp_frame_with_blank_checksums(&[0xca, 0xfe, 0xba, 0xbe]);
+
+    device
+        .begin_tx_dma_copy(
+            SinicDataDescriptor::new(0x3000, frame.len() as u32)
+                .unwrap()
+                .with_checksum(true),
+        )
+        .unwrap();
+    let complete = device.complete_tx_dma_copy(&frame, 2, 0).unwrap();
+    assert!(complete.packet_complete());
+
+    let sent = transmit_single(&mut device);
+    let payload = sent.send_record().packet().payload();
+    assert_ne!(u16_at(payload, IPV4_HEADER_CHECKSUM_OFFSET), 0);
+    assert_ne!(u16_at(payload, IPV4_UDP_CHECKSUM_OFFSET), 0);
+    assert_eq!(
+        internet_checksum(&payload[ETHERNET_HEADER_LEN..ETHERNET_HEADER_LEN + IPV4_HEADER_LEN]),
+        0
+    );
+    assert_eq!(ipv4_transport_checksum(payload), 0);
+}
+
+#[test]
 fn sinic_dma_errors_preserve_pending_state_and_restore_partial_tx_packet() {
     let params = SinicRegisterParams::default()
         .with_fifo_limits(16, 16, 4, 4, 12, 12)
@@ -632,4 +782,159 @@ fn sinic_dma_errors_preserve_pending_state_and_restore_partial_tx_packet() {
         .unwrap()
         .unwrap();
     assert_eq!(sent.send_record().packet().payload(), &[7, 8, 9]);
+}
+
+const ETHERNET_HEADER_LEN: usize = 14;
+const IPV4_HEADER_LEN: usize = 20;
+const IPV4_PROTOCOL_OFFSET: usize = ETHERNET_HEADER_LEN + 9;
+const IPV4_HEADER_CHECKSUM_OFFSET: usize = ETHERNET_HEADER_LEN + 10;
+const IPV4_TCP_CHECKSUM_OFFSET: usize = ETHERNET_HEADER_LEN + IPV4_HEADER_LEN + 16;
+const IPV4_UDP_CHECKSUM_OFFSET: usize = ETHERNET_HEADER_LEN + IPV4_HEADER_LEN + 6;
+
+fn transmit_single(device: &mut SinicFifoDevice) -> rem6_net::SinicTransmitRecord {
+    let mut registry = EthernetInterfaceRegistry::new();
+    let nic = registry.register("sinic").unwrap();
+    let peer = registry.register("peer").unwrap();
+    registry.bind_pair(nic, peer).unwrap();
+    device
+        .transmit_one(&mut registry, nic, 4, 0)
+        .unwrap()
+        .unwrap()
+}
+
+fn ipv4_tcp_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = ipv4_tcp_frame_with_blank_checksums(payload);
+    fill_ipv4_tcp_checksums(&mut frame);
+    frame
+}
+
+fn ipv4_udp_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = ipv4_udp_frame_with_blank_checksums(payload);
+    fill_ipv4_udp_checksums(&mut frame);
+    frame
+}
+
+fn ipv4_tcp_frame_with_blank_checksums(payload: &[u8]) -> Vec<u8> {
+    let tcp_len = 20 + payload.len();
+    let total_len = IPV4_HEADER_LEN + tcp_len;
+    let mut frame = ipv4_frame_header(total_len, 6);
+    frame.extend_from_slice(&[
+        0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x50, 0x18, 0x20,
+        0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn ipv4_udp_frame_with_blank_checksums(payload: &[u8]) -> Vec<u8> {
+    let udp_len = 8 + payload.len();
+    let total_len = IPV4_HEADER_LEN + udp_len;
+    let mut frame = ipv4_frame_header(total_len, 17);
+    frame.extend_from_slice(&[
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+        (udp_len >> 8) as u8,
+        udp_len as u8,
+        0x00,
+        0x00,
+    ]);
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn ipv4_frame_header(total_len: usize, protocol: u8) -> Vec<u8> {
+    let mut frame = vec![
+        0x00,
+        0x11,
+        0x22,
+        0x33,
+        0x44,
+        0x55,
+        0x66,
+        0x77,
+        0x88,
+        0x99,
+        0xaa,
+        0xbb,
+        0x08,
+        0x00,
+        0x45,
+        0x00,
+        (total_len >> 8) as u8,
+        total_len as u8,
+        0x12,
+        0x34,
+        0x40,
+        0x00,
+        0x40,
+        protocol,
+        0x00,
+        0x00,
+        192,
+        0,
+        2,
+        1,
+        198,
+        51,
+        100,
+        2,
+    ];
+    let ip_sum =
+        internet_checksum(&frame[ETHERNET_HEADER_LEN..ETHERNET_HEADER_LEN + IPV4_HEADER_LEN]);
+    write_u16(&mut frame, IPV4_HEADER_CHECKSUM_OFFSET, ip_sum);
+    frame
+}
+
+fn fill_ipv4_tcp_checksums(frame: &mut [u8]) {
+    let tcp_sum = ipv4_transport_checksum(frame);
+    write_u16(frame, IPV4_TCP_CHECKSUM_OFFSET, tcp_sum);
+}
+
+fn fill_ipv4_udp_checksums(frame: &mut [u8]) {
+    let udp_sum = ipv4_transport_checksum(frame);
+    write_u16(frame, IPV4_UDP_CHECKSUM_OFFSET, udp_sum);
+}
+
+fn ipv4_transport_checksum(frame: &[u8]) -> u16 {
+    let ip_start = ETHERNET_HEADER_LEN;
+    let ihl = usize::from(frame[ip_start] & 0x0f) * 4;
+    let total_len = usize::from(u16_at(frame, ip_start + 2));
+    let protocol = frame[IPV4_PROTOCOL_OFFSET];
+    let transport_start = ip_start + ihl;
+    let transport_len = total_len - ihl;
+    let mut checksum_bytes = Vec::new();
+    checksum_bytes.extend_from_slice(&frame[ip_start + 12..ip_start + 20]);
+    checksum_bytes.push(0);
+    checksum_bytes.push(protocol);
+    checksum_bytes.push((transport_len >> 8) as u8);
+    checksum_bytes.push(transport_len as u8);
+    checksum_bytes.extend_from_slice(&frame[transport_start..transport_start + transport_len]);
+    internet_checksum(&checksum_bytes)
+}
+
+fn internet_checksum(bytes: &[u8]) -> u16 {
+    let mut sum = 0_u32;
+    let mut chunks = bytes.chunks_exact(2);
+    for chunk in &mut chunks {
+        sum += u32::from(u16::from_be_bytes([chunk[0], chunk[1]]));
+    }
+    if let [last] = chunks.remainder() {
+        sum += u32::from(*last) << 8;
+    }
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    let [high, low] = value.to_be_bytes();
+    bytes[offset] = high;
+    bytes[offset + 1] = low;
 }
