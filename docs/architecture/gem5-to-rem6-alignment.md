@@ -382,8 +382,9 @@ Implementation evidence on 2026-05-28:
   into BAR-local SINIC registers. SINIC interrupt records can now bind to a
   validated PCI legacy INTx port, preserve the device-scheduled interrupt tick,
   add PCI signal latency, and deliver serial or parallel assertions and
-  deassertions through `rem6-interrupt` without direct controller mutation. The
-  remaining SINIC checksum offload and automatic MMIO-to-interrupt wiring remain
+  deassertions through `rem6-interrupt` without direct controller mutation.
+  MMIO writes and reads now invoke that wiring automatically through the typed
+  SINIC PCI device wrapper. The remaining SINIC checksum offload work remains
   open.
 
 Implementation evidence on 2026-05-26:

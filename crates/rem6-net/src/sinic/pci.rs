@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_interrupt::InterruptSourceId;
+use rem6_interrupt::{InterruptError, InterruptSourceId};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, SchedulerContext, SchedulerError, Tick,
 };
@@ -258,6 +258,25 @@ impl SinicPciInterruptPort {
         self.port
             .clear_parallel(context, self.source)
             .map_err(pci_error)
+    }
+
+    pub fn clear_if_pending(&self, context: &mut SchedulerContext<'_>) -> Result<(), SinicError> {
+        match self.port.clear(context, self.source) {
+            Ok(_) => Ok(()),
+            Err(rem6_pci::PciError::Interrupt(InterruptError::NotPending { .. })) => Ok(()),
+            Err(error) => Err(pci_error(error)),
+        }
+    }
+
+    pub fn clear_if_pending_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+    ) -> Result<(), SinicError> {
+        match self.port.clear_parallel(context, self.source) {
+            Ok(_) => Ok(()),
+            Err(rem6_pci::PciError::Interrupt(InterruptError::NotPending { .. })) => Ok(()),
+            Err(error) => Err(pci_error(error)),
+        }
     }
 }
 

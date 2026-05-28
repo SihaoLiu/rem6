@@ -295,6 +295,137 @@ fn sinic_pci_interrupt_port_delivers_scheduled_intx_in_parallel() {
     assert!(sinic_port.dispatch_errors().lock().unwrap().is_empty());
 }
 
+#[test]
+fn sinic_pci_mmio_auto_wires_interrupt_assert_and_status_clear() {
+    let mut host = pci_host();
+    let range = active_host_bar_range(&mut host);
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let (controller, legacy_port, source) = legacy_interrupt_port(cpu, 2);
+    let sinic_port = SinicPciEndpointSpec::new(function())
+        .build_legacy_interrupt_port(legacy_port, source)
+        .unwrap();
+    let endpoint = SinicMmioDevice::new(
+        Address::new(0),
+        SinicFifoDevice::new(
+            SinicRegisterParams::default()
+                .with_interrupt_mask(SinicInterrupts::SOFT | SinicInterrupts::RX_PACKET),
+        )
+        .unwrap(),
+    )
+    .with_pci_interrupt_port(sinic_port.clone());
+    let bar_device = SinicPciEndpointSpec::new(function())
+        .build_bar_mmio_device(range.clone(), endpoint)
+        .unwrap();
+
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        range.host_range(),
+        MmioRoute::new(cpu, pci, 2, 1).unwrap(),
+        bar_device,
+    )
+    .unwrap();
+    let bus = Arc::new(bus);
+    let host_start = range.host_range().start().get();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let enable_bus = Arc::clone(&bus);
+    let enable_completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 4, move |context| {
+            enable_bus
+                .submit_parallel(
+                    context,
+                    write_request(
+                        1,
+                        host_start,
+                        rem6_net::SinicRegisterBlock::CONFIG_INT_EN
+                            .to_le_bytes()
+                            .to_vec(),
+                    ),
+                    move |completion| enable_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let intr_bus = Arc::clone(&bus);
+    let intr_completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 5, move |context| {
+            intr_bus
+                .submit_parallel(
+                    context,
+                    write_request(
+                        2,
+                        host_start + 0x04,
+                        rem6_net::SinicRegisterBlock::COMMAND_INTR
+                            .to_le_bytes()
+                            .to_vec(),
+                    ),
+                    move |completion| intr_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let read_bus = Arc::clone(&bus);
+    let read_completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 10, move |context| {
+            read_bus
+                .submit_parallel(
+                    context,
+                    read_request(3, host_start + 0x08, 4),
+                    move |completion| read_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let completions = completions.lock().unwrap();
+    assert_eq!(
+        response_for(&completions, MmioRequestId::new(1)),
+        &Ok(MmioResponse::completed(MmioRequestId::new(1), None))
+    );
+    assert_eq!(
+        response_for(&completions, MmioRequestId::new(2)),
+        &Ok(MmioResponse::completed(MmioRequestId::new(2), None))
+    );
+    assert_eq!(
+        response_for(&completions, MmioRequestId::new(3)),
+        &Ok(MmioResponse::completed(
+            MmioRequestId::new(3),
+            Some(SinicInterrupts::SOFT.bits().to_le_bytes().to_vec()),
+        ))
+    );
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                9,
+                InterruptLineId::new(44),
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                14,
+                InterruptLineId::new(44),
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Deassert,
+            ),
+        ]
+    );
+    assert!(sinic_port.dispatch_errors().lock().unwrap().is_empty());
+}
+
 fn response_for(
     completions: &[MmioCompletion],
     request: MmioRequestId,

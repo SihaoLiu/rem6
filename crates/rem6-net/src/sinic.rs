@@ -709,6 +709,22 @@ impl SinicRegisterBlock {
         Ok(None)
     }
 
+    pub fn change_config_action(
+        &mut self,
+        config_bits: u32,
+        current_tick: u64,
+    ) -> Result<Option<SinicInterruptAction>, SinicError> {
+        let had_pending = self.pending_interrupt_tick.is_some();
+        let record = self.change_config(config_bits, current_tick)?;
+        if let Some(record) = record {
+            return Ok(Some(SinicInterruptAction::Assert(record)));
+        }
+        if !self.cpu_interrupt_enabled() && had_pending {
+            return Ok(Some(SinicInterruptAction::Deassert));
+        }
+        Ok(None)
+    }
+
     pub fn change_interrupt_mask(
         &mut self,
         interrupt_mask: SinicInterrupts,
@@ -720,6 +736,22 @@ impl SinicRegisterBlock {
         }
         self.interrupt_mask = interrupt_mask;
         Ok(self.schedule_masked_interrupt(current_tick, 0))
+    }
+
+    pub fn change_interrupt_mask_action(
+        &mut self,
+        interrupt_mask: SinicInterrupts,
+        current_tick: u64,
+    ) -> Result<Option<SinicInterruptAction>, SinicError> {
+        let had_pending = self.pending_interrupt_tick.is_some();
+        let record = self.change_interrupt_mask(interrupt_mask, current_tick)?;
+        if let Some(record) = record {
+            return Ok(Some(SinicInterruptAction::Assert(record)));
+        }
+        if had_pending && self.pending_interrupt_tick.is_none() {
+            return Ok(Some(SinicInterruptAction::Deassert));
+        }
+        Ok(None)
     }
 
     pub fn post_interrupt(
@@ -778,11 +810,36 @@ impl SinicRegisterBlock {
         Ok(())
     }
 
+    pub fn clear_interrupts_action(
+        &mut self,
+        interrupts: SinicInterrupts,
+    ) -> Result<Option<SinicInterruptAction>, SinicError> {
+        let had_pending = self.pending_interrupt_tick.is_some();
+        self.clear_interrupts(interrupts)?;
+        if had_pending && self.pending_interrupt_tick.is_none() {
+            return Ok(Some(SinicInterruptAction::Deassert));
+        }
+        Ok(None)
+    }
+
     pub fn read_interrupt_status(&mut self) -> SinicInterrupts {
         let status = self.interrupt_status;
         self.interrupt_status = SinicInterrupts::NONE;
         self.pending_interrupt_tick = None;
         status
+    }
+
+    pub fn read_interrupt_status_action(
+        &mut self,
+    ) -> (SinicInterrupts, Option<SinicInterruptAction>) {
+        let had_pending = self.pending_interrupt_tick.is_some();
+        let status = self.read_interrupt_status();
+        let action = if had_pending {
+            Some(SinicInterruptAction::Deassert)
+        } else {
+            None
+        };
+        (status, action)
     }
 
     pub fn snapshot(&self) -> SinicRegisterBlockSnapshot {
@@ -809,6 +866,16 @@ impl SinicRegisterBlock {
         self.tx_full_seen = snapshot.tx_full_seen;
         self.pending_interrupt_tick = snapshot.pending_interrupt_tick;
         Ok(())
+    }
+
+    pub fn reset_action(&mut self) -> Result<Option<SinicInterruptAction>, SinicError> {
+        let had_pending = self.pending_interrupt_tick.is_some();
+        let params = self.params;
+        *self = Self::new(params)?;
+        if had_pending {
+            return Ok(Some(SinicInterruptAction::Deassert));
+        }
+        Ok(None)
     }
 
     fn gated_masked_interrupts(&mut self) -> SinicInterrupts {
@@ -853,6 +920,7 @@ impl SinicRegisterBlock {
         interrupt_delay_ticks: u64,
     ) -> Option<u64> {
         if masked_bits.is_empty() || !self.cpu_interrupt_enabled() {
+            self.pending_interrupt_tick = None;
             return None;
         }
         let scheduled_tick = if (masked_bits & SinicInterrupts::NO_DELAY).is_empty() {
@@ -919,6 +987,12 @@ pub struct SinicRegisterBlockSnapshot {
     rx_empty_seen: bool,
     tx_full_seen: bool,
     pending_interrupt_tick: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SinicInterruptAction {
+    Assert(SinicInterruptRecord),
+    Deassert,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
