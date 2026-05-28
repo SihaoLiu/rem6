@@ -36,6 +36,7 @@ mod heterogeneous_checkpoint;
 mod host;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
+mod pci_checkpoint;
 mod riscv_checkpoint;
 mod riscv_run_activity;
 mod riscv_run_translation;
@@ -86,6 +87,9 @@ pub use memory_checkpoint::{
     DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
     DramMemoryCheckpointRecord, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
     MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
+};
+pub use pci_checkpoint::{
+    PciHostCheckpointBank, PciHostCheckpointError, PciHostCheckpointPort, PciHostCheckpointRecord,
 };
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
@@ -1391,6 +1395,7 @@ pub enum SystemError {
     MsiBankCheckpoint(MsiBankCheckpointError),
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
+    PciHostCheckpoint(PciHostCheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
     SchedulerCheckpoint(SchedulerCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
@@ -1420,6 +1425,7 @@ impl fmt::Display for SystemError {
             Self::MsiBankCheckpoint(error) => write!(formatter, "{error}"),
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
+            Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
@@ -1446,6 +1452,7 @@ impl Error for SystemError {
             Self::MsiBankCheckpoint(error) => Some(error),
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
+            Self::PciHostCheckpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
             Self::SchedulerCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),

@@ -19,6 +19,7 @@ rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
 rem6-mmio = { path = "../rem6-mmio" }
+rem6-pci = { path = "../rem6-pci" }
 rem6-platform = { path = "../rem6-platform" }
 rem6-protocol-chi = { path = "../rem6-protocol-chi" }
 rem6-protocol-mesi = { path = "../rem6-protocol-mesi" }

@@ -239,6 +239,7 @@ dependencies = [
  "rem6-kernel",
  "rem6-memory",
  "rem6-mmio",
+ "rem6-pci",
  "rem6-platform",
  "rem6-protocol-chi",
  "rem6-protocol-mesi",

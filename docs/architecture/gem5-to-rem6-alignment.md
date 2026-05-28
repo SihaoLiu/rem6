@@ -1458,7 +1458,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   encoded payloads preserve aperture shape, host address bases, sorted bridge
   and endpoint functions, reject malformed or out-of-aperture functions, and
   can be compared against a live host before a broader checkpoint restore
-  mutates device state.
+  mutates device state. `rem6-system` now exposes a PCI host checkpoint bank
+  that captures this topology payload into host checkpoint manifests and
+  prevalidates restore attempts against the live host topology without
+  pretending that topology-only payloads restore full PCI configuration state.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status
