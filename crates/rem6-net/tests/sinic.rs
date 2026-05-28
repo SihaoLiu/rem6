@@ -1,7 +1,12 @@
 use rem6_net::{
-    SinicDataDescriptor, SinicDoneStatus, SinicError, SinicInterrupts, SinicRegisterBlock,
-    SinicRegisterOffset, SinicRegisterParams, SinicRxStatus,
+    EthernetInterfaceRegistry, EthernetPacket, SinicDataDescriptor, SinicDoneStatus, SinicError,
+    SinicFifoDevice, SinicInterrupts, SinicQueueKind, SinicRegisterBlock, SinicRegisterOffset,
+    SinicRegisterParams, SinicRxStatus,
 };
+
+fn packet(bytes: &[u8]) -> EthernetPacket {
+    EthernetPacket::new(bytes.to_vec()).unwrap()
+}
 
 #[test]
 fn sinic_register_info_matches_typed_layout_and_access_policy() {
@@ -239,4 +244,187 @@ fn sinic_fifo_watermark_latches_gate_high_and_low_interrupts() {
     let tx_low = regs.post_interrupt(SinicInterrupts::TX_LOW, 7, 5).unwrap();
     assert_eq!(tx_low.masked_bits().bits(), SinicInterrupts::TX_LOW.bits());
     assert_eq!(tx_low.scheduled_tick(), Some(7));
+}
+
+#[test]
+fn sinic_fifo_device_drops_rx_when_disabled_and_posts_packet_interrupts() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(12, 12, 4, 4, 4, 8)
+        .with_interrupt_mask(
+            SinicInterrupts::RX_PACKET | SinicInterrupts::RX_HIGH | SinicInterrupts::RX_EMPTY,
+        );
+    let mut device = SinicFifoDevice::new(params).unwrap();
+
+    let disabled = device.receive_from_wire(packet(&[1, 2, 3]), 10, 5).unwrap();
+    assert!(!disabled.queued());
+    assert_eq!(
+        disabled
+            .interrupt_record()
+            .map(|record| record.masked_bits().bits()),
+        None
+    );
+    assert_eq!(device.rx_packet_count(), 0);
+
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_RX_EN,
+            11,
+        )
+        .unwrap();
+    let first = device
+        .receive_from_wire(packet(&[1, 2, 3, 4]), 12, 5)
+        .unwrap();
+    assert!(first.queued());
+    assert_eq!(first.rx_packet_count(), 1);
+    assert_eq!(
+        first
+            .interrupt_record()
+            .expect("rx packet interrupt")
+            .masked_bits()
+            .bits(),
+        SinicInterrupts::RX_PACKET.bits()
+    );
+    assert_eq!(device.rx_done_status().packets(), 1);
+    assert_eq!(device.rx_done_status().copy_len(), 0);
+
+    device.mark_rx_empty(13, 5).unwrap();
+    let second = device.receive_from_wire(packet(&[5]), 14, 5).unwrap();
+    assert!(second.queued());
+    assert_eq!(second.rx_packet_count(), 2);
+    assert_eq!(
+        second
+            .interrupt_record()
+            .expect("rx high and packet interrupt")
+            .masked_bits()
+            .bits(),
+        (SinicInterrupts::RX_PACKET | SinicInterrupts::RX_HIGH | SinicInterrupts::RX_EMPTY).bits()
+    );
+
+    let popped = device.pop_rx_packet(15, 5).unwrap().unwrap();
+    assert_eq!(popped.packet().payload(), &[1, 2, 3, 4]);
+    assert_eq!(device.rx_packet_count(), 1);
+    assert_eq!(device.rx_done_status().packets(), 1);
+    device.pop_rx_packet(16, 5).unwrap().unwrap();
+    assert_eq!(device.rx_packet_count(), 0);
+    assert!(device.rx_done_status().bits() & (1 << 28) != 0);
+}
+
+#[test]
+fn sinic_fifo_device_rejects_rx_overflow_without_mutation() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(4, 12, 1, 4, 8, 8)
+        .with_interrupt_mask(SinicInterrupts::RX_PACKET);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_RX_EN,
+            1,
+        )
+        .unwrap();
+    device
+        .receive_from_wire(packet(&[1, 2, 3, 4]), 2, 0)
+        .unwrap();
+
+    assert!(matches!(
+        device.receive_from_wire(packet(&[5]), 3, 0),
+        Err(SinicError::PacketQueueCapacityExceeded {
+            queue: SinicQueueKind::Receive,
+            capacity_bytes: 4,
+            occupied_bytes: 4,
+            packet_bytes: 1,
+        })
+    ));
+    assert_eq!(device.rx_packet_count(), 1);
+    assert_eq!(device.rx_occupied_bytes(), 4);
+}
+
+#[test]
+fn sinic_fifo_device_transmits_only_when_peer_accepts_and_posts_watermarks() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(12, 8, 4, 4, 8, 8)
+        .with_interrupt_mask(SinicInterrupts::TX_PACKET | SinicInterrupts::TX_LOW);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_TX_EN,
+            1,
+        )
+        .unwrap();
+    let mut registry = EthernetInterfaceRegistry::new();
+    let nic = registry.register("sinic").unwrap();
+    let peer = registry.register("peer").unwrap();
+    registry.bind_pair(nic, peer).unwrap();
+
+    device
+        .enqueue_tx_packet(packet(&[0xaa, 0xbb, 0xcc]), 2, 0)
+        .unwrap();
+    assert_eq!(device.tx_packet_count(), 1);
+    assert_eq!(device.tx_done_status().packets(), 1);
+    registry.set_busy(peer, true).unwrap();
+    assert!(matches!(
+        device.transmit_one(&mut registry, nic, 3, 0),
+        Err(SinicError::EthernetPeerBusy { interface }) if interface == nic
+    ));
+    assert_eq!(device.tx_packet_count(), 1);
+
+    registry.set_busy(peer, false).unwrap();
+    device.mark_tx_full(4, 0).unwrap();
+    let transmitted = device
+        .transmit_one(&mut registry, nic, 5, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(transmitted.send_record().peer(), Some(peer));
+    assert_eq!(
+        transmitted.send_record().packet().payload(),
+        &[0xaa, 0xbb, 0xcc]
+    );
+    assert_eq!(
+        transmitted
+            .interrupt_record()
+            .expect("tx packet and tx low interrupt")
+            .masked_bits()
+            .bits(),
+        (SinicInterrupts::TX_PACKET | SinicInterrupts::TX_LOW).bits()
+    );
+    assert_eq!(device.tx_packet_count(), 0);
+    assert_eq!(registry.receive_count(peer).unwrap(), 1);
+}
+
+#[test]
+fn sinic_fifo_device_records_tx_full_and_restores_snapshot() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(12, 6, 4, 2, 8, 8)
+        .with_tx_max_copy(2)
+        .with_interrupt_mask(SinicInterrupts::TX_FULL);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_TX_EN,
+            1,
+        )
+        .unwrap();
+
+    let first = device.enqueue_tx_packet(packet(&[1, 2, 3]), 2, 0).unwrap();
+    assert!(first.interrupt_record().is_none());
+    let snapshot = device.snapshot();
+    let second = device.enqueue_tx_packet(packet(&[4, 5]), 3, 0).unwrap();
+    assert_eq!(second.tx_packet_count(), 2);
+    assert_eq!(
+        second
+            .interrupt_record()
+            .expect("tx full interrupt")
+            .masked_bits()
+            .bits(),
+        SinicInterrupts::TX_FULL.bits()
+    );
+    assert_eq!(device.tx_occupied_bytes(), 5);
+
+    device.restore(&snapshot).unwrap();
+    assert_eq!(device.tx_packet_count(), 1);
+    assert_eq!(device.tx_occupied_bytes(), 3);
+    assert_eq!(device.tx_done_status().packets(), 1);
 }

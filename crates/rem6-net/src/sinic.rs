@@ -2,6 +2,12 @@ use std::error::Error;
 use std::fmt;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 
+#[path = "sinic/fifo.rs"]
+mod fifo;
+pub use fifo::*;
+
+use crate::NetworkError;
+
 const ADDR_MASK_40: u64 = (1_u64 << 40) - 1;
 const LEN_MASK_20: u32 = (1_u32 << 20) - 1;
 const INTR_ALL_BITS: u32 = 0x01ff;
@@ -495,6 +501,11 @@ impl SinicRegisterParams {
         self
     }
 
+    pub const fn with_tx_max_copy(mut self, tx_max_copy: u32) -> Self {
+        self.tx_max_copy = tx_max_copy;
+        self
+    }
+
     pub const fn with_fifo_limits(
         mut self,
         rx_fifo_size: u32,
@@ -638,6 +649,14 @@ impl SinicRegisterBlock {
 
     pub const fn tx_fifo_high(&self) -> u32 {
         self.params.tx_fifo_high
+    }
+
+    pub const fn rx_max_copy(&self) -> u32 {
+        self.params.rx_max_copy
+    }
+
+    pub const fn tx_max_copy(&self) -> u32 {
+        self.params.tx_max_copy
     }
 
     pub const fn hardware_address(&self) -> u64 {
@@ -832,6 +851,20 @@ pub struct SinicInterruptRecord {
 }
 
 impl SinicInterruptRecord {
+    pub const fn new(
+        requested_bits: SinicInterrupts,
+        status_bits: SinicInterrupts,
+        masked_bits: SinicInterrupts,
+        scheduled_tick: Option<u64>,
+    ) -> Self {
+        Self {
+            requested_bits,
+            status_bits,
+            masked_bits,
+            scheduled_tick,
+        }
+    }
+
     pub const fn requested_bits(&self) -> SinicInterrupts {
         self.requested_bits
     }
@@ -881,6 +914,21 @@ pub enum SinicError {
         zero_copy_size: u32,
         zero_copy_mark: u32,
     },
+    PacketQueueCapacityExceeded {
+        queue: SinicQueueKind,
+        capacity_bytes: u64,
+        occupied_bytes: u64,
+        packet_bytes: u64,
+    },
+    PacketQueueEmpty {
+        queue: SinicQueueKind,
+    },
+    EthernetPeerBusy {
+        interface: crate::EthernetInterfaceId,
+    },
+    Network {
+        source: NetworkError,
+    },
 }
 
 impl fmt::Display for SinicError {
@@ -923,6 +971,24 @@ impl fmt::Display for SinicError {
                 formatter,
                 "SINIC zero-copy size {zero_copy_size} must be below mark {zero_copy_mark}"
             ),
+            Self::PacketQueueCapacityExceeded {
+                queue,
+                capacity_bytes,
+                occupied_bytes,
+                packet_bytes,
+            } => write!(
+                formatter,
+                "SINIC {queue} packet queue cannot fit {packet_bytes} bytes with capacity {capacity_bytes} and occupied {occupied_bytes}"
+            ),
+            Self::PacketQueueEmpty { queue } => {
+                write!(formatter, "SINIC {queue} packet queue is empty")
+            }
+            Self::EthernetPeerBusy { interface } => write!(
+                formatter,
+                "SINIC ethernet interface {} peer is busy",
+                interface.index()
+            ),
+            Self::Network { source } => write!(formatter, "SINIC network error: {source}"),
         }
     }
 }

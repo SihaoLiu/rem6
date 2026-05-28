@@ -341,6 +341,15 @@ Implementation evidence on 2026-05-28:
   watermark latches, read-clear status behavior, and snapshot restore are
   explicit Rust state with typed errors instead of register macro expansion and
   panic paths.
+- `rem6-net` also has typed SINIC FIFO ingress and egress state aligned with
+  gem5 `Sinic::recvPacket` and `Sinic::transmit`: RX disabled drops, RX FIFO
+  capacity rejection without mutation, RX packet and high/empty watermark
+  interrupts, TX FIFO capacity and full watermark interrupts, peer-busy
+  transmit backpressure without popping queued data, TX packet and low
+  watermark interrupts, derived RX/TX done status words, and snapshot restore
+  are explicit records. The remaining SINIC DMA copy state machines,
+  descriptor-memory walking, checksum offload, and full PCI/MMIO binding remain
+  open.
 
 Implementation evidence on 2026-05-26:
 
