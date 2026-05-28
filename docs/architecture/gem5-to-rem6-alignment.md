@@ -736,6 +736,11 @@ Implementation evidence on 2026-05-26:
   DMA planned capacities. Replay idle-budget checks therefore keep the strongest
   available pre-dispatch capacity evidence instead of trusting a weaker global
   aggregate.
+- Explicit recorded full-system worker-capacity summaries follow the same
+  lower-bound rule against scoped CPU-scheduler, data-cache, GPU DMA, and
+  accelerator DMA recorded capacities. Runtime utilization and idle summaries
+  therefore cannot hide executed device-side worker slack behind a weaker
+  global capacity counter.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global
