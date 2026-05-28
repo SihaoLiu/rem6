@@ -891,6 +891,60 @@ fn stats_registry_records_interleaved_typed_history() {
 }
 
 #[test]
+fn stats_registry_rejects_schema_registration_after_history_begins() {
+    let mut stats = StatsRegistry::new();
+    let cpu0 = stats.register_group(["system", "cpu0"]).unwrap();
+    let cycles = stats
+        .register_group_counter(cpu0, "cycles", "Cycle")
+        .unwrap();
+
+    let first_dump = stats.dump(10);
+
+    assert_eq!(
+        stats
+            .register_counter("system.mem_reads", "Count")
+            .unwrap_err(),
+        StatsError::SchemaLocked { history_records: 1 },
+    );
+    assert_eq!(
+        stats.register_group(["system", "cpu1"]).unwrap_err(),
+        StatsError::SchemaLocked { history_records: 1 },
+    );
+    assert_eq!(
+        stats
+            .register_group_counter(cpu0, "committed_insts", "Count")
+            .unwrap_err(),
+        StatsError::SchemaLocked { history_records: 1 },
+    );
+    assert_eq!(
+        stats
+            .register_scoped_counter(["system", "cpu0"], "ipc", "Ratio")
+            .unwrap_err(),
+        StatsError::SchemaLocked { history_records: 1 },
+    );
+    assert_eq!(stats.dump_records(), std::slice::from_ref(&first_dump));
+    assert_eq!(
+        stats.history_records(),
+        [StatHistoryRecord::Dump(first_dump.clone())].as_slice(),
+    );
+
+    stats.increment(cycles, 4).unwrap();
+    let reset = stats.reset(12);
+    assert_eq!(
+        stats.register_counter("l1d.misses", "Count").unwrap_err(),
+        StatsError::SchemaLocked { history_records: 2 },
+    );
+    assert_eq!(
+        stats.history_records(),
+        [
+            StatHistoryRecord::Dump(first_dump),
+            StatHistoryRecord::Reset(reset),
+        ]
+        .as_slice(),
+    );
+}
+
+#[test]
 fn stats_registry_rejects_dump_before_reset_without_recording_history() {
     let mut stats = StatsRegistry::new();
     let insts = stats.register_counter("cpu0.cycles", "cycles").unwrap();

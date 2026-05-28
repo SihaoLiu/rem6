@@ -148,6 +148,7 @@ impl StatsRegistry {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        self.ensure_schema_open()?;
         let segments = scope.into_iter().map(Into::into).collect::<Vec<_>>();
         let path = segments.join(".");
         let scope = StatScope::from_segments(segments)
@@ -224,6 +225,7 @@ impl StatsRegistry {
         unit: StatUnit,
         description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
+        self.ensure_schema_open()?;
         let Some(scope) = self.groups.get(&group) else {
             return Err(StatsError::UnknownStatGroup { group });
         };
@@ -243,6 +245,7 @@ impl StatsRegistry {
         unit: StatUnit,
         description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
+        self.ensure_schema_open()?;
         if self.paths.contains(path.as_str()) {
             return Err(StatsError::DuplicatePath {
                 path: path.as_str().to_string(),
@@ -263,6 +266,16 @@ impl StatsRegistry {
         );
         self.counters.insert(id, 0);
         Ok(id)
+    }
+
+    fn ensure_schema_open(&self) -> Result<(), StatsError> {
+        if self.history_records.is_empty() {
+            return Ok(());
+        }
+
+        Err(StatsError::SchemaLocked {
+            history_records: self.history_records.len(),
+        })
     }
 
     pub fn increment(&mut self, stat: StatId, value: u64) -> Result<(), StatsError> {

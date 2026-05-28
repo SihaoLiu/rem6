@@ -30,6 +30,9 @@ pub enum StatsError {
     DuplicateGroup {
         scope: String,
     },
+    SchemaLocked {
+        history_records: usize,
+    },
     UnknownStat {
         stat: StatId,
     },
@@ -174,6 +177,10 @@ impl fmt::Display for StatsError {
             Self::DuplicateGroup { scope } => {
                 write!(formatter, "stat group already exists: {scope}")
             }
+            Self::SchemaLocked { history_records } => write!(
+                formatter,
+                "cannot register stats after {history_records} stats history records"
+            ),
             Self::UnknownStat { stat } => write!(formatter, "unknown stat id {}", stat.get()),
             Self::UnknownStatGroup { group } => {
                 write!(formatter, "unknown stat group id {}", group.get())
