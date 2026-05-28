@@ -150,6 +150,30 @@ impl PciLegacyInterruptRoutingEntry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PciLegacyInterruptRoutingTableSnapshot {
+    fallback: PciLegacyInterruptMapper,
+    entries: Vec<PciLegacyInterruptRoutingEntry>,
+}
+
+impl PciLegacyInterruptRoutingTableSnapshot {
+    pub fn new(
+        fallback: PciLegacyInterruptMapper,
+        entries: Vec<PciLegacyInterruptRoutingEntry>,
+    ) -> Result<Self, PciError> {
+        let table = PciLegacyInterruptRoutingTable::from_entries(fallback, entries)?;
+        Ok(table.snapshot())
+    }
+
+    pub const fn fallback(&self) -> PciLegacyInterruptMapper {
+        self.fallback
+    }
+
+    pub fn entries(&self) -> &[PciLegacyInterruptRoutingEntry] {
+        &self.entries
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciLegacyInterruptRoutingTable {
     fallback: PciLegacyInterruptMapper,
     entries: Vec<PciLegacyInterruptRoutingEntry>,
@@ -161,6 +185,17 @@ impl PciLegacyInterruptRoutingTable {
             fallback,
             entries: Vec::new(),
         }
+    }
+
+    pub fn from_entries(
+        fallback: PciLegacyInterruptMapper,
+        entries: Vec<PciLegacyInterruptRoutingEntry>,
+    ) -> Result<Self, PciError> {
+        let mut table = Self::new(fallback);
+        for entry in entries {
+            table.insert_entry(entry)?;
+        }
+        Ok(table)
     }
 
     pub fn with_entry(mut self, entry: PciLegacyInterruptRoutingEntry) -> Result<Self, PciError> {
@@ -181,6 +216,7 @@ impl PciLegacyInterruptRoutingTable {
         }
 
         self.entries.push(entry);
+        self.sort_entries();
         Ok(())
     }
 
@@ -190,6 +226,18 @@ impl PciLegacyInterruptRoutingTable {
 
     pub fn entries(&self) -> &[PciLegacyInterruptRoutingEntry] {
         &self.entries
+    }
+
+    pub fn snapshot(&self) -> PciLegacyInterruptRoutingTableSnapshot {
+        PciLegacyInterruptRoutingTableSnapshot {
+            fallback: self.fallback,
+            entries: self.entries.clone(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &PciLegacyInterruptRoutingTableSnapshot) {
+        self.fallback = snapshot.fallback;
+        self.entries = snapshot.entries.clone();
     }
 
     pub fn line(
@@ -243,6 +291,16 @@ impl PciLegacyInterruptRoutingTable {
             InterruptRoute::new(line, target, target_partition),
             signal_latency,
         )
+    }
+
+    fn sort_entries(&mut self) {
+        self.entries.sort_by_key(|entry| {
+            (
+                entry.function,
+                legacy_pin_index_unchecked(entry.pin),
+                entry.line.get(),
+            )
+        });
     }
 }
 

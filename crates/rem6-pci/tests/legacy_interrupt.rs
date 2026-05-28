@@ -9,6 +9,7 @@ use rem6_pci::{
     PciError, PciFunctionAddress, PciInterruptPin, PciLegacyInterruptMapper,
     PciLegacyInterruptPath, PciLegacyInterruptPolicy, PciLegacyInterruptPort,
     PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable,
+    PciLegacyInterruptRoutingTableSnapshot,
 };
 
 fn function(device: u8) -> PciFunctionAddress {
@@ -171,6 +172,77 @@ fn pci_legacy_interrupt_routing_table_prefers_explicit_root_entries() {
     assert_eq!(route.pin(), PciInterruptPin::IntA);
     assert_eq!(route.line(), InterruptLineId::new(48));
     assert_eq!(route.signal_latency(), 3);
+}
+
+#[test]
+fn pci_legacy_interrupt_routing_table_snapshots_sorted_entries() {
+    let root_a = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let root_b = PciFunctionAddress::new(0, 2, 0).unwrap();
+    let fallback = mapper(PciLegacyInterruptPolicy::PinModulo);
+    let entry_b = PciLegacyInterruptRoutingEntry::new(
+        root_b,
+        PciInterruptPin::IntD,
+        InterruptLineId::new(55),
+    )
+    .unwrap();
+    let entry_a = PciLegacyInterruptRoutingEntry::new(
+        root_a,
+        PciInterruptPin::IntB,
+        InterruptLineId::new(44),
+    )
+    .unwrap();
+    let table =
+        PciLegacyInterruptRoutingTable::from_entries(fallback, vec![entry_b, entry_a]).unwrap();
+
+    assert_eq!(table.fallback(), fallback);
+    assert_eq!(table.entries(), &[entry_a, entry_b]);
+    assert_eq!(
+        PciLegacyInterruptRoutingTable::from_entries(fallback, vec![entry_a, entry_a]),
+        Err(PciError::DuplicateLegacyInterruptRoutingEntry {
+            function: root_a,
+            pin: PciInterruptPin::IntB,
+        })
+    );
+
+    let snapshot = table.snapshot();
+    assert_eq!(
+        snapshot,
+        PciLegacyInterruptRoutingTableSnapshot::new(fallback, vec![entry_a, entry_b]).unwrap()
+    );
+    assert_eq!(
+        PciLegacyInterruptRoutingTableSnapshot::new(fallback, vec![entry_b, entry_b]),
+        Err(PciError::DuplicateLegacyInterruptRoutingEntry {
+            function: root_b,
+            pin: PciInterruptPin::IntD,
+        })
+    );
+
+    let mut restored =
+        PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DeviceModulo))
+            .with_entry(
+                PciLegacyInterruptRoutingEntry::new(
+                    root_a,
+                    PciInterruptPin::IntA,
+                    InterruptLineId::new(60),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    restored.restore(&snapshot);
+
+    assert_eq!(restored, table);
+    assert_eq!(
+        restored.line(root_a, PciInterruptPin::IntB),
+        Ok(InterruptLineId::new(44))
+    );
+    assert_eq!(
+        restored.line(root_b, PciInterruptPin::IntD),
+        Ok(InterruptLineId::new(55))
+    );
+    assert_eq!(
+        restored.line(root_b, PciInterruptPin::IntA),
+        Ok(InterruptLineId::new(32))
+    );
 }
 
 #[test]

@@ -30,7 +30,7 @@ pub use error::PciError;
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
     PciLegacyInterruptPort, PciLegacyInterruptRoute, PciLegacyInterruptRoutingEntry,
-    PciLegacyInterruptRoutingTable,
+    PciLegacyInterruptRoutingTable, PciLegacyInterruptRoutingTableSnapshot,
 };
 pub use mmio::{PciBarMmioDevice, PciConfigMmioDevice};
 pub use msi::{PciMsiCapabilitySpec, PciMsiMessage, PciMsiPort, PciMsiRoute};
