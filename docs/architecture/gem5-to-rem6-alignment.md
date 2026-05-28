@@ -1243,7 +1243,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   sustained same-batch partition-set streak activity, minimum active partition
   counts derived from aggregate, exact partition-set, streak, activity,
   dedicated GPU or accelerator DMA timeline scopes, remote-send, or
-  remote-flow evidence, remote-flow timing derived from exact
+  remote-flow evidence, GPU and accelerator compute or DMA activity presence
+  derived from active device counts as well as command, copy, completion,
+  scheduler, frontier, and remote-traffic evidence, remote-flow timing derived from exact
   remote-send records when aggregate flow records are absent or weaker, per-partition
   activity minima backed by explicit activity, exact batch partition-set
   histograms, same-partition-set streaks, dedicated GPU or accelerator DMA
@@ -1466,7 +1468,8 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   accelerator DMA scheduler traffic,
   scheduler idle bounds, at-least-two-worker max-worker use, at-least-two-worker total-worker
   activity, batch activity, at-least-two-partition CPU/cache/full-system active-partition, direct GPU and accelerator
-  DMA active-partition, CPU/cache/full-system per-partition activity, direct
+  DMA active-partition, active GPU and accelerator compute or DMA device-count
+  activity presence, CPU/cache/full-system per-partition activity, direct
   GPU and accelerator DMA per-partition activity, data-cache run attribution
   contracts, data-cache run-accounting consistency contracts, data-cache
   protocol run-count verification contracts, resource activity contracts,

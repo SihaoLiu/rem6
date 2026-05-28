@@ -168,6 +168,7 @@ impl WorkloadParallelExecutionSummary {
         self.gpu_kernel_launch_count != 0
             || self.gpu_trace_event_count != 0
             || self.gpu_workgroup_completion_count != 0
+            || self.active_gpu_device_count != 0
     }
 
     pub fn gpu_compute_wait_for_edge_count(&self) -> usize {
@@ -377,6 +378,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn has_gpu_dma_activity(&self) -> bool {
         self.gpu_dma_copy_count != 0
             || self.gpu_dma_completion_count != 0
+            || self.active_gpu_dma_device_count != 0
             || self.gpu_dma_scheduler_epoch_count != 0
             || self.gpu_dma_scheduler_empty_epoch_count != 0
             || self.gpu_dma_scheduler_dispatch_count != 0
@@ -486,6 +488,7 @@ impl WorkloadParallelExecutionSummary {
             || self.accelerator_gpu_kernel_completion_count != 0
             || self.accelerator_npu_inference_completion_count != 0
             || self.accelerator_dma_command_completion_count != 0
+            || self.active_accelerator_device_count != 0
     }
 
     pub const fn has_accelerator_npu_activity(&self) -> bool {
@@ -768,6 +771,7 @@ impl WorkloadParallelExecutionSummary {
     pub fn has_accelerator_dma_activity(&self) -> bool {
         self.accelerator_dma_copy_count != 0
             || self.accelerator_dma_completion_count != 0
+            || self.active_accelerator_dma_device_count != 0
             || self.accelerator_dma_scheduler_epoch_count != 0
             || self.accelerator_dma_scheduler_empty_epoch_count != 0
             || self.accelerator_dma_scheduler_dispatch_count != 0

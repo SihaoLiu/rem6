@@ -471,7 +471,9 @@ cross-partition DMA traffic keeps source tick, delivery tick, order, and delay
 data instead of collapsing into a device-local copy counter. Accelerator compute
 summaries preserve submitted and completed command counts by command kind, so
 GPU-kernel, NPU-inference, and DMA-command work remain directly visible without
-trace scraping. The workload
+trace scraping. GPU and accelerator compute or DMA summaries also treat active
+device counts as activity evidence, so a device-level parallel run does not
+become invisible when only occupancy evidence is available. The workload
 full-system scheduler aggregate includes that DMA scheduler evidence alongside
 CPU and data-cache scheduler evidence, so
 heterogeneous parallel work remains visible through the same full-system batch
