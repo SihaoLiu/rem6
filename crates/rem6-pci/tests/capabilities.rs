@@ -675,6 +675,67 @@ fn pci_endpoint_pcie_extended_registers_are_typed_and_snapshot_restored() {
 }
 
 #[test]
+fn pci_endpoint_snapshot_exposes_pcie_payload_for_checkpoint_audit() {
+    let mut endpoint = storage_endpoint();
+    endpoint
+        .install_pcie_capability(pcie_with_extended_registers(0x80))
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x98).unwrap(),
+            &0x0102_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0xa0).unwrap(),
+            &0x0304_0506_u32.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payload = snapshot.pcie_payload().unwrap();
+
+    assert_eq!(snapshot.validate_pcie_payload(&payload), Ok(()));
+    let no_pcie = storage_endpoint().snapshot();
+    assert_eq!(no_pcie.pcie_payload(), None);
+    assert_eq!(
+        no_pcie.validate_pcie_payload(&payload),
+        Err(PciError::SnapshotPciExpressCapabilityMismatch)
+    );
+
+    let different_state = {
+        let mut endpoint = storage_endpoint();
+        endpoint
+            .install_pcie_capability(pcie_with_extended_registers(0x80))
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_state.validate_pcie_payload(&payload),
+        Err(PciError::SnapshotPciExpressCapabilityMismatch)
+    );
+    let different_spec = {
+        let mut endpoint = storage_endpoint();
+        endpoint
+            .install_pcie_capability(pcie_with_extended_registers(0x84))
+            .unwrap();
+        endpoint.snapshot()
+    };
+    assert_eq!(
+        different_spec.validate_pcie_payload(&payload),
+        Err(PciError::SnapshotPciExpressCapabilityMismatch)
+    );
+
+    let mut corrupted = payload;
+    corrupted.push(0);
+    assert_eq!(
+        snapshot.validate_pcie_payload(&corrupted),
+        Err(PciError::InvalidPciExpressCapabilitySnapshot)
+    );
+}
+
+#[test]
 fn pci_endpoint_rejects_overlapping_capabilities_without_mutating_chain() {
     let mut endpoint = storage_endpoint();
 

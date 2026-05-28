@@ -1428,8 +1428,9 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   next-pointer ownership, raw snapshot shape checks, raw capability invalid
   offset and size rejection, PMCSR snapshot restore, PCIe
   device/link/slot/root/capability2 control/status snapshot restore, PCIe
-  read-only device and slot capability rejection, and overlap rejection without
-  mutating existing config bytes. MSI tests cover capability header exposure,
+  stable payload encoding for endpoint checkpoint audit, PCIe read-only device
+  and slot capability rejection, and overlap rejection without mutating
+  existing config bytes. MSI tests cover capability header exposure,
   clamped vector enable state, message-address masking, vector masks, snapshot
   restore, stable payload encoding for endpoint checkpoint audit, duplicate and
   invalid capability layouts, and serial plus parallel MSI delivery through
@@ -1471,12 +1472,15 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   state now has the first exposed byte codec: endpoint snapshots can emit a PM
   payload and validate a candidate payload against the typed PM spec plus
   current PMCSR, rejecting malformed bytes or live-snapshot mismatches before a
-  broader PCI config checkpoint restore mutates device state. MSI capability
-  state now follows the same audit pattern for vector count, 64-bit and
-  per-vector-mask support, enabled vectors, programmed address and data, and
-  mask and pending bits. MSI-X capability state now does the same for table and
-  PBA BAR placement, enable and function-mask bits, table entries, and PBA
-  pending words while rejecting malformed table or out-of-range pending bits.
+  broader PCI config checkpoint restore mutates device state. PCIe capability
+  state now follows the same audit pattern for capability identity,
+  device/link/slot/root/capability2 declared fields, and all writable
+  control/status registers. MSI capability state now follows the same audit
+  pattern for vector count, 64-bit and per-vector-mask support, enabled
+  vectors, programmed address and data, and mask and pending bits. MSI-X
+  capability state now does the same for table and PBA BAR placement, enable
+  and function-mask bits, table entries, and PBA pending words while rejecting
+  malformed table or out-of-range pending bits.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status

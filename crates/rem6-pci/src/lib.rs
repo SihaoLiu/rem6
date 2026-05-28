@@ -790,6 +790,21 @@ impl PciEndpointConfigSnapshot {
         }
     }
 
+    pub fn pcie_payload(&self) -> Option<Vec<u8>> {
+        self.pcie
+            .as_ref()
+            .map(pcie::PciExpressCapabilityState::to_bytes)
+    }
+
+    pub fn validate_pcie_payload(&self, payload: &[u8]) -> Result<(), PciError> {
+        let decoded = pcie::PciExpressCapabilityState::from_bytes(payload)?;
+        if self.pcie.as_ref() == Some(&decoded) {
+            Ok(())
+        } else {
+            Err(PciError::SnapshotPciExpressCapabilityMismatch)
+        }
+    }
+
     pub fn msi_payload(&self) -> Option<Vec<u8>> {
         self.msi.as_ref().map(msi::PciMsiCapabilityState::to_bytes)
     }

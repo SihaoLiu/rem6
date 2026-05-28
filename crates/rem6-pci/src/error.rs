@@ -107,6 +107,7 @@ pub enum PciError {
     },
     DuplicatePciExpressCapability,
     SnapshotPciExpressCapabilityMismatch,
+    InvalidPciExpressCapabilitySnapshot,
     ReadOnlyPciExpressCapabilityWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -439,6 +440,9 @@ impl fmt::Display for PciError {
             }
             Self::SnapshotPciExpressCapabilityMismatch => {
                 write!(f, "PCI snapshot PCI Express capability does not match this endpoint")
+            }
+            Self::InvalidPciExpressCapabilitySnapshot => {
+                write!(f, "PCI Express capability snapshot is invalid")
             }
             Self::ReadOnlyPciExpressCapabilityWrite { offset, size } => write!(
                 f,
