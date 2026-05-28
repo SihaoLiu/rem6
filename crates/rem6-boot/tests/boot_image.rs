@@ -1,4 +1,7 @@
-use rem6_boot::{BootElfError, BootError, BootImage, BootLineWrite, BootLoadReport};
+use rem6_boot::{
+    BootElfArchitecture, BootElfClass, BootElfError, BootError, BootImage, BootLineWrite,
+    BootLoadReport,
+};
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, LineMemoryStore, MemoryError,
     MemoryTargetId, PartitionedMemoryStore,
@@ -255,6 +258,123 @@ fn boot_image_detects_unsupported_elf_encoding() {
         BootImage::from_elf(&elf).unwrap_err(),
         BootError::InvalidElf {
             reason: BootElfError::UnsupportedEncoding { encoding: 2 },
+        },
+    );
+}
+
+#[test]
+fn boot_image_records_elf_machine_metadata() {
+    let elf64 = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    let elf32 = elf32_image(
+        0x8040,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x9000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x93, 0x05, 0x10, 0x00])],
+    );
+
+    let metadata64 = BootImage::from_elf64_le(&elf64)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(metadata64.class(), BootElfClass::Class64);
+    assert_eq!(metadata64.machine(), 243);
+    assert_eq!(metadata64.architecture(), BootElfArchitecture::Riscv64);
+
+    let metadata32 = BootImage::from_elf32_le(&elf32)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(metadata32.class(), BootElfClass::Class32);
+    assert_eq!(metadata32.machine(), 243);
+    assert_eq!(metadata32.architecture(), BootElfArchitecture::Riscv32);
+
+    assert_eq!(BootImage::new(Address::new(0)).elf_metadata(), None);
+}
+
+#[test]
+fn boot_image_maps_arm_thumb_from_elf32_entry_bit() {
+    let mut arm = elf32_image(
+        0x8000,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x00, 0x00, 0xa0, 0xe3])],
+    );
+    write_u16(&mut arm, 18, 40);
+    let mut thumb = elf32_image(
+        0x8001,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x9000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x00, 0xbf, 0x00, 0xbf])],
+    );
+    write_u16(&mut thumb, 18, 40);
+
+    assert_eq!(
+        BootImage::from_elf32_le(&arm)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .architecture(),
+        BootElfArchitecture::Arm,
+    );
+    assert_eq!(
+        BootImage::from_elf32_le(&thumb)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .architecture(),
+        BootElfArchitecture::Thumb,
+    );
+}
+
+#[test]
+fn boot_image_preserves_unknown_elf_machine_metadata() {
+    let mut elf = elf64_image(
+        0x8000,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u16(&mut elf, 18, 0xffff);
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .architecture(),
+        BootElfArchitecture::Unknown {
+            machine: 0xffff,
+            class: BootElfClass::Class64,
         },
     );
 }

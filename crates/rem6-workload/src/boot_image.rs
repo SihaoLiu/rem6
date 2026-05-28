@@ -1,4 +1,4 @@
-use rem6_boot::BootImage;
+use rem6_boot::{BootElfMetadata, BootImage};
 use rem6_memory::{Address, AddressRange};
 
 use crate::WorkloadError;
@@ -6,6 +6,7 @@ use crate::WorkloadError;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadBootImage {
     entry: Address,
+    elf_metadata: Option<BootElfMetadata>,
     segments: Vec<WorkloadBootSegment>,
 }
 
@@ -13,6 +14,7 @@ impl WorkloadBootImage {
     pub fn from_boot_image(image: &BootImage) -> Self {
         Self {
             entry: image.entry(),
+            elf_metadata: image.elf_metadata(),
             segments: image
                 .segments()
                 .iter()
@@ -25,12 +27,19 @@ impl WorkloadBootImage {
         self.entry
     }
 
+    pub const fn elf_metadata(&self) -> Option<BootElfMetadata> {
+        self.elf_metadata
+    }
+
     pub fn segments(&self) -> &[WorkloadBootSegment] {
         &self.segments
     }
 
     pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
         let mut image = BootImage::new(self.entry);
+        if let Some(metadata) = self.elf_metadata {
+            image = image.with_elf_metadata(metadata);
+        }
         for segment in &self.segments {
             image = image
                 .add_segment(segment.range().start(), segment.data().to_vec())

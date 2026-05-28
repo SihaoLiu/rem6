@@ -1,3 +1,4 @@
+use rem6_boot::{BootElfArchitecture, BootElfClass, BootElfMetadata};
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
@@ -126,6 +127,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     hash_str(&mut hash, "rem6.workload.manifest.v1");
     hash_str(&mut hash, input.id.as_str());
     hash_u64(&mut hash, input.boot.entry().get());
+    hash_elf_metadata(&mut hash, input.boot.elf_metadata());
     hash_u64(&mut hash, input.boot.segments().len() as u64);
     for segment in input.boot.segments() {
         hash_u64(&mut hash, segment.range().start().get());
@@ -1076,6 +1078,48 @@ fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHan
             hash_u64(hash, initrd.size().bytes());
         }
         None => hash_str(hash, "initrd.none"),
+    }
+}
+
+fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
+    match metadata {
+        Some(metadata) => {
+            hash_u64(hash, 1);
+            hash_elf_class(hash, metadata.class());
+            hash_u64(hash, u64::from(metadata.machine()));
+            hash_elf_architecture(hash, metadata.architecture());
+        }
+        None => hash_u64(hash, 0),
+    }
+}
+
+fn hash_elf_class(hash: &mut u64, class: BootElfClass) {
+    let value = match class {
+        BootElfClass::Class32 => 1,
+        BootElfClass::Class64 => 2,
+    };
+    hash_u64(hash, value);
+}
+
+fn hash_elf_architecture(hash: &mut u64, architecture: BootElfArchitecture) {
+    match architecture {
+        BootElfArchitecture::Sparc32 => hash_u64(hash, 1),
+        BootElfArchitecture::Sparc64 => hash_u64(hash, 2),
+        BootElfArchitecture::Mips => hash_u64(hash, 3),
+        BootElfArchitecture::I386 => hash_u64(hash, 4),
+        BootElfArchitecture::X8664 => hash_u64(hash, 5),
+        BootElfArchitecture::Arm => hash_u64(hash, 6),
+        BootElfArchitecture::Thumb => hash_u64(hash, 7),
+        BootElfArchitecture::Arm64 => hash_u64(hash, 8),
+        BootElfArchitecture::Riscv32 => hash_u64(hash, 9),
+        BootElfArchitecture::Riscv64 => hash_u64(hash, 10),
+        BootElfArchitecture::Power => hash_u64(hash, 11),
+        BootElfArchitecture::Power64 => hash_u64(hash, 12),
+        BootElfArchitecture::Unknown { machine, class } => {
+            hash_u64(hash, 13);
+            hash_u64(hash, u64::from(machine));
+            hash_elf_class(hash, class);
+        }
     }
 }
 

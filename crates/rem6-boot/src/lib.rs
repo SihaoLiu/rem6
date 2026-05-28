@@ -15,11 +15,101 @@ const ELF_CLASS_64: u8 = 2;
 const ELF_DATA_LITTLE: u8 = 1;
 const ELF_VERSION_CURRENT: u8 = 1;
 const PT_LOAD: u32 = 1;
+const EM_SPARC: u16 = 2;
+const EM_386: u16 = 3;
+const EM_MIPS: u16 = 8;
+const EM_SPARC64: u16 = 11;
+const EM_SPARC32PLUS: u16 = 18;
+const EM_PPC: u16 = 20;
+const EM_PPC64: u16 = 21;
+const EM_ARM: u16 = 40;
+const EM_SPARCV9: u16 = 43;
+const EM_X86_64: u16 = 62;
+const EM_AARCH64: u16 = 183;
+const EM_RISCV: u16 = 243;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootElfClass {
+    Class32,
+    Class64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootElfArchitecture {
+    Sparc32,
+    Sparc64,
+    Mips,
+    I386,
+    X8664,
+    Arm,
+    Thumb,
+    Arm64,
+    Riscv32,
+    Riscv64,
+    Power,
+    Power64,
+    Unknown { machine: u16, class: BootElfClass },
+}
+
+impl BootElfArchitecture {
+    const fn from_machine(class: BootElfClass, machine: u16, entry: Address) -> Self {
+        match (machine, class) {
+            (EM_SPARC64, _) | (EM_SPARCV9, _) | (EM_SPARC, BootElfClass::Class64) => Self::Sparc64,
+            (EM_SPARC32PLUS, _) | (EM_SPARC, BootElfClass::Class32) => Self::Sparc32,
+            (EM_MIPS, BootElfClass::Class32) => Self::Mips,
+            (EM_X86_64, BootElfClass::Class64) => Self::X8664,
+            (EM_386, BootElfClass::Class32) => Self::I386,
+            (EM_ARM, BootElfClass::Class32) => {
+                if entry.get() & 1 == 0 {
+                    Self::Arm
+                } else {
+                    Self::Thumb
+                }
+            }
+            (EM_AARCH64, BootElfClass::Class64) => Self::Arm64,
+            (EM_RISCV, BootElfClass::Class64) => Self::Riscv64,
+            (EM_RISCV, BootElfClass::Class32) => Self::Riscv32,
+            (EM_PPC, BootElfClass::Class32) => Self::Power,
+            (EM_PPC64, BootElfClass::Class64) => Self::Power64,
+            _ => Self::Unknown { machine, class },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BootElfMetadata {
+    class: BootElfClass,
+    machine: u16,
+    architecture: BootElfArchitecture,
+}
+
+impl BootElfMetadata {
+    const fn from_header(class: BootElfClass, machine: u16, entry: Address) -> Self {
+        Self {
+            class,
+            machine,
+            architecture: BootElfArchitecture::from_machine(class, machine, entry),
+        }
+    }
+
+    pub const fn class(&self) -> BootElfClass {
+        self.class
+    }
+
+    pub const fn machine(&self) -> u16 {
+        self.machine
+    }
+
+    pub const fn architecture(&self) -> BootElfArchitecture {
+        self.architecture
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootImage {
     entry: Address,
     segments: Vec<BootSegment>,
+    elf_metadata: Option<BootElfMetadata>,
 }
 
 impl BootImage {
@@ -27,11 +117,16 @@ impl BootImage {
         Self {
             entry,
             segments: Vec::new(),
+            elf_metadata: None,
         }
     }
 
     pub const fn entry(&self) -> Address {
         self.entry
+    }
+
+    pub const fn elf_metadata(&self) -> Option<BootElfMetadata> {
+        self.elf_metadata
     }
 
     pub fn from_elf(bytes: &[u8]) -> Result<Self, BootError> {
@@ -48,6 +143,11 @@ impl BootImage {
 
     pub fn segments(&self) -> &[BootSegment] {
         &self.segments
+    }
+
+    pub const fn with_elf_metadata(mut self, metadata: BootElfMetadata) -> Self {
+        self.elf_metadata = Some(metadata);
+        self
     }
 
     pub fn add_segment(mut self, start: Address, data: Vec<u8>) -> Result<Self, BootError> {
@@ -312,6 +412,7 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         }));
     }
 
+    let machine = read_u16(bytes, 18)?;
     let entry = Address::new(read_u64(bytes, 24)?);
     let program_header_offset = read_u64(bytes, 32)?;
     let program_header_count = read_u16(bytes, 56)?;
@@ -332,7 +433,11 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         })
     })?;
 
-    let mut image = BootImage::new(entry);
+    let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
+        BootElfClass::Class64,
+        machine,
+        entry,
+    ));
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let header_offset = program_header_offset + index as u64 * program_header_size as u64;
@@ -426,6 +531,7 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         }));
     }
 
+    let machine = read_u16(bytes, 18)?;
     let entry = Address::new(u64::from(read_u32(bytes, 24)?));
     let program_header_offset = u64::from(read_u32(bytes, 28)?);
     let program_header_count = read_u16(bytes, 44)?;
@@ -446,7 +552,11 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         })
     })?;
 
-    let mut image = BootImage::new(entry);
+    let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
+        BootElfClass::Class32,
+        machine,
+        entry,
+    ));
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let header_offset = program_header_offset + index as u64 * program_header_size as u64;
