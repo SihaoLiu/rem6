@@ -1,6 +1,6 @@
 use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfError, BootError, BootImage, BootLineWrite,
-    BootLoadReport,
+    BootElfArchitecture, BootElfClass, BootElfError, BootElfOperatingSystem, BootError, BootImage,
+    BootLineWrite, BootLoadReport,
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, LineMemoryStore, MemoryError,
@@ -376,6 +376,120 @@ fn boot_image_preserves_unknown_elf_machine_metadata() {
             machine: 0xffff,
             class: BootElfClass::Class64,
         },
+    );
+}
+
+#[test]
+fn boot_image_records_elf_operating_system_metadata() {
+    let mut linux = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    linux[7] = 3;
+    let mut freebsd = elf32_image(
+        0x8040,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x9000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x93, 0x05, 0x10, 0x00])],
+    );
+    freebsd[7] = 9;
+
+    let linux_metadata = BootImage::from_elf64_le(&linux)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(linux_metadata.os_abi(), 3);
+    assert_eq!(
+        linux_metadata.operating_system(),
+        BootElfOperatingSystem::Linux,
+    );
+
+    let freebsd_metadata = BootImage::from_elf32_le(&freebsd)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(freebsd_metadata.os_abi(), 9);
+    assert_eq!(
+        freebsd_metadata.operating_system(),
+        BootElfOperatingSystem::FreeBsd,
+    );
+
+    let unknown_metadata = BootImage::from_elf64_le(&elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    ))
+    .unwrap()
+    .elf_metadata()
+    .unwrap();
+    assert_eq!(
+        unknown_metadata.operating_system(),
+        BootElfOperatingSystem::Unknown { os_abi: 0 },
+    );
+}
+
+#[test]
+fn boot_image_maps_power64_abi_from_elf_flags() {
+    let mut abi_v1 = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x60, 0x00, 0x00, 0x00])],
+    );
+    write_u16(&mut abi_v1, 18, 21);
+    write_u32(&mut abi_v1, 48, 1);
+    let mut abi_v2 = abi_v1.clone();
+    write_u32(&mut abi_v2, 48, 2);
+    let mut abi_default = abi_v1.clone();
+    write_u32(&mut abi_default, 48, 0);
+
+    let metadata_v1 = BootImage::from_elf64_le(&abi_v1)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(metadata_v1.flags(), 1);
+    assert_eq!(
+        metadata_v1.operating_system(),
+        BootElfOperatingSystem::LinuxPower64AbiV1,
+    );
+    assert_eq!(
+        BootImage::from_elf64_le(&abi_v2)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .operating_system(),
+        BootElfOperatingSystem::LinuxPower64AbiV2,
+    );
+    assert_eq!(
+        BootImage::from_elf64_le(&abi_default)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .operating_system(),
+        BootElfOperatingSystem::LinuxPower64AbiV2,
     );
 }
 

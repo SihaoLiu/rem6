@@ -1,4 +1,4 @@
-use rem6_boot::{BootElfArchitecture, BootElfClass, BootImage};
+use rem6_boot::{BootElfArchitecture, BootElfClass, BootElfOperatingSystem, BootImage};
 use rem6_workload::{WorkloadBootImage, WorkloadId, WorkloadManifest};
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -79,4 +79,35 @@ fn workload_manifest_identity_includes_elf_metadata() {
     let x86_manifest = WorkloadManifest::builder(id("same"), x86).build().unwrap();
 
     assert_ne!(riscv_manifest.identity(), x86_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_operating_system_metadata() {
+    let mut linux_bytes = elf64_image(243);
+    linux_bytes[7] = 3;
+    let mut freebsd_bytes = elf64_image(243);
+    freebsd_bytes[7] = 9;
+
+    let linux = BootImage::from_elf64_le(&linux_bytes).unwrap();
+    let freebsd = BootImage::from_elf64_le(&freebsd_bytes).unwrap();
+
+    assert_eq!(linux.entry(), freebsd.entry());
+    assert_eq!(linux.segments(), freebsd.segments());
+    assert_eq!(
+        linux.elf_metadata().unwrap().operating_system(),
+        BootElfOperatingSystem::Linux,
+    );
+    assert_eq!(
+        freebsd.elf_metadata().unwrap().operating_system(),
+        BootElfOperatingSystem::FreeBsd,
+    );
+
+    let linux_manifest = WorkloadManifest::builder(id("same"), linux)
+        .build()
+        .unwrap();
+    let freebsd_manifest = WorkloadManifest::builder(id("same"), freebsd)
+        .build()
+        .unwrap();
+
+    assert_ne!(linux_manifest.identity(), freebsd_manifest.identity());
 }

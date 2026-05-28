@@ -14,6 +14,11 @@ const ELF_CLASS_32: u8 = 1;
 const ELF_CLASS_64: u8 = 2;
 const ELF_DATA_LITTLE: u8 = 1;
 const ELF_VERSION_CURRENT: u8 = 1;
+const ELF_OSABI_LINUX: u8 = 3;
+const ELF_OSABI_SOLARIS: u8 = 6;
+const ELF_OSABI_FREEBSD: u8 = 9;
+const ELF_OSABI_TRU64: u8 = 10;
+const ELF_OSABI_ARM: u8 = 97;
 const PT_LOAD: u32 = 1;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
@@ -51,6 +56,39 @@ pub enum BootElfArchitecture {
     Unknown { machine: u16, class: BootElfClass },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootElfOperatingSystem {
+    Linux,
+    Solaris,
+    Tru64,
+    LinuxArmOabi,
+    LinuxPower64AbiV1,
+    LinuxPower64AbiV2,
+    FreeBsd,
+    Unknown { os_abi: u8 },
+}
+
+impl BootElfOperatingSystem {
+    const fn from_header(machine: u16, os_abi: u8, flags: u32) -> Self {
+        if machine == EM_PPC64 {
+            return match flags & 0x3 {
+                0x1 => Self::LinuxPower64AbiV1,
+                0x2 => Self::LinuxPower64AbiV2,
+                _ => Self::LinuxPower64AbiV2,
+            };
+        }
+
+        match os_abi {
+            ELF_OSABI_LINUX => Self::Linux,
+            ELF_OSABI_SOLARIS => Self::Solaris,
+            ELF_OSABI_TRU64 => Self::Tru64,
+            ELF_OSABI_ARM => Self::LinuxArmOabi,
+            ELF_OSABI_FREEBSD => Self::FreeBsd,
+            _ => Self::Unknown { os_abi },
+        }
+    }
+}
+
 impl BootElfArchitecture {
     const fn from_machine(class: BootElfClass, machine: u16, entry: Address) -> Self {
         match (machine, class) {
@@ -80,15 +118,27 @@ impl BootElfArchitecture {
 pub struct BootElfMetadata {
     class: BootElfClass,
     machine: u16,
+    os_abi: u8,
+    flags: u32,
     architecture: BootElfArchitecture,
+    operating_system: BootElfOperatingSystem,
 }
 
 impl BootElfMetadata {
-    const fn from_header(class: BootElfClass, machine: u16, entry: Address) -> Self {
+    const fn from_header(
+        class: BootElfClass,
+        machine: u16,
+        os_abi: u8,
+        flags: u32,
+        entry: Address,
+    ) -> Self {
         Self {
             class,
             machine,
+            os_abi,
+            flags,
             architecture: BootElfArchitecture::from_machine(class, machine, entry),
+            operating_system: BootElfOperatingSystem::from_header(machine, os_abi, flags),
         }
     }
 
@@ -100,8 +150,20 @@ impl BootElfMetadata {
         self.machine
     }
 
+    pub const fn os_abi(&self) -> u8 {
+        self.os_abi
+    }
+
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
     pub const fn architecture(&self) -> BootElfArchitecture {
         self.architecture
+    }
+
+    pub const fn operating_system(&self) -> BootElfOperatingSystem {
+        self.operating_system
     }
 }
 
@@ -412,7 +474,9 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         }));
     }
 
+    let os_abi = bytes[7];
     let machine = read_u16(bytes, 18)?;
+    let flags = read_u32(bytes, 48)?;
     let entry = Address::new(read_u64(bytes, 24)?);
     let program_header_offset = read_u64(bytes, 32)?;
     let program_header_count = read_u16(bytes, 56)?;
@@ -436,6 +500,8 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
         BootElfClass::Class64,
         machine,
+        os_abi,
+        flags,
         entry,
     ));
     let mut loaded_segments = 0usize;
@@ -531,7 +597,9 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
         }));
     }
 
+    let os_abi = bytes[7];
     let machine = read_u16(bytes, 18)?;
+    let flags = read_u32(bytes, 36)?;
     let entry = Address::new(u64::from(read_u32(bytes, 24)?));
     let program_header_offset = u64::from(read_u32(bytes, 28)?);
     let program_header_count = read_u16(bytes, 44)?;
@@ -555,6 +623,8 @@ fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
         BootElfClass::Class32,
         machine,
+        os_abi,
+        flags,
         entry,
     ));
     let mut loaded_segments = 0usize;

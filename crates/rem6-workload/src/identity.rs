@@ -1,4 +1,4 @@
-use rem6_boot::{BootElfArchitecture, BootElfClass, BootElfMetadata};
+use rem6_boot::{BootElfArchitecture, BootElfClass, BootElfMetadata, BootElfOperatingSystem};
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
@@ -1087,7 +1087,10 @@ fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
             hash_u64(hash, 1);
             hash_elf_class(hash, metadata.class());
             hash_u64(hash, u64::from(metadata.machine()));
+            hash_u64(hash, u64::from(metadata.os_abi()));
+            hash_u64(hash, u64::from(metadata.flags()));
             hash_elf_architecture(hash, metadata.architecture());
+            hash_elf_operating_system(hash, metadata.operating_system());
         }
         None => hash_u64(hash, 0),
     }
@@ -1119,6 +1122,22 @@ fn hash_elf_architecture(hash: &mut u64, architecture: BootElfArchitecture) {
             hash_u64(hash, 13);
             hash_u64(hash, u64::from(machine));
             hash_elf_class(hash, class);
+        }
+    }
+}
+
+fn hash_elf_operating_system(hash: &mut u64, operating_system: BootElfOperatingSystem) {
+    match operating_system {
+        BootElfOperatingSystem::Linux => hash_u64(hash, 1),
+        BootElfOperatingSystem::Solaris => hash_u64(hash, 2),
+        BootElfOperatingSystem::Tru64 => hash_u64(hash, 3),
+        BootElfOperatingSystem::LinuxArmOabi => hash_u64(hash, 4),
+        BootElfOperatingSystem::LinuxPower64AbiV1 => hash_u64(hash, 5),
+        BootElfOperatingSystem::LinuxPower64AbiV2 => hash_u64(hash, 6),
+        BootElfOperatingSystem::FreeBsd => hash_u64(hash, 7),
+        BootElfOperatingSystem::Unknown { os_abi } => {
+            hash_u64(hash, 8);
+            hash_u64(hash, u64::from(os_abi));
         }
     }
 }
