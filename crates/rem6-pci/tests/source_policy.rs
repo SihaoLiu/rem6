@@ -16,6 +16,22 @@ fn pci_lib_rs_remains_a_facade() {
 }
 
 #[test]
+fn pci_host_bridge_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let host_rs = crate_dir.join("src/host.rs");
+
+    assert!(
+        host_rs.exists(),
+        "PCI host bridge code belongs in src/host.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct PciHostBridge"),
+        "src/lib.rs should re-export PciHostBridge from the host module"
+    );
+}
+
+#[test]
 fn pci_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

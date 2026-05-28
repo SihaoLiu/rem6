@@ -1449,7 +1449,11 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   bridge windows. PCI host bridge tests also cover topology-level snapshot
   restore across registered type-1 bridges, downstream endpoints, bridge
   forwarding windows, endpoint BAR mappings, and derived legacy INTx line state,
-  with mismatched host topology rejected before live state is replaced.
+  with mismatched host topology rejected before live state is replaced. The PCI
+  host aperture, config-address decoder, host BAR range mapper, bridge-window
+  forwarding, INTx path derivation, and host snapshot/restore live in a focused
+  host module, leaving the crate root as a facade instead of letting PCI
+  topology code accumulate beside endpoint and capability code.
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status
