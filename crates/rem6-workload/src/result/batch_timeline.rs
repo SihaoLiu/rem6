@@ -553,17 +553,7 @@ impl WorkloadParallelExecutionSummary {
                 .full_system_parallel_scheduler_planned_batch_timeline
                 .clone();
         }
-        collect_parallel_batch_timeline(
-            self.parallel_scheduler_planned_batch_timeline
-                .iter()
-                .cloned()
-                .chain(
-                    self.data_cache_parallel_scheduler_planned_batch_timeline
-                        .iter()
-                        .cloned(),
-                )
-                .chain(self.dma_scheduler_planned_batch_timeline()),
-        )
+        self.scoped_full_system_parallel_scheduler_planned_batch_timeline()
     }
 
     pub fn parallel_scheduler_planned_batch_worker_ticks(&self) -> Tick {
@@ -751,11 +741,17 @@ impl WorkloadParallelExecutionSummary {
     pub fn full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries(
         &self,
     ) -> Vec<(usize, Tick, Tick)> {
-        let timeline = self.full_system_parallel_scheduler_planned_batch_timeline();
-        planned_batch_worker_slot_tick_summaries(
-            &timeline,
-            self.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),
-        )
+        let scoped_summaries =
+            self.scoped_full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries();
+        if !self.has_explicit_full_system_parallel_scheduler_planned_batch_timeline() {
+            return scoped_summaries;
+        }
+        if !self.explicit_full_system_parallel_scheduler_planned_batch_timeline_covers_scoped() {
+            return scoped_summaries;
+        }
+        let explicit_summaries =
+            self.explicit_full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries();
+        collect_strongest_batch_worker_slot_tick_summaries(&explicit_summaries, &scoped_summaries)
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_utilization_ratio(
@@ -1299,6 +1295,54 @@ impl WorkloadParallelExecutionSummary {
         !self
             .full_system_parallel_scheduler_planned_batch_timeline
             .is_empty()
+    }
+
+    fn scoped_full_system_parallel_scheduler_planned_batch_timeline(
+        &self,
+    ) -> Vec<WorkloadParallelBatchTimelineRecord> {
+        collect_parallel_batch_timeline(
+            self.parallel_scheduler_planned_batch_timeline
+                .iter()
+                .cloned()
+                .chain(
+                    self.data_cache_parallel_scheduler_planned_batch_timeline
+                        .iter()
+                        .cloned(),
+                )
+                .chain(self.dma_scheduler_planned_batch_timeline()),
+        )
+    }
+
+    fn explicit_full_system_parallel_scheduler_planned_batch_timeline_covers_scoped(&self) -> bool {
+        let scoped_timeline = self.scoped_full_system_parallel_scheduler_planned_batch_timeline();
+        scoped_timeline.iter().all(|scoped| {
+            self.full_system_parallel_scheduler_planned_batch_timeline
+                .iter()
+                .any(|record| record == scoped)
+        })
+    }
+
+    fn explicit_full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        planned_batch_worker_slot_tick_summaries(
+            &self.full_system_parallel_scheduler_planned_batch_timeline,
+            self.planned_batch_worker_capacity_ticks
+                .full_system_parallel_scheduler,
+        )
+    }
+
+    fn scoped_full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries(
+        &self,
+    ) -> Vec<(usize, Tick, Tick)> {
+        collect_batch_worker_slot_tick_summaries(
+            self.parallel_scheduler_planned_batch_worker_slot_tick_summaries()
+                .into_iter()
+                .chain(
+                    self.data_cache_parallel_scheduler_planned_batch_worker_slot_tick_summaries(),
+                )
+                .chain(self.dma_scheduler_planned_batch_worker_slot_tick_summaries()),
+        )
     }
 }
 

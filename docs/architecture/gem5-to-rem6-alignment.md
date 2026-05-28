@@ -751,6 +751,12 @@ Implementation evidence on 2026-05-26:
   accepts exact timeline or derived worker/partition contracts. A global
   pre-dispatch plan therefore cannot hide device-local planned occupancy behind
   a weaker merged timeline.
+- Planned full-system worker-slot summaries retain scoped CPU-scheduler,
+  data-cache, GPU DMA, and accelerator DMA planned slot evidence directly, and
+  merge explicit full-system planned slot evidence only when the explicit
+  timeline covers the scoped planned records. Slot-level pre-dispatch occupancy
+  therefore cannot be weakened by publishing a partial global timeline with a
+  larger capacity counter.
 - Batch-timeline evidence validation rejects duplicate records at the replay
   boundary. Replaying the same pre-dispatch batch record twice can no longer
   inflate planned full-system worker-bucket evidence.

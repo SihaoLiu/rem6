@@ -301,3 +301,33 @@ fn workload_replay_plan_uses_scoped_planned_capacity_when_explicit_full_system_i
         ),
     );
 }
+
+#[test]
+fn workload_summary_uses_scoped_planned_slots_when_explicit_full_system_timeline_is_weaker() {
+    let cpu = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0)],
+        1,
+    );
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        4,
+        8,
+        [partition(2), partition(3)],
+        2,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_planned_batch_timeline([cpu.clone()])
+        .with_parallel_scheduler_planned_batch_worker_capacity_ticks(8)
+        .with_gpu_dma_scheduler_planned_batch_timeline([gpu])
+        .with_gpu_dma_scheduler_planned_batch_worker_capacity_ticks(12)
+        .with_full_system_parallel_scheduler_planned_batch_timeline([cpu])
+        .with_full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(20);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_slot_tick_summaries(),
+        vec![(0, 8, 0), (1, 4, 4), (2, 0, 4)],
+    );
+}
