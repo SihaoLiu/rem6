@@ -50,6 +50,13 @@ pub enum PciError {
     DuplicateFunction {
         function: PciFunctionAddress,
     },
+    MissingEndpoint {
+        function: PciFunctionAddress,
+    },
+    MissingBridgePath {
+        function: PciFunctionAddress,
+        bus: u8,
+    },
     HostAddressOverflow {
         base: Address,
         offset: Address,
@@ -330,6 +337,14 @@ impl fmt::Display for PciError {
             Self::DuplicateFunction { function } => {
                 write!(f, "PCI function {:?} is already registered", function)
             }
+            Self::MissingEndpoint { function } => {
+                write!(f, "PCI endpoint {:?} is not registered", function)
+            }
+            Self::MissingBridgePath { function, bus } => write!(
+                f,
+                "PCI endpoint {:?} has no bridge path for bus {}",
+                function, bus
+            ),
             Self::HostAddressOverflow { base, offset } => write!(
                 f,
                 "PCI host address base {:#x} plus PCI offset {:#x} overflows",

@@ -3,7 +3,8 @@ use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciBridgeBusRange, PciBridgeConfig, PciClassCode,
     PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciError,
     PciFunctionAddress, PciHostAddressBases, PciHostAddressSpace, PciHostBarRange, PciHostBridge,
-    PciInterruptPin, PciType1HeaderFields,
+    PciInterruptPin, PciLegacyInterruptMapper, PciLegacyInterruptPolicy, PciLegacyInterruptRouter,
+    PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable, PciType1HeaderFields,
 };
 
 fn bridge_config(function: PciFunctionAddress) -> PciBridgeConfig {
@@ -55,6 +56,104 @@ fn legacy_io_endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
         )
         .unwrap();
     endpoint
+}
+
+#[test]
+fn pci_host_bridge_derives_legacy_interrupt_path_from_bridge_ranges() {
+    let root_bridge = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let downstream_bridge = PciFunctionAddress::new(1, 2, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(2, 5, 0).unwrap();
+    let mut host =
+        PciHostBridge::new(PciConfigAperture::ecam(Address::new(0x1000_0000), 3).unwrap());
+    host.register_bridge(bridge_config(root_bridge)).unwrap();
+    host.register_bridge(PciBridgeConfig::new(
+        downstream_bridge,
+        PciDeviceIdentity::new(0x1011, 0x0026),
+        PciClassCode::new(0x06, 0x04, 0x00, 0x00),
+        PciBridgeBusRange::new(1, 2, 2).unwrap(),
+    ))
+    .unwrap();
+    host.register_endpoint(
+        PciEndpointConfig::new(
+            endpoint_function,
+            PciDeviceIdentity::new(0x1af4, 0x1001),
+            PciClassCode::new(0x01, 0x00, 0x00, 0x00),
+        )
+        .with_interrupt(11, PciInterruptPin::IntA),
+    )
+    .unwrap();
+
+    let path = host.legacy_interrupt_path(endpoint_function).unwrap();
+    assert_eq!(path.endpoint_function(), endpoint_function);
+    assert_eq!(path.endpoint_pin(), PciInterruptPin::IntA);
+    assert_eq!(path.root_function(), root_bridge);
+    assert_eq!(path.root_pin(), PciInterruptPin::IntD);
+    assert_eq!(path.upstream_bridges(), &[downstream_bridge, root_bridge]);
+
+    let table = PciLegacyInterruptRoutingTable::new(
+        PciLegacyInterruptMapper::new(
+            rem6_interrupt::InterruptLineId::new(32),
+            4,
+            PciLegacyInterruptPolicy::DeviceModulo,
+        )
+        .unwrap(),
+    )
+    .with_entry(
+        PciLegacyInterruptRoutingEntry::new(
+            root_bridge,
+            PciInterruptPin::IntD,
+            rem6_interrupt::InterruptLineId::new(52),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let router = PciLegacyInterruptRouter::new(
+        table,
+        rem6_interrupt::InterruptTargetId::new(0),
+        rem6_kernel::PartitionId::new(0),
+        2,
+        std::sync::Arc::new(std::sync::Mutex::new(
+            rem6_interrupt::InterruptController::new(),
+        )),
+    )
+    .unwrap();
+    assert_eq!(
+        router.route_for_path(&path).unwrap().line(),
+        rem6_interrupt::InterruptLineId::new(52)
+    );
+    assert_eq!(
+        router
+            .route_for_host_endpoint(&host, endpoint_function)
+            .unwrap()
+            .line(),
+        rem6_interrupt::InterruptLineId::new(52)
+    );
+    assert_eq!(
+        host.endpoint(endpoint_function)
+            .unwrap()
+            .legacy_interrupt_line(),
+        11
+    );
+    let assigned_route = router
+        .assign_host_endpoint_interrupt_line(&mut host, endpoint_function)
+        .unwrap();
+    assert_eq!(
+        assigned_route.line(),
+        rem6_interrupt::InterruptLineId::new(52)
+    );
+    assert_eq!(
+        host.endpoint(endpoint_function)
+            .unwrap()
+            .legacy_interrupt_line(),
+        52
+    );
+
+    assert_eq!(
+        host.legacy_interrupt_path(PciFunctionAddress::new(2, 6, 0).unwrap()),
+        Err(PciError::MissingEndpoint {
+            function: PciFunctionAddress::new(2, 6, 0).unwrap(),
+        })
+    );
 }
 
 #[test]

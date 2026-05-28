@@ -969,11 +969,46 @@ impl PciHostBridge {
         self.bridges.get(&function)
     }
 
+    pub fn endpoint_mut(&mut self, function: PciFunctionAddress) -> Option<&mut PciEndpointConfig> {
+        self.endpoints.get_mut(&function)
+    }
+
     pub fn endpoint_config_range(
         &self,
         function: PciFunctionAddress,
     ) -> Result<AddressRange, PciError> {
         self.aperture.endpoint_config_range(function)
+    }
+
+    pub fn legacy_interrupt_path(
+        &self,
+        function: PciFunctionAddress,
+    ) -> Result<PciLegacyInterruptPath, PciError> {
+        let endpoint = self
+            .endpoint(function)
+            .ok_or(PciError::MissingEndpoint { function })?;
+        let mut path = endpoint.legacy_interrupt_path()?;
+        let mut bus = function.bus();
+
+        while bus != 0 {
+            let bridge = self
+                .parent_bridge_for_bus(bus)
+                .ok_or(PciError::MissingBridgePath { function, bus })?;
+            path = path.with_upstream_bridge(bridge.function());
+            bus = bridge.function().bus();
+        }
+
+        Ok(path)
+    }
+
+    pub fn assign_legacy_interrupt_line(
+        &mut self,
+        function: PciFunctionAddress,
+        line: InterruptLineId,
+    ) -> Result<(), PciError> {
+        self.endpoint_mut(function)
+            .ok_or(PciError::MissingEndpoint { function })?
+            .assign_legacy_interrupt_line(line)
     }
 
     pub fn register_endpoint(&mut self, endpoint: PciEndpointConfig) -> Result<(), PciError> {
@@ -1071,6 +1106,13 @@ impl PciHostBridge {
 
     fn bridge_for_bus(&self, bus: u8) -> Option<&PciBridgeConfig> {
         self.bridges.values().find(|bridge| bridge.routes_bus(bus))
+    }
+
+    fn parent_bridge_for_bus(&self, bus: u8) -> Option<&PciBridgeConfig> {
+        self.bridges
+            .values()
+            .filter(|bridge| bridge.function().bus() < bus && bridge.routes_bus(bus))
+            .max_by_key(|bridge| (bridge.bus_range().secondary(), bridge.function()))
     }
 
     fn host_forwards_bar_range(&self, function: PciFunctionAddress, range: &PciBarRange) -> bool {
