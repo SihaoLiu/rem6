@@ -6,6 +6,7 @@ mod bus;
 mod distributed;
 mod dump;
 mod interface;
+mod sinic;
 mod switch;
 mod tap;
 
@@ -13,6 +14,7 @@ pub use bus::*;
 pub use distributed::*;
 pub use dump::*;
 pub use interface::*;
+pub use sinic::*;
 pub use switch::*;
 pub use tap::*;
 

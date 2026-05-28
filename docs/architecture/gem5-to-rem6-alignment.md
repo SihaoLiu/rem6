@@ -333,6 +333,14 @@ Implementation evidence on 2026-05-28:
   registry, schedule remote data messages through the distributed receive
   scheduler, inject ready packets into the bound local peer, and snapshot codec,
   delay, transmit, and receive-scheduler state.
+- `rem6-net` has a typed SINIC register nucleus aligned with gem5
+  `sinicreg.hh` and the interrupt paths in `sinic.cc`: register offsets,
+  access widths, read/write permissions, RX/TX data descriptors, RX/TX done
+  status words, RX status packing, reset parameter validation, interrupt masks,
+  software interrupts, delayed packet/DMA-style interrupts, RX-high and TX-low
+  watermark latches, read-clear status behavior, and snapshot restore are
+  explicit Rust state with typed errors instead of register macro expansion and
+  panic paths.
 
 Implementation evidence on 2026-05-26:
 
