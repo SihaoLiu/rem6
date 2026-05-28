@@ -556,6 +556,14 @@ impl TageBranchPredictor {
         self.apply_history_update(history, taken, target, true)
     }
 
+    pub fn validate_history_update(
+        &self,
+        history: &TageHistory,
+    ) -> Result<(), TageBranchPredictorError> {
+        let thread_index = self.thread_index(history.cpu())?;
+        self.validate_history_update_at(thread_index, history)
+    }
+
     pub fn train(
         &mut self,
         history: &TageHistory,
@@ -857,14 +865,8 @@ impl TageBranchPredictor {
         let old_global_history = self.threads[thread_index].global_history_value();
         if repair {
             self.threads[thread_index].clone_from(history.thread_before());
-        } else if &self.threads[thread_index] != history.thread_before() {
-            return Err(TageBranchPredictorError::HistoryUpdateOutOfOrder {
-                cpu: history.cpu(),
-                expected_path_history: old_path_history,
-                actual_path_history: history.thread_before().path_history(),
-                expected_global_history: old_global_history,
-                actual_global_history: history.thread_before().global_history_value(),
-            });
+        } else {
+            self.validate_history_update_at(thread_index, history)?;
         }
         let (history_bits, history_bit_count) =
             self.update_path_and_global_history(thread_index, history.pc(), taken, target);
@@ -879,6 +881,23 @@ impl TageBranchPredictor {
             history_bits,
             history_bit_count,
             history_update_count: self.history_update_count,
+        })
+    }
+
+    fn validate_history_update_at(
+        &self,
+        thread_index: usize,
+        history: &TageHistory,
+    ) -> Result<(), TageBranchPredictorError> {
+        if &self.threads[thread_index] == history.thread_before() {
+            return Ok(());
+        }
+        Err(TageBranchPredictorError::HistoryUpdateOutOfOrder {
+            cpu: history.cpu(),
+            expected_path_history: self.threads[thread_index].path_history(),
+            actual_path_history: history.thread_before().path_history(),
+            expected_global_history: self.threads[thread_index].global_history_value(),
+            actual_global_history: history.thread_before().global_history_value(),
         })
     }
 

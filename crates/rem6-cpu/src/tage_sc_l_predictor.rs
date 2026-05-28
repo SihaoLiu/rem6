@@ -241,6 +241,8 @@ impl TageScLBranchPredictor {
         kind: StatisticalCorrectorBranchKind,
         target: Address,
     ) -> Result<TageScLTrainingUpdate, TageScLBranchPredictorError> {
+        self.ltage.validate_train(history.ltage_history())?;
+
         let statistical_corrector_update = self
             .statistical_corrector
             .train(history.statistical_corrector_history(), actual_taken)?;

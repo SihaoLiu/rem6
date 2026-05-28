@@ -225,6 +225,8 @@ impl LTageBranchPredictor {
         actual_taken: bool,
         target: Address,
     ) -> Result<LTageTrainingUpdate, LTageBranchPredictorError> {
+        self.validate_train(history)?;
+
         let loop_update = self
             .loop_predictor
             .train(history.loop_history(), actual_taken)?;
@@ -246,6 +248,11 @@ impl LTageBranchPredictor {
             history_update,
             update_count: self.update_count,
         })
+    }
+
+    pub fn validate_train(&self, history: &LTageHistory) -> Result<(), LTageBranchPredictorError> {
+        self.tage.validate_history_update(history.tage_history())?;
+        Ok(())
     }
 
     pub fn repair(

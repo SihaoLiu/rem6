@@ -1,8 +1,9 @@
 use rem6_cpu::{
     CpuId, LTageBranchPredictorConfig, LTageBranchPredictorError, LTageProvider,
     LoopBranchPredictorConfig, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
-    StatisticalCorrectorError, TageBranchPredictorConfig, TageProvider, TageScLBranchPredictor,
-    TageScLBranchPredictorConfig, TageScLBranchPredictorError, TageScLProvider,
+    StatisticalCorrectorError, TageBranchPredictorConfig, TageBranchPredictorError, TageProvider,
+    TageScLBranchPredictor, TageScLBranchPredictorConfig, TageScLBranchPredictorError,
+    TageScLProvider,
 };
 use rem6_memory::Address;
 
@@ -164,6 +165,45 @@ fn tage_sc_l_train_updates_sc_ltage_and_histories_in_reference_order() {
     assert_eq!(predictor.statistical_corrector().update_count(), 1);
     assert_eq!(predictor.ltage().update_count(), 1);
     assert_eq!(predictor.statistical_corrector().history_update_count(), 1);
+}
+
+#[test]
+fn tage_sc_l_stale_train_rejects_without_partial_inner_mutation() {
+    let mut predictor = predictor(false, false, false);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x44);
+
+    let prediction = predictor.predict(cpu, pc, true).unwrap();
+    predictor
+        .train(
+            prediction.history(),
+            true,
+            StatisticalCorrectorBranchKind::DirectConditional,
+            Address::new(0),
+        )
+        .unwrap();
+    let snapshot = predictor.snapshot();
+
+    assert_eq!(
+        predictor
+            .train(
+                prediction.history(),
+                false,
+                StatisticalCorrectorBranchKind::DirectConditional,
+                Address::new(0),
+            )
+            .unwrap_err(),
+        TageScLBranchPredictorError::LTage(LTageBranchPredictorError::Tage(
+            TageBranchPredictorError::HistoryUpdateOutOfOrder {
+                cpu,
+                expected_path_history: 1,
+                actual_path_history: 0,
+                expected_global_history: 1,
+                actual_global_history: 0,
+            },
+        )),
+    );
+    assert_eq!(predictor.snapshot(), snapshot);
 }
 
 #[test]

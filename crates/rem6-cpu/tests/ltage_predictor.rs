@@ -161,6 +161,33 @@ fn ltage_train_updates_loop_tage_and_history_in_gem5_order() {
 }
 
 #[test]
+fn ltage_stale_train_rejects_without_partial_inner_mutation() {
+    let mut predictor = ltage(false, false);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x10);
+
+    let prediction = predictor.predict(cpu, pc, true).unwrap();
+    predictor
+        .train(prediction.history(), true, Address::new(0x80))
+        .unwrap();
+    let snapshot = predictor.snapshot();
+
+    assert_eq!(
+        predictor
+            .train(prediction.history(), false, Address::new(0))
+            .unwrap_err(),
+        LTageBranchPredictorError::Tage(TageBranchPredictorError::HistoryUpdateOutOfOrder {
+            cpu,
+            expected_path_history: 0,
+            actual_path_history: 0,
+            expected_global_history: 1,
+            actual_global_history: 0,
+        }),
+    );
+    assert_eq!(predictor.snapshot(), snapshot);
+}
+
+#[test]
 fn ltage_repair_restores_loop_speculation_and_tage_history() {
     let mut predictor = ltage(true, true);
     let cpu = CpuId::new(0);
