@@ -503,6 +503,42 @@ fn workload_replay_plan_rejects_weaker_explicit_full_system_batch_timeline() {
 }
 
 #[test]
+fn workload_summary_uses_scoped_recorded_timeline_when_explicit_full_system_timeline_is_weaker() {
+    let cpu = timeline_record(
+        WorkloadParallelBatchScope::Scheduler,
+        0,
+        4,
+        [partition(0), partition(1)],
+        2,
+    );
+    let gpu = timeline_record(
+        WorkloadParallelBatchScope::GpuDmaScheduler,
+        4,
+        8,
+        [partition(2), partition(3)],
+        2,
+    );
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_batch_timeline([cpu.clone()])
+        .with_gpu_dma_scheduler_batch_timeline([gpu.clone()])
+        .with_full_system_parallel_scheduler_batch_timeline([cpu]);
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_batch_timeline(),
+        vec![
+            timeline_record(
+                WorkloadParallelBatchScope::Scheduler,
+                0,
+                4,
+                [partition(0), partition(1)],
+                2,
+            ),
+            gpu,
+        ],
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_parallel_batch_timeline_expectations() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-batch-timeline"), boot_image())

@@ -66,7 +66,8 @@ fn validate_full_system_batch_timeline_merge_summary_for_scopes(
     scoped_timeline_scopes: [WorkloadParallelBatchTimelineScope; 4],
 ) -> Result<(), WorkloadError> {
     validate_batch_timeline_records_for_scope(summary, full_system_scope)?;
-    let merged = actual_parallel_batch_timeline_records(full_system_scope, summary);
+    let merged =
+        full_system_batch_timeline_records_for_merge_validation(summary, full_system_scope);
     for scope in scoped_timeline_scopes {
         validate_batch_timeline_records_for_scope(summary, scope)?;
         for scoped in actual_parallel_batch_timeline_records(scope, summary) {
@@ -87,6 +88,24 @@ fn validate_full_system_batch_timeline_merge_summary_for_scopes(
         }
     }
     Ok(())
+}
+
+fn full_system_batch_timeline_records_for_merge_validation(
+    summary: &WorkloadParallelExecutionSummary,
+    full_system_scope: WorkloadParallelBatchTimelineScope,
+) -> Vec<crate::WorkloadParallelBatchTimelineRecord> {
+    match full_system_scope {
+        WorkloadParallelBatchTimelineScope::FullSystem
+            if !summary
+                .explicit_full_system_parallel_scheduler_batch_timeline()
+                .is_empty() =>
+        {
+            summary
+                .explicit_full_system_parallel_scheduler_batch_timeline()
+                .to_vec()
+        }
+        _ => actual_parallel_batch_timeline_records(full_system_scope, summary),
+    }
 }
 
 fn validate_batch_timeline_scope_evidence(

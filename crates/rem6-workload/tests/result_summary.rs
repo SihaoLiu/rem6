@@ -1088,13 +1088,6 @@ fn workload_result_uses_explicit_full_system_batch_timeline_evidence() {
     let cpu = PartitionId::new(1);
     let cache = PartitionId::new(2);
     let dma = PartitionId::new(3);
-    let scoped_scheduler = WorkloadParallelBatchTimelineRecord::new(
-        WorkloadParallelBatchScope::Scheduler,
-        20,
-        24,
-        [cpu, cache],
-        2,
-    );
     let full_system_early = WorkloadParallelBatchTimelineRecord::new(
         WorkloadParallelBatchScope::Scheduler,
         0,
@@ -1110,7 +1103,7 @@ fn workload_result_uses_explicit_full_system_batch_timeline_evidence() {
         2,
     );
     let summary = WorkloadParallelExecutionSummary::default()
-        .with_parallel_scheduler_batch_timeline([scoped_scheduler])
+        .with_parallel_scheduler_batch_timeline([full_system_early.clone()])
         .with_full_system_parallel_scheduler_batch_timeline([
             full_system_late.clone(),
             full_system_early.clone(),

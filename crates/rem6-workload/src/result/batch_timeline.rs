@@ -540,9 +540,18 @@ impl WorkloadParallelExecutionSummary {
         &self,
     ) -> Vec<WorkloadParallelBatchTimelineRecord> {
         if self.has_explicit_full_system_parallel_scheduler_batch_timeline() {
+            if !self.explicit_full_system_parallel_scheduler_batch_timeline_covers_scoped() {
+                return self.scoped_full_system_parallel_scheduler_batch_timeline();
+            }
             return self.full_system_parallel_scheduler_batch_timeline.clone();
         }
         self.scoped_full_system_parallel_scheduler_batch_timeline()
+    }
+
+    pub(crate) fn explicit_full_system_parallel_scheduler_batch_timeline(
+        &self,
+    ) -> &[WorkloadParallelBatchTimelineRecord] {
+        &self.full_system_parallel_scheduler_batch_timeline
     }
 
     pub fn full_system_parallel_scheduler_planned_batch_timeline(
@@ -1289,6 +1298,15 @@ impl WorkloadParallelExecutionSummary {
                 )
                 .chain(self.dma_scheduler_batch_timeline()),
         )
+    }
+
+    fn explicit_full_system_parallel_scheduler_batch_timeline_covers_scoped(&self) -> bool {
+        let scoped_timeline = self.scoped_full_system_parallel_scheduler_batch_timeline();
+        scoped_timeline.iter().all(|scoped| {
+            self.full_system_parallel_scheduler_batch_timeline
+                .iter()
+                .any(|record| record == scoped)
+        })
     }
 
     fn has_explicit_full_system_parallel_scheduler_planned_batch_timeline(&self) -> bool {

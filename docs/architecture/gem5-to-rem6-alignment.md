@@ -746,6 +746,11 @@ Implementation evidence on 2026-05-26:
   by retaining the strongest active and idle tick evidence per slot. A runtime
   full-system summary therefore cannot hide device-side worker slots merely by
   publishing a shorter global slot list.
+- Explicit recorded full-system batch timelines must also cover scoped runtime
+  scheduler, data-cache, GPU DMA, and accelerator DMA records before reporting
+  APIs use them as the full-system timeline. Runtime timeline queries therefore
+  expose scoped device-side batches directly instead of hiding them until replay
+  validation rejects the weak merge.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global
