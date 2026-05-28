@@ -4,10 +4,12 @@ use std::fmt;
 
 mod bus;
 mod dump;
+mod interface;
 mod switch;
 
 pub use bus::*;
 pub use dump::*;
+pub use interface::*;
 pub use switch::*;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -838,6 +840,27 @@ pub enum NetworkError {
         payload_bytes: u64,
     },
     EthernetPcapSequenceOverflow,
+    DuplicateEthernetInterfaceName {
+        name: String,
+    },
+    EthernetInterfaceCountOverflow {
+        interface_count: usize,
+    },
+    UnknownEthernetInterface {
+        interface: EthernetInterfaceId,
+        interface_count: usize,
+    },
+    EthernetInterfaceSelfBinding {
+        interface: EthernetInterfaceId,
+    },
+    EthernetInterfacePeerAlreadyBound {
+        interface: EthernetInterfaceId,
+        current_peer: EthernetInterfaceId,
+        requested_peer: EthernetInterfaceId,
+    },
+    EthernetInterfacePeerMissing {
+        interface: EthernetInterfaceId,
+    },
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
@@ -1007,6 +1030,42 @@ impl fmt::Display for NetworkError {
             Self::EthernetPcapSequenceOverflow => {
                 write!(formatter, "ethernet pcap record sequence overflow")
             }
+            Self::DuplicateEthernetInterfaceName { name } => {
+                write!(formatter, "duplicate ethernet interface name {name}")
+            }
+            Self::EthernetInterfaceCountOverflow { interface_count } => write!(
+                formatter,
+                "ethernet interface count {interface_count} cannot fit in interface id"
+            ),
+            Self::UnknownEthernetInterface {
+                interface,
+                interface_count,
+            } => write!(
+                formatter,
+                "unknown ethernet interface {} for registry with {interface_count} interfaces",
+                interface.index()
+            ),
+            Self::EthernetInterfaceSelfBinding { interface } => write!(
+                formatter,
+                "ethernet interface {} cannot bind to itself",
+                interface.index()
+            ),
+            Self::EthernetInterfacePeerAlreadyBound {
+                interface,
+                current_peer,
+                requested_peer,
+            } => write!(
+                formatter,
+                "ethernet interface {} is already bound to {}, not requested peer {}",
+                interface.index(),
+                current_peer.index(),
+                requested_peer.index()
+            ),
+            Self::EthernetInterfacePeerMissing { interface } => write!(
+                formatter,
+                "ethernet interface {} has no peer",
+                interface.index()
+            ),
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
                 "ethernet switch port count {port_count} must be positive"
