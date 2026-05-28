@@ -1141,6 +1141,10 @@ pub enum PciError {
         requested_function: PciFunctionAddress,
         requested_bar: PciBarIndex,
     },
+    HostBarRangeNotForwarded {
+        function: PciFunctionAddress,
+        bar: PciBarIndex,
+    },
     OverlappingCapability {
         existing_offset: PciConfigOffset,
         existing_size: AccessSize,
@@ -1414,6 +1418,12 @@ impl fmt::Display for PciError {
                 requested_bar.get(),
                 existing_function,
                 existing_bar.get()
+            ),
+            Self::HostBarRangeNotForwarded { function, bar } => write!(
+                f,
+                "PCI host BAR range for {:?} BAR {} is not currently forwarded",
+                function,
+                bar.get()
             ),
             Self::OverlappingCapability {
                 existing_offset,

@@ -54,6 +54,7 @@ impl MmioDevice for PciConfigMmioDevice {
 }
 
 pub struct PciBarMmioDevice<D> {
+    forwarding_host: Option<Arc<Mutex<PciHostBridge>>>,
     host_bar_range: PciHostBarRange,
     local_range: AddressRange,
     inner: D,
@@ -64,10 +65,21 @@ impl<D> PciBarMmioDevice<D> {
         let local_range = AddressRange::new(Address::new(0), host_bar_range.host_range().size())
             .expect("PCI BAR local range mirrors an existing host BAR range");
         Self {
+            forwarding_host: None,
             host_bar_range,
             local_range,
             inner,
         }
+    }
+
+    pub fn new_forwarded(
+        host: Arc<Mutex<PciHostBridge>>,
+        host_bar_range: PciHostBarRange,
+        inner: D,
+    ) -> Self {
+        let mut device = Self::new(host_bar_range, inner);
+        device.forwarding_host = Some(host);
+        device
     }
 
     pub const fn host_bar_range(&self) -> &PciHostBarRange {
@@ -119,6 +131,7 @@ impl<D> PciBarMmioDevice<D> {
                 requested_end: requested.end(),
             });
         }
+        self.validate_current_forwarding(request.id())?;
 
         let offset = requested.start().get() - host_range.start().get();
         let local_address = Address::new(offset);
@@ -140,6 +153,30 @@ impl<D> PciBarMmioDevice<D> {
                 MmioRequest::write(request.id(), local_address, data, byte_mask)
             }
         }
+    }
+
+    fn validate_current_forwarding(&self, request: MmioRequestId) -> Result<(), MmioError> {
+        let Some(host) = self.forwarding_host.as_ref() else {
+            return Ok(());
+        };
+        let active_ranges = host
+            .lock()
+            .expect("PCI BAR forwarding host lock")
+            .active_host_bar_ranges()
+            .map_err(|error| pci_device_error(request, error))?;
+        if active_ranges
+            .iter()
+            .any(|range| range == &self.host_bar_range)
+        {
+            return Ok(());
+        }
+        Err(pci_device_error(
+            request,
+            PciError::HostBarRangeNotForwarded {
+                function: self.host_bar_range.function(),
+                bar: self.host_bar_range.bar(),
+            },
+        ))
     }
 }
 

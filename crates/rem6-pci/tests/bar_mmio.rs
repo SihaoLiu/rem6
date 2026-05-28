@@ -7,9 +7,9 @@ use rem6_mmio::{
     MmioResponse, MmioRoute,
 };
 use rem6_pci::{
-    PciBarIndex, PciBarKind, PciBarMmioDevice, PciBarSpec, PciClassCode, PciConfigAperture,
-    PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciFunctionAddress, PciHostAddressBases,
-    PciHostBarRange, PciHostBridge,
+    PciBarIndex, PciBarKind, PciBarMmioDevice, PciBarSpec, PciBridgeBusRange, PciBridgeConfig,
+    PciClassCode, PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig,
+    PciFunctionAddress, PciHostAddressBases, PciHostBarRange, PciHostBridge,
 };
 
 fn endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
@@ -65,6 +65,57 @@ fn active_bar_range() -> PciHostBarRange {
     ranges[0].clone()
 }
 
+fn bridge_backed_active_bar_range() -> (Arc<Mutex<PciHostBridge>>, PciHostBarRange, Address) {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(1, 2, 0).unwrap();
+    let mut host = PciHostBridge::with_address_bases(
+        aperture,
+        PciHostAddressBases::new(
+            Address::new(0x1000_0000),
+            Address::new(0x8000_0000),
+            Address::new(0xa000_0000),
+        ),
+    );
+    let bridge = PciBridgeConfig::new(
+        bridge_function,
+        PciDeviceIdentity::new(0x1011, 0x0026),
+        PciClassCode::new(0x06, 0x04, 0x00, 0x00),
+        PciBridgeBusRange::new(0, 1, 1).unwrap(),
+    );
+    host.register_bridge(bridge).unwrap();
+    host.register_endpoint(endpoint(endpoint_function)).unwrap();
+
+    host.write_config_address(
+        aperture
+            .config_address(endpoint_function, PciConfigOffset::new(0x10).unwrap())
+            .unwrap(),
+        &0x0020_2000_u32.to_le_bytes(),
+    )
+    .unwrap();
+    host.write_config_address(
+        aperture
+            .config_address(endpoint_function, PciConfigOffset::new(0x04).unwrap())
+            .unwrap(),
+        &0x0002_u16.to_le_bytes(),
+    )
+    .unwrap();
+
+    let bridge_window_addr = aperture
+        .config_address(bridge_function, PciConfigOffset::new(0x20).unwrap())
+        .unwrap();
+    host.write_config_address(bridge_window_addr, &0x0020_0020_u32.to_le_bytes())
+        .unwrap();
+
+    let ranges = host.active_host_bar_ranges().unwrap();
+    assert_eq!(ranges.len(), 1);
+    (
+        Arc::new(Mutex::new(host)),
+        ranges[0].clone(),
+        bridge_window_addr,
+    )
+}
+
 fn local_register_bank() -> Mutex<MmioRegisterBank> {
     let mut bank = MmioRegisterBank::new(Address::new(0), AccessSize::new(0x100).unwrap()).unwrap();
     bank.insert_register(
@@ -86,6 +137,9 @@ fn response_for(
         .find_map(|completion| match completion.response() {
             Ok(response) if response.request() == request => Some(completion.response()),
             Err(MmioError::DeviceBoundaryCrossed {
+                request: failed, ..
+            }) if *failed == request => Some(completion.response()),
+            Err(MmioError::DeviceError {
                 request: failed, ..
             }) if *failed == request => Some(completion.response()),
             _ => None,
@@ -268,5 +322,120 @@ fn pci_bar_mmio_device_rejects_host_accesses_outside_the_bar_range() {
             requested_start: Address::new(0x8000_20fe),
             requested_end: Address::new(0x8000_2102),
         })
+    );
+}
+
+#[test]
+fn pci_bar_mmio_device_revalidates_bridge_forwarding_before_runtime_access() {
+    let (host, range, bridge_window_addr) = bridge_backed_active_bar_range();
+    let host_start = range.host_range().start();
+    let device =
+        PciBarMmioDevice::new_forwarded(Arc::clone(&host), range.clone(), local_register_bank());
+
+    let cpu = PartitionId::new(0);
+    let pci = PartitionId::new(1);
+    let route = MmioRoute::new(cpu, pci, 2, 1).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(device.host_range(), route, device)
+        .unwrap();
+    let bus = Arc::new(bus);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let read_bus = Arc::clone(&bus);
+    let read_completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 5, move |context| {
+            read_bus
+                .submit_parallel(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(5),
+                        Address::new(host_start.get() + 0x20),
+                        AccessSize::new(4).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| read_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let closed_host = Arc::clone(&host);
+    scheduler
+        .schedule_parallel_at(cpu, 20, move |_context| {
+            closed_host
+                .lock()
+                .unwrap()
+                .write_config_address(bridge_window_addr, &0x0040_0040_u32.to_le_bytes())
+                .unwrap();
+        })
+        .unwrap();
+
+    let blocked_bus = Arc::clone(&bus);
+    let blocked_completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 21, move |context| {
+            blocked_bus
+                .submit_parallel(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(6),
+                        Address::new(host_start.get() + 0x20),
+                        AccessSize::new(4).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| blocked_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let reopened_host = Arc::clone(&host);
+    scheduler
+        .schedule_parallel_at(cpu, 30, move |_context| {
+            reopened_host
+                .lock()
+                .unwrap()
+                .write_config_address(bridge_window_addr, &0x0020_0020_u32.to_le_bytes())
+                .unwrap();
+        })
+        .unwrap();
+
+    let reopened_bus = Arc::clone(&bus);
+    let reopened_completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 31, move |context| {
+            reopened_bus
+                .submit_parallel(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(7),
+                        Address::new(host_start.get() + 0x20),
+                        AccessSize::new(4).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| reopened_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let completions = completions.lock().unwrap();
+    assert_eq!(
+        completed_data(&completions, MmioRequestId::new(5)),
+        vec![0x10, 0x20, 0x30, 0x40]
+    );
+    assert!(matches!(
+        response_for(&completions, MmioRequestId::new(6)),
+        Err(MmioError::DeviceError { request, message })
+            if *request == MmioRequestId::new(6)
+                && message.contains("is not currently forwarded")
+    ));
+    assert_eq!(
+        completed_data(&completions, MmioRequestId::new(7)),
+        vec![0x10, 0x20, 0x30, 0x40]
     );
 }
