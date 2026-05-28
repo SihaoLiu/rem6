@@ -721,6 +721,11 @@ Implementation evidence on 2026-05-26:
   start tick, and horizon ownership, so device-side DMA parallelism is audited
   from the scheduler's pre-dispatch plan instead of inferred from executed
   batch counters.
+- Merged full-system planned worker-lane summaries now include direct GPU DMA
+  and accelerator DMA lane records in addition to CPU-scheduler and data-cache
+  lanes. Full-system replay evidence therefore cannot satisfy pre-dispatch
+  lane-ownership contracts while hiding device-side DMA worker ownership behind
+  a CPU/cache-only aggregate.
 - Explicit planned full-system batch timelines must preserve scoped planned
   scheduler, data-cache, GPU DMA, and accelerator DMA records before replay
   accepts exact timeline or derived worker/partition contracts. A global

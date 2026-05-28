@@ -205,7 +205,21 @@ pub(super) fn parallel_execution_summary(
         .with_full_system_parallel_scheduler_planned_batch_worker_lanes(
             run.full_system_parallel_scheduler_planned_batch_worker_lanes()
                 .into_iter()
-                .map(workload_parallel_batch_worker_lane_record),
+                .map(workload_parallel_batch_worker_lane_record)
+                .chain(
+                    activities
+                        .gpu_dma
+                        .scheduler_planned_batch_worker_lanes
+                        .iter()
+                        .copied(),
+                )
+                .chain(
+                    activities
+                        .accelerator_dma
+                        .scheduler_planned_batch_worker_lanes
+                        .iter()
+                        .copied(),
+                ),
         )
         .with_full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(
             run.full_system_parallel_scheduler_planned_batch_worker_capacity_ticks(),

@@ -437,6 +437,25 @@ fn parallel_execution_summary_copies_dma_recorded_batch_capacity() {
             ),
         ],
     );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_lanes(),
+        vec![
+            workload_lane_record(WorkloadParallelBatchScope::Scheduler, 0, cpu, 0, 4),
+            workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 0, gpu, 0, 4),
+            workload_lane_record(WorkloadParallelBatchScope::GpuDmaScheduler, 1, memory, 0, 4),
+            workload_lane_record(
+                WorkloadParallelBatchScope::AcceleratorDmaScheduler,
+                0,
+                accelerator,
+                4,
+                8,
+            ),
+        ],
+    );
+    assert_eq!(
+        summary.full_system_parallel_scheduler_planned_batch_worker_lane_partition_ticks(0, gpu),
+        4,
+    );
     assert_eq!(summary.gpu_dma_scheduler_recorded_batch_worker_ticks(), 8);
     assert_eq!(
         summary.gpu_dma_scheduler_recorded_batch_worker_capacity_ticks(),
