@@ -353,6 +353,20 @@ fn parse_elf64_le(bytes: &[u8]) -> Result<BootImage, BootError> {
                 memory_size,
             })
         })?;
+        let memory_access_size = AccessSize::new(memory_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
+                segment: index,
+                physical,
+                memory_size,
+            })
+        })?;
+        AddressRange::new(Address::new(physical), memory_access_size).map_err(|_| {
+            invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
+                segment: index,
+                physical,
+                memory_size,
+            })
+        })?;
         let file_len = usize::try_from(file_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
                 segment: index,
@@ -490,6 +504,11 @@ pub enum BootElfError {
         segment: u16,
         memory_size: u64,
     },
+    SegmentMemoryRangeOverflow {
+        segment: u16,
+        physical: u64,
+        memory_size: u64,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         size: u64,
@@ -570,6 +589,14 @@ impl fmt::Display for BootElfError {
             } => write!(
                 formatter,
                 "ELF segment {segment} memory size {memory_size:#x} is too large"
+            ),
+            Self::SegmentMemoryRangeOverflow {
+                segment,
+                physical,
+                memory_size,
+            } => write!(
+                formatter,
+                "ELF segment {segment} memory range {physical:#x}+{memory_size:#x} overflows"
             ),
             Self::ProgramHeaderTableOutOfBounds {
                 offset,

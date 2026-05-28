@@ -1,4 +1,4 @@
-use rem6_boot::{BootError, BootImage, BootLineWrite, BootLoadReport};
+use rem6_boot::{BootElfError, BootError, BootImage, BootLineWrite, BootLoadReport};
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, LineMemoryStore, MemoryError,
     MemoryTargetId, PartitionedMemoryStore,
@@ -115,6 +115,32 @@ fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
     );
     assert_eq!(image.segments()[1].range().start(), Address::new(0x9002));
     assert_eq!(image.segments()[1].data(), &[0xa0, 0xa1, 0xa2]);
+}
+
+#[test]
+fn boot_image_rejects_elf64_segment_memory_overflow_with_segment_context() {
+    let elf = elf64_image(
+        0x8000,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: u64::MAX - 1,
+            file_size: 2,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0xaa, 0xbb])],
+    );
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::SegmentMemoryRangeOverflow {
+                segment: 0,
+                physical: u64::MAX - 1,
+                memory_size: 4,
+            },
+        },
+    );
 }
 
 #[test]
