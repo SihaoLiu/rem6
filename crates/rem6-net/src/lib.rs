@@ -3,12 +3,14 @@ use std::error::Error;
 use std::fmt;
 
 mod bus;
+mod distributed;
 mod dump;
 mod interface;
 mod switch;
 mod tap;
 
 pub use bus::*;
+pub use distributed::*;
 pub use dump::*;
 pub use interface::*;
 pub use switch::*;
@@ -874,6 +876,24 @@ pub enum NetworkError {
     EthernetTapFrameLengthOverflow {
         frame_bytes: u64,
     },
+    DistributedEthernetHeaderTooShort {
+        bytes: usize,
+        header_bytes: usize,
+    },
+    DistributedEthernetBadMagic {
+        magic: [u8; 4],
+    },
+    UnknownDistributedEthernetMessageKind {
+        kind: u8,
+    },
+    UnknownDistributedEthernetRequestType {
+        req_type: u8,
+    },
+    DistributedEthernetPayloadLengthMismatch {
+        expected_bytes: u64,
+        actual_bytes: u64,
+    },
+    DistributedEthernetSequenceOverflow,
     InvalidEthernetSwitchPortCount {
         port_count: u16,
     },
@@ -1095,6 +1115,35 @@ impl fmt::Display for NetworkError {
                 formatter,
                 "ethernet tap frame bytes {frame_bytes} cannot fit in stub frame length"
             ),
+            Self::DistributedEthernetHeaderTooShort {
+                bytes,
+                header_bytes,
+            } => write!(
+                formatter,
+                "distributed ethernet message has {bytes} bytes but header requires {header_bytes}"
+            ),
+            Self::DistributedEthernetBadMagic { magic } => write!(
+                formatter,
+                "distributed ethernet message has bad magic bytes {magic:?}"
+            ),
+            Self::UnknownDistributedEthernetMessageKind { kind } => write!(
+                formatter,
+                "unknown distributed ethernet message kind {kind}"
+            ),
+            Self::UnknownDistributedEthernetRequestType { req_type } => write!(
+                formatter,
+                "unknown distributed ethernet request type {req_type}"
+            ),
+            Self::DistributedEthernetPayloadLengthMismatch {
+                expected_bytes,
+                actual_bytes,
+            } => write!(
+                formatter,
+                "distributed ethernet payload length mismatch: expected {expected_bytes} bytes, got {actual_bytes}"
+            ),
+            Self::DistributedEthernetSequenceOverflow => {
+                write!(formatter, "distributed ethernet record sequence overflow")
+            }
             Self::InvalidEthernetSwitchPortCount { port_count } => write!(
                 formatter,
                 "ethernet switch port count {port_count} must be positive"
