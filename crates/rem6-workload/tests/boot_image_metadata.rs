@@ -145,6 +145,30 @@ fn workload_manifest_identity_includes_elf_endian_metadata() {
 }
 
 #[test]
+fn workload_manifest_identity_includes_power64_endian_default_abi() {
+    let little = BootImage::from_elf(&elf64_image(21)).unwrap();
+    let big = BootImage::from_elf(&elf64_be_image(21)).unwrap();
+
+    assert_eq!(little.entry(), big.entry());
+    assert_eq!(little.segments(), big.segments());
+    assert_eq!(
+        little.elf_metadata().unwrap().operating_system(),
+        BootElfOperatingSystem::LinuxPower64AbiV2,
+    );
+    assert_eq!(
+        big.elf_metadata().unwrap().operating_system(),
+        BootElfOperatingSystem::LinuxPower64AbiV1,
+    );
+
+    let little_manifest = WorkloadManifest::builder(id("same"), little)
+        .build()
+        .unwrap();
+    let big_manifest = WorkloadManifest::builder(id("same"), big).build().unwrap();
+
+    assert_ne!(little_manifest.identity(), big_manifest.identity());
+}
+
+#[test]
 fn workload_manifest_identity_includes_elf_operating_system_metadata() {
     let mut linux_bytes = elf64_image(243);
     linux_bytes[7] = 3;

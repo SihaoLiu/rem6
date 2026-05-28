@@ -120,12 +120,15 @@ pub enum BootElfOperatingSystem {
 }
 
 impl BootElfOperatingSystem {
-    const fn from_header(machine: u16, os_abi: u8, flags: u32) -> Self {
+    const fn from_header(machine: u16, endian: BootElfEndian, os_abi: u8, flags: u32) -> Self {
         if machine == EM_PPC64 {
             return match flags & 0x3 {
                 0x1 => Self::LinuxPower64AbiV1,
                 0x2 => Self::LinuxPower64AbiV2,
-                _ => Self::LinuxPower64AbiV2,
+                _ => match endian {
+                    BootElfEndian::Little => Self::LinuxPower64AbiV2,
+                    BootElfEndian::Big => Self::LinuxPower64AbiV1,
+                },
             };
         }
 
@@ -568,7 +571,7 @@ fn detect_elf_operating_system(
     os_abi: u8,
     flags: u32,
 ) -> Result<BootElfOperatingSystem, BootError> {
-    let header_os = BootElfOperatingSystem::from_header(machine, os_abi, flags);
+    let header_os = BootElfOperatingSystem::from_header(machine, endian, os_abi, flags);
     if !matches!(header_os, BootElfOperatingSystem::Unknown { .. }) {
         return Ok(header_os);
     }

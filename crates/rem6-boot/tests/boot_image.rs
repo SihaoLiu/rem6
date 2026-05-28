@@ -744,6 +744,32 @@ fn boot_image_maps_power64_abi_from_elf_flags() {
 }
 
 #[test]
+fn boot_image_maps_power64_default_abi_from_elf_endian() {
+    let elf = elf64_be_image(
+        0x8004,
+        21,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x60, 0x00, 0x00, 0x00])],
+    );
+
+    let metadata = BootImage::from_elf(&elf).unwrap().elf_metadata().unwrap();
+
+    assert_eq!(metadata.endian(), BootElfEndian::Big);
+    assert_eq!(metadata.flags(), 0);
+    assert_eq!(metadata.architecture(), BootElfArchitecture::Power64);
+    assert_eq!(
+        metadata.operating_system(),
+        BootElfOperatingSystem::LinuxPower64AbiV1,
+    );
+}
+
+#[test]
 fn boot_image_derives_operating_system_from_abi_note_section() {
     let linux_note = abi_note(0);
     let mut linux = elf64_image(
