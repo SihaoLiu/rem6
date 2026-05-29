@@ -15,6 +15,11 @@ pub(super) use super::wait_for_node_windows::{
     wait_for_blocked_node_window, wait_for_blocked_node_window_count_sum,
     wait_for_target_node_window, wait_for_target_node_window_count_sum,
 };
+use super::wait_for_raw_audit::{
+    validate_unique_full_system_wait_for_blocked_node_windows,
+    validate_unique_full_system_wait_for_edge_kind_windows,
+    validate_unique_full_system_wait_for_target_node_windows,
+};
 use super::{
     WorkloadParallelExecutionSummary, WorkloadWaitForBlockedNodeWindow,
     WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
@@ -1570,63 +1575,6 @@ fn validate_unique_full_system_livelock_diagnostic_records(
                 first_transition_tick: diagnostic.first_transition_tick(),
                 last_transition_tick: diagnostic.last_transition_tick(),
             });
-        }
-    }
-    Ok(())
-}
-
-fn validate_unique_full_system_wait_for_edge_kind_windows(
-    windows: &[WorkloadWaitForEdgeKindWindow],
-) -> Result<(), WorkloadError> {
-    let mut seen = BTreeSet::new();
-    for window in windows {
-        if !window.is_empty() && !seen.insert(*window) {
-            return Err(
-                WorkloadError::DuplicateFullSystemWaitForEdgeKindWindowRecord {
-                    kind: window.kind(),
-                    edge_count: window.edge_count(),
-                    first_tick: window.first_tick(),
-                    last_tick: window.last_tick(),
-                },
-            );
-        }
-    }
-    Ok(())
-}
-
-fn validate_unique_full_system_wait_for_blocked_node_windows(
-    windows: &[WorkloadWaitForBlockedNodeWindow],
-) -> Result<(), WorkloadError> {
-    let mut seen = BTreeSet::new();
-    for window in windows {
-        if !window.is_empty() && !seen.insert(window.clone()) {
-            return Err(
-                WorkloadError::DuplicateFullSystemWaitForBlockedNodeWindowRecord {
-                    node: window.node().clone(),
-                    edge_count: window.edge_count(),
-                    first_tick: window.first_tick(),
-                    last_tick: window.last_tick(),
-                },
-            );
-        }
-    }
-    Ok(())
-}
-
-fn validate_unique_full_system_wait_for_target_node_windows(
-    windows: &[WorkloadWaitForTargetNodeWindow],
-) -> Result<(), WorkloadError> {
-    let mut seen = BTreeSet::new();
-    for window in windows {
-        if !window.is_empty() && !seen.insert(window.clone()) {
-            return Err(
-                WorkloadError::DuplicateFullSystemWaitForTargetNodeWindowRecord {
-                    node: window.node().clone(),
-                    edge_count: window.edge_count(),
-                    first_tick: window.first_tick(),
-                    last_tick: window.last_tick(),
-                },
-            );
         }
     }
     Ok(())

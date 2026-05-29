@@ -7,6 +7,7 @@ const MAX_FACADE_LINES: usize = 1300;
 const MAX_ERROR_DISPLAY_ROOT_LINES: usize = 1300;
 const MAX_REPLAY_VERIFY_ROOT_LINES: usize = 1300;
 const MAX_RESULT_ROOT_LINES: usize = 1300;
+const MAX_WAIT_FOR_DIAGNOSTICS_LINES: usize = 1750;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RESULT_ERROR_BYTES: usize = 128;
 
@@ -51,6 +52,17 @@ fn workload_replay_verify_root_stays_within_module_budget() {
     assert!(
         lines <= MAX_REPLAY_VERIFY_ROOT_LINES,
         "src/replay_verify.rs should delegate focused verifiers, but it has {lines} lines"
+    );
+}
+
+#[test]
+fn workload_wait_for_diagnostics_stays_within_module_budget() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/result/wait_for_diagnostics.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_WAIT_FOR_DIAGNOSTICS_LINES,
+        "src/result/wait_for_diagnostics.rs should delegate focused raw-evidence audits, but it has {lines} lines"
     );
 }
 
