@@ -103,6 +103,24 @@ pub(super) fn format_checkpoint_error(
             formatter,
             "checkpoint restore component summary for {label}:{component} has chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
         ),
+        WorkloadError::CheckpointComponentChunkSummaryBelowMinimum(error) => write!(
+            formatter,
+            "checkpoint component summary for {}:{} chunk {} has payload bytes {}/{}",
+            error.label,
+            error.component,
+            error.chunk,
+            error.actual_payload_bytes,
+            error.minimum_payload_bytes
+        ),
+        WorkloadError::CheckpointRestoreComponentChunkSummaryBelowMinimum(error) => write!(
+            formatter,
+            "checkpoint restore component summary for {}:{} chunk {} has payload bytes {}/{}",
+            error.label,
+            error.component,
+            error.chunk,
+            error.actual_payload_bytes,
+            error.minimum_payload_bytes
+        ),
         _ => unreachable!("checkpoint formatter called with non-checkpoint workload error"),
     }
 }

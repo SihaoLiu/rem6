@@ -753,7 +753,9 @@ impl fmt::Display for WorkloadError {
             | Self::CheckpointManifestSummaryBelowMinimum { .. }
             | Self::CheckpointRestoreManifestSummaryBelowMinimum { .. }
             | Self::CheckpointComponentSummaryBelowMinimum { .. }
-            | Self::CheckpointRestoreComponentSummaryBelowMinimum { .. }) => {
+            | Self::CheckpointRestoreComponentSummaryBelowMinimum { .. }
+            | Self::CheckpointComponentChunkSummaryBelowMinimum { .. }
+            | Self::CheckpointRestoreComponentChunkSummaryBelowMinimum { .. }) => {
                 format_checkpoint_error(error, formatter)
             }
             Self::MissingExecutionModeSwitch { tick, target, mode } => write!(

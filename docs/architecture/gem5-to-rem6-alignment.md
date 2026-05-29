@@ -851,6 +851,10 @@ Implementation evidence on 2026-05-26:
   the workload identity and verified against replay result chunk summaries, so
   a checkpoint can prove that state such as registers, pages, or device queues
   was captured instead of only proving aggregate byte counts.
+- Required checkpoint chunks can also carry per-chunk minimum payload-byte
+  contracts. Replay verification rejects present-but-undercovered chunks during
+  capture or restore, and the minimums are hashed into the workload identity,
+  so a required state block cannot be satisfied by an empty placeholder chunk.
 - Workload resources now carry optional typed acquisition provenance, including
   acquisition kind, acquisition locator, tool, and revision. The manifest
   identity hashes this provenance, so artifact acquisition state cannot drift

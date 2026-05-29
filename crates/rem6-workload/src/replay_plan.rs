@@ -881,6 +881,19 @@ impl WorkloadReplayPlan {
                     chunk: chunk.to_string(),
                 });
             }
+            if let Some((chunk, actual_payload_bytes)) =
+                checkpoint_chunk_payload_below_minimum(expected, actual)
+            {
+                return Err(
+                    WorkloadError::checkpoint_component_chunk_summary_below_minimum(
+                        expected.label(),
+                        expected.component(),
+                        chunk.name(),
+                        chunk.minimum_payload_bytes(),
+                        actual_payload_bytes,
+                    ),
+                );
+            }
         }
 
         Ok(())
@@ -931,6 +944,19 @@ impl WorkloadReplayPlan {
                         component: expected.component().to_string(),
                         chunk: chunk.to_string(),
                     },
+                );
+            }
+            if let Some((chunk, actual_payload_bytes)) =
+                checkpoint_chunk_payload_below_minimum(expected, actual)
+            {
+                return Err(
+                    WorkloadError::checkpoint_restore_component_chunk_summary_below_minimum(
+                        expected.label(),
+                        expected.component(),
+                        chunk.name(),
+                        chunk.minimum_payload_bytes(),
+                        actual_payload_bytes,
+                    ),
                 );
             }
         }
@@ -1194,5 +1220,22 @@ fn missing_required_checkpoint_chunk<'a>(
         .required_chunk_names()
         .iter()
         .map(String::as_str)
+        .chain(
+            expected
+                .required_chunk_payloads()
+                .iter()
+                .map(|chunk| chunk.name()),
+        )
         .find(|chunk| actual.chunk_summary(chunk).is_none())
+}
+
+fn checkpoint_chunk_payload_below_minimum<'a>(
+    expected: &'a WorkloadExpectedCheckpointComponentSummary,
+    actual: &WorkloadCheckpointComponentSummary,
+) -> Option<(&'a crate::WorkloadExpectedCheckpointChunkSummary, usize)> {
+    expected.required_chunk_payloads().iter().find_map(|chunk| {
+        let actual_payload_bytes = actual.chunk_summary(chunk.name())?.payload_bytes();
+        (actual_payload_bytes < chunk.minimum_payload_bytes())
+            .then_some((chunk, actual_payload_bytes))
+    })
 }

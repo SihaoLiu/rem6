@@ -146,8 +146,9 @@ pub use topology::{
 };
 pub use workload_result::{
     WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
-    WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointComponentSummary,
-    WorkloadExpectedCheckpointManifestSummary, WorkloadResult,
+    WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointChunkSummary,
+    WorkloadExpectedCheckpointComponentSummary, WorkloadExpectedCheckpointManifestSummary,
+    WorkloadResult,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

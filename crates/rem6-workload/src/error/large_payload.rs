@@ -4,6 +4,15 @@ use rem6_kernel::Tick;
 use crate::{WorkloadError, WorkloadParallelRemoteFlowScope};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadCheckpointComponentChunkSummaryBelowMinimumError {
+    pub(crate) label: String,
+    pub(crate) component: String,
+    pub(crate) chunk: String,
+    pub(crate) minimum_payload_bytes: usize,
+    pub(crate) actual_payload_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelRemoteFlowMergeSummaryError {
     pub(crate) scope: WorkloadParallelRemoteFlowScope,
     pub(crate) source: u32,
@@ -77,6 +86,42 @@ pub struct WorkloadFabricLinkActivityBelowMinimumError {
 }
 
 impl WorkloadError {
+    pub fn checkpoint_component_chunk_summary_below_minimum(
+        label: impl Into<String>,
+        component: impl Into<String>,
+        chunk: impl Into<String>,
+        minimum_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    ) -> Self {
+        Self::CheckpointComponentChunkSummaryBelowMinimum(Box::new(
+            WorkloadCheckpointComponentChunkSummaryBelowMinimumError {
+                label: label.into(),
+                component: component.into(),
+                chunk: chunk.into(),
+                minimum_payload_bytes,
+                actual_payload_bytes,
+            },
+        ))
+    }
+
+    pub fn checkpoint_restore_component_chunk_summary_below_minimum(
+        label: impl Into<String>,
+        component: impl Into<String>,
+        chunk: impl Into<String>,
+        minimum_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    ) -> Self {
+        Self::CheckpointRestoreComponentChunkSummaryBelowMinimum(Box::new(
+            WorkloadCheckpointComponentChunkSummaryBelowMinimumError {
+                label: label.into(),
+                component: component.into(),
+                chunk: chunk.into(),
+                minimum_payload_bytes,
+                actual_payload_bytes,
+            },
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn invalid_parallel_remote_flow_merge_summary(
         scope: WorkloadParallelRemoteFlowScope,

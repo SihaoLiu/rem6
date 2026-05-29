@@ -222,12 +222,36 @@ impl WorkloadExpectedCheckpointManifestSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadExpectedCheckpointChunkSummary {
+    name: String,
+    minimum_payload_bytes: usize,
+}
+
+impl WorkloadExpectedCheckpointChunkSummary {
+    pub fn new(name: impl Into<String>, minimum_payload_bytes: usize) -> Self {
+        Self {
+            name: name.into(),
+            minimum_payload_bytes,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn minimum_payload_bytes(&self) -> usize {
+        self.minimum_payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadExpectedCheckpointComponentSummary {
     label: String,
     component: String,
     minimum_chunk_count: usize,
     minimum_payload_bytes: usize,
     required_chunk_names: Vec<String>,
+    required_chunk_payloads: Vec<WorkloadExpectedCheckpointChunkSummary>,
 }
 
 impl WorkloadExpectedCheckpointComponentSummary {
@@ -243,6 +267,7 @@ impl WorkloadExpectedCheckpointComponentSummary {
             minimum_chunk_count,
             minimum_payload_bytes,
             required_chunk_names: Vec::new(),
+            required_chunk_payloads: Vec::new(),
         }
     }
 
@@ -253,6 +278,30 @@ impl WorkloadExpectedCheckpointComponentSummary {
         self.required_chunk_names = chunk_names.into_iter().map(Into::into).collect::<Vec<_>>();
         self.required_chunk_names.sort();
         self.required_chunk_names.dedup();
+        self
+    }
+
+    pub fn with_required_chunk_payloads(
+        mut self,
+        chunk_payloads: impl IntoIterator<Item = WorkloadExpectedCheckpointChunkSummary>,
+    ) -> Self {
+        let mut chunk_payloads = chunk_payloads.into_iter().collect::<Vec<_>>();
+        chunk_payloads.sort_by(|left, right| left.name().cmp(right.name()));
+        let mut required_chunk_payloads: Vec<WorkloadExpectedCheckpointChunkSummary> = Vec::new();
+        for chunk_payload in chunk_payloads {
+            match required_chunk_payloads.last_mut() {
+                Some(existing)
+                    if existing.name() == chunk_payload.name()
+                        && existing.minimum_payload_bytes()
+                            < chunk_payload.minimum_payload_bytes() =>
+                {
+                    *existing = chunk_payload;
+                }
+                Some(existing) if existing.name() == chunk_payload.name() => {}
+                _ => required_chunk_payloads.push(chunk_payload),
+            }
+        }
+        self.required_chunk_payloads = required_chunk_payloads;
         self
     }
 
@@ -274,6 +323,10 @@ impl WorkloadExpectedCheckpointComponentSummary {
 
     pub fn required_chunk_names(&self) -> &[String] {
         &self.required_chunk_names
+    }
+
+    pub fn required_chunk_payloads(&self) -> &[WorkloadExpectedCheckpointChunkSummary] {
+        &self.required_chunk_payloads
     }
 
     pub(crate) fn sort_key(&self) -> (&str, &str) {
