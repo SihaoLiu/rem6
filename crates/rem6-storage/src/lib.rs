@@ -16,8 +16,9 @@ pub use checkpoint::{
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
 };
 pub use ide::{
-    IdeChannelId, IdeController, IdeControllerError, IdeDeviceId, IdeDisk, IdeDiskError,
-    IDE_ALTSTAT_OFFSET, IDE_BMI_COMMAND_OFFSET, IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START,
+    IdeBarWriteOutcome, IdeChannelId, IdeController, IdeControllerBar, IdeControllerDispatch,
+    IdeControllerError, IdeDeviceId, IdeDisk, IdeDiskError, IDE_ALTSTAT_OFFSET,
+    IDE_BMI_CHANNEL_BYTES, IDE_BMI_COMMAND_OFFSET, IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START,
     IDE_BMI_PRD_TABLE_OFFSET, IDE_BMI_STATUS_ACTIVE, IDE_BMI_STATUS_DMA_CAP0,
     IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT,
     IDE_BMI_STATUS_OFFSET, IDE_COMMAND_ATAPI_IDENTIFY_DEVICE, IDE_COMMAND_IDENTIFY,

@@ -47,6 +47,7 @@ pub const IDE_BMI_STATUS_DMA_ERROR: u8 = 0x02;
 pub const IDE_BMI_STATUS_INTERRUPT: u8 = 0x04;
 pub const IDE_BMI_STATUS_DMA_CAP1: u8 = 0x20;
 pub const IDE_BMI_STATUS_DMA_CAP0: u8 = 0x40;
+pub const IDE_BMI_CHANNEL_BYTES: u8 = 8;
 
 const IDE_IDENTIFY_BYTES: usize = 512;
 const IDE_MAX_MULTI_SECTORS: u16 = 128;
@@ -83,6 +84,49 @@ impl IdeChannelId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdeControllerBar {
+    PrimaryCommand,
+    PrimaryControl,
+    SecondaryCommand,
+    SecondaryControl,
+    BusMaster,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IdeControllerDispatch {
+    io_shift: u8,
+    control_offset: u64,
+    bus_master_enabled: bool,
+}
+
+impl IdeControllerDispatch {
+    pub fn new(io_shift: u8, control_offset: u64) -> Result<Self, IdeControllerError> {
+        if io_shift > 7 {
+            return Err(IdeControllerError::InvalidDispatch {
+                io_shift,
+                control_offset,
+            });
+        }
+        Ok(Self {
+            io_shift,
+            control_offset,
+            bus_master_enabled: false,
+        })
+    }
+
+    pub const fn with_bus_master_enabled(mut self, enabled: bool) -> Self {
+        self.bus_master_enabled = enabled;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdeBarWriteOutcome {
+    Applied,
+    IgnoredBusMasterDisabled,
+}
+
 #[derive(Clone, Debug)]
 pub struct IdeController {
     channels: [IdeChannel; 2],
@@ -102,6 +146,165 @@ impl IdeController {
                 IdeChannel::new(IdeChannelId::Secondary, secondary0, secondary1),
             ],
         })
+    }
+
+    pub fn read_bar_u8(
+        &mut self,
+        dispatch: IdeControllerDispatch,
+        bar: IdeControllerBar,
+        offset: u64,
+    ) -> Result<u8, IdeControllerError> {
+        match bar {
+            IdeControllerBar::PrimaryCommand => {
+                self.read_command_u8(IdeChannelId::Primary, command_bar_offset(dispatch, offset)?)
+            }
+            IdeControllerBar::PrimaryControl => {
+                self.read_control_u8(IdeChannelId::Primary, control_bar_offset(dispatch, offset)?)
+            }
+            IdeControllerBar::SecondaryCommand => {
+                self.read_command_u8(IdeChannelId::Secondary, offset_u8(bar, offset, 1)?)
+            }
+            IdeControllerBar::SecondaryControl => self.read_control_u8(
+                IdeChannelId::Secondary,
+                control_bar_offset(dispatch, offset)?,
+            ),
+            IdeControllerBar::BusMaster => {
+                let (channel, bmi_offset) = bmi_bar_offset(offset, 1)?;
+                self.read_bmi_u8(channel, bmi_offset)
+            }
+        }
+    }
+
+    pub fn write_bar_u8(
+        &mut self,
+        dispatch: IdeControllerDispatch,
+        bar: IdeControllerBar,
+        offset: u64,
+        value: u8,
+    ) -> Result<IdeBarWriteOutcome, IdeControllerError> {
+        match bar {
+            IdeControllerBar::PrimaryCommand => {
+                self.write_command_u8(
+                    IdeChannelId::Primary,
+                    command_bar_offset(dispatch, offset)?,
+                    value,
+                )?;
+            }
+            IdeControllerBar::PrimaryControl => {
+                self.write_control_u8(
+                    IdeChannelId::Primary,
+                    control_bar_offset(dispatch, offset)?,
+                    value,
+                )?;
+            }
+            IdeControllerBar::SecondaryCommand => {
+                self.write_command_u8(IdeChannelId::Secondary, offset_u8(bar, offset, 1)?, value)?;
+            }
+            IdeControllerBar::SecondaryControl => {
+                self.write_control_u8(
+                    IdeChannelId::Secondary,
+                    control_bar_offset(dispatch, offset)?,
+                    value,
+                )?;
+            }
+            IdeControllerBar::BusMaster => {
+                if !dispatch.bus_master_enabled {
+                    return Ok(IdeBarWriteOutcome::IgnoredBusMasterDisabled);
+                }
+                let (channel, bmi_offset) = bmi_bar_offset(offset, 1)?;
+                self.write_bmi_u8(channel, bmi_offset, value)?;
+            }
+        }
+        Ok(IdeBarWriteOutcome::Applied)
+    }
+
+    pub fn read_bar_u16(
+        &mut self,
+        dispatch: IdeControllerDispatch,
+        bar: IdeControllerBar,
+        offset: u64,
+    ) -> Result<u16, IdeControllerError> {
+        match bar {
+            IdeControllerBar::PrimaryCommand
+                if command_bar_offset(dispatch, offset)? == IDE_DATA_OFFSET =>
+            {
+                self.read_data_u16(IdeChannelId::Primary)
+            }
+            IdeControllerBar::SecondaryCommand if offset_u8(bar, offset, 2)? == IDE_DATA_OFFSET => {
+                self.read_data_u16(IdeChannelId::Secondary)
+            }
+            _ => Err(IdeControllerError::UnsupportedBarWidth {
+                bar,
+                offset,
+                width: 2,
+            }),
+        }
+    }
+
+    pub fn write_bar_u16(
+        &mut self,
+        dispatch: IdeControllerDispatch,
+        bar: IdeControllerBar,
+        offset: u64,
+        value: u16,
+    ) -> Result<IdeBarWriteOutcome, IdeControllerError> {
+        match bar {
+            IdeControllerBar::PrimaryCommand
+                if command_bar_offset(dispatch, offset)? == IDE_DATA_OFFSET =>
+            {
+                self.write_data_u16(IdeChannelId::Primary, value)?;
+            }
+            IdeControllerBar::SecondaryCommand if offset_u8(bar, offset, 2)? == IDE_DATA_OFFSET => {
+                self.write_data_u16(IdeChannelId::Secondary, value)?;
+            }
+            _ => {
+                return Err(IdeControllerError::UnsupportedBarWidth {
+                    bar,
+                    offset,
+                    width: 2,
+                });
+            }
+        }
+        Ok(IdeBarWriteOutcome::Applied)
+    }
+
+    pub fn read_bar_u32(
+        &self,
+        _dispatch: IdeControllerDispatch,
+        bar: IdeControllerBar,
+        offset: u64,
+    ) -> Result<u32, IdeControllerError> {
+        if bar != IdeControllerBar::BusMaster {
+            return Err(IdeControllerError::UnsupportedBarWidth {
+                bar,
+                offset,
+                width: 4,
+            });
+        }
+        let (channel, bmi_offset) = bmi_bar_offset(offset, 4)?;
+        self.read_bmi_u32(channel, bmi_offset)
+    }
+
+    pub fn write_bar_u32(
+        &mut self,
+        dispatch: IdeControllerDispatch,
+        bar: IdeControllerBar,
+        offset: u64,
+        value: u32,
+    ) -> Result<IdeBarWriteOutcome, IdeControllerError> {
+        if bar != IdeControllerBar::BusMaster {
+            return Err(IdeControllerError::UnsupportedBarWidth {
+                bar,
+                offset,
+                width: 4,
+            });
+        }
+        if !dispatch.bus_master_enabled {
+            return Ok(IdeBarWriteOutcome::IgnoredBusMasterDisabled);
+        }
+        let (channel, bmi_offset) = bmi_bar_offset(offset, 4)?;
+        self.write_bmi_u32(channel, bmi_offset, value)?;
+        Ok(IdeBarWriteOutcome::Applied)
     }
 
     pub fn channel_pending_interrupt(&self, channel: IdeChannelId) -> bool {
@@ -426,6 +629,79 @@ impl IdeBmiRegisters {
         }
         self.status = status | IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1;
     }
+}
+
+fn command_bar_offset(
+    dispatch: IdeControllerDispatch,
+    offset: u64,
+) -> Result<u8, IdeControllerError> {
+    let shifted = offset
+        .checked_shr(u32::from(dispatch.io_shift))
+        .unwrap_or(0);
+    offset_u8(IdeControllerBar::PrimaryCommand, shifted, 1)
+}
+
+fn control_bar_offset(
+    dispatch: IdeControllerDispatch,
+    offset: u64,
+) -> Result<u8, IdeControllerError> {
+    let adjusted = offset.checked_add(dispatch.control_offset).ok_or(
+        IdeControllerError::BarOffsetOverflow {
+            bar: IdeControllerBar::PrimaryControl,
+            offset,
+            addend: dispatch.control_offset,
+        },
+    )?;
+    offset_u8(IdeControllerBar::PrimaryControl, adjusted, 1)
+}
+
+fn bmi_bar_offset(offset: u64, width: u8) -> Result<(IdeChannelId, u8), IdeControllerError> {
+    let channel_bytes = u64::from(IDE_BMI_CHANNEL_BYTES);
+    let total_bytes = channel_bytes * 2;
+    let width_u64 = u64::from(width);
+    let end = offset
+        .checked_add(width_u64)
+        .ok_or(IdeControllerError::BarOffsetOverflow {
+            bar: IdeControllerBar::BusMaster,
+            offset,
+            addend: width_u64,
+        })?;
+    if end > total_bytes {
+        return Err(IdeControllerError::InvalidBarOffset {
+            bar: IdeControllerBar::BusMaster,
+            offset,
+            width,
+        });
+    }
+
+    let (channel, local) = if offset < channel_bytes {
+        (IdeChannelId::Primary, offset)
+    } else {
+        (IdeChannelId::Secondary, offset - channel_bytes)
+    };
+    if local + width_u64 > channel_bytes {
+        return Err(IdeControllerError::InvalidBarOffset {
+            bar: IdeControllerBar::BusMaster,
+            offset,
+            width,
+        });
+    }
+    Ok((channel, local as u8))
+}
+
+fn offset_u8(bar: IdeControllerBar, offset: u64, width: u8) -> Result<u8, IdeControllerError> {
+    let width_u64 = u64::from(width);
+    let end = offset
+        .checked_add(width_u64)
+        .ok_or(IdeControllerError::BarOffsetOverflow {
+            bar,
+            offset,
+            addend: width_u64,
+        })?;
+    if end > u64::from(u8::MAX) + 1 {
+        return Err(IdeControllerError::InvalidBarOffset { bar, offset, width });
+    }
+    Ok(offset as u8)
 }
 
 #[derive(Clone, Debug)]
@@ -888,10 +1164,29 @@ impl IdeGeometry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IdeControllerError {
+    InvalidDispatch {
+        io_shift: u8,
+        control_offset: u64,
+    },
     InvalidDeviceSlot {
         slot: usize,
         expected: IdeDeviceId,
         actual: IdeDeviceId,
+    },
+    InvalidBarOffset {
+        bar: IdeControllerBar,
+        offset: u64,
+        width: u8,
+    },
+    BarOffsetOverflow {
+        bar: IdeControllerBar,
+        offset: u64,
+        addend: u64,
+    },
+    UnsupportedBarWidth {
+        bar: IdeControllerBar,
+        offset: u64,
+        width: u8,
     },
     NoSelectedDevice {
         channel: IdeChannelId,
@@ -914,6 +1209,13 @@ pub enum IdeControllerError {
 impl Display for IdeControllerError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDispatch {
+                io_shift,
+                control_offset,
+            } => write!(
+                formatter,
+                "invalid IDE controller dispatch io_shift {io_shift} control offset {control_offset:#x}"
+            ),
             Self::InvalidDeviceSlot {
                 slot,
                 expected,
@@ -921,6 +1223,22 @@ impl Display for IdeControllerError {
             } => write!(
                 formatter,
                 "IDE controller disk slot {slot} expected {expected:?}, got {actual:?}"
+            ),
+            Self::InvalidBarOffset { bar, offset, width } => write!(
+                formatter,
+                "invalid IDE controller {bar:?} BAR offset {offset:#x} for {width}-byte access"
+            ),
+            Self::BarOffsetOverflow {
+                bar,
+                offset,
+                addend,
+            } => write!(
+                formatter,
+                "IDE controller {bar:?} BAR offset {offset:#x} overflows with addend {addend:#x}"
+            ),
+            Self::UnsupportedBarWidth { bar, offset, width } => write!(
+                formatter,
+                "IDE controller {bar:?} BAR offset {offset:#x} does not support {width}-byte access"
             ),
             Self::NoSelectedDevice { channel, device } => write!(
                 formatter,
