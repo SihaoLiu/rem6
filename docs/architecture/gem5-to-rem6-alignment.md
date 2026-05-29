@@ -455,6 +455,14 @@ Implementation evidence through 2026-05-29:
   stay out of the root, and enforce the hard per-source-file size budget, so
   cache, DRAM, transport, and CPU integrations share one typed request contract
   without regrowing a gem5-style packet utility monolith.
+- `rem6-dram` now keeps public DRAM error formatting in a focused `error`
+  module and target-backed external-memory controller state in
+  `memory_controller`, leaving the crate root focused on timing, command, bank,
+  port, and controller scheduling primitives. DRAM source-policy tests keep the
+  crate root under the facade budget, require error and memory-controller state
+  to stay out of the root, and enforce the hard per-source-file size budget, so
+  DDR, HBM, LPDDR, NVM, QoS, and target-backed storage growth do not collapse
+  into a gem5-style memory-controller monolith.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1834,11 +1842,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   a focused module, and enforce the hard module-size budget across platform
   sources. Memory source-policy tests keep request and response state in a
   focused module while enforcing the hard module-size budget across memory
-  sources. System source-policy tests keep workload replay data-cache backend
-  state in a focused module while enforcing the hard module-size budget across
-  system sources. Type-1 bridge tests cover typed bridge
-  header fields, Expansion ROM reads and writes, Expansion ROM size probing,
-  interrupt line/pin bytes, bridge-control writes, common command writes with
+  sources. DRAM source-policy tests keep public error state and target-backed
+  memory-controller state in focused modules while enforcing the hard
+  module-size budget across DRAM sources. System source-policy tests keep
+  workload replay data-cache backend state in a focused module while enforcing
+  the hard module-size budget across system sources. Type-1 bridge tests cover
+  typed bridge header fields, Expansion ROM reads and writes, Expansion ROM
+  size probing, interrupt line/pin bytes, bridge-control writes, common command writes with
   reserved-bit masking, common cache-line-size, latency-timer, and BIST byte
   writes, common status writes that do not create guest-owned bits, bridge
   BAR0/BAR1 install and command-bit-gated host mapping, snapshot restore of
