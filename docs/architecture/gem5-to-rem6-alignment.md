@@ -837,6 +837,10 @@ Implementation evidence on 2026-05-26:
 - Workload checkpoint component summaries canonicalize duplicate chunk names by
   keeping the strongest payload evidence per name, so duplicate summary entries
   cannot inflate component chunk counts or total payload coverage.
+- Workload checkpoint manifest summaries canonicalize duplicate component names
+  before computing totals, merging chunk evidence and preserving stronger
+  aggregate counts so repeated component entries cannot inflate manifest
+  coverage.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
   payload bytes, plus per-component chunk-level payload evidence, so replay

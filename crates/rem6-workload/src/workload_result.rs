@@ -81,6 +81,22 @@ impl WorkloadCheckpointComponentSummary {
         }
     }
 
+    fn merge_with(&self, other: &Self) -> Self {
+        let mut chunk_summaries = Vec::new();
+        chunk_summaries.extend(self.chunk_summaries().iter().cloned());
+        chunk_summaries.extend(other.chunk_summaries().iter().cloned());
+        let mut merged = Self::with_chunk_summaries(self.component(), chunk_summaries);
+        merged.chunk_count = merged
+            .chunk_count()
+            .max(self.chunk_count())
+            .max(other.chunk_count());
+        merged.payload_bytes = merged
+            .payload_bytes()
+            .max(self.payload_bytes())
+            .max(other.payload_bytes());
+        merged
+    }
+
     pub fn component(&self) -> &str {
         &self.component
     }
@@ -137,7 +153,18 @@ impl WorkloadCheckpointManifestSummary {
         tick: Tick,
         component_summaries: impl IntoIterator<Item = WorkloadCheckpointComponentSummary>,
     ) -> Self {
-        let component_summaries = component_summaries.into_iter().collect::<Vec<_>>();
+        let mut component_summaries = component_summaries.into_iter().collect::<Vec<_>>();
+        component_summaries.sort_by(|left, right| left.component().cmp(right.component()));
+        let mut canonical_component_summaries: Vec<WorkloadCheckpointComponentSummary> = Vec::new();
+        for component_summary in component_summaries {
+            match canonical_component_summaries.last_mut() {
+                Some(existing) if existing.component() == component_summary.component() => {
+                    *existing = existing.merge_with(&component_summary);
+                }
+                _ => canonical_component_summaries.push(component_summary),
+            }
+        }
+        let component_summaries = canonical_component_summaries;
         let component_count = component_summaries.len();
         let chunk_count = component_summaries
             .iter()
