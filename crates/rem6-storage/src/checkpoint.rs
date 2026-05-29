@@ -1,19 +1,31 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 
 use crate::{
     validate_storage_bytes, CowStorageImage, CowStorageSnapshot, FileStorageImage,
-    FileStorageSnapshot, RawStorageImage, RawStorageSnapshot, StorageError, StorageSectorId,
-    STORAGE_SECTOR_BYTES,
+    FileStorageSnapshot, IdeBmiSnapshot, IdeChannelId, IdeChannelSnapshot, IdeController,
+    IdeControllerError, IdeControllerSnapshot, IdeDeviceId, IdeDiskSnapshot,
+    IdeDiskTransferSnapshot, IdeDmaDirection, IdeTaskFile, RawStorageImage, RawStorageSnapshot,
+    StorageError, StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
 const STORAGE_IMAGE_CHUNK: &str = "storage-image";
+const IDE_CONTROLLER_CHUNK: &str = "ide-controller";
 const STORAGE_RAW_KIND: u8 = 1;
 const STORAGE_COW_KIND: u8 = 2;
 const STORAGE_FILE_KIND: u8 = 3;
+const IDE_CONTROLLER_VERSION: u8 = 1;
+const IDE_TRANSFER_NONE: u8 = 0;
+const IDE_TRANSFER_INPUT: u8 = 1;
+const IDE_TRANSFER_OUTPUT: u8 = 2;
+const IDE_TRANSFER_DMA: u8 = 3;
+const IDE_DMA_TO_GUEST: u8 = 1;
+const IDE_DMA_FROM_GUEST: u8 = 2;
+const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +39,29 @@ pub enum StorageImageCheckpointSnapshot {
 pub struct StorageImageCheckpointRecord {
     component: CheckpointComponentId,
     snapshot: StorageImageCheckpointSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdeControllerCheckpointRecord {
+    component: CheckpointComponentId,
+    snapshot: IdeControllerSnapshot,
+}
+
+impl IdeControllerCheckpointRecord {
+    pub fn new(component: CheckpointComponentId, snapshot: IdeControllerSnapshot) -> Self {
+        Self {
+            component,
+            snapshot,
+        }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn snapshot(&self) -> &IdeControllerSnapshot {
+        &self.snapshot
+    }
 }
 
 impl StorageImageCheckpointRecord {
@@ -50,6 +85,106 @@ impl StorageImageCheckpointRecord {
 pub struct StorageImageCheckpointPort {
     component: CheckpointComponentId,
     target: StorageImageCheckpointTarget,
+}
+
+#[derive(Clone, Debug)]
+pub struct IdeControllerCheckpointPort {
+    component: CheckpointComponentId,
+    controller: Arc<Mutex<IdeController>>,
+}
+
+impl IdeControllerCheckpointPort {
+    pub fn new(component: CheckpointComponentId, controller: Arc<Mutex<IdeController>>) -> Self {
+        Self {
+            component,
+            controller,
+        }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn register(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        registry.register(self.component.clone())
+    }
+
+    pub fn capture_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<IdeControllerCheckpointRecord, StorageCheckpointError> {
+        let snapshot = self.lock_controller()?.snapshot();
+        registry
+            .write_chunk(
+                &self.component,
+                IDE_CONTROLLER_CHUNK,
+                encode_ide_controller(&snapshot),
+            )
+            .map_err(StorageCheckpointError::Checkpoint)?;
+        Ok(IdeControllerCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
+    }
+
+    pub fn restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<IdeControllerCheckpointRecord, StorageCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_snapshot(record.snapshot())?;
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<IdeControllerCheckpointRecord, StorageCheckpointError> {
+        let payload = registry
+            .chunk(&self.component, IDE_CONTROLLER_CHUNK)
+            .ok_or_else(|| StorageCheckpointError::MissingChunk {
+                component: self.component.clone(),
+                name: IDE_CONTROLLER_CHUNK.to_string(),
+            })?;
+        let snapshot = decode_ide_controller(&self.component, payload)?;
+        Ok(IdeControllerCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
+    }
+
+    fn validate_snapshot(
+        &self,
+        snapshot: &IdeControllerSnapshot,
+    ) -> Result<(), StorageCheckpointError> {
+        let mut cloned = self.lock_controller()?.clone();
+        cloned
+            .restore(snapshot)
+            .map_err(|error| StorageCheckpointError::Ide {
+                component: self.component.clone(),
+                error,
+            })
+    }
+
+    fn restore_snapshot(
+        &self,
+        snapshot: &IdeControllerSnapshot,
+    ) -> Result<(), StorageCheckpointError> {
+        self.lock_controller()?
+            .restore(snapshot)
+            .map_err(|error| StorageCheckpointError::Ide {
+                component: self.component.clone(),
+                error,
+            })
+    }
+
+    fn lock_controller(&self) -> Result<MutexGuard<'_, IdeController>, StorageCheckpointError> {
+        self.controller
+            .lock()
+            .map_err(|_| StorageCheckpointError::LockPoisoned {
+                component: self.component.clone(),
+            })
+    }
 }
 
 impl StorageImageCheckpointPort {
@@ -215,6 +350,98 @@ pub struct StorageImageCheckpointBank {
     ports: BTreeMap<CheckpointComponentId, StorageImageCheckpointPort>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct IdeControllerCheckpointBank {
+    ports: BTreeMap<CheckpointComponentId, IdeControllerCheckpointPort>,
+}
+
+impl IdeControllerCheckpointBank {
+    pub fn new<I>(ports: I) -> Result<Self, CheckpointError>
+    where
+        I: IntoIterator<Item = IdeControllerCheckpointPort>,
+    {
+        let mut by_component = BTreeMap::new();
+        for port in ports {
+            let component = port.component().clone();
+            if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            by_component.insert(component, port);
+        }
+        Ok(Self {
+            ports: by_component,
+        })
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.ports.len()
+    }
+
+    pub fn components(&self) -> Vec<CheckpointComponentId> {
+        self.ports.keys().cloned().collect()
+    }
+
+    pub fn insert_port(
+        &mut self,
+        port: IdeControllerCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
+        if self.ports.contains_key(&component) {
+            return Err(CheckpointError::DuplicateComponent { component });
+        }
+        self.ports.insert(component, port);
+        Ok(())
+    }
+
+    pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        for port in self.ports.values() {
+            port.register(registry)?;
+        }
+        Ok(())
+    }
+
+    pub fn capture_all_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<Vec<IdeControllerCheckpointRecord>, StorageCheckpointError> {
+        self.ports
+            .values()
+            .map(|port| port.capture_into(registry))
+            .collect()
+    }
+
+    pub fn restore_all_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Vec<IdeControllerCheckpointRecord>, StorageCheckpointError> {
+        self.validate_restore_from(registry)?;
+        let mut decoded = Vec::new();
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+            decoded.push((port, record));
+        }
+
+        let mut restored = Vec::new();
+        for (port, record) in decoded {
+            port.restore_snapshot(record.snapshot())?;
+            restored.push(record);
+        }
+        Ok(restored)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), StorageCheckpointError> {
+        for port in self.ports.values() {
+            let record = port.decode_from(registry)?;
+            port.validate_snapshot(record.snapshot())?;
+        }
+        Ok(())
+    }
+}
+
 impl StorageImageCheckpointBank {
     pub fn new<I>(ports: I) -> Result<Self, CheckpointError>
     where
@@ -310,6 +537,13 @@ pub enum StorageCheckpointError {
         reason: String,
     },
     Checkpoint(CheckpointError),
+    Ide {
+        component: CheckpointComponentId,
+        error: IdeControllerError,
+    },
+    LockPoisoned {
+        component: CheckpointComponentId,
+    },
     Storage {
         component: CheckpointComponentId,
         error: StorageError,
@@ -321,6 +555,8 @@ impl StorageCheckpointError {
         match self {
             Self::MissingChunk { component, .. }
             | Self::InvalidChunk { component, .. }
+            | Self::Ide { component, .. }
+            | Self::LockPoisoned { component }
             | Self::Storage { component, .. } => Some(component),
             Self::Checkpoint(_) => None,
         }
@@ -341,6 +577,16 @@ impl Display for StorageCheckpointError {
                 component.as_str()
             ),
             Self::Checkpoint(error) => write!(formatter, "{error}"),
+            Self::Ide { component, error } => write!(
+                formatter,
+                "storage checkpoint component {} IDE restore failed: {error}",
+                component.as_str()
+            ),
+            Self::LockPoisoned { component } => write!(
+                formatter,
+                "storage checkpoint component {} IDE controller lock is poisoned",
+                component.as_str()
+            ),
             Self::Storage { component, error } => write!(
                 formatter,
                 "storage checkpoint component {} restore failed: {error}",
@@ -354,8 +600,11 @@ impl Error for StorageCheckpointError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Checkpoint(error) => Some(error),
+            Self::Ide { error, .. } => Some(error),
             Self::Storage { error, .. } => Some(error),
-            Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
+            Self::MissingChunk { .. } | Self::InvalidChunk { .. } | Self::LockPoisoned { .. } => {
+                None
+            }
         }
     }
 }
@@ -411,6 +660,213 @@ fn decode_storage_image(
     };
     reader.finish()?;
     Ok(snapshot)
+}
+
+fn encode_ide_controller(snapshot: &IdeControllerSnapshot) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.push(IDE_CONTROLLER_VERSION);
+    for channel in snapshot.channels() {
+        encode_ide_channel(&mut payload, channel);
+    }
+    payload
+}
+
+fn encode_ide_channel(payload: &mut Vec<u8>, snapshot: &IdeChannelSnapshot) {
+    payload.push(encode_channel_id(snapshot.id()));
+    payload.push(encode_device_id(snapshot.selected_device()));
+    payload.push(u8::from(snapshot.pending_interrupt()));
+    let bmi = snapshot.bmi();
+    payload.push(bmi.command());
+    payload.push(bmi.status());
+    payload.extend(bmi.prd_table().to_le_bytes());
+    encode_optional_ide_disk(payload, snapshot.device0());
+    encode_optional_ide_disk(payload, snapshot.device1());
+}
+
+fn encode_optional_ide_disk(payload: &mut Vec<u8>, snapshot: Option<&IdeDiskSnapshot>) {
+    match snapshot {
+        Some(snapshot) => {
+            payload.push(1);
+            encode_ide_disk(payload, snapshot);
+        }
+        None => payload.push(0),
+    }
+}
+
+fn encode_ide_disk(payload: &mut Vec<u8>, snapshot: &IdeDiskSnapshot) {
+    payload.push(encode_device_id(snapshot.device_id()));
+    let task_file = snapshot.task_file();
+    payload.push(task_file.error());
+    payload.push(task_file.sector_count());
+    payload.push(task_file.sector_number());
+    payload.push(task_file.cylinder_low());
+    payload.push(task_file.cylinder_high());
+    payload.push(task_file.drive());
+    payload.push(task_file.command());
+    payload.push(snapshot.status());
+    payload.push(snapshot.control());
+    payload.push(u8::from(snapshot.pending_interrupt()));
+    encode_ide_transfer(payload, snapshot.transfer());
+}
+
+fn encode_ide_transfer(payload: &mut Vec<u8>, transfer: Option<&IdeDiskTransferSnapshot>) {
+    match transfer {
+        None => payload.push(IDE_TRANSFER_NONE),
+        Some(IdeDiskTransferSnapshot::Input {
+            start_sector,
+            cursor,
+            payload: transfer_payload,
+        }) => {
+            payload.push(IDE_TRANSFER_INPUT);
+            payload.extend(start_sector.to_le_bytes());
+            payload.extend((*cursor as u64).to_le_bytes());
+            payload.extend((transfer_payload.len() as u64).to_le_bytes());
+            payload.extend(transfer_payload);
+        }
+        Some(IdeDiskTransferSnapshot::Output {
+            start_sector,
+            cursor,
+            payload: transfer_payload,
+        }) => {
+            payload.push(IDE_TRANSFER_OUTPUT);
+            payload.extend(start_sector.to_le_bytes());
+            payload.extend((*cursor as u64).to_le_bytes());
+            payload.extend((transfer_payload.len() as u64).to_le_bytes());
+            payload.extend(transfer_payload);
+        }
+        Some(IdeDiskTransferSnapshot::Dma {
+            direction,
+            start_sector,
+            sectors,
+        }) => {
+            payload.push(IDE_TRANSFER_DMA);
+            payload.push(encode_dma_direction(*direction));
+            payload.extend(start_sector.to_le_bytes());
+            payload.extend(sectors.to_le_bytes());
+        }
+    }
+}
+
+fn decode_ide_controller(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<IdeControllerSnapshot, StorageCheckpointError> {
+    let mut reader = StorageCheckpointReader::new(component, payload);
+    let version = reader.read_u8("IDE controller version")?;
+    if version != IDE_CONTROLLER_VERSION {
+        return Err(reader.invalid(format!("unknown IDE controller version {version}")));
+    }
+    let primary = decode_ide_channel(&mut reader)?;
+    let secondary = decode_ide_channel(&mut reader)?;
+    reader.finish()?;
+    Ok(IdeControllerSnapshot::from_channels([primary, secondary]))
+}
+
+fn decode_ide_channel(
+    reader: &mut StorageCheckpointReader<'_>,
+) -> Result<IdeChannelSnapshot, StorageCheckpointError> {
+    let channel_id = reader.read_u8("IDE channel id")?;
+    let id = decode_channel_id(reader, channel_id)?;
+    let selected_device_id = reader.read_u8("IDE selected device")?;
+    let selected_device = decode_device_id(reader, selected_device_id)?;
+    let pending_interrupt = reader.read_bool("IDE channel pending interrupt")?;
+    let command = reader.read_u8("IDE BMI command")?;
+    let status = reader.read_u8("IDE BMI status")?;
+    let prd_table = reader.read_u32("IDE BMI PRD table")?;
+    let device0 = decode_optional_ide_disk(reader)?;
+    let device1 = decode_optional_ide_disk(reader)?;
+    Ok(IdeChannelSnapshot {
+        id,
+        selected_device,
+        pending_interrupt,
+        bmi: IdeBmiSnapshot {
+            command,
+            status,
+            prd_table,
+        },
+        device0,
+        device1,
+    })
+}
+
+fn decode_optional_ide_disk(
+    reader: &mut StorageCheckpointReader<'_>,
+) -> Result<Option<IdeDiskSnapshot>, StorageCheckpointError> {
+    match reader.read_u8("IDE disk presence")? {
+        0 => Ok(None),
+        1 => decode_ide_disk(reader).map(Some),
+        value => Err(reader.invalid(format!("IDE disk presence has invalid value {value}"))),
+    }
+}
+
+fn decode_ide_disk(
+    reader: &mut StorageCheckpointReader<'_>,
+) -> Result<IdeDiskSnapshot, StorageCheckpointError> {
+    let disk_device_id = reader.read_u8("IDE disk device id")?;
+    let device_id = decode_device_id(reader, disk_device_id)?;
+    let task_file = IdeTaskFile::from_registers(
+        reader.read_u8("IDE task error")?,
+        reader.read_u8("IDE task sector count")?,
+        reader.read_u8("IDE task sector number")?,
+        reader.read_u8("IDE task cylinder low")?,
+        reader.read_u8("IDE task cylinder high")?,
+        reader.read_u8("IDE task drive")?,
+        reader.read_u8("IDE task command")?,
+    );
+    let status = reader.read_u8("IDE disk status")?;
+    let control = reader.read_u8("IDE disk control")?;
+    let pending_interrupt = reader.read_bool("IDE disk pending interrupt")?;
+    let transfer = decode_ide_transfer(reader)?;
+    Ok(IdeDiskSnapshot::from_parts(
+        device_id,
+        task_file,
+        status,
+        control,
+        pending_interrupt,
+        transfer,
+    ))
+}
+
+fn decode_ide_transfer(
+    reader: &mut StorageCheckpointReader<'_>,
+) -> Result<Option<IdeDiskTransferSnapshot>, StorageCheckpointError> {
+    let tag = reader.read_u8("IDE transfer tag")?;
+    match tag {
+        IDE_TRANSFER_NONE => Ok(None),
+        IDE_TRANSFER_INPUT | IDE_TRANSFER_OUTPUT => {
+            let start_sector = reader.read_u64("IDE transfer start sector")?;
+            let cursor = reader.read_count("IDE transfer cursor")?;
+            let byte_count = reader.read_count("IDE transfer byte count")?;
+            let payload = reader
+                .read_bytes("IDE transfer payload", byte_count)?
+                .to_vec();
+            if tag == IDE_TRANSFER_INPUT {
+                Ok(Some(IdeDiskTransferSnapshot::Input {
+                    start_sector,
+                    cursor,
+                    payload,
+                }))
+            } else {
+                Ok(Some(IdeDiskTransferSnapshot::Output {
+                    start_sector,
+                    cursor,
+                    payload,
+                }))
+            }
+        }
+        IDE_TRANSFER_DMA => {
+            let dma_direction = reader.read_u8("IDE DMA direction")?;
+            let direction = decode_dma_direction(reader, dma_direction)?;
+            let start_sector = reader.read_u64("IDE DMA start sector")?;
+            let sectors = reader.read_u64("IDE DMA sectors")?;
+            Ok(Some(IdeDiskTransferSnapshot::Dma {
+                direction,
+                start_sector,
+                sectors,
+            }))
+        }
+        _ => Err(reader.invalid(format!("unknown IDE transfer tag {tag}"))),
+    }
 }
 
 fn decode_raw_storage(
@@ -527,6 +983,60 @@ fn validate_file_storage_snapshot(
     validate_storage_bytes(snapshot.capacity_sectors(), snapshot.bytes().len() as u64)
 }
 
+fn encode_channel_id(channel: IdeChannelId) -> u8 {
+    match channel {
+        IdeChannelId::Primary => 0,
+        IdeChannelId::Secondary => 1,
+    }
+}
+
+fn decode_channel_id(
+    reader: &StorageCheckpointReader<'_>,
+    value: u8,
+) -> Result<IdeChannelId, StorageCheckpointError> {
+    match value {
+        0 => Ok(IdeChannelId::Primary),
+        1 => Ok(IdeChannelId::Secondary),
+        _ => Err(reader.invalid(format!("unknown IDE channel id {value}"))),
+    }
+}
+
+fn encode_device_id(device: IdeDeviceId) -> u8 {
+    match device {
+        IdeDeviceId::Device0 => 0,
+        IdeDeviceId::Device1 => 1,
+    }
+}
+
+fn decode_device_id(
+    reader: &StorageCheckpointReader<'_>,
+    value: u8,
+) -> Result<IdeDeviceId, StorageCheckpointError> {
+    match value {
+        0 => Ok(IdeDeviceId::Device0),
+        1 => Ok(IdeDeviceId::Device1),
+        _ => Err(reader.invalid(format!("unknown IDE device id {value}"))),
+    }
+}
+
+fn encode_dma_direction(direction: IdeDmaDirection) -> u8 {
+    match direction {
+        IdeDmaDirection::ToGuest => IDE_DMA_TO_GUEST,
+        IdeDmaDirection::FromGuest => IDE_DMA_FROM_GUEST,
+    }
+}
+
+fn decode_dma_direction(
+    reader: &StorageCheckpointReader<'_>,
+    value: u8,
+) -> Result<IdeDmaDirection, StorageCheckpointError> {
+    match value {
+        IDE_DMA_TO_GUEST => Ok(IdeDmaDirection::ToGuest),
+        IDE_DMA_FROM_GUEST => Ok(IdeDmaDirection::FromGuest),
+        _ => Err(reader.invalid(format!("unknown IDE DMA direction {value}"))),
+    }
+}
+
 struct StorageCheckpointReader<'a> {
     component: &'a CheckpointComponentId,
     payload: &'a [u8],
@@ -552,6 +1062,11 @@ impl<'a> StorageCheckpointReader<'a> {
 
     fn read_u8(&mut self, name: &str) -> Result<u8, StorageCheckpointError> {
         Ok(self.read_bytes(name, 1)?[0])
+    }
+
+    fn read_u32(&mut self, name: &str) -> Result<u32, StorageCheckpointError> {
+        let bytes = self.read_bytes(name, U32_BYTES)?;
+        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     fn read_u64(&mut self, name: &str) -> Result<u64, StorageCheckpointError> {

@@ -1368,6 +1368,26 @@ impl IdeTaskFile {
         }
     }
 
+    pub(crate) const fn from_registers(
+        error: u8,
+        sector_count: u8,
+        sector_number: u8,
+        cylinder_low: u8,
+        cylinder_high: u8,
+        drive: u8,
+        command: u8,
+    ) -> Self {
+        Self {
+            error,
+            sector_count,
+            sector_number,
+            cylinder_low,
+            cylinder_high,
+            drive,
+            command,
+        }
+    }
+
     fn lba_base(self) -> u64 {
         (u64::from(self.drive & 0x0f) << 24)
             | (u64::from(self.cylinder_high) << 16)

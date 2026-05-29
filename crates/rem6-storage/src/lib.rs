@@ -15,6 +15,7 @@ mod ide_snapshot;
 mod simple_disk;
 
 pub use checkpoint::{
+    IdeControllerCheckpointBank, IdeControllerCheckpointPort, IdeControllerCheckpointRecord,
     StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
 };

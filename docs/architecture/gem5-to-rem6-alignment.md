@@ -578,11 +578,14 @@ Implementation evidence through 2026-05-29:
   interrupt, and command bits through typed state transitions. IDE controller
   snapshots now preserve channel identity, selected device, pending interrupt,
   BMI command/status/PRD state, and attached disk snapshots with decode-first
-  shape checks before live mutation. This replaces gem5's callback-heavy IDE
-  DMA event chain and fragile object-local serialize/unserialize pattern with
-  explicit transfer plans, guest-memory boundaries, and register records. PCI
-  endpoint identity, external interrupt delivery, timing delay, and checkpoint
-  bank integration remain open.
+  shape checks before live mutation. IDE controller checkpoint banks now encode
+  those snapshots as deterministic chunks, validate all controller chunks with
+  clone-restore preflight, and reject malformed chunks without partial live
+  controller mutation. This replaces gem5's callback-heavy IDE DMA event chain
+  and fragile object-local serialize/unserialize pattern with explicit transfer
+  plans, guest-memory boundaries, register records, and decode-first checkpoint
+  chunks. PCI endpoint identity, external interrupt delivery, timing delay, and
+  system host checkpoint attachment remain open.
   `rem6-system` host checkpoint actions can attach those banks, stage their
   chunk capture with the rest of the system, and restore storage images only
   after decode-first validation has accepted every attached bank. RISC-V
@@ -2133,7 +2136,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   shape mismatch rejection before mutation. IDE DMA tests cover READ DMA from
   disk to guest memory, WRITE DMA from guest memory to disk, active DMA
   snapshot restore before execution, and malformed PRD rejection without disk
-  or guest-memory mutation.
+  or guest-memory mutation. IDE checkpoint tests cover active DMA snapshot
+  capture/restore through deterministic controller chunks and malformed
+  controller chunk rejection without partial restore.
   System checkpoint action tests cover storage image bank attachment, staged
   capture into host manifests, and malformed storage restore rejection without
   partial live-image mutation. Topology checkpoint tests cover storage image
