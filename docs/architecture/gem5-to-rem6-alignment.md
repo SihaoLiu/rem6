@@ -471,6 +471,13 @@ Implementation evidence through 2026-05-29:
   hard per-source-file size budget, so MSI, MESI, MOESI, CHI, topology, QoS,
   and DRAM-backed coherence growth cannot recreate a gem5 Ruby-style harness
   monolith.
+- `rem6-cache` now keeps MSI and MESI controller state, snapshots, errors,
+  pending-miss records, CPU-event decoding, and response materialization in
+  focused `msi` and `mesi` modules. Cache source-policy tests keep the crate
+  root under the facade budget, require those controller states to stay out of
+  the root, and enforce the hard per-source-file size budget, so cache
+  controller growth does not recreate gem5-style mixed protocol controller
+  monoliths.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1855,6 +1862,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   module-size budget across DRAM sources. Coherence source-policy tests keep
   harness errors, CPU response records, and partitioned configuration in focused
   modules while enforcing the hard module-size budget across coherence sources.
+  Cache source-policy tests keep MSI and MESI controller state in focused
+  modules while enforcing the hard module-size budget across cache sources.
   System source-policy tests keep workload replay data-cache backend state in a
   focused module while enforcing the hard module-size budget across system
   sources. Type-1 bridge tests cover typed bridge header fields, Expansion ROM
