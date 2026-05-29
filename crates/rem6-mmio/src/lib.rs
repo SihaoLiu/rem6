@@ -382,6 +382,160 @@ impl MmioDevice for Mutex<MmioRegisterBank> {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnsupportedMmioAccess {
+    tick: Tick,
+    device: String,
+    request: MmioRequestId,
+    operation: MmioOperation,
+    range: AddressRange,
+    write_data: Option<Vec<u8>>,
+}
+
+impl UnsupportedMmioAccess {
+    pub const fn new(
+        tick: Tick,
+        device: String,
+        request: MmioRequestId,
+        operation: MmioOperation,
+        range: AddressRange,
+        write_data: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            tick,
+            device,
+            request,
+            operation,
+            range,
+            write_data,
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    pub const fn request(&self) -> MmioRequestId {
+        self.request
+    }
+
+    pub const fn operation(&self) -> MmioOperation {
+        self.operation
+    }
+
+    pub const fn range(&self) -> AddressRange {
+        self.range
+    }
+
+    pub fn write_data(&self) -> Option<&[u8]> {
+        self.write_data.as_deref()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UnsupportedMmioDevice {
+    name: String,
+    range: AddressRange,
+    access_log: Arc<Mutex<Vec<UnsupportedMmioAccess>>>,
+}
+
+impl UnsupportedMmioDevice {
+    pub fn new(
+        name: impl Into<String>,
+        base: Address,
+        size: AccessSize,
+    ) -> Result<Self, MmioError> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(MmioError::InvalidDeviceName);
+        }
+        Ok(Self {
+            name,
+            range: AddressRange::new(base, size).map_err(MmioError::Memory)?,
+            access_log: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn range(&self) -> AddressRange {
+        self.range
+    }
+
+    pub fn access_log(&self) -> Vec<UnsupportedMmioAccess> {
+        self.access_log
+            .lock()
+            .expect("unsupported MMIO device access log")
+            .clone()
+    }
+
+    fn reject(&self, tick: Tick, request: &MmioRequest) -> Result<MmioResponse, MmioError> {
+        let requested = request.range();
+        if !self.range.contains_range(requested) {
+            return Err(MmioError::DeviceBoundaryCrossed {
+                request: request.id(),
+                device_start: self.range.start(),
+                device_end: self.range.end(),
+                requested_start: requested.start(),
+                requested_end: requested.end(),
+            });
+        }
+
+        self.access_log
+            .lock()
+            .expect("unsupported MMIO device access log")
+            .push(UnsupportedMmioAccess::new(
+                tick,
+                self.name.clone(),
+                request.id(),
+                request.operation(),
+                requested,
+                request.data().map(Vec::from),
+            ));
+        Err(MmioError::UnsupportedDeviceAccess {
+            request: request.id(),
+            device: self.name.clone(),
+            operation: request.operation(),
+            address: requested.start(),
+            bytes: requested.size().bytes(),
+        })
+    }
+}
+
+impl PartialEq for UnsupportedMmioDevice {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.range == other.range
+            && self.access_log() == other.access_log()
+    }
+}
+
+impl Eq for UnsupportedMmioDevice {}
+
+impl MmioDevice for UnsupportedMmioDevice {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.reject(context.now(), request)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.reject(context.now(), request)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MmioRouteLatency {
     Request,
@@ -819,6 +973,14 @@ pub enum MmioError {
         expected: u64,
         actual: u64,
     },
+    UnsupportedDeviceAccess {
+        request: MmioRequestId,
+        device: String,
+        operation: MmioOperation,
+        address: Address,
+        bytes: u64,
+    },
+    InvalidDeviceName,
     HostOffsetTooLarge {
         address: Address,
     },
@@ -972,6 +1134,21 @@ impl fmt::Display for MmioError {
                 "MMIO request {} has {actual} bytes but expects {expected}",
                 request.get()
             ),
+            Self::UnsupportedDeviceAccess {
+                request,
+                device,
+                operation,
+                address,
+                bytes,
+            } => write!(
+                formatter,
+                "MMIO request {} {operation:?} touched unsupported device {device} at {:#x} for {bytes} bytes",
+                request.get(),
+                address.get()
+            ),
+            Self::InvalidDeviceName => {
+                write!(formatter, "unsupported MMIO device name must not be empty")
+            }
             Self::HostOffsetTooLarge { address } => write!(
                 formatter,
                 "MMIO address {:#x} register offset does not fit host usize",
