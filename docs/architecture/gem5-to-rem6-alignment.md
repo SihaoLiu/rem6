@@ -514,6 +514,15 @@ Implementation evidence through 2026-05-29:
   command and error contracts to stay out of the root, and enforce the hard
   per-source-file size budget, so GPU-kernel, NPU-inference, and DMA
   accelerator growth does not recreate gem5-style device-command monoliths.
+- `rem6-virtio` now keeps queue indexes, queue specs, notify specs, queue
+  notifications, VirtIO error variants, error formatting, and device-error
+  conversion helpers in focused `queue` and `error` modules while leaving the
+  crate root centered on modern PCI common-config and notify-MMIO state
+  machines. VirtIO source-policy tests keep the crate root under the facade
+  budget, require queue and error contracts to stay out of the root, and
+  enforce the hard per-source-file size budget, so block, queue, PCI transport,
+  shared-memory, and future network/console/rng VirtIO work does not recreate
+  gem5-style mixed device, queue, and transport monoliths.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1911,6 +1920,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   Accelerator source-policy tests keep command contracts and error reporting in
   focused modules while enforcing the facade and hard module-size budgets across
   accelerator sources.
+  VirtIO source-policy tests keep queue contracts and error reporting in focused
+  modules while enforcing the facade and hard module-size budgets across VirtIO
+  sources.
   System source-policy tests keep workload replay data-cache backend state in a
   focused module while enforcing the hard module-size budget across system
   sources. Type-1 bridge tests cover typed bridge header fields, Expansion ROM
