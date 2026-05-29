@@ -1294,7 +1294,7 @@ impl RiscvCore {
         let address = Address::new(access_address(&access));
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         let request = mmio_request(request_id, &access, size, address)?;
-        let route = match bus.route_for(&request) {
+        let route = match bus.route_for(self.core.partition(), &request) {
             Ok(route) => route,
             Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
             Err(error) => return Err(RiscvCpuError::Mmio(error)),

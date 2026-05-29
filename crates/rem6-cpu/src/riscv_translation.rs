@@ -449,7 +449,7 @@ impl RiscvCore {
             translated.size,
             translated.physical_address,
         )?;
-        let route = match bus.route_for(&request) {
+        let route = match bus.route_for(self.core.partition(), &request) {
             Ok(route) => route,
             Err(MmioError::UnmappedAddress { .. }) => return Ok(None),
             Err(error) => return Err(RiscvCpuError::Mmio(error)),

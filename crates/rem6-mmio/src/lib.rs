@@ -784,11 +784,10 @@ impl MmioBus {
     where
         F: MmioDevice + 'static,
     {
-        if let Some(existing) = self
-            .devices
-            .iter()
-            .find(|device| device.range.overlaps(range))
-        {
+        if let Some(existing) = self.devices.iter().find(|device| {
+            device.range.overlaps(range)
+                && device.channel.route().source_partition() == route.source_partition()
+        }) {
             return Err(MmioError::OverlappingDeviceRegion {
                 existing_start: existing.range.start(),
                 existing_end: existing.range.end(),
@@ -802,13 +801,21 @@ impl MmioBus {
             channel: MmioChannel::new(route),
             device: Arc::new(device),
         });
-        self.devices
-            .sort_by_key(|device| device.range.start().get());
+        self.devices.sort_by_key(|device| {
+            (
+                device.range.start().get(),
+                device.channel.route().source_partition(),
+            )
+        });
         Ok(())
     }
 
-    pub fn route_for(&self, request: &MmioRequest) -> Result<MmioRoute, MmioError> {
-        Ok(self.device_for(request)?.channel.route())
+    pub fn route_for(
+        &self,
+        source_partition: PartitionId,
+        request: &MmioRequest,
+    ) -> Result<MmioRoute, MmioError> {
+        Ok(self.device_for(source_partition, request)?.channel.route())
     }
 
     pub fn response_errors(&self) -> Vec<MmioError> {
@@ -836,7 +843,7 @@ impl MmioBus {
     where
         G: FnOnce(MmioCompletion) + Send + 'static,
     {
-        let device = self.device_for(&request)?.clone();
+        let device = self.device_for(context.partition(), &request)?.clone();
         let responder = Arc::clone(&device.device);
         device.channel.submit(
             context,
@@ -855,7 +862,7 @@ impl MmioBus {
     where
         G: FnOnce(MmioCompletion) + Send + 'static,
     {
-        let device = self.device_for(&request)?.clone();
+        let device = self.device_for(context.partition(), &request)?.clone();
         let responder = Arc::clone(&device.device);
         device.channel.submit_parallel(
             context,
@@ -865,10 +872,16 @@ impl MmioBus {
         )
     }
 
-    fn device_for(&self, request: &MmioRequest) -> Result<&MmioDeviceEntry, MmioError> {
+    fn device_for(
+        &self,
+        source_partition: PartitionId,
+        request: &MmioRequest,
+    ) -> Result<&MmioDeviceEntry, MmioError> {
         let requested = request.range();
         for device in &self.devices {
-            if device.range.contains(requested.start()) {
+            if device.channel.route().source_partition() == source_partition
+                && device.range.contains(requested.start())
+            {
                 if !device.range.contains_range(requested) {
                     return Err(MmioError::DeviceBoundaryCrossed {
                         request: request.id(),

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext, Tick};
-use rem6_memory::{AccessSize, Address, AddressRange};
+use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
 use rem6_mmio::{
     MmioAccess, MmioBus, MmioCompletion, MmioDevice, MmioError, MmioRegisterBank, MmioRequest,
     MmioRequestId, MmioResponse, MmioRoute,
@@ -276,6 +276,78 @@ fn mmio_bus_routes_decoded_devices_on_parallel_scheduler() {
 }
 
 #[test]
+fn mmio_bus_allows_source_partition_local_device_views() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let route0 = MmioRoute::new(cpu0, cpu0, 1, 1).unwrap();
+    let route1 = MmioRoute::new(cpu1, cpu1, 1, 1).unwrap();
+    let range = AddressRange::new(Address::new(0x5000), AccessSize::new(0x100).unwrap()).unwrap();
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = MmioBus::new();
+
+    bus.insert_device(range, route0, NoopDevice).unwrap();
+    bus.insert_device(range, route1, NoopDevice).unwrap();
+
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu0, 3, {
+            let bus = bus.clone();
+            move |context| {
+                bus.submit(
+                    context,
+                    MmioRequest::write(
+                        MmioRequestId::new(20),
+                        Address::new(0x5000),
+                        vec![0],
+                        ByteMask::full(AccessSize::new(1).unwrap()).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+            }
+        })
+        .unwrap();
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu1, 4, move |context| {
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(21),
+                    Address::new(0x5000),
+                    vec![1],
+                    ByteMask::full(AccessSize::new(1).unwrap()).unwrap(),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 6);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                5,
+                route0,
+                Ok(MmioResponse::completed(MmioRequestId::new(20), None)),
+            ),
+            MmioCompletion::new(
+                6,
+                route1,
+                Ok(MmioResponse::completed(MmioRequestId::new(21), None)),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn mmio_bus_rejects_overlapping_devices_and_boundary_crosses() {
     let cpu = PartitionId::new(0);
     let device = PartitionId::new(1);
@@ -310,7 +382,7 @@ fn mmio_bus_rejects_overlapping_devices_and_boundary_crosses() {
     )
     .unwrap();
     assert_eq!(
-        bus.route_for(&crossing),
+        bus.route_for(cpu, &crossing),
         Err(MmioError::DeviceBoundaryCrossed {
             request: MmioRequestId::new(3),
             device_start: Address::new(0x4000),
@@ -327,7 +399,7 @@ fn mmio_bus_rejects_overlapping_devices_and_boundary_crosses() {
     )
     .unwrap();
     assert_eq!(
-        bus.route_for(&unmapped),
+        bus.route_for(cpu, &unmapped),
         Err(MmioError::UnmappedAddress {
             address: Address::new(0x5000),
         })

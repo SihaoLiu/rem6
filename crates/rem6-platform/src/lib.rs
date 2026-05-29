@@ -12,7 +12,8 @@ use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 use rem6_mmio::{MmioBus, MmioError, MmioRoute};
 use rem6_timer::{
-    ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, Mc146818Rtc,
+    ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, CpuLocalTimerBank,
+    CpuLocalTimerError, CpuLocalTimerInterruptPorts, CpuLocalTimerMmioDevice, Mc146818Rtc,
     Mc146818RtcMmioDevice, Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, ProgrammableTimer,
     RtcDateTime, RtcEncoding, RtcError, Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804Error,
     Sp805Error, Sp805Watchdog, Sp805WatchdogMmioDevice, TimerError, TimerId, TimerMmioDevice,
@@ -127,6 +128,30 @@ pub struct PlatformSp805WatchdogConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlatformSp805WatchdogInterruptConfig {
+    pub line: InterruptLineId,
+    pub target: InterruptTargetId,
+    pub source: InterruptSourceId,
+    pub latency: Tick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformCpuLocalTimerConfig {
+    pub base: Address,
+    pub size: AccessSize,
+    pub routes: Vec<MmioRoute>,
+    pub clock_tick: Tick,
+    pub cpus: Vec<PlatformCpuLocalTimerCpuConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformCpuLocalTimerCpuConfig {
+    pub partition: PartitionId,
+    pub timer: PlatformCpuLocalTimerInterruptConfig,
+    pub watchdog: PlatformCpuLocalTimerInterruptConfig,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformCpuLocalTimerInterruptConfig {
     pub line: InterruptLineId,
     pub target: InterruptTargetId,
     pub source: InterruptSourceId,
@@ -1017,6 +1042,7 @@ pub struct PlatformBuilder {
     pl031_rtcs: Vec<PlatformPl031RtcConfig>,
     sp804_timers: Vec<PlatformSp804TimerConfig>,
     sp805_watchdogs: Vec<PlatformSp805WatchdogConfig>,
+    cpu_local_timers: Vec<PlatformCpuLocalTimerConfig>,
 }
 
 impl PlatformBuilder {
@@ -1032,6 +1058,7 @@ impl PlatformBuilder {
             pl031_rtcs: Vec::new(),
             sp804_timers: Vec::new(),
             sp805_watchdogs: Vec::new(),
+            cpu_local_timers: Vec::new(),
         }
     }
 
@@ -1084,6 +1111,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_cpu_local_timer(mut self, config: PlatformCpuLocalTimerConfig) -> Self {
+        self.cpu_local_timers.push(config);
+        self
+    }
+
     pub fn build(self) -> Result<Platform, PlatformError> {
         if self.partition_count == 0 {
             return Err(PlatformError::NoPartitions);
@@ -1108,6 +1140,7 @@ impl PlatformBuilder {
         let mut pl031_rtcs = BTreeMap::new();
         let mut sp804_timers = BTreeMap::new();
         let mut sp805_watchdogs = BTreeMap::new();
+        let mut cpu_local_timers = BTreeMap::new();
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
@@ -1387,6 +1420,56 @@ impl PlatformBuilder {
             sp805_watchdogs.insert(config.base, device);
         }
 
+        for config in self.cpu_local_timers {
+            for route in &config.routes {
+                validate_route(self.partition_count, *route)?;
+            }
+            let mut ports = Vec::with_capacity(config.cpus.len());
+            for cpu in &config.cpus {
+                validate_partition(self.partition_count, cpu.partition)?;
+                if !config
+                    .routes
+                    .iter()
+                    .any(|route| route.source_partition() == cpu.partition)
+                {
+                    return Err(PlatformError::MissingCpuLocalTimerRoute {
+                        base: config.base,
+                        partition: cpu.partition,
+                    });
+                }
+                let timer_port = register_interrupt(
+                    &controller,
+                    cpu.partition,
+                    cpu.timer.line,
+                    cpu.timer.target,
+                    cpu.timer.latency,
+                )?;
+                let watchdog_port = register_interrupt(
+                    &controller,
+                    cpu.partition,
+                    cpu.watchdog.line,
+                    cpu.watchdog.target,
+                    cpu.watchdog.latency,
+                )?;
+                ports.push(CpuLocalTimerInterruptPorts::new(
+                    cpu.partition,
+                    cpu.timer.source,
+                    timer_port,
+                    cpu.watchdog.source,
+                    watchdog_port,
+                ));
+            }
+            let bank = CpuLocalTimerBank::new(config.cpus.len(), config.clock_tick)
+                .map_err(PlatformError::CpuLocalTimer)?;
+            let device = CpuLocalTimerMmioDevice::with_interrupts(config.base, bank, ports)
+                .map_err(PlatformError::CpuLocalTimer)?;
+            for route in config.routes {
+                bus.insert_device(region(config.base, config.size)?, route, device.clone())
+                    .map_err(PlatformError::Mmio)?;
+            }
+            cpu_local_timers.insert(config.base, device);
+        }
+
         Ok(Platform {
             partition_count: self.partition_count,
             interrupt_controller: controller,
@@ -1400,6 +1483,7 @@ impl PlatformBuilder {
             pl031_rtcs,
             sp804_timers,
             sp805_watchdogs,
+            cpu_local_timers,
             device_tree_inventory,
         })
     }
@@ -1419,6 +1503,7 @@ pub struct Platform {
     pl031_rtcs: BTreeMap<Address, Pl031RtcMmioDevice>,
     sp804_timers: BTreeMap<Address, Sp804DualTimerMmioDevice>,
     sp805_watchdogs: BTreeMap<Address, Sp805WatchdogMmioDevice>,
+    cpu_local_timers: BTreeMap<Address, CpuLocalTimerMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
 }
 
@@ -1509,6 +1594,16 @@ impl Platform {
 
     pub fn sp805_watchdogs(&self) -> impl Iterator<Item = (Address, &Sp805WatchdogMmioDevice)> {
         self.sp805_watchdogs
+            .iter()
+            .map(|(base, device)| (*base, device))
+    }
+
+    pub fn cpu_local_timer(&self, base: Address) -> Option<&CpuLocalTimerMmioDevice> {
+        self.cpu_local_timers.get(&base)
+    }
+
+    pub fn cpu_local_timers(&self) -> impl Iterator<Item = (Address, &CpuLocalTimerMmioDevice)> {
+        self.cpu_local_timers
             .iter()
             .map(|(base, device)| (*base, device))
     }
@@ -1628,6 +1723,10 @@ pub enum PlatformError {
         partition: PartitionId,
         partitions: u32,
     },
+    MissingCpuLocalTimerRoute {
+        base: Address,
+        partition: PartitionId,
+    },
     Memory(MemoryError),
     Mmio(MmioError),
     Interrupt(InterruptError),
@@ -1636,6 +1735,7 @@ pub enum PlatformError {
     Pl031(Pl031Error),
     Sp804(Sp804Error),
     Sp805(Sp805Error),
+    CpuLocalTimer(CpuLocalTimerError),
 }
 
 impl fmt::Display for PlatformError {
@@ -1661,6 +1761,12 @@ impl fmt::Display for PlatformError {
                 "partition {} is outside platform partition count {partitions}",
                 partition.index()
             ),
+            Self::MissingCpuLocalTimerRoute { base, partition } => write!(
+                formatter,
+                "CPU local timer at {:#x} has no MMIO route for partition {}",
+                base.get(),
+                partition.index()
+            ),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Mmio(error) => write!(formatter, "{error}"),
             Self::Interrupt(error) => write!(formatter, "{error}"),
@@ -1669,6 +1775,7 @@ impl fmt::Display for PlatformError {
             Self::Pl031(error) => write!(formatter, "{error}"),
             Self::Sp804(error) => write!(formatter, "{error}"),
             Self::Sp805(error) => write!(formatter, "{error}"),
+            Self::CpuLocalTimer(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1684,6 +1791,7 @@ impl Error for PlatformError {
             Self::Pl031(error) => Some(error),
             Self::Sp804(error) => Some(error),
             Self::Sp805(error) => Some(error),
+            Self::CpuLocalTimer(error) => Some(error),
             _ => None,
         }
     }
