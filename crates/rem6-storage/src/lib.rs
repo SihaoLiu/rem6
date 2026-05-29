@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod checkpoint;
+mod simple_disk;
 
 pub use checkpoint::{
     StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
 };
+pub use simple_disk::{SimpleDisk, SimpleDiskError, SimpleDiskGuestMemory, SimpleDiskTransfer};
 
 pub const STORAGE_SECTOR_BYTES: u64 = 512;
 
