@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
+const MAX_IDE_CORE_LINES: usize = 1700;
 
 #[test]
 fn storage_lib_rs_remains_within_facade_budget() {
@@ -36,6 +37,17 @@ fn storage_source_files_stay_within_size_limit() {
         oversized.is_empty(),
         "source files exceed {MAX_SOURCE_LINES} lines: {}",
         oversized.join(", ")
+    );
+}
+
+#[test]
+fn ide_core_stays_within_focused_budget() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ide.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_IDE_CORE_LINES,
+        "src/ide.rs should keep only core controller behavior, but it has {lines} lines"
     );
 }
 

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerError, IdeControllerGuestMemory,
-    IdeControllerSnapshot, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, IdeDmaDirection,
-    IdeDmaPlan, IdeDmaRequest, IdePendingCommandSnapshot, StorageError, StorageImageLayer,
-    StorageSectorId, STORAGE_SECTOR_BYTES,
+    ide_identify_payload, IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerError,
+    IdeControllerGuestMemory, IdeControllerSnapshot, IdeDiskError, IdeDiskSnapshot,
+    IdeDmaDirection, IdeDmaPlan, IdeDmaRequest, IdePendingCommand, IdeTransfer,
+    IdeTransferDirection, StorageError, StorageImageLayer, StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
 pub const IDE_DATA_OFFSET: u8 = 0;
@@ -53,11 +53,6 @@ pub const IDE_BMI_STATUS_INTERRUPT: u8 = 0x04;
 pub const IDE_BMI_STATUS_DMA_CAP1: u8 = 0x20;
 pub const IDE_BMI_STATUS_DMA_CAP0: u8 = 0x40;
 pub const IDE_BMI_CHANNEL_BYTES: u8 = 8;
-
-const IDE_IDENTIFY_BYTES: usize = 512;
-const IDE_MAX_MULTI_SECTORS: u16 = 128;
-const IDE_ATA7_MAJOR: u16 = 0x0080;
-const IDE_MODEL: &[u8] = b"5MI EDD si k";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdeDeviceId {
@@ -136,6 +131,36 @@ pub enum IdeBarWriteOutcome {
 pub enum IdeCommandIssue {
     Completed,
     Delayed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct IdeDataReadIssue {
+    word: u16,
+    sector_delay: bool,
+}
+
+impl IdeDataReadIssue {
+    const fn ready(word: u16) -> Self {
+        Self {
+            word,
+            sector_delay: false,
+        }
+    }
+
+    const fn delayed(word: u16) -> Self {
+        Self {
+            word,
+            sector_delay: true,
+        }
+    }
+
+    pub(crate) const fn word(self) -> u16 {
+        self.word
+    }
+
+    pub(crate) const fn sector_delay(self) -> bool {
+        self.sector_delay
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -449,6 +474,25 @@ impl IdeController {
         Ok(value)
     }
 
+    pub(crate) fn read_data_u16_timed(
+        &mut self,
+        channel: IdeChannelId,
+    ) -> Result<IdeDataReadIssue, IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        let issue = disk
+            .read_data_u16_timed()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
+        Ok(issue)
+    }
+
     pub fn write_data_u16(
         &mut self,
         channel: IdeChannelId,
@@ -594,6 +638,24 @@ impl IdeController {
                 device: selected_device,
             })?;
         disk.complete_timed_command()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
+        Ok(())
+    }
+
+    pub(crate) fn complete_timed_data_read(
+        &mut self,
+        channel: IdeChannelId,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        disk.complete_timed_data_read()
             .map_err(|source| IdeControllerError::Disk { channel, source })?;
         command_channel.refresh_interrupt();
         Ok(())
@@ -1136,6 +1198,9 @@ impl IdeDisk {
     }
 
     pub fn read_data_u16(&mut self) -> Result<u16, IdeDiskError> {
+        if self.status & IDE_STATUS_DRQ == 0 {
+            return Err(IdeDiskError::DataReadNotReady);
+        }
         let transfer = self
             .transfer
             .as_mut()
@@ -1152,6 +1217,30 @@ impl IdeDisk {
         Ok(word)
     }
 
+    fn read_data_u16_timed(&mut self) -> Result<IdeDataReadIssue, IdeDiskError> {
+        if self.status & IDE_STATUS_DRQ == 0 {
+            return Err(IdeDiskError::DataReadNotReady);
+        }
+        let transfer = self
+            .transfer
+            .as_mut()
+            .ok_or(IdeDiskError::DataReadNotReady)?;
+        if transfer.direction != IdeTransferDirection::Input {
+            return Err(IdeDiskError::DataReadNotReady);
+        }
+        let word = transfer.read_word()?;
+        if transfer.is_complete() {
+            self.complete_data_transfer();
+            return Ok(IdeDataReadIssue::ready(word));
+        }
+        if transfer.sector_boundary() {
+            self.status = IDE_STATUS_DRDY | IDE_STATUS_BSY;
+            self.pending_interrupt = false;
+            return Ok(IdeDataReadIssue::delayed(word));
+        }
+        Ok(IdeDataReadIssue::ready(word))
+    }
+
     pub fn write_data_u16(&mut self, value: u16) -> Result<(), IdeDiskError> {
         let transfer = self
             .transfer
@@ -1166,6 +1255,19 @@ impl IdeDisk {
             self.commit_write_transfer(completed)?;
             self.complete_data_transfer();
         }
+        Ok(())
+    }
+
+    fn complete_timed_data_read(&mut self) -> Result<(), IdeDiskError> {
+        let transfer = self
+            .transfer
+            .as_ref()
+            .ok_or(IdeDiskError::DataReadNotReady)?;
+        if transfer.direction != IdeTransferDirection::Input {
+            return Err(IdeDiskError::DataReadNotReady);
+        }
+        self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
+        self.pending_interrupt = !self.interrupts_disabled();
         Ok(())
     }
 
@@ -1204,7 +1306,8 @@ impl IdeDisk {
             IDE_COMMAND_READ | IDE_COMMAND_READ_MULTI => {
                 let (start, sectors) = self.lba_transfer(command)?;
                 self.start_busy();
-                let mut payload = Vec::with_capacity(sectors as usize * IDE_IDENTIFY_BYTES);
+                let mut payload =
+                    Vec::with_capacity(sectors as usize * STORAGE_SECTOR_BYTES as usize);
                 for offset in 0..sectors {
                     payload.extend_from_slice(
                         &self
@@ -1260,11 +1363,7 @@ impl IdeDisk {
         self.pending_command = None;
         let (start_sector, sectors) = self.lba_transfer(command)?;
         self.start_busy();
-        self.pending_command = Some(IdePendingCommand {
-            command,
-            start_sector,
-            sectors,
-        });
+        self.pending_command = Some(IdePendingCommand::new(command, start_sector, sectors));
         Ok(IdeCommandIssue::Delayed)
     }
 
@@ -1412,10 +1511,10 @@ impl IdeDisk {
     fn commit_write_transfer(&self, transfer: IdeTransfer) -> Result<(), IdeDiskError> {
         for (offset, chunk) in transfer
             .payload
-            .chunks_exact(IDE_IDENTIFY_BYTES)
+            .chunks_exact(STORAGE_SECTOR_BYTES as usize)
             .enumerate()
         {
-            let mut sector = [0_u8; IDE_IDENTIFY_BYTES];
+            let mut sector = [0_u8; STORAGE_SECTOR_BYTES as usize];
             sector.copy_from_slice(chunk);
             self.image.write_sector(
                 StorageSectorId::new(transfer.start_sector + offset as u64),
@@ -1459,24 +1558,7 @@ impl IdeDisk {
 
     fn identify_payload(&self) -> Result<Vec<u8>, IdeDiskError> {
         let capacity = self.capacity_sectors_u32()?;
-        let geometry = IdeGeometry::from_capacity(capacity)?;
-        let mut bytes = vec![0_u8; IDE_IDENTIFY_BYTES];
-        put_word(&mut bytes, 1, geometry.cylinders);
-        put_word(&mut bytes, 3, u16::from(geometry.heads));
-        put_word(&mut bytes, 6, u16::from(geometry.sectors));
-        bytes[54..54 + IDE_MODEL.len()].copy_from_slice(IDE_MODEL);
-        put_word(&mut bytes, 47, IDE_MAX_MULTI_SECTORS);
-        bytes[99] = 0x07;
-        put_word(&mut bytes, 53, 0x0006);
-        bytes[118] = IDE_MAX_MULTI_SECTORS as u8;
-        bytes[119] = 0x01;
-        put_dword(&mut bytes, 60, capacity);
-        bytes[126] = 0x04;
-        bytes[128] = 0x03;
-        put_word(&mut bytes, 80, IDE_ATA7_MAJOR);
-        bytes[176] = 0x1f;
-        put_word(&mut bytes, 93, 0x4001);
-        Ok(bytes)
+        ide_identify_payload(capacity)
     }
 
     fn capacity_sectors_u32(&self) -> Result<u32, IdeDiskError> {
@@ -1568,231 +1650,4 @@ impl IdeTaskFile {
     pub const fn command(self) -> u8 {
         self.command
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct IdePendingCommand {
-    command: u8,
-    start_sector: u64,
-    sectors: u64,
-}
-
-impl IdePendingCommand {
-    const fn snapshot(self) -> IdePendingCommandSnapshot {
-        IdePendingCommandSnapshot::new(self.command, self.start_sector, self.sectors)
-    }
-
-    const fn from_snapshot(snapshot: IdePendingCommandSnapshot) -> Self {
-        Self {
-            command: snapshot.command(),
-            start_sector: snapshot.start_sector(),
-            sectors: snapshot.sectors(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct IdeTransfer {
-    direction: IdeTransferDirection,
-    start_sector: u64,
-    payload: Vec<u8>,
-    cursor: usize,
-}
-
-impl IdeTransfer {
-    fn new_input(payload: Vec<u8>) -> Self {
-        Self {
-            direction: IdeTransferDirection::Input,
-            start_sector: 0,
-            payload,
-            cursor: 0,
-        }
-    }
-
-    fn new_output(start_sector: u64, sectors: u64) -> Result<Self, IdeDiskError> {
-        let bytes = sectors
-            .checked_mul(STORAGE_SECTOR_BYTES)
-            .ok_or(IdeDiskError::TransferTooLarge { sectors })?;
-        let capacity =
-            usize::try_from(bytes).map_err(|_| IdeDiskError::TransferTooLarge { sectors })?;
-        Ok(Self {
-            direction: IdeTransferDirection::Output,
-            start_sector,
-            payload: vec![0; capacity],
-            cursor: 0,
-        })
-    }
-
-    fn new_dma(
-        direction: IdeDmaDirection,
-        start_sector: u64,
-        sectors: u64,
-    ) -> Result<Self, IdeDiskError> {
-        let cursor =
-            usize::try_from(sectors).map_err(|_| IdeDiskError::TransferTooLarge { sectors })?;
-        Ok(Self {
-            direction: IdeTransferDirection::Dma(direction),
-            start_sector,
-            payload: Vec::new(),
-            cursor,
-        })
-    }
-
-    fn read_word(&mut self) -> Result<u16, IdeDiskError> {
-        if self.cursor + 2 > self.payload.len() {
-            return Err(IdeDiskError::DataReadNotReady);
-        }
-        let word = u16::from_le_bytes(
-            self.payload[self.cursor..self.cursor + 2]
-                .try_into()
-                .unwrap(),
-        );
-        self.cursor += 2;
-        Ok(word)
-    }
-
-    fn write_word(&mut self, value: u16) -> Result<(), IdeDiskError> {
-        if self.cursor + 2 > self.payload.len() {
-            return Err(IdeDiskError::DataWriteNotReady);
-        }
-        self.payload[self.cursor..self.cursor + 2].copy_from_slice(&value.to_le_bytes());
-        self.cursor += 2;
-        Ok(())
-    }
-
-    fn is_complete(&self) -> bool {
-        self.cursor == self.payload.len()
-    }
-
-    fn sector_boundary(&self) -> bool {
-        self.cursor > 0
-            && self.cursor.is_multiple_of(STORAGE_SECTOR_BYTES as usize)
-            && !self.is_complete()
-    }
-
-    fn snapshot(&self) -> IdeDiskTransferSnapshot {
-        match self.direction {
-            IdeTransferDirection::Input => IdeDiskTransferSnapshot::Input {
-                start_sector: self.start_sector,
-                cursor: self.cursor,
-                payload: self.payload.clone(),
-            },
-            IdeTransferDirection::Output => IdeDiskTransferSnapshot::Output {
-                start_sector: self.start_sector,
-                cursor: self.cursor,
-                payload: self.payload.clone(),
-            },
-            IdeTransferDirection::Dma(direction) => IdeDiskTransferSnapshot::Dma {
-                direction,
-                start_sector: self.start_sector,
-                sectors: self.cursor as u64,
-            },
-        }
-    }
-
-    fn from_snapshot(snapshot: &IdeDiskTransferSnapshot) -> Result<Self, IdeDiskError> {
-        snapshot.validate()?;
-        let (direction, start_sector, cursor, payload) = match snapshot {
-            IdeDiskTransferSnapshot::Input {
-                start_sector,
-                cursor,
-                payload,
-            } => (
-                IdeTransferDirection::Input,
-                *start_sector,
-                *cursor,
-                payload.clone(),
-            ),
-            IdeDiskTransferSnapshot::Output {
-                start_sector,
-                cursor,
-                payload,
-            } => (
-                IdeTransferDirection::Output,
-                *start_sector,
-                *cursor,
-                payload.clone(),
-            ),
-            IdeDiskTransferSnapshot::Dma {
-                direction,
-                start_sector,
-                sectors,
-            } => (
-                IdeTransferDirection::Dma(*direction),
-                *start_sector,
-                usize::try_from(*sectors)
-                    .map_err(|_| IdeDiskError::TransferTooLarge { sectors: *sectors })?,
-                Vec::new(),
-            ),
-        };
-        Ok(Self {
-            direction,
-            start_sector,
-            payload,
-            cursor,
-        })
-    }
-
-    fn dma_request(&self) -> Result<IdeDmaRequest, IdeDiskError> {
-        match self.direction {
-            IdeTransferDirection::Dma(direction) => Ok(IdeDmaRequest::new(
-                direction,
-                self.start_sector,
-                self.cursor as u64,
-            )),
-            _ => Err(IdeDiskError::DmaNotReady { command: 0 }),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum IdeTransferDirection {
-    Input,
-    Output,
-    Dma(IdeDmaDirection),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct IdeGeometry {
-    cylinders: u16,
-    heads: u8,
-    sectors: u8,
-}
-
-impl IdeGeometry {
-    fn from_capacity(capacity: u32) -> Result<Self, IdeDiskError> {
-        if capacity == 0 {
-            return Err(IdeDiskError::InvalidCapacity {
-                sectors: u64::from(capacity),
-            });
-        }
-        if capacity >= 16_383 * 16 * 63 {
-            return Ok(Self {
-                cylinders: 16_383,
-                heads: 16,
-                sectors: 63,
-            });
-        }
-
-        let sectors = if capacity >= 63 { 63 } else { capacity };
-        let heads = if capacity / sectors >= 16 {
-            16
-        } else {
-            capacity / sectors
-        };
-        let cylinders = capacity / (heads * sectors);
-        Ok(Self {
-            cylinders: cylinders as u16,
-            heads: heads as u8,
-            sectors: sectors as u8,
-        })
-    }
-}
-
-fn put_word(bytes: &mut [u8], word: usize, value: u16) {
-    bytes[word * 2..word * 2 + 2].copy_from_slice(&value.to_le_bytes());
-}
-
-fn put_dword(bytes: &mut [u8], word: usize, value: u32) {
-    bytes[word * 2..word * 2 + 4].copy_from_slice(&value.to_le_bytes());
 }

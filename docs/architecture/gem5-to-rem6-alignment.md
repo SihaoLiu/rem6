@@ -591,7 +591,14 @@ Implementation evidence through 2026-05-29:
   timing now uses a typed timing port: media commands enter BSY immediately,
   retain the pending command as snapshot state, complete on the owning
   scheduler partition after the declared delay, and only then expose DRQ,
-  transfer payloads, DMA readiness, and optional PCI INTx delivery.
+  transfer payloads, DMA readiness, and optional PCI INTx delivery. Timed PIO
+  reads also preserve the sector cursor across a typed inter-sector delay:
+  after a sector boundary the disk returns to BSY with DRQ hidden, the next
+  sector becomes visible only after the scheduler-owned media delay, and direct
+  data-port reads during the gap are rejected instead of consuming buffered
+  bytes early. This replaces gem5's immediate `updateState(ACT_DATA_READY)`
+  paths around its "scheduled event" TODOs with an explicit partition-local
+  event and typed completion-error capture.
   `rem6-system` host checkpoint actions can attach storage image and IDE
   controller banks, stage their chunk capture with the rest of the system, and
   restore storage state only after decode-first validation has accepted every
@@ -2162,8 +2169,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   BAR ranges, dispatch-policy derivation from explicit layout parameters, and
   typed legacy INTx delivery from shared controller interrupt state through the
   parallel scheduler. IDE timing tests cover delayed media-read readiness,
-  BSY-before-DRQ state, deferred PCI INTx delivery, and completion-error
-  capture on the parallel scheduler path.
+  BSY-before-DRQ state, deferred PCI INTx delivery, multi-sector PIO read
+  inter-sector delay before the next DRQ, data-read rejection while the
+  inter-sector delay is pending, and completion-error capture on the parallel
+  scheduler path.
   System checkpoint action tests cover storage image and IDE controller bank
   attachment, staged capture into host manifests, and malformed storage or IDE
   restore rejection without partial live-state mutation. Topology checkpoint

@@ -3,8 +3,32 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, SchedulerContext, Tick};
 
 use crate::{
-    IdeChannelId, IdeCommandIssue, IdeController, IdeControllerError, IdePciInterruptPort,
+    IdeChannelId, IdeCommandIssue, IdeController, IdeControllerError, IdeDataReadIssue,
+    IdePciInterruptPort,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IdeTimedDataRead {
+    word: u16,
+    completion_event: Option<PartitionEventId>,
+}
+
+impl IdeTimedDataRead {
+    const fn new(word: u16, completion_event: Option<PartitionEventId>) -> Self {
+        Self {
+            word,
+            completion_event,
+        }
+    }
+
+    pub const fn word(self) -> u16 {
+        self.word
+    }
+
+    pub const fn completion_event(self) -> Option<PartitionEventId> {
+        self.completion_event
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct IdeControllerTimingPort {
@@ -77,6 +101,32 @@ impl IdeControllerTimingPort {
         self.schedule_if_delayed_parallel(context, channel, issue)
     }
 
+    pub fn read_data_u16(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        channel: IdeChannelId,
+    ) -> Result<IdeTimedDataRead, IdeControllerError> {
+        let issue = self
+            .controller
+            .lock()
+            .expect("IDE controller timing lock")
+            .read_data_u16_timed(channel)?;
+        self.schedule_read_if_delayed(context, channel, issue)
+    }
+
+    pub fn read_data_u16_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        channel: IdeChannelId,
+    ) -> Result<IdeTimedDataRead, IdeControllerError> {
+        let issue = self
+            .controller
+            .lock()
+            .expect("IDE controller timing lock")
+            .read_data_u16_timed(channel)?;
+        self.schedule_read_if_delayed_parallel(context, channel, issue)
+    }
+
     fn schedule_if_delayed(
         &self,
         context: &mut SchedulerContext<'_>,
@@ -129,6 +179,64 @@ impl IdeControllerTimingPort {
             })
             .map(Some)
             .map_err(scheduler_error)
+    }
+
+    fn schedule_read_if_delayed(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        channel: IdeChannelId,
+        issue: IdeDataReadIssue,
+    ) -> Result<IdeTimedDataRead, IdeControllerError> {
+        if !issue.sector_delay() {
+            self.sync_interrupt(context)?;
+            return Ok(IdeTimedDataRead::new(issue.word(), None));
+        }
+
+        let controller = Arc::clone(&self.controller);
+        let interrupt_port = self.interrupt_port.clone();
+        let completion_errors = Arc::clone(&self.completion_errors);
+        let completion_event = context
+            .schedule_local_after(self.delay_ticks, move |context| {
+                complete_timed_data_read(
+                    &controller,
+                    interrupt_port.as_ref(),
+                    &completion_errors,
+                    channel,
+                    context,
+                );
+            })
+            .map_err(scheduler_error)?;
+        self.sync_interrupt(context)?;
+        Ok(IdeTimedDataRead::new(issue.word(), Some(completion_event)))
+    }
+
+    fn schedule_read_if_delayed_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        channel: IdeChannelId,
+        issue: IdeDataReadIssue,
+    ) -> Result<IdeTimedDataRead, IdeControllerError> {
+        if !issue.sector_delay() {
+            self.sync_interrupt_parallel(context)?;
+            return Ok(IdeTimedDataRead::new(issue.word(), None));
+        }
+
+        let controller = Arc::clone(&self.controller);
+        let interrupt_port = self.interrupt_port.clone();
+        let completion_errors = Arc::clone(&self.completion_errors);
+        let completion_event = context
+            .schedule_local_after(self.delay_ticks, move |context| {
+                complete_timed_data_read_parallel(
+                    &controller,
+                    interrupt_port.as_ref(),
+                    &completion_errors,
+                    channel,
+                    context,
+                );
+            })
+            .map_err(scheduler_error)?;
+        self.sync_interrupt_parallel(context)?;
+        Ok(IdeTimedDataRead::new(issue.word(), Some(completion_event)))
     }
 
     fn sync_interrupt(
@@ -190,6 +298,56 @@ fn complete_timed_command_parallel(
 ) {
     let mut controller = controller.lock().expect("IDE controller timing lock");
     if let Err(error) = controller.complete_timed_command(channel) {
+        completion_errors
+            .lock()
+            .expect("IDE timing completion error lock")
+            .push(error);
+        return;
+    }
+    if let Some(interrupt_port) = interrupt_port {
+        if let Err(error) = interrupt_port.sync_controller_parallel(context, &controller) {
+            completion_errors
+                .lock()
+                .expect("IDE timing completion error lock")
+                .push(error);
+        }
+    }
+}
+
+fn complete_timed_data_read(
+    controller: &Arc<Mutex<IdeController>>,
+    interrupt_port: Option<&IdePciInterruptPort>,
+    completion_errors: &Arc<Mutex<Vec<IdeControllerError>>>,
+    channel: IdeChannelId,
+    context: &mut SchedulerContext<'_>,
+) {
+    let mut controller = controller.lock().expect("IDE controller timing lock");
+    if let Err(error) = controller.complete_timed_data_read(channel) {
+        completion_errors
+            .lock()
+            .expect("IDE timing completion error lock")
+            .push(error);
+        return;
+    }
+    if let Some(interrupt_port) = interrupt_port {
+        if let Err(error) = interrupt_port.sync_controller(context, &controller) {
+            completion_errors
+                .lock()
+                .expect("IDE timing completion error lock")
+                .push(error);
+        }
+    }
+}
+
+fn complete_timed_data_read_parallel(
+    controller: &Arc<Mutex<IdeController>>,
+    interrupt_port: Option<&IdePciInterruptPort>,
+    completion_errors: &Arc<Mutex<Vec<IdeControllerError>>>,
+    channel: IdeChannelId,
+    context: &mut ParallelSchedulerContext<'_>,
+) {
+    let mut controller = controller.lock().expect("IDE controller timing lock");
+    if let Err(error) = controller.complete_timed_data_read(channel) {
         completion_errors
             .lock()
             .expect("IDE timing completion error lock")

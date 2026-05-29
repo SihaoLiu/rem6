@@ -11,9 +11,11 @@ mod checkpoint;
 mod ide;
 mod ide_dma;
 mod ide_error;
+mod ide_identify;
 mod ide_pci;
 mod ide_snapshot;
 mod ide_timing;
+mod ide_transfer;
 mod simple_disk;
 
 pub use checkpoint::{
@@ -21,6 +23,7 @@ pub use checkpoint::{
     StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
 };
+pub(crate) use ide::IdeDataReadIssue;
 pub use ide::{
     IdeBarWriteOutcome, IdeChannelId, IdeCommandIssue, IdeController, IdeControllerBar,
     IdeControllerDispatch, IdeDeviceId, IdeDisk, IdeTaskFile, IDE_ALTSTAT_OFFSET,
@@ -39,6 +42,7 @@ pub use ide::{
 pub use ide_dma::{IdeControllerGuestMemory, IdeDmaDirection};
 pub(crate) use ide_dma::{IdeDmaPlan, IdeDmaRequest};
 pub use ide_error::{IdeControllerError, IdeDiskError};
+pub(crate) use ide_identify::ide_identify_payload;
 pub use ide_pci::{
     IdePciEndpointSpec, IdePciInterruptPort, IDE_PCI_BUS_MASTER_BAR_BYTES, IDE_PCI_CLASS_CODE,
     IDE_PCI_COMMAND_BAR_BYTES, IDE_PCI_CONTROL_BAR_BYTES, IDE_PCI_DEVICE_ID,
@@ -50,7 +54,8 @@ pub use ide_snapshot::{
     IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerSnapshot, IdeDiskSnapshot,
     IdeDiskTransferSnapshot, IdePendingCommandSnapshot,
 };
-pub use ide_timing::IdeControllerTimingPort;
+pub use ide_timing::{IdeControllerTimingPort, IdeTimedDataRead};
+pub(crate) use ide_transfer::{IdePendingCommand, IdeTransfer, IdeTransferDirection};
 pub use simple_disk::{SimpleDisk, SimpleDiskError, SimpleDiskGuestMemory, SimpleDiskTransfer};
 
 pub const STORAGE_SECTOR_BYTES: u64 = 512;
