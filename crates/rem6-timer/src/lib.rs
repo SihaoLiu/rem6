@@ -10,12 +10,20 @@ use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
 mod clint;
+mod rtc;
 
 pub use self::clint::{
     ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintResetPolicy, ClintSnapshot,
     ClintTimebase, RiscvRtcSource, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
     CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
     CLINT_MTIMECMP_STRIDE, CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
+};
+pub use self::rtc::{
+    Mc146818Rtc, RtcDateTime, RtcEncoding, RtcError, RtcSnapshot, RTC_DAY_OF_MONTH_REGISTER,
+    RTC_DAY_OF_WEEK_REGISTER, RTC_HOURS_ALARM_REGISTER, RTC_HOURS_REGISTER,
+    RTC_MINUTES_ALARM_REGISTER, RTC_MINUTES_REGISTER, RTC_MONTH_REGISTER,
+    RTC_SECONDS_ALARM_REGISTER, RTC_SECONDS_REGISTER, RTC_STATUS_A_REGISTER, RTC_STATUS_B_REGISTER,
+    RTC_STATUS_C_REGISTER, RTC_STATUS_D_REGISTER, RTC_YEARS_REGISTER,
 };
 
 pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;
