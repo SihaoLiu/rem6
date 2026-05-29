@@ -755,6 +755,7 @@ impl fmt::Display for WorkloadError {
             | Self::CheckpointManifestSummaryTickMismatch { .. }
             | Self::CheckpointRestoreManifestSummaryBelowMinimum { .. }
             | Self::CheckpointRestoreManifestSummaryAfterFinalTick { .. }
+            | Self::CheckpointRestoreManifestSummaryTickMismatch { .. }
             | Self::CheckpointComponentSummaryBelowMinimum { .. }
             | Self::CheckpointRestoreComponentSummaryBelowMinimum { .. }
             | Self::CheckpointComponentChunkSummaryBelowMinimum { .. }

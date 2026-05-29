@@ -825,6 +825,8 @@ impl WorkloadReplayPlan {
         &self,
         result: &WorkloadResult,
     ) -> Result<(), WorkloadError> {
+        let mut remaining_planned_ticks =
+            planned_checkpoint_restore_ticks_by_label(&self.host_events);
         for actual in result.restored_checkpoint_manifest_summaries() {
             if actual.tick() > result.final_tick() {
                 return Err(
@@ -835,6 +837,22 @@ impl WorkloadReplayPlan {
                     ),
                 );
             }
+            let remaining_ticks = remaining_planned_ticks
+                .entry(actual.label().to_string())
+                .or_default();
+            let Some(position) = remaining_ticks
+                .iter()
+                .position(|tick| *tick == actual.tick())
+            else {
+                return Err(
+                    WorkloadError::checkpoint_restore_manifest_summary_tick_mismatch(
+                        actual.label(),
+                        actual.tick(),
+                        remaining_ticks.iter().copied(),
+                    ),
+                );
+            };
+            remaining_ticks.remove(position);
         }
 
         for expected in &self.expected_checkpoint_restore_manifest_summaries {
@@ -1287,6 +1305,21 @@ fn planned_checkpoint_ticks_by_label(events: &[WorkloadHostEvent]) -> BTreeMap<S
     let mut ticks_by_label = BTreeMap::new();
     for event in events {
         if let HostEventIntent::Checkpoint { label } = event.intent() {
+            ticks_by_label
+                .entry(label.clone())
+                .or_insert_with(Vec::new)
+                .push(event.tick());
+        }
+    }
+    ticks_by_label
+}
+
+fn planned_checkpoint_restore_ticks_by_label(
+    events: &[WorkloadHostEvent],
+) -> BTreeMap<String, Vec<Tick>> {
+    let mut ticks_by_label = BTreeMap::new();
+    for event in events {
+        if let HostEventIntent::RestoreCheckpoint { label } = event.intent() {
             ticks_by_label
                 .entry(label.clone())
                 .or_insert_with(Vec::new)

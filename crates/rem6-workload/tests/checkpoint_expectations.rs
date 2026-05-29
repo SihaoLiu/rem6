@@ -205,7 +205,7 @@ fn restore_checkpoint_component_expectation_requires_named_chunks() {
         .with_restored_checkpoint_manifest_summary(
             WorkloadCheckpointManifestSummary::with_component_summaries(
                 "warm",
-                20,
+                40,
                 [WorkloadCheckpointComponentSummary::with_chunk_summaries(
                     "memory0",
                     [WorkloadCheckpointChunkSummary::new("metadata", 8)],
@@ -227,7 +227,7 @@ fn restore_checkpoint_component_expectation_requires_named_chunks() {
         .with_restored_checkpoint_manifest_summary(
             WorkloadCheckpointManifestSummary::with_component_summaries(
                 "warm",
-                20,
+                40,
                 [WorkloadCheckpointComponentSummary::with_chunk_summaries(
                     "memory0",
                     [
@@ -278,7 +278,7 @@ fn restore_checkpoint_component_expectation_requires_chunk_payloads() {
         .with_restored_checkpoint_manifest_summary(
             WorkloadCheckpointManifestSummary::with_component_summaries(
                 "warm",
-                20,
+                40,
                 [WorkloadCheckpointComponentSummary::with_chunk_summaries(
                     "memory0",
                     [
@@ -301,7 +301,7 @@ fn restore_checkpoint_component_expectation_requires_chunk_payloads() {
         .with_restored_checkpoint_manifest_summary(
             WorkloadCheckpointManifestSummary::with_component_summaries(
                 "warm",
-                20,
+                40,
                 [WorkloadCheckpointComponentSummary::with_chunk_summaries(
                     "memory0",
                     [

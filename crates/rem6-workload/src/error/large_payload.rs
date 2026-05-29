@@ -181,6 +181,23 @@ impl WorkloadError {
         ))
     }
 
+    pub fn checkpoint_restore_manifest_summary_tick_mismatch(
+        label: impl Into<String>,
+        summary_tick: Tick,
+        expected_ticks: impl IntoIterator<Item = Tick>,
+    ) -> Self {
+        let mut expected_ticks = expected_ticks.into_iter().collect::<Vec<_>>();
+        expected_ticks.sort_unstable();
+        expected_ticks.dedup();
+        Self::CheckpointRestoreManifestSummaryTickMismatch(Box::new(
+            WorkloadCheckpointSummaryTickMismatchError {
+                label: label.into(),
+                summary_tick,
+                expected_ticks,
+            },
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn invalid_parallel_remote_flow_merge_summary(
         scope: WorkloadParallelRemoteFlowScope,

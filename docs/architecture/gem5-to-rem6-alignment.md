@@ -853,6 +853,10 @@ Implementation evidence on 2026-05-26:
 - Repeated same-label checkpoint summaries consume planned checkpoint ticks as
   a multiset, so duplicate summary records cannot repeatedly claim one
   rollback point while leaving another same-label checkpoint uncovered.
+- Checkpoint-restore manifest summaries now require their summary tick to
+  match and consume a planned restore host event with the same label, so
+  restore coverage cannot drift away from the replayed rollback point or reuse
+  one restore event while another remains uncovered.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
   payload bytes, plus per-component chunk-level payload evidence, so replay

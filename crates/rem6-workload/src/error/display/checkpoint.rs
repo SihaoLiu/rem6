@@ -96,6 +96,11 @@ pub(super) fn format_checkpoint_error(
             "checkpoint restore manifest summary for {} at tick {} is after final tick {}",
             error.label, error.summary_tick, error.final_tick
         ),
+        WorkloadError::CheckpointRestoreManifestSummaryTickMismatch(error) => write!(
+            formatter,
+            "checkpoint restore manifest summary for {} at tick {} does not match planned checkpoint restore ticks {:?}",
+            error.label, error.summary_tick, error.expected_ticks
+        ),
         WorkloadError::CheckpointComponentSummaryBelowMinimum {
             label,
             component,

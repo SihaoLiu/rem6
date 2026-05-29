@@ -544,6 +544,7 @@ pub enum WorkloadError {
         actual_payload_bytes: usize,
     },
     CheckpointRestoreManifestSummaryAfterFinalTick(Box<WorkloadCheckpointSummaryTimingError>),
+    CheckpointRestoreManifestSummaryTickMismatch(Box<WorkloadCheckpointSummaryTickMismatchError>),
     CheckpointComponentSummaryBelowMinimum {
         label: String,
         component: String,
