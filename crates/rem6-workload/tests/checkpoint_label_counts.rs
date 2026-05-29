@@ -1,8 +1,8 @@
 use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
-    HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadId, WorkloadManifest,
-    WorkloadReplayPlan, WorkloadResult,
+    HostEventIntent, WorkloadCheckpointManifestSummary, WorkloadError, WorkloadHostEvent,
+    WorkloadId, WorkloadManifest, WorkloadReplayPlan, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -114,4 +114,61 @@ fn checkpoint_restore_labels_verify_planned_occurrence_counts() {
         .with_restored_checkpoint_label("warm")
         .with_restored_checkpoint_label("warm");
     plan.verify_result(&matched).unwrap();
+}
+
+#[test]
+fn checkpoint_manifest_summary_tick_must_not_exceed_final_tick() {
+    let manifest = WorkloadManifest::builder(id("checkpoint-summary-tick"), boot_image())
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let result = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
+            "warm", 80, 1, 1, 8,
+        ));
+
+    let error = plan.verify_result(&result).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::checkpoint_manifest_summary_after_final_tick("warm", 80, 40)
+    );
+}
+
+#[test]
+fn checkpoint_restore_manifest_summary_tick_must_not_exceed_final_tick() {
+    let manifest = WorkloadManifest::builder(id("checkpoint-restore-summary-tick"), boot_image())
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            40,
+            HostEventIntent::RestoreCheckpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let result = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_label("warm")
+        .with_restored_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
+            "warm", 80, 1, 1, 8,
+        ));
+
+    let error = plan.verify_result(&result).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::checkpoint_restore_manifest_summary_after_final_tick("warm", 80, 40)
+    );
 }

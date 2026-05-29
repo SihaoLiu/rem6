@@ -762,6 +762,16 @@ impl WorkloadReplayPlan {
         &self,
         result: &WorkloadResult,
     ) -> Result<(), WorkloadError> {
+        for actual in result.checkpoint_manifest_summaries() {
+            if actual.tick() > result.final_tick() {
+                return Err(WorkloadError::checkpoint_manifest_summary_after_final_tick(
+                    actual.label(),
+                    actual.tick(),
+                    result.final_tick(),
+                ));
+            }
+        }
+
         for expected in &self.expected_checkpoint_manifest_summaries {
             let actual = result
                 .checkpoint_manifest_summaries()
@@ -800,6 +810,18 @@ impl WorkloadReplayPlan {
         &self,
         result: &WorkloadResult,
     ) -> Result<(), WorkloadError> {
+        for actual in result.restored_checkpoint_manifest_summaries() {
+            if actual.tick() > result.final_tick() {
+                return Err(
+                    WorkloadError::checkpoint_restore_manifest_summary_after_final_tick(
+                        actual.label(),
+                        actual.tick(),
+                        result.final_tick(),
+                    ),
+                );
+            }
+        }
+
         for expected in &self.expected_checkpoint_restore_manifest_summaries {
             let actual = result
                 .restored_checkpoint_manifest_summaries()

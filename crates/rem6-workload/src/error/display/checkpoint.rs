@@ -69,6 +69,11 @@ pub(super) fn format_checkpoint_error(
             formatter,
             "checkpoint manifest summary for {label} has components {actual_component_count}/{minimum_component_count}, chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
         ),
+        WorkloadError::CheckpointManifestSummaryAfterFinalTick(error) => write!(
+            formatter,
+            "checkpoint manifest summary for {} at tick {} is after final tick {}",
+            error.label, error.summary_tick, error.final_tick
+        ),
         WorkloadError::CheckpointRestoreManifestSummaryBelowMinimum {
             label,
             minimum_component_count,
@@ -80,6 +85,11 @@ pub(super) fn format_checkpoint_error(
         } => write!(
             formatter,
             "checkpoint restore manifest summary for {label} has components {actual_component_count}/{minimum_component_count}, chunks {actual_chunk_count}/{minimum_chunk_count}, payload bytes {actual_payload_bytes}/{minimum_payload_bytes}"
+        ),
+        WorkloadError::CheckpointRestoreManifestSummaryAfterFinalTick(error) => write!(
+            formatter,
+            "checkpoint restore manifest summary for {} at tick {} is after final tick {}",
+            error.label, error.summary_tick, error.final_tick
         ),
         WorkloadError::CheckpointComponentSummaryBelowMinimum {
             label,

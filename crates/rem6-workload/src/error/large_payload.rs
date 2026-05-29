@@ -13,6 +13,13 @@ pub struct WorkloadCheckpointComponentChunkSummaryBelowMinimumError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadCheckpointSummaryTimingError {
+    pub(crate) label: String,
+    pub(crate) summary_tick: Tick,
+    pub(crate) final_tick: Tick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelRemoteFlowMergeSummaryError {
     pub(crate) scope: WorkloadParallelRemoteFlowScope,
     pub(crate) source: u32,
@@ -118,6 +125,34 @@ impl WorkloadError {
                 chunk: chunk.into(),
                 minimum_payload_bytes,
                 actual_payload_bytes,
+            },
+        ))
+    }
+
+    pub fn checkpoint_manifest_summary_after_final_tick(
+        label: impl Into<String>,
+        summary_tick: Tick,
+        final_tick: Tick,
+    ) -> Self {
+        Self::CheckpointManifestSummaryAfterFinalTick(Box::new(
+            WorkloadCheckpointSummaryTimingError {
+                label: label.into(),
+                summary_tick,
+                final_tick,
+            },
+        ))
+    }
+
+    pub fn checkpoint_restore_manifest_summary_after_final_tick(
+        label: impl Into<String>,
+        summary_tick: Tick,
+        final_tick: Tick,
+    ) -> Self {
+        Self::CheckpointRestoreManifestSummaryAfterFinalTick(Box::new(
+            WorkloadCheckpointSummaryTimingError {
+                label: label.into(),
+                summary_tick,
+                final_tick,
             },
         ))
     }

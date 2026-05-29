@@ -844,6 +844,9 @@ Implementation evidence on 2026-05-26:
 - Workload checkpoint and checkpoint-restore labels are verified as occurrence
   counts, not just set membership, so repeated same-label host events must be
   recorded exactly and cannot hide missing or extra rollback points.
+- Workload checkpoint and checkpoint-restore manifest summaries reject summary
+  ticks after the replay final tick, keeping checkpoint coverage evidence
+  causally inside the recorded run rather than accepting late artifacts.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
   payload bytes, plus per-component chunk-level payload evidence, so replay

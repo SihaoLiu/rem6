@@ -25,7 +25,7 @@ mod parallel_partition;
 mod remote_traffic_mismatch;
 
 pub use large_payload::{
-    WorkloadCheckpointComponentChunkSummaryBelowMinimumError,
+    WorkloadCheckpointComponentChunkSummaryBelowMinimumError, WorkloadCheckpointSummaryTimingError,
     WorkloadFabricHopActivityBelowMinimumError, WorkloadFabricLaneActivityBelowMinimumError,
     WorkloadFabricLinkActivityBelowMinimumError, WorkloadParallelRemoteFlowMergeSummaryError,
 };
@@ -536,6 +536,7 @@ pub enum WorkloadError {
         minimum_payload_bytes: usize,
         actual_payload_bytes: usize,
     },
+    CheckpointManifestSummaryAfterFinalTick(Box<WorkloadCheckpointSummaryTimingError>),
     CheckpointRestoreManifestSummaryBelowMinimum {
         label: String,
         minimum_component_count: usize,
@@ -545,6 +546,7 @@ pub enum WorkloadError {
         minimum_payload_bytes: usize,
         actual_payload_bytes: usize,
     },
+    CheckpointRestoreManifestSummaryAfterFinalTick(Box<WorkloadCheckpointSummaryTimingError>),
     CheckpointComponentSummaryBelowMinimum {
         label: String,
         component: String,
