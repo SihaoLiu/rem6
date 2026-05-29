@@ -79,6 +79,9 @@ pub enum VirtioError {
         config_sectors: u64,
         backend_sectors: u64,
     },
+    BlockStorageBackend {
+        message: String,
+    },
     InvalidBlockRequestDataLength {
         raw_type: u32,
         bytes: u64,
@@ -367,6 +370,9 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO block config capacity {config_sectors} sectors does not match backend capacity {backend_sectors} sectors"
             ),
+            Self::BlockStorageBackend { message } => {
+                write!(formatter, "VirtIO block storage backend failed: {message}")
+            }
             Self::InvalidBlockRequestDataLength { raw_type, bytes } => write!(
                 formatter,
                 "VirtIO block request type {raw_type} data length {bytes} must be a nonzero multiple of 512 bytes"

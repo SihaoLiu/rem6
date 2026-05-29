@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 use rem6_memory::ByteMask;
+use rem6_storage::{StorageError, StorageImageLayer, StorageSectorId};
 
 use crate::{
     VirtioError, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec, VirtioQueueIndex,
@@ -866,8 +867,47 @@ impl VirtioBlockMemoryBackendState {
 }
 
 #[derive(Clone, Debug)]
+enum VirtioBlockBackend {
+    Memory(VirtioBlockMemoryBackend),
+    Storage(Arc<dyn StorageImageLayer>),
+}
+
+impl VirtioBlockBackend {
+    fn capacity_sectors(&self) -> u64 {
+        match self {
+            Self::Memory(backend) => backend.capacity_sectors(),
+            Self::Storage(backend) => backend.capacity_sectors(),
+        }
+    }
+
+    fn read(&self, sector: u64, bytes: u64) -> Result<Vec<u8>, VirtioError> {
+        match self {
+            Self::Memory(backend) => backend.read(sector, bytes),
+            Self::Storage(backend) => read_storage_backend(backend.as_ref(), sector, bytes),
+        }
+    }
+
+    fn write(&self, sector: u64, data: &[u8]) -> Result<(), VirtioError> {
+        match self {
+            Self::Memory(backend) => backend.write(sector, data),
+            Self::Storage(backend) => write_storage_backend(backend.as_ref(), sector, data),
+        }
+    }
+
+    fn flush(&self) -> Result<(), VirtioError> {
+        match self {
+            Self::Memory(backend) => {
+                backend.flush();
+                Ok(())
+            }
+            Self::Storage(backend) => backend.flush().map_err(storage_error_to_virtio),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct VirtioBlockDevice {
-    backend: VirtioBlockMemoryBackend,
+    backend: VirtioBlockBackend,
     state: Arc<Mutex<VirtioBlockDeviceState>>,
 }
 
@@ -875,6 +915,20 @@ impl VirtioBlockDevice {
     pub fn new(
         config: VirtioBlockConfigSpec,
         backend: VirtioBlockMemoryBackend,
+    ) -> Result<Self, VirtioError> {
+        Self::new_with_backend(config, VirtioBlockBackend::Memory(backend))
+    }
+
+    pub fn new_with_storage(
+        config: VirtioBlockConfigSpec,
+        backend: Arc<dyn StorageImageLayer>,
+    ) -> Result<Self, VirtioError> {
+        Self::new_with_backend(config, VirtioBlockBackend::Storage(backend))
+    }
+
+    fn new_with_backend(
+        config: VirtioBlockConfigSpec,
+        backend: VirtioBlockBackend,
     ) -> Result<Self, VirtioError> {
         config.validate()?;
         let backend_sectors = backend.capacity_sectors();
@@ -974,10 +1028,10 @@ impl VirtioBlockDevice {
                     Err(_) => (VirtioBlockStatus::IoErr, None),
                 }
             }
-            VirtioBlockRequestKind::Flush => {
-                self.backend.flush();
-                (VirtioBlockStatus::Ok, None)
-            }
+            VirtioBlockRequestKind::Flush => match self.backend.flush() {
+                Ok(()) => (VirtioBlockStatus::Ok, None),
+                Err(_) => (VirtioBlockStatus::IoErr, None),
+            },
             VirtioBlockRequestKind::GetId => {
                 let id = self
                     .state
@@ -997,6 +1051,106 @@ struct VirtioBlockDeviceState {
     config: VirtioBlockConfigSpec,
     device_id: [u8; 20],
     completions: Vec<VirtioBlockCompletion>,
+}
+
+fn read_storage_backend(
+    backend: &dyn StorageImageLayer,
+    sector: u64,
+    bytes: u64,
+) -> Result<Vec<u8>, VirtioError> {
+    let sectors = validate_storage_backend_range(
+        sector,
+        bytes,
+        backend.capacity_sectors(),
+        VIRTIO_BLOCK_T_IN,
+    )?;
+    let mut data = Vec::with_capacity(bytes as usize);
+    for offset in 0..sectors {
+        let sector = sector
+            .checked_add(offset)
+            .ok_or(VirtioError::BlockRequestAddressOverflow { sector, bytes })?;
+        data.extend(
+            backend
+                .read_sector(StorageSectorId::new(sector))
+                .map_err(storage_error_to_virtio)?,
+        );
+    }
+    Ok(data)
+}
+
+fn write_storage_backend(
+    backend: &dyn StorageImageLayer,
+    sector: u64,
+    data: &[u8],
+) -> Result<(), VirtioError> {
+    let bytes = data.len() as u64;
+    let sectors = validate_storage_backend_range(
+        sector,
+        bytes,
+        backend.capacity_sectors(),
+        VIRTIO_BLOCK_T_OUT,
+    )?;
+    for offset in 0..sectors {
+        let sector = sector
+            .checked_add(offset)
+            .ok_or(VirtioError::BlockRequestAddressOverflow { sector, bytes })?;
+        let start = (offset * VIRTIO_BLOCK_SECTOR_SIZE) as usize;
+        let end = start + VIRTIO_BLOCK_SECTOR_SIZE as usize;
+        backend
+            .write_sector(
+                StorageSectorId::new(sector),
+                data[start..end].try_into().unwrap(),
+            )
+            .map_err(storage_error_to_virtio)?;
+    }
+    Ok(())
+}
+
+fn validate_storage_backend_range(
+    sector: u64,
+    bytes: u64,
+    capacity_sectors: u64,
+    raw_type: u32,
+) -> Result<u64, VirtioError> {
+    if bytes == 0 || !bytes.is_multiple_of(VIRTIO_BLOCK_SECTOR_SIZE) {
+        return Err(VirtioError::InvalidBlockRequestDataLength { raw_type, bytes });
+    }
+    let sectors = bytes / VIRTIO_BLOCK_SECTOR_SIZE;
+    let end = sector
+        .checked_add(sectors)
+        .ok_or(VirtioError::BlockRequestAddressOverflow { sector, bytes })?;
+    if end > capacity_sectors {
+        return Err(VirtioError::BlockRequestOutOfRange {
+            sector,
+            bytes,
+            capacity_sectors,
+        });
+    }
+    Ok(sectors)
+}
+
+fn storage_error_to_virtio(error: StorageError) -> VirtioError {
+    match error {
+        StorageError::InvalidImageSize { bytes } => VirtioError::InvalidBlockBackendSize { bytes },
+        StorageError::RequestAddressOverflow { sector, sectors } => {
+            VirtioError::BlockRequestAddressOverflow {
+                sector: sector.get(),
+                bytes: sectors.saturating_mul(VIRTIO_BLOCK_SECTOR_SIZE),
+            }
+        }
+        StorageError::OutOfRange {
+            sector,
+            sectors,
+            capacity_sectors,
+        } => VirtioError::BlockRequestOutOfRange {
+            sector: sector.get(),
+            bytes: sectors.saturating_mul(VIRTIO_BLOCK_SECTOR_SIZE),
+            capacity_sectors,
+        },
+        error => VirtioError::BlockStorageBackend {
+            message: error.to_string(),
+        },
+    }
 }
 
 fn validate_block_payload_length(raw_type: u32, bytes: u64) -> Result<(), VirtioError> {

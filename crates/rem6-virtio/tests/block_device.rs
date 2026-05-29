@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_storage::{CowStorageImage, RawStorageImage, StorageSectorId};
 use rem6_virtio::{
     VirtioBlockConfigSpec, VirtioBlockDevice, VirtioBlockMemoryBackend, VirtioBlockRequest,
     VirtioBlockRequestId, VirtioBlockStatus, VirtioQueueIndex, VIRTIO_BLOCK_SECTOR_SIZE,
@@ -11,8 +12,108 @@ fn sector(byte: u8) -> Vec<u8> {
     vec![byte; VIRTIO_BLOCK_SECTOR_SIZE as usize]
 }
 
+fn sector_array(byte: u8) -> [u8; 512] {
+    [byte; 512]
+}
+
 fn queue(index: u16) -> VirtioQueueIndex {
     VirtioQueueIndex::new(index).unwrap()
+}
+
+#[test]
+fn virtio_block_device_executes_against_storage_image_layers() {
+    let raw = RawStorageImage::from_bytes([sector(0x11), sector(0x22)].concat()).unwrap();
+    let cow = CowStorageImage::new(Arc::new(raw.clone()));
+    let device = VirtioBlockDevice::new_with_storage(
+        VirtioBlockConfigSpec::new(2).with_flush(true),
+        Arc::new(cow.clone()),
+    )
+    .unwrap();
+
+    let write = device
+        .execute_at(
+            5,
+            VirtioBlockRequest::write(VirtioBlockRequestId::new(1), queue(0), 1, sector(0xaa))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(write.status(), VirtioBlockStatus::Ok);
+    assert_eq!(write.data(), None);
+    assert_eq!(
+        cow.read_sector(StorageSectorId::new(1)).unwrap(),
+        sector_array(0xaa)
+    );
+    assert_eq!(
+        raw.read_sector(StorageSectorId::new(1)).unwrap(),
+        sector_array(0x22)
+    );
+
+    let read = device
+        .execute_at(
+            6,
+            VirtioBlockRequest::read(
+                VirtioBlockRequestId::new(2),
+                queue(0),
+                1,
+                VIRTIO_BLOCK_SECTOR_SIZE,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(read.status(), VirtioBlockStatus::Ok);
+    assert_eq!(read.data(), Some(sector(0xaa).as_slice()));
+
+    let flush = device
+        .execute_at(
+            7,
+            VirtioBlockRequest::flush(VirtioBlockRequestId::new(3), queue(0)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(flush.status(), VirtioBlockStatus::Ok);
+    assert_eq!(cow.flush_count(), 1);
+
+    cow.writeback().unwrap();
+    assert_eq!(
+        raw.read_sector(StorageSectorId::new(1)).unwrap(),
+        sector_array(0xaa)
+    );
+    assert_eq!(device.completions().len(), 3);
+}
+
+#[test]
+fn virtio_block_storage_backend_reports_guest_visible_errors_before_mutation() {
+    let raw = RawStorageImage::from_read_only_bytes([sector(0x33), sector(0x44)].concat()).unwrap();
+    let device =
+        VirtioBlockDevice::new_with_storage(VirtioBlockConfigSpec::new(2), Arc::new(raw.clone()))
+            .unwrap();
+
+    let write = device
+        .execute_at(
+            8,
+            VirtioBlockRequest::write(VirtioBlockRequestId::new(4), queue(0), 0, sector(0xee))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(write.status(), VirtioBlockStatus::IoErr);
+    assert_eq!(
+        raw.read_sector(StorageSectorId::new(0)).unwrap(),
+        sector_array(0x33)
+    );
+
+    let read = device
+        .execute_at(
+            9,
+            VirtioBlockRequest::read(
+                VirtioBlockRequestId::new(5),
+                queue(0),
+                2,
+                VIRTIO_BLOCK_SECTOR_SIZE,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(read.status(), VirtioBlockStatus::IoErr);
+    assert_eq!(read.data(), None);
 }
 
 #[test]

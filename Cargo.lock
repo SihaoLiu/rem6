@@ -311,6 +311,7 @@ dependencies = [
  "rem6-memory",
  "rem6-mmio",
  "rem6-pci",
+ "rem6-storage",
 ]
 
 [[package]]
