@@ -17,6 +17,7 @@ pub const IDE_COMMAND_OFFSET: u8 = 7;
 pub const IDE_CONTROL_OFFSET: u8 = 2;
 pub const IDE_ALTSTAT_OFFSET: u8 = 2;
 
+pub const IDE_DRIVE_DEVICE1: u8 = 0x10;
 pub const IDE_DRIVE_LBA: u8 = 0x40;
 pub const IDE_CONTROL_RST: u8 = 0x04;
 pub const IDE_CONTROL_IEN: u8 = 0x02;
@@ -36,6 +37,17 @@ pub const IDE_COMMAND_IDENTIFY: u8 = 0xec;
 pub const IDE_COMMAND_ATAPI_IDENTIFY_DEVICE: u8 = 0xa1;
 pub const IDE_COMMAND_READ_NATIVE_MAX: u8 = 0xf8;
 
+pub const IDE_BMI_COMMAND_OFFSET: u8 = 0x0;
+pub const IDE_BMI_STATUS_OFFSET: u8 = 0x2;
+pub const IDE_BMI_PRD_TABLE_OFFSET: u8 = 0x4;
+pub const IDE_BMI_COMMAND_START: u8 = 0x01;
+pub const IDE_BMI_COMMAND_RW: u8 = 0x08;
+pub const IDE_BMI_STATUS_ACTIVE: u8 = 0x01;
+pub const IDE_BMI_STATUS_DMA_ERROR: u8 = 0x02;
+pub const IDE_BMI_STATUS_INTERRUPT: u8 = 0x04;
+pub const IDE_BMI_STATUS_DMA_CAP1: u8 = 0x20;
+pub const IDE_BMI_STATUS_DMA_CAP0: u8 = 0x40;
+
 const IDE_IDENTIFY_BYTES: usize = 512;
 const IDE_MAX_MULTI_SECTORS: u16 = 128;
 const IDE_ATA7_MAJOR: u16 = 0x0080;
@@ -53,6 +65,366 @@ impl IdeDeviceId {
             Self::Device0 => 0,
             Self::Device1 => 1,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdeChannelId {
+    Primary,
+    Secondary,
+}
+
+impl IdeChannelId {
+    const fn index(self) -> usize {
+        match self {
+            Self::Primary => 0,
+            Self::Secondary => 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct IdeController {
+    channels: [IdeChannel; 2],
+}
+
+impl IdeController {
+    pub fn new(disks: [Option<IdeDisk>; 4]) -> Result<Self, IdeControllerError> {
+        let [primary0, primary1, secondary0, secondary1] = disks;
+        Self::validate_slot(0, IdeDeviceId::Device0, primary0.as_ref())?;
+        Self::validate_slot(1, IdeDeviceId::Device1, primary1.as_ref())?;
+        Self::validate_slot(2, IdeDeviceId::Device0, secondary0.as_ref())?;
+        Self::validate_slot(3, IdeDeviceId::Device1, secondary1.as_ref())?;
+
+        Ok(Self {
+            channels: [
+                IdeChannel::new(IdeChannelId::Primary, primary0, primary1),
+                IdeChannel::new(IdeChannelId::Secondary, secondary0, secondary1),
+            ],
+        })
+    }
+
+    pub fn channel_pending_interrupt(&self, channel: IdeChannelId) -> bool {
+        self.channel(channel).pending_interrupt
+    }
+
+    pub fn shared_interrupt_asserted(&self) -> bool {
+        self.channels
+            .iter()
+            .any(|channel| channel.pending_interrupt)
+    }
+
+    pub fn read_command_u8(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+    ) -> Result<u8, IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let value = if let Some(disk) = command_channel.selected_mut() {
+            disk.read_command_u8(offset)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?
+        } else {
+            0
+        };
+        command_channel.refresh_interrupt();
+        Ok(value)
+    }
+
+    pub fn write_command_u8(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+        value: u8,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        if offset == IDE_DRIVE_OFFSET {
+            command_channel.select(value & IDE_DRIVE_DEVICE1 != 0);
+        }
+
+        if let Some(disk) = command_channel.selected_mut() {
+            disk.write_command_u8(offset, value)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        }
+        command_channel.refresh_interrupt();
+        Ok(())
+    }
+
+    pub fn read_control_u8(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+    ) -> Result<u8, IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let value = if let Some(disk) = command_channel.selected_mut() {
+            disk.read_control_u8(offset)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?
+        } else {
+            0
+        };
+        command_channel.refresh_interrupt();
+        Ok(value)
+    }
+
+    pub fn write_control_u8(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+        value: u8,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        if let Some(disk) = command_channel.selected_mut() {
+            disk.write_control_u8(offset, value)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        }
+        command_channel.refresh_interrupt();
+        Ok(())
+    }
+
+    pub fn read_data_u16(&mut self, channel: IdeChannelId) -> Result<u16, IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        let value = disk
+            .read_data_u16()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
+        Ok(value)
+    }
+
+    pub fn write_data_u16(
+        &mut self,
+        channel: IdeChannelId,
+        value: u16,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        disk.write_data_u16(value)
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
+        Ok(())
+    }
+
+    pub fn read_bmi_u8(&self, channel: IdeChannelId, offset: u8) -> Result<u8, IdeControllerError> {
+        self.channel(channel).bmi.read_u8(channel, offset)
+    }
+
+    pub fn write_bmi_u8(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+        value: u8,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        match offset {
+            IDE_BMI_COMMAND_OFFSET => command_channel.write_bmi_command(value),
+            IDE_BMI_STATUS_OFFSET => {
+                command_channel.bmi.write_status(value);
+                if value & IDE_BMI_STATUS_INTERRUPT != 0 {
+                    command_channel.pending_interrupt = false;
+                }
+                Ok(())
+            }
+            _ => Err(IdeControllerError::InvalidBmiOffset {
+                channel,
+                offset,
+                width: 1,
+            }),
+        }
+    }
+
+    pub fn read_bmi_u32(
+        &self,
+        channel: IdeChannelId,
+        offset: u8,
+    ) -> Result<u32, IdeControllerError> {
+        self.channel(channel).bmi.read_u32(channel, offset)
+    }
+
+    pub fn write_bmi_u32(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+        value: u32,
+    ) -> Result<(), IdeControllerError> {
+        match offset {
+            IDE_BMI_PRD_TABLE_OFFSET => {
+                self.channel_mut(channel).bmi.prd_table = value & !0x3;
+                Ok(())
+            }
+            _ => Err(IdeControllerError::InvalidBmiOffset {
+                channel,
+                offset,
+                width: 4,
+            }),
+        }
+    }
+
+    fn validate_slot(
+        slot: usize,
+        expected: IdeDeviceId,
+        disk: Option<&IdeDisk>,
+    ) -> Result<(), IdeControllerError> {
+        if let Some(disk) = disk {
+            let actual = disk.device_id();
+            if actual != expected {
+                return Err(IdeControllerError::InvalidDeviceSlot {
+                    slot,
+                    expected,
+                    actual,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn channel(&self, channel: IdeChannelId) -> &IdeChannel {
+        &self.channels[channel.index()]
+    }
+
+    fn channel_mut(&mut self, channel: IdeChannelId) -> &mut IdeChannel {
+        &mut self.channels[channel.index()]
+    }
+}
+
+#[derive(Clone, Debug)]
+struct IdeChannel {
+    id: IdeChannelId,
+    device0: Option<IdeDisk>,
+    device1: Option<IdeDisk>,
+    selected_device: IdeDeviceId,
+    pending_interrupt: bool,
+    bmi: IdeBmiRegisters,
+}
+
+impl IdeChannel {
+    fn new(id: IdeChannelId, device0: Option<IdeDisk>, device1: Option<IdeDisk>) -> Self {
+        Self {
+            id,
+            device0,
+            device1,
+            selected_device: IdeDeviceId::Device0,
+            pending_interrupt: false,
+            bmi: IdeBmiRegisters::reset(),
+        }
+    }
+
+    fn select(&mut self, select_device_1: bool) {
+        self.selected_device = if select_device_1 {
+            IdeDeviceId::Device1
+        } else {
+            IdeDeviceId::Device0
+        };
+    }
+
+    fn selected_mut(&mut self) -> Option<&mut IdeDisk> {
+        match self.selected_device {
+            IdeDeviceId::Device0 => self.device0.as_mut(),
+            IdeDeviceId::Device1 => self.device1.as_mut(),
+        }
+    }
+
+    fn selected(&self) -> Option<&IdeDisk> {
+        match self.selected_device {
+            IdeDeviceId::Device0 => self.device0.as_ref(),
+            IdeDeviceId::Device1 => self.device1.as_ref(),
+        }
+    }
+
+    fn refresh_interrupt(&mut self) {
+        self.pending_interrupt = self
+            .selected()
+            .is_some_and(|selected| selected.pending_interrupt());
+        if self.pending_interrupt {
+            self.bmi.status |= IDE_BMI_STATUS_INTERRUPT;
+        } else {
+            self.bmi.status &= !IDE_BMI_STATUS_INTERRUPT;
+        }
+    }
+
+    fn write_bmi_command(&mut self, value: u8) -> Result<(), IdeControllerError> {
+        let old_start = self.bmi.command & IDE_BMI_COMMAND_START != 0;
+        let new_start = value & IDE_BMI_COMMAND_START != 0;
+        if !old_start && new_start {
+            if self.selected().is_none() {
+                return Err(IdeControllerError::NoSelectedDevice {
+                    channel: self.id,
+                    device: self.selected_device,
+                });
+            }
+            return Err(IdeControllerError::DmaUnsupported { channel: self.id });
+        }
+        if old_start && !new_start {
+            self.bmi.status &= !IDE_BMI_STATUS_ACTIVE;
+        }
+        self.bmi.command = value & (IDE_BMI_COMMAND_START | IDE_BMI_COMMAND_RW);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct IdeBmiRegisters {
+    command: u8,
+    status: u8,
+    prd_table: u32,
+}
+
+impl IdeBmiRegisters {
+    const fn reset() -> Self {
+        Self {
+            command: 0,
+            status: IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1,
+            prd_table: 0,
+        }
+    }
+
+    fn read_u8(self, channel: IdeChannelId, offset: u8) -> Result<u8, IdeControllerError> {
+        match offset {
+            IDE_BMI_COMMAND_OFFSET => Ok(self.command),
+            IDE_BMI_STATUS_OFFSET => Ok(self.status),
+            _ => Err(IdeControllerError::InvalidBmiOffset {
+                channel,
+                offset,
+                width: 1,
+            }),
+        }
+    }
+
+    fn read_u32(self, channel: IdeChannelId, offset: u8) -> Result<u32, IdeControllerError> {
+        match offset {
+            IDE_BMI_PRD_TABLE_OFFSET => Ok(self.prd_table),
+            _ => Err(IdeControllerError::InvalidBmiOffset {
+                channel,
+                offset,
+                width: 4,
+            }),
+        }
+    }
+
+    fn write_status(&mut self, value: u8) {
+        let mut status = self.status
+            & (IDE_BMI_STATUS_ACTIVE
+                | IDE_BMI_STATUS_DMA_ERROR
+                | IDE_BMI_STATUS_INTERRUPT
+                | IDE_BMI_STATUS_DMA_CAP0
+                | IDE_BMI_STATUS_DMA_CAP1);
+        if value & IDE_BMI_STATUS_INTERRUPT != 0 {
+            status &= !IDE_BMI_STATUS_INTERRUPT;
+        }
+        if value & IDE_BMI_STATUS_DMA_ERROR != 0 {
+            status &= !IDE_BMI_STATUS_DMA_ERROR;
+        }
+        self.status = status | IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1;
     }
 }
 
@@ -511,6 +883,79 @@ impl IdeGeometry {
             heads: heads as u8,
             sectors: sectors as u8,
         })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IdeControllerError {
+    InvalidDeviceSlot {
+        slot: usize,
+        expected: IdeDeviceId,
+        actual: IdeDeviceId,
+    },
+    NoSelectedDevice {
+        channel: IdeChannelId,
+        device: IdeDeviceId,
+    },
+    InvalidBmiOffset {
+        channel: IdeChannelId,
+        offset: u8,
+        width: u8,
+    },
+    DmaUnsupported {
+        channel: IdeChannelId,
+    },
+    Disk {
+        channel: IdeChannelId,
+        source: IdeDiskError,
+    },
+}
+
+impl Display for IdeControllerError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDeviceSlot {
+                slot,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "IDE controller disk slot {slot} expected {expected:?}, got {actual:?}"
+            ),
+            Self::NoSelectedDevice { channel, device } => write!(
+                formatter,
+                "IDE controller {channel:?} channel has no selected {device:?} disk"
+            ),
+            Self::InvalidBmiOffset {
+                channel,
+                offset,
+                width,
+            } => write!(
+                formatter,
+                "invalid IDE controller {channel:?} BMI offset {offset:#x} for {width}-byte access"
+            ),
+            Self::DmaUnsupported { channel } => {
+                write!(
+                    formatter,
+                    "IDE controller {channel:?} channel DMA is not implemented"
+                )
+            }
+            Self::Disk { channel, source } => {
+                write!(
+                    formatter,
+                    "IDE controller {channel:?} disk access failed: {source}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for IdeControllerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Disk { source, .. } => Some(source),
+            _ => None,
+        }
     }
 }
 
