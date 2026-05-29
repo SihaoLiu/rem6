@@ -222,19 +222,22 @@ impl UartMmioDevice {
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         let mut state = self.state.lock().expect("uart state lock");
-        let byte = state
+        let byte = *state
             .rx_pending
-            .pop_front()
+            .front()
             .ok_or_else(|| MmioError::DeviceError {
                 request: request.id(),
                 message: UartError::EmptyReceiveQueue.to_string(),
             })?;
-        let should_deassert = state.rx_pending.is_empty();
-        state.rx_consumed.push(UartRxByte::new(context.now(), byte));
-        drop(state);
+        let should_deassert = state.rx_pending.len() == 1;
         if should_deassert {
-            self.emit_interrupt(context, InterruptEventKind::Deassert);
+            self.try_emit_interrupt(context, InterruptEventKind::Deassert)
+                .map_err(|error| MmioError::DeviceError {
+                    request: request.id(),
+                    message: error.to_string(),
+                })?;
         }
+        state.consume_rx(context.now());
         Ok(MmioResponse::completed(request.id(), Some(vec![byte])))
     }
 
@@ -244,19 +247,22 @@ impl UartMmioDevice {
         request: &MmioRequest,
     ) -> Result<MmioResponse, MmioError> {
         let mut state = self.state.lock().expect("uart state lock");
-        let byte = state
+        let byte = *state
             .rx_pending
-            .pop_front()
+            .front()
             .ok_or_else(|| MmioError::DeviceError {
                 request: request.id(),
                 message: UartError::EmptyReceiveQueue.to_string(),
             })?;
-        let should_deassert = state.rx_pending.is_empty();
-        state.rx_consumed.push(UartRxByte::new(context.now(), byte));
-        drop(state);
+        let should_deassert = state.rx_pending.len() == 1;
         if should_deassert {
-            self.emit_interrupt_parallel(context, InterruptEventKind::Deassert);
+            self.try_emit_interrupt_parallel(context, InterruptEventKind::Deassert)
+                .map_err(|error| MmioError::DeviceError {
+                    request: request.id(),
+                    message: error.to_string(),
+                })?;
         }
+        state.consume_rx(context.now());
         Ok(MmioResponse::completed(request.id(), Some(vec![byte])))
     }
 
@@ -343,83 +349,85 @@ impl UartMmioDevice {
     }
 
     fn inject_rx_now(&self, context: &mut SchedulerContext<'_>, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+
         let mut state = self.state.lock().expect("uart state lock");
-        let was_empty = state.rx_pending.is_empty();
-        for byte in bytes {
-            state.rx_pending.push_back(byte);
-            state.rx_injected.push(UartRxByte::new(context.now(), byte));
-        }
-        let should_assert = was_empty && !state.rx_pending.is_empty();
-        drop(state);
+        let should_assert = state.rx_pending.is_empty();
         if should_assert {
-            self.emit_interrupt(context, InterruptEventKind::Assert);
+            if let Err(error) = self.try_emit_interrupt(context, InterruptEventKind::Assert) {
+                if let Some(interrupt) = &self.interrupt {
+                    state.interrupt_errors.push(UartInterruptError::new(
+                        context.now(),
+                        interrupt.source,
+                        InterruptEventKind::Assert,
+                        error,
+                    ));
+                }
+                return;
+            }
         }
+        state.inject_rx(context.now(), bytes);
     }
 
     fn inject_rx_now_parallel(&self, context: &mut ParallelSchedulerContext<'_>, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+
         let mut state = self.state.lock().expect("uart state lock");
-        let was_empty = state.rx_pending.is_empty();
-        for byte in bytes {
-            state.rx_pending.push_back(byte);
-            state.rx_injected.push(UartRxByte::new(context.now(), byte));
-        }
-        let should_assert = was_empty && !state.rx_pending.is_empty();
-        drop(state);
+        let should_assert = state.rx_pending.is_empty();
         if should_assert {
-            self.emit_interrupt_parallel(context, InterruptEventKind::Assert);
+            if let Err(error) =
+                self.try_emit_interrupt_parallel(context, InterruptEventKind::Assert)
+            {
+                if let Some(interrupt) = &self.interrupt {
+                    state.interrupt_errors.push(UartInterruptError::new(
+                        context.now(),
+                        interrupt.source,
+                        InterruptEventKind::Assert,
+                        error,
+                    ));
+                }
+                return;
+            }
         }
+        state.inject_rx(context.now(), bytes);
     }
 
-    fn emit_interrupt(&self, context: &mut SchedulerContext<'_>, kind: InterruptEventKind) {
+    fn try_emit_interrupt(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        kind: InterruptEventKind,
+    ) -> Result<(), InterruptError> {
         let Some(interrupt) = &self.interrupt else {
-            return;
+            return Ok(());
         };
         let result = match kind {
             InterruptEventKind::Assert => interrupt.port.assert(context, interrupt.source),
             InterruptEventKind::Deassert => interrupt.port.deassert(context, interrupt.source),
-            InterruptEventKind::Claim | InterruptEventKind::Complete => return,
+            InterruptEventKind::Claim | InterruptEventKind::Complete => return Ok(()),
         };
-        if let Err(error) = result {
-            self.state
-                .lock()
-                .expect("uart state lock")
-                .interrupt_errors
-                .push(UartInterruptError::new(
-                    context.now(),
-                    interrupt.source,
-                    kind,
-                    error,
-                ));
-        }
+        result.map(|_| ())
     }
 
-    fn emit_interrupt_parallel(
+    fn try_emit_interrupt_parallel(
         &self,
         context: &mut ParallelSchedulerContext<'_>,
         kind: InterruptEventKind,
-    ) {
+    ) -> Result<(), InterruptError> {
         let Some(interrupt) = &self.interrupt else {
-            return;
+            return Ok(());
         };
         let result = match kind {
             InterruptEventKind::Assert => interrupt.port.assert_parallel(context, interrupt.source),
             InterruptEventKind::Deassert => {
                 interrupt.port.deassert_parallel(context, interrupt.source)
             }
-            InterruptEventKind::Claim | InterruptEventKind::Complete => return,
+            InterruptEventKind::Claim | InterruptEventKind::Complete => return Ok(()),
         };
-        if let Err(error) = result {
-            self.state
-                .lock()
-                .expect("uart state lock")
-                .interrupt_errors
-                .push(UartInterruptError::new(
-                    context.now(),
-                    interrupt.source,
-                    kind,
-                    error,
-                ));
-        }
+        result.map(|_| ())
     }
 }
 
@@ -584,6 +592,18 @@ impl UartState {
             status |= UART_STATUS_RX_READY;
         }
         status
+    }
+
+    fn inject_rx(&mut self, tick: Tick, bytes: Vec<u8>) {
+        for byte in bytes {
+            self.rx_pending.push_back(byte);
+            self.rx_injected.push(UartRxByte::new(tick, byte));
+        }
+    }
+
+    fn consume_rx(&mut self, tick: Tick) {
+        let byte = self.rx_pending.pop_front().expect("validated UART RX byte");
+        self.rx_consumed.push(UartRxByte::new(tick, byte));
     }
 
     fn snapshot(&self) -> UartSnapshot {

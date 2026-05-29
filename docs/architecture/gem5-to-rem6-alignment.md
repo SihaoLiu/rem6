@@ -132,7 +132,10 @@ isolated bugs:
   `msip`, immediate `mtimecmp`, and RTC-driven timer assertion paths also
   commit register or asserted-line state only after the required interrupt
   signal has been accepted by the scheduler, preventing remote-boundary
-  failures from leaving partially committed platform state.
+  failures from leaving partially committed platform state. UART RX injection
+  and final-byte RX MMIO reads follow the same rule: failed serial or parallel
+  interrupt assertion keeps bytes out of the pending RX FIFO, while failed
+  deassertion returns a typed MMIO device error before consuming the byte.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
@@ -1538,6 +1541,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   snapshot deltas, and typed probe point, listener, historical listener-ref,
   event, payload, identifier-grammar, cursor-preserving, and time-monotonic
   snapshot restore records with malformed snapshot rejection.
+- UART/MMIO tests cover transmitted byte logging, RX FIFO status, snapshot
+  restore, serial and parallel RX interrupt assertion, serial interrupt
+  deassertion after the final byte is read, and rejection of serial or parallel
+  RX interrupt delivery before RX FIFO or consumed-byte state is mutated.
 - Timer/MMIO tests cover typed RISC-V CLINT `msip` software interrupts,
   `mtimecmp` timer interrupt scheduling, future-deadline timer deassertion,
   read-only `mtime` from scheduler ticks, the same `mtimecmp` path under the

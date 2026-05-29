@@ -1,17 +1,18 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
-    InterruptController, InterruptEvent, InterruptEventKind, InterruptLineChannel, InterruptLineId,
-    InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId, PendingInterrupt,
+    InterruptController, InterruptError, InterruptEvent, InterruptEventKind, InterruptLineChannel,
+    InterruptLineId, InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
+    PendingInterrupt,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
 use rem6_mmio::{
     MmioAccess, MmioBus, MmioCompletion, MmioError, MmioOperation, MmioRequest, MmioRequestId,
     MmioResponse, MmioRoute,
 };
 use rem6_uart::{
-    UartId, UartMmioDevice, UartRxByte, UartTxByte, UART_MMIO_DATA_OFFSET,
+    UartId, UartInterruptError, UartMmioDevice, UartRxByte, UartTxByte, UART_MMIO_DATA_OFFSET,
     UART_MMIO_REGISTER_BYTES, UART_MMIO_STATUS_OFFSET, UART_STATUS_RX_READY, UART_STATUS_TX_READY,
 };
 
@@ -21,6 +22,25 @@ fn byte_mask() -> ByteMask {
 
 fn uart_range(base: Address) -> AddressRange {
     AddressRange::new(base, AccessSize::new(0x100).unwrap()).unwrap()
+}
+
+fn interrupt_uart(
+    base: Address,
+    cpu: PartitionId,
+    line: InterruptLineId,
+    source: InterruptSourceId,
+) -> (UartMmioDevice, Arc<Mutex<InterruptController>>) {
+    let route = InterruptRoute::new(line, InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    (
+        UartMmioDevice::with_interrupt(UartId::new(line.get()), base, source, port),
+        controller,
+    )
 }
 
 fn write_byte(uart: &UartMmioDevice, tick: u64, byte: u8) {
@@ -70,6 +90,196 @@ fn read_byte(uart: &UartMmioDevice, tick: u64) -> u8 {
     scheduler.run_until_idle();
     let byte = read.lock().unwrap().unwrap();
     byte
+}
+
+#[test]
+fn uart_rx_injection_rejects_interrupt_before_state_change() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let base = Address::new(0x7600);
+    let source = InterruptSourceId::new(21);
+    let (uart, controller) = interrupt_uart(base, cpu, InterruptLineId::new(46), source);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    let uart_input = uart.clone();
+    scheduler
+        .schedule_at(uart_partition, 5, move |context| {
+            uart_input.inject_rx_after(context, 1, [b'Q']).unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert!(uart.snapshot().rx_pending().is_empty());
+    assert!(uart.snapshot().rx_injected().is_empty());
+    assert_eq!(
+        uart.snapshot().interrupt_errors(),
+        &[UartInterruptError::new(
+            6,
+            source,
+            InterruptEventKind::Assert,
+            InterruptError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                source: uart_partition,
+                target: cpu,
+                source_tick: 6,
+                delivery_tick: 8,
+                minimum_delivery_tick: 9,
+            }),
+        )]
+    );
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn uart_parallel_rx_injection_rejects_interrupt_before_state_change() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let base = Address::new(0x7700);
+    let source = InterruptSourceId::new(22);
+    let (uart, controller) = interrupt_uart(base, cpu, InterruptLineId::new(47), source);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    let uart_input = uart.clone();
+    scheduler
+        .schedule_parallel_at(uart_partition, 5, move |context| {
+            uart_input
+                .inject_rx_after_parallel(context, 1, [b'R'])
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert!(uart.snapshot().rx_pending().is_empty());
+    assert!(uart.snapshot().rx_injected().is_empty());
+    assert_eq!(
+        uart.snapshot().interrupt_errors(),
+        &[UartInterruptError::new(
+            6,
+            source,
+            InterruptEventKind::Assert,
+            InterruptError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                source: uart_partition,
+                target: cpu,
+                source_tick: 6,
+                delivery_tick: 8,
+                minimum_delivery_tick: 9,
+            }),
+        )]
+    );
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn uart_mmio_read_rejects_deassert_before_consuming_last_rx_byte() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let base = Address::new(0x7a00);
+    let source = InterruptSourceId::new(23);
+    let (uart, controller) = interrupt_uart(base, cpu, InterruptLineId::new(48), source);
+    uart.inject_rx([b'S']).unwrap();
+    let observed_uart = uart.clone();
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&errors);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_at(uart_partition, 5, move |context| {
+            let error = uart
+                .respond(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(31),
+                        Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                        AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap_err();
+            captured.lock().unwrap().push(error);
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        errors.lock().unwrap().as_slice(),
+        &[MmioError::DeviceError {
+            request: MmioRequestId::new(31),
+            message: InterruptError::Scheduler(
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source: uart_partition,
+                    target: cpu,
+                    source_tick: 5,
+                    delivery_tick: 7,
+                    minimum_delivery_tick: 8,
+                }
+            )
+            .to_string(),
+        }]
+    );
+    assert_eq!(observed_uart.snapshot().rx_pending(), b"S");
+    assert!(observed_uart.snapshot().rx_consumed().is_empty());
+    assert!(observed_uart.snapshot().interrupt_errors().is_empty());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn uart_parallel_mmio_read_rejects_deassert_before_consuming_last_rx_byte() {
+    let cpu = PartitionId::new(0);
+    let uart_partition = PartitionId::new(1);
+    let base = Address::new(0x7b00);
+    let source = InterruptSourceId::new(24);
+    let (uart, controller) = interrupt_uart(base, cpu, InterruptLineId::new(49), source);
+    uart.inject_rx([b'T']).unwrap();
+    let observed_uart = uart.clone();
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&errors);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_parallel_at(uart_partition, 5, move |context| {
+            let error = uart
+                .respond_parallel(
+                    context,
+                    &MmioRequest::read(
+                        MmioRequestId::new(32),
+                        Address::new(base.get() + UART_MMIO_DATA_OFFSET),
+                        AccessSize::new(UART_MMIO_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap_err();
+            captured.lock().unwrap().push(error);
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        errors.lock().unwrap().as_slice(),
+        &[MmioError::DeviceError {
+            request: MmioRequestId::new(32),
+            message: InterruptError::Scheduler(
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source: uart_partition,
+                    target: cpu,
+                    source_tick: 5,
+                    delivery_tick: 7,
+                    minimum_delivery_tick: 8,
+                }
+            )
+            .to_string(),
+        }]
+    );
+    assert_eq!(observed_uart.snapshot().rx_pending(), b"T");
+    assert!(observed_uart.snapshot().rx_consumed().is_empty());
+    assert!(observed_uart.snapshot().interrupt_errors().is_empty());
+    assert!(controller.lock().unwrap().history().is_empty());
 }
 
 #[test]
