@@ -221,6 +221,37 @@ fn file_storage_image_reads_writes_and_flushes_host_file_explicitly() {
 }
 
 #[test]
+fn file_storage_image_snapshots_and_restores_host_file_bytes() {
+    let path = temp_image_path("snapshot");
+    fs::write(&path, image_bytes(&[0x41, 0x42])).unwrap();
+
+    let image = FileStorageImage::open(&path).unwrap();
+    image
+        .write_sector(StorageSectorId::new(1), sector(0xaa))
+        .unwrap();
+    image.flush().unwrap();
+    let snapshot = image.snapshot().unwrap();
+
+    assert_eq!(snapshot.capacity_sectors(), 2);
+    assert_eq!(snapshot.flush_count(), 1);
+    assert!(!snapshot.read_only());
+    assert_eq!(snapshot.bytes(), [sector(0x41), sector(0xaa)].concat());
+
+    image
+        .write_sector(StorageSectorId::new(0), sector(0xbb))
+        .unwrap();
+    image.restore(&snapshot).unwrap();
+
+    assert_eq!(image.flush_count(), 1);
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        [sector(0x41), sector(0xaa)].concat()
+    );
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn file_storage_image_rejects_bad_files_and_writes_before_mutation() {
     let missing_path = temp_image_path("missing");
     assert!(matches!(
@@ -316,6 +347,50 @@ fn storage_image_checkpoint_bank_captures_and_restores_raw_and_cow_images() {
     assert_eq!(restored, captured);
     assert_eq!(raw.snapshot(), raw_snapshot);
     assert_eq!(cow.snapshot(), cow_snapshot);
+}
+
+#[test]
+fn storage_image_checkpoint_bank_captures_and_restores_file_images() {
+    let component = CheckpointComponentId::new("storage.file0").unwrap();
+    let path = temp_image_path("checkpoint-file");
+    fs::write(&path, image_bytes(&[0x21, 0x22])).unwrap();
+    let file = FileStorageImage::open(&path).unwrap();
+    file.write_sector(StorageSectorId::new(0), sector(0xaa))
+        .unwrap();
+    file.flush().unwrap();
+    let file_snapshot = file.snapshot().unwrap();
+    let bank = StorageImageCheckpointBank::new([StorageImageCheckpointPort::file(
+        component.clone(),
+        file.clone(),
+    )])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    let captured = bank.capture_all_into(&mut registry).unwrap();
+
+    assert_eq!(
+        captured,
+        vec![StorageImageCheckpointRecord::new(
+            component.clone(),
+            StorageImageCheckpointSnapshot::File(file_snapshot.clone()),
+        )]
+    );
+    assert!(registry.chunk(&component, "storage-image").is_some());
+
+    file.write_sector(StorageSectorId::new(1), sector(0xbb))
+        .unwrap();
+
+    let restored = bank.restore_all_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(file.snapshot().unwrap(), file_snapshot);
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        [sector(0xaa), sector(0x22)].concat()
+    );
+
+    fs::remove_file(path).unwrap();
 }
 
 #[test]
