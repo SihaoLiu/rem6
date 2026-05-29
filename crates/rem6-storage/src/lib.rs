@@ -11,6 +11,7 @@ mod checkpoint;
 mod ide;
 mod ide_dma;
 mod ide_error;
+mod ide_pci;
 mod ide_snapshot;
 mod simple_disk;
 
@@ -36,6 +37,12 @@ pub use ide::{
 pub use ide_dma::{IdeControllerGuestMemory, IdeDmaDirection};
 pub(crate) use ide_dma::{IdeDmaPlan, IdeDmaRequest};
 pub use ide_error::{IdeControllerError, IdeDiskError};
+pub use ide_pci::{
+    IdePciEndpointSpec, IDE_PCI_BUS_MASTER_BAR_BYTES, IDE_PCI_CLASS_CODE,
+    IDE_PCI_COMMAND_BAR_BYTES, IDE_PCI_CONTROL_BAR_BYTES, IDE_PCI_DEVICE_ID,
+    IDE_PCI_INTERRUPT_LINE, IDE_PCI_MAX_BAR_INDEX, IDE_PCI_PROG_IF, IDE_PCI_STATUS,
+    IDE_PCI_SUBCLASS_CODE, IDE_PCI_VENDOR_ID,
+};
 pub(crate) use ide_snapshot::IdeSnapshotError;
 pub use ide_snapshot::{
     IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerSnapshot, IdeDiskSnapshot,

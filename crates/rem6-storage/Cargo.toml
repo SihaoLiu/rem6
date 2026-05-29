@@ -7,6 +7,8 @@ repository.workspace = true
 
 [dependencies]
 rem6-checkpoint = { path = "../rem6-checkpoint" }
+rem6-memory = { path = "../rem6-memory" }
+rem6-pci = { path = "../rem6-pci" }
 
 [lints]
 workspace = true

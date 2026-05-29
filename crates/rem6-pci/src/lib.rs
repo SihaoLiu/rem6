@@ -325,6 +325,11 @@ impl PciEndpointConfig {
         self
     }
 
+    pub fn with_status(mut self, status: u16) -> Self {
+        write_u16_at(&mut self.config, PCI_STATUS_OFFSET, status);
+        self
+    }
+
     pub fn with_type0_header(mut self, fields: PciType0HeaderFields) -> Self {
         write_u32_at(
             &mut self.config,
