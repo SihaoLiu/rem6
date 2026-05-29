@@ -356,6 +356,66 @@ fn workload_replay_plan_rejects_weak_explicit_full_system_frontiers() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_merged_weak_explicit_full_system_frontiers() {
+    let plan = replay_plan()
+        .add_expected_parallel_frontier(expected_frontier(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            WorkloadParallelFrontierStage::Final,
+            4,
+            21,
+            29,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_data_cache_parallel_scheduler_frontiers(
+            [],
+            [PartitionFrontier::new(
+                PartitionId::new(4),
+                21,
+                29,
+                Some(24),
+                2,
+            )],
+        )
+        .with_full_system_parallel_scheduler_frontiers(
+            [],
+            [
+                PartitionFrontier::new(PartitionId::new(4), 21, 29, Some(24), 1),
+                PartitionFrontier::new(PartitionId::new(4), 25, 33, Some(28), 2),
+            ],
+        );
+
+    assert_eq!(
+        summary.full_system_parallel_scheduler_final_frontiers(),
+        vec![PartitionFrontier::new(
+            PartitionId::new(4),
+            21,
+            29,
+            Some(24),
+            2,
+        )],
+    );
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::InvalidParallelFrontierMergeSummary {
+            scope: WorkloadParallelSchedulerScope::FullSystem,
+            stage: WorkloadParallelFrontierStage::Final,
+            partition: 4,
+            merged_now: Some(21),
+            scoped_now: 21,
+            merged_safe_until: Some(29),
+            scoped_safe_until: 29,
+            merged_next_tick: Some(24),
+            scoped_next_tick: Some(24),
+            merged_pending_events: Some(1),
+            scoped_pending_events: 2,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_invalid_full_system_frontier_safety_window() {
     let plan = replay_plan()
         .add_expected_parallel_frontier(expected_frontier(

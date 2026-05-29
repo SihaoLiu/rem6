@@ -955,6 +955,11 @@ Implementation evidence on 2026-05-26:
   now tick, safe-until tick, next pending tick, or pending-event count. A global
   frontier summary therefore cannot hide an earlier scoped safe-time boundary
   while replay contracts still pass through the conservative merged getter.
+- Explicit recorded full-system frontier validation also audits each raw
+  global frontier before same-partition frontiers are conservatively merged for
+  reporting. Duplicate weak frontiers therefore cannot combine one record's
+  earlier safe-time boundary with another record's pending-event count to pass
+  replay.
 - Workload full-system dispatch reporting now treats explicit full-system
   partition streaks as aggregate dispatch evidence, using them as a merged
   lower bound instead of adding them to scoped scheduler counts again.

@@ -89,7 +89,6 @@ fn validate_full_system_frontier_merge_summary(
         return Ok(());
     }
 
-    let explicit_frontiers = collect_conservative_partition_frontiers(explicit_frontiers);
     let scoped_frontiers = scoped_full_system_frontier_records(summary, stage);
     for scoped_frontier in scoped_frontiers {
         let explicit_frontier = explicit_frontiers
