@@ -1185,7 +1185,7 @@ impl RiscvCore {
         scheduler: &mut PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
-        let Some(issue) = self.prepare_mmio_data_access(scheduler.now(), bus)? else {
+        let Some(issue) = self.prepare_mmio_data_access(scheduler, bus)? else {
             return Ok(None);
         };
         if self.store_conditional_fails(&issue) {
@@ -1281,7 +1281,7 @@ impl RiscvCore {
 
     fn prepare_mmio_data_access(
         &self,
-        tick: Tick,
+        scheduler: &PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
         if let Some(fetch) = self.data_translation_page_map_required_fetch() {
@@ -1305,9 +1305,16 @@ impl RiscvCore {
                 actual: route.source_partition(),
             });
         }
+        riscv_data_access::validate_parallel_mmio_route(
+            route,
+            scheduler.now(),
+            scheduler.min_remote_delay(),
+            scheduler.partition_count(),
+        )
+        .map_err(|error| RiscvCpuError::Mmio(MmioError::Scheduler(error)))?;
 
         Ok(Some(OutstandingDataAccess {
-            tick,
+            tick: scheduler.now(),
             partition: self.core.partition(),
             target: RiscvDataAccessTarget::Mmio { route },
             request_id,
@@ -1390,10 +1397,7 @@ impl RiscvCore {
             return;
         };
         let MemoryAccessKind::StoreConditional { rd, .. } = &access.access else {
-            debug_assert!(
-                false,
-                "store-conditional failure recorded for non-SC access"
-            );
+            debug_assert!(false, "store-conditional failure for non-SC access");
             return;
         };
         state.hart.write(*rd, 1);
@@ -1511,12 +1515,10 @@ struct OutstandingDataAccess {
 
 impl OutstandingDataAccess {
     fn memory_route(&self) -> MemoryRouteId {
-        match &self.target {
-            RiscvDataAccessTarget::Memory { route, .. } => *route,
-            RiscvDataAccessTarget::Mmio { .. } => {
-                panic!("MMIO data access does not have a memory route")
-            }
-        }
+        let RiscvDataAccessTarget::Memory { route, .. } = &self.target else {
+            unreachable!("memory data access target");
+        };
+        *route
     }
 
     fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {

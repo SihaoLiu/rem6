@@ -1,5 +1,5 @@
 use rem6_isa_riscv::{MemoryAccessKind, RiscvFenceSet, RiscvMemoryOrdering};
-use rem6_kernel::{PartitionId, Tick};
+use rem6_kernel::{PartitionId, SchedulerError, Tick};
 use rem6_memory::{
     AccessSize, Address, MemoryAccessOrdering, MemoryBarrierSet, MemoryOperation, MemoryRequestId,
 };
@@ -255,6 +255,79 @@ pub(crate) fn memory_request_ordering(access: &MemoryAccessKind) -> MemoryAccess
         ordering.before().map(memory_barrier_set),
         ordering.after().map(memory_barrier_set),
     )
+}
+
+pub(crate) fn validate_parallel_mmio_route(
+    route: MmioRoute,
+    issue_tick: Tick,
+    min_remote_delay: Tick,
+    partition_count: u32,
+) -> Result<(), SchedulerError> {
+    if route.target_partition().index() >= partition_count {
+        return Err(SchedulerError::UnknownPartition {
+            partition: route.target_partition(),
+            partitions: partition_count,
+        });
+    }
+
+    let request_tick =
+        issue_tick
+            .checked_add(route.request_latency())
+            .ok_or(SchedulerError::TickOverflow {
+                now: issue_tick,
+                delay: route.request_latency(),
+            })?;
+    validate_remote_delivery_boundary(
+        route.source_partition(),
+        route.target_partition(),
+        issue_tick,
+        request_tick,
+        min_remote_delay,
+    )?;
+
+    let response_tick =
+        request_tick
+            .checked_add(route.response_latency())
+            .ok_or(SchedulerError::TickOverflow {
+                now: request_tick,
+                delay: route.response_latency(),
+            })?;
+    validate_remote_delivery_boundary(
+        route.target_partition(),
+        route.source_partition(),
+        request_tick,
+        response_tick,
+        min_remote_delay,
+    )
+}
+
+fn validate_remote_delivery_boundary(
+    source: PartitionId,
+    target: PartitionId,
+    source_tick: Tick,
+    delivery_tick: Tick,
+    min_remote_delay: Tick,
+) -> Result<(), SchedulerError> {
+    if target == source {
+        return Ok(());
+    }
+    let minimum_delivery_tick =
+        source_tick
+            .checked_add(min_remote_delay)
+            .ok_or(SchedulerError::TickOverflow {
+                now: source_tick,
+                delay: min_remote_delay,
+            })?;
+    if delivery_tick < minimum_delivery_tick {
+        return Err(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            minimum_delivery_tick,
+        });
+    }
+    Ok(())
 }
 
 fn memory_barrier_set(fence: RiscvFenceSet) -> MemoryBarrierSet {
