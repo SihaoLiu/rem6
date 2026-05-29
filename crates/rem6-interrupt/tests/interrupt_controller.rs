@@ -538,18 +538,99 @@ fn interrupt_line_port_delivers_signals_into_controller_on_parallel_scheduler() 
 }
 
 #[test]
+fn interrupt_line_port_rejects_route_mismatch_before_serial_delivery() {
+    let device = PartitionId::new(0);
+    let cpu = PartitionId::new(1);
+    let route = InterruptRoute::new(InterruptLineId::new(12), InterruptTargetId::new(4), cpu);
+    let expected_route =
+        InterruptRoute::new(InterruptLineId::new(12), InterruptTargetId::new(5), cpu);
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let errors = port.delivery_errors();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(device, 4, move |context| {
+            *captured.lock().unwrap() = Some(port.assert(context, InterruptSourceId::new(6)));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 4);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(InterruptError::RouteMismatch {
+            line: InterruptLineId::new(12),
+            expected: expected_route,
+            actual: route,
+        })
+    );
+    assert!(errors.lock().unwrap().is_empty());
+    let controller = controller.lock().unwrap();
+    assert!(controller.pending().is_empty());
+    assert!(controller.history().is_empty());
+}
+
+#[test]
+fn interrupt_line_port_rejects_route_mismatch_before_parallel_delivery() {
+    let device = PartitionId::new(0);
+    let cpu = PartitionId::new(1);
+    let route = InterruptRoute::new(InterruptLineId::new(15), InterruptTargetId::new(4), cpu);
+    let expected_route =
+        InterruptRoute::new(InterruptLineId::new(15), InterruptTargetId::new(5), cpu);
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let errors = port.delivery_errors();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(device, 4, move |context| {
+            *captured.lock().unwrap() =
+                Some(port.assert_parallel(context, InterruptSourceId::new(6)));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 4);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(InterruptError::RouteMismatch {
+            line: InterruptLineId::new(15),
+            expected: expected_route,
+            actual: route,
+        })
+    );
+    assert!(errors.lock().unwrap().is_empty());
+    let controller = controller.lock().unwrap();
+    assert!(controller.pending().is_empty());
+    assert!(controller.history().is_empty());
+}
+
+#[test]
 fn interrupt_line_port_records_delivery_errors() {
     let device = PartitionId::new(0);
     let cpu = PartitionId::new(1);
     let route = InterruptRoute::new(InterruptLineId::new(12), InterruptTargetId::new(4), cpu);
     let mut controller = InterruptController::new();
-    controller
-        .register_route(InterruptRoute::new(
-            InterruptLineId::new(12),
-            InterruptTargetId::new(5),
-            cpu,
-        ))
-        .unwrap();
+    controller.register_route(route).unwrap();
     let controller = Arc::new(Mutex::new(controller));
     let port = InterruptLinePort::new(
         InterruptLineChannel::new(route, 2).unwrap(),
@@ -561,22 +642,41 @@ fn interrupt_line_port_records_delivery_errors() {
     scheduler
         .schedule_at(device, 4, move |context| {
             port.assert(context, InterruptSourceId::new(6)).unwrap();
+            port.assert(context, InterruptSourceId::new(6)).unwrap();
         })
         .unwrap();
 
     let summary = scheduler.run_until_idle();
 
-    assert_eq!(summary.executed_events(), 2);
+    assert_eq!(summary.executed_events(), 3);
     assert_eq!(summary.final_tick(), 6);
     assert_eq!(
         errors.lock().unwrap().as_slice(),
-        &[InterruptError::RouteMismatch {
+        &[InterruptError::AlreadyPending {
             line: InterruptLineId::new(12),
-            expected: InterruptRoute::new(InterruptLineId::new(12), InterruptTargetId::new(5), cpu),
-            actual: route,
+            source: InterruptSourceId::new(6),
         }]
     );
     let controller = controller.lock().unwrap();
-    assert!(controller.pending().is_empty());
-    assert!(controller.history().is_empty());
+    assert_eq!(
+        controller.pending(),
+        vec![PendingInterrupt::routed(
+            InterruptLineId::new(12),
+            InterruptTargetId::new(4),
+            cpu,
+            InterruptSourceId::new(6),
+            6,
+        )]
+    );
+    assert_eq!(
+        controller.history(),
+        &[InterruptEvent::routed(
+            6,
+            InterruptLineId::new(12),
+            InterruptTargetId::new(4),
+            cpu,
+            InterruptSourceId::new(6),
+            InterruptEventKind::Assert,
+        )]
+    );
 }

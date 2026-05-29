@@ -117,6 +117,10 @@ isolated bugs:
   accesses after virtual-to-physical resolution, so invalid device response
   timing remains a typed CPU/MMIO scheduler error and cannot disappear into a
   worker callback or delayed response-error side channel.
+  Interrupt line ports also prevalidate their controller route before serial or
+  parallel signal delivery is scheduled, so static line-target mismatches fail
+  at the device/interrupt boundary while delivery-time state conflicts remain
+  explicit recorded errors.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
