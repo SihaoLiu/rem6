@@ -137,7 +137,9 @@ pub use trap_event::{
     SystemEventPort, SystemHostEventPort,
 };
 pub use uart_checkpoint::{
-    UartCheckpointBank, UartCheckpointError, UartCheckpointPort, UartCheckpointRecord,
+    Pl011UartCheckpointBank, Pl011UartCheckpointError, Pl011UartCheckpointPort,
+    Pl011UartCheckpointRecord, UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
+    UartCheckpointRecord,
 };
 pub use virtio_checkpoint::{
     VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
@@ -942,6 +944,7 @@ pub enum SystemError {
     ClintCheckpoint(ClintCheckpointError),
     TimerCheckpoint(TimerCheckpointError),
     UartCheckpoint(UartCheckpointError),
+    Pl011UartCheckpoint(Pl011UartCheckpointError),
     PlicCheckpoint(PlicCheckpointError),
     VirtioCheckpoint(VirtioSplitQueueCheckpointError),
 }
@@ -976,6 +979,7 @@ impl fmt::Display for SystemError {
             Self::ClintCheckpoint(error) => write!(formatter, "{error}"),
             Self::TimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
+            Self::Pl011UartCheckpoint(error) => write!(formatter, "{error}"),
             Self::PlicCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioCheckpoint(error) => write!(formatter, "{error}"),
         }
@@ -1007,6 +1011,7 @@ impl Error for SystemError {
             Self::ClintCheckpoint(error) => Some(error),
             Self::TimerCheckpoint(error) => Some(error),
             Self::UartCheckpoint(error) => Some(error),
+            Self::Pl011UartCheckpoint(error) => Some(error),
             Self::PlicCheckpoint(error) => Some(error),
             Self::VirtioCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,

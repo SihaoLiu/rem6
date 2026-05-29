@@ -18,7 +18,7 @@ use rem6_timer::{
     TimerError, TimerId, TimerMmioDevice,
 };
 use rem6_topology::{Endpoint, Topology, TopologyError};
-use rem6_uart::{UartId, UartMmioDevice};
+use rem6_uart::{Pl011UartMmioDevice, UartId, UartMmioDevice};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlatformTimerConfig {
@@ -42,6 +42,23 @@ pub struct PlatformUartConfig {
     pub interrupt_target: InterruptTargetId,
     pub interrupt_source: InterruptSourceId,
     pub interrupt_latency: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformPl011UartConfig {
+    pub id: UartId,
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub interrupt: Option<PlatformPl011UartInterruptConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformPl011UartInterruptConfig {
+    pub line: InterruptLineId,
+    pub target: InterruptTargetId,
+    pub source: InterruptSourceId,
+    pub latency: Tick,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -978,6 +995,7 @@ pub struct PlatformBuilder {
     clints: Vec<PlatformClintConfig>,
     timers: Vec<PlatformTimerConfig>,
     uarts: Vec<PlatformUartConfig>,
+    pl011_uarts: Vec<PlatformPl011UartConfig>,
     rtcs: Vec<PlatformRtcConfig>,
     pl031_rtcs: Vec<PlatformPl031RtcConfig>,
     sp804_timers: Vec<PlatformSp804TimerConfig>,
@@ -991,6 +1009,7 @@ impl PlatformBuilder {
             clints: Vec::new(),
             timers: Vec::new(),
             uarts: Vec::new(),
+            pl011_uarts: Vec::new(),
             rtcs: Vec::new(),
             pl031_rtcs: Vec::new(),
             sp804_timers: Vec::new(),
@@ -1018,6 +1037,11 @@ impl PlatformBuilder {
 
     pub fn add_uart(mut self, config: PlatformUartConfig) -> Self {
         self.uarts.push(config);
+        self
+    }
+
+    pub fn add_pl011_uart(mut self, config: PlatformPl011UartConfig) -> Self {
+        self.pl011_uarts.push(config);
         self
     }
 
@@ -1055,6 +1079,7 @@ impl PlatformBuilder {
         let mut plics = BTreeMap::new();
         let mut timers = BTreeMap::new();
         let mut uarts = BTreeMap::new();
+        let mut pl011_uarts = BTreeMap::new();
         let mut rtcs = BTreeMap::new();
         let mut pl031_rtcs = BTreeMap::new();
         let mut sp804_timers = BTreeMap::new();
@@ -1180,6 +1205,29 @@ impl PlatformBuilder {
             uarts.insert(config.id, device);
         }
 
+        for config in self.pl011_uarts {
+            validate_route(self.partition_count, config.route)?;
+            let device = if let Some(interrupt) = config.interrupt {
+                let port = register_interrupt(
+                    &controller,
+                    config.route.source_partition(),
+                    interrupt.line,
+                    interrupt.target,
+                    interrupt.latency,
+                )?;
+                Pl011UartMmioDevice::with_interrupt(config.id, config.base, interrupt.source, port)
+            } else {
+                Pl011UartMmioDevice::new(config.id, config.base)
+            };
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            pl011_uarts.insert(config.base, device);
+        }
+
         for config in self.rtcs {
             validate_route(self.partition_count, config.route)?;
             let rtc = Mc146818Rtc::new(config.time, config.encoding).map_err(PlatformError::Rtc)?;
@@ -1291,6 +1339,7 @@ impl PlatformBuilder {
             plics,
             timers,
             uarts,
+            pl011_uarts,
             rtcs,
             pl031_rtcs,
             sp804_timers,
@@ -1308,6 +1357,7 @@ pub struct Platform {
     plics: BTreeMap<Address, PlicMmioDevice>,
     timers: BTreeMap<TimerId, ProgrammableTimer>,
     uarts: BTreeMap<UartId, UartMmioDevice>,
+    pl011_uarts: BTreeMap<Address, Pl011UartMmioDevice>,
     rtcs: BTreeMap<Address, Mc146818RtcMmioDevice>,
     pl031_rtcs: BTreeMap<Address, Pl031RtcMmioDevice>,
     sp804_timers: BTreeMap<Address, Sp804DualTimerMmioDevice>,
@@ -1357,6 +1407,16 @@ impl Platform {
 
     pub fn uarts(&self) -> impl Iterator<Item = (UartId, &UartMmioDevice)> {
         self.uarts.iter().map(|(id, device)| (*id, device))
+    }
+
+    pub fn pl011_uart(&self, base: Address) -> Option<&Pl011UartMmioDevice> {
+        self.pl011_uarts.get(&base)
+    }
+
+    pub fn pl011_uarts(&self) -> impl Iterator<Item = (Address, &Pl011UartMmioDevice)> {
+        self.pl011_uarts
+            .iter()
+            .map(|(base, device)| (*base, device))
     }
 
     pub fn rtc(&self, base: Address) -> Option<&Mc146818RtcMmioDevice> {

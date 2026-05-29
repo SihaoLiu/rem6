@@ -12,12 +12,13 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, GuestEventId, GuestSourceId,
     HostAction, HostActionRecord, InterruptControllerCheckpointBank,
-    InterruptControllerCheckpointError, InterruptControllerCheckpointPort, Pl031CheckpointBank,
-    Pl031CheckpointError, Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointError,
-    PlicCheckpointPort, RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort,
-    Sp804CheckpointBank, Sp804CheckpointError, Sp804CheckpointPort, SystemActionExecutor,
-    SystemActionOutcome, TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort,
-    UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
+    InterruptControllerCheckpointError, InterruptControllerCheckpointPort, Pl011UartCheckpointBank,
+    Pl011UartCheckpointError, Pl011UartCheckpointPort, Pl031CheckpointBank, Pl031CheckpointError,
+    Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort,
+    RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, Sp804CheckpointBank,
+    Sp804CheckpointError, Sp804CheckpointPort, SystemActionExecutor, SystemActionOutcome,
+    TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, UartCheckpointBank,
+    UartCheckpointError, UartCheckpointPort,
 };
 use rem6_timer::{
     ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, Mc146818Rtc,
@@ -28,7 +29,10 @@ use rem6_timer::{
     RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_UF, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET,
     SP804_LOAD_OFFSET,
 };
-use rem6_uart::{UartId, UartMmioDevice, UartSnapshot, UartTxByte};
+use rem6_uart::{
+    Pl011UartMmioDevice, Pl011UartSnapshot, Pl011UartSnapshotFields, UartId, UartMmioDevice,
+    UartRxByte, UartSnapshot, UartTxByte,
+};
 
 fn checkpoint_component(name: &str) -> CheckpointComponentId {
     CheckpointComponentId::new(name).unwrap()
@@ -174,6 +178,23 @@ fn rtc_snapshot_with_status_c(
             status_c,
         ),
     )
+}
+
+fn pl011_snapshot() -> Pl011UartSnapshot {
+    Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
+        tx_bytes: vec![UartTxByte::new(9, b'P')],
+        rx_injected: vec![UartRxByte::new(10, b'L')],
+        rx_pending: b"11".to_vec(),
+        rx_consumed: vec![UartRxByte::new(11, b'Q')],
+        interrupt_errors: Vec::new(),
+        control: 0x301,
+        integer_baud_divisor: 7,
+        fractional_baud_divisor: 4,
+        line_control: 0x70,
+        interrupt_fifo_level: 0x24,
+        interrupt_mask: 0x50,
+        raw_interrupt: 0x50,
+    })
 }
 
 #[test]
@@ -342,6 +363,50 @@ fn uart_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn pl011_uart_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = checkpoint_component("pl011_bank_a");
+    let invalid_component = checkpoint_component("pl011_bank_b");
+    let expected = pl011_snapshot();
+    let source = Pl011UartMmioDevice::new(UartId::new(0), Address::new(0x1c09_0000));
+    source.restore(&expected);
+    let target_valid = Pl011UartMmioDevice::new(UartId::new(0), Address::new(0x1c09_0000));
+    let target_invalid = Pl011UartMmioDevice::new(UartId::new(1), Address::new(0x1c0a_0000));
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    Pl011UartCheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "pl011", vec![0xee])
+        .unwrap();
+
+    let bank = Pl011UartCheckpointBank::new([
+        Pl011UartCheckpointPort::new(valid_component.clone(), target_valid.clone()),
+        Pl011UartCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        Pl011UartCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+
+    let valid_only_bank = Pl011UartCheckpointBank::new([Pl011UartCheckpointPort::new(
+        valid_component,
+        target_valid.clone(),
+    )])
+    .unwrap();
+    valid_only_bank.restore_all_from(&registry).unwrap();
+    assert_eq!(target_valid.snapshot(), expected);
 }
 
 #[test]

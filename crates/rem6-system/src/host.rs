@@ -13,9 +13,10 @@ use crate::{
     ExecutionModeTarget, FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId,
     GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
-    PciHostCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank, StopRequest, SystemError,
-    TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
+    PciHostCheckpointBank, Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank,
+    RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank,
+    StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -138,6 +139,7 @@ pub struct SystemActionExecutor {
     clint_checkpoints: Option<ClintCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
+    pl011_uart_checkpoints: Option<Pl011UartCheckpointBank>,
     plic_checkpoints: Option<PlicCheckpointBank>,
     pl031_checkpoints: Option<Pl031CheckpointBank>,
     sp804_checkpoints: Option<Sp804CheckpointBank>,
@@ -171,6 +173,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -204,6 +207,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -237,6 +241,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -270,6 +275,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -303,6 +309,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -336,6 +343,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -346,6 +354,16 @@ impl SystemActionExecutor {
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
         }
+    }
+
+    pub fn with_pl011_uart_checkpoint_bank(
+        stats: StatsRegistry,
+        checkpoints: CheckpointRegistry,
+        pl011_uart_checkpoints: Pl011UartCheckpointBank,
+    ) -> Self {
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.pl011_uart_checkpoints = Some(pl011_uart_checkpoints);
+        executor
     }
 
     pub fn with_pci_host_checkpoint_bank(
@@ -369,6 +387,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -403,6 +422,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -437,6 +457,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            pl011_uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
             sp804_checkpoints: None,
@@ -651,6 +672,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_pl011_uart_checkpoint_bank(
+        &mut self,
+        pl011_uart_checkpoints: Pl011UartCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        pl011_uart_checkpoints.register_all(&mut self.checkpoints)?;
+        self.pl011_uart_checkpoints = Some(pl011_uart_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_plic_checkpoint_bank(
         &mut self,
         plic_checkpoints: PlicCheckpointBank,
@@ -762,6 +792,10 @@ impl SystemActionExecutor {
 
     pub const fn uart_checkpoint_bank(&self) -> Option<&UartCheckpointBank> {
         self.uart_checkpoints.as_ref()
+    }
+
+    pub const fn pl011_uart_checkpoint_bank(&self) -> Option<&Pl011UartCheckpointBank> {
+        self.pl011_uart_checkpoints.as_ref()
     }
 
     pub const fn plic_checkpoint_bank(&self) -> Option<&PlicCheckpointBank> {
@@ -879,6 +913,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::UartCheckpoint)?;
         }
+        if let Some(pl011_uart_checkpoints) = &self.pl011_uart_checkpoints {
+            pl011_uart_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::Pl011UartCheckpoint)?;
+        }
         if let Some(plic_checkpoints) = &self.plic_checkpoints {
             plic_checkpoints
                 .validate_restore_from(checkpoints)
@@ -972,6 +1011,11 @@ impl SystemActionExecutor {
             uart_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::UartCheckpoint)?;
+        }
+        if let Some(pl011_uart_checkpoints) = &self.pl011_uart_checkpoints {
+            pl011_uart_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::Pl011UartCheckpoint)?;
         }
         if let Some(plic_checkpoints) = &self.plic_checkpoints {
             plic_checkpoints
@@ -1116,6 +1160,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(uart_checkpoints) = &self.uart_checkpoints {
                     uart_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(pl011_uart_checkpoints) = &self.pl011_uart_checkpoints {
+                    pl011_uart_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }

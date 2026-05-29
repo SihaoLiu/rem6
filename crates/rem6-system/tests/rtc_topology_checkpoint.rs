@@ -3,8 +3,8 @@ use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopolo
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_platform::{
-    Platform, PlatformBuilder, PlatformPl031RtcConfig, PlatformRtcConfig, PlatformSp804TimerConfig,
-    PlatformSp804TimerInterruptConfig, PlatformTopologyRoute,
+    Platform, PlatformBuilder, PlatformPl011UartConfig, PlatformPl031RtcConfig, PlatformRtcConfig,
+    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformTopologyRoute,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -20,6 +20,9 @@ use rem6_timer::{
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
+};
+use rem6_uart::{
+    Pl011UartMmioDevice, Pl011UartSnapshot, Pl011UartSnapshotFields, UartId, UartRxByte, UartTxByte,
 };
 
 fn component(name: &str) -> ComponentId {
@@ -207,6 +210,22 @@ fn platform_with_sp804(topology: &Topology, base: Address) -> Platform {
         .unwrap()
 }
 
+fn platform_with_pl011(topology: &Topology, base: Address) -> Platform {
+    let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
+        .resolve(topology)
+        .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_pl011_uart(PlatformPl011UartConfig {
+            id: UartId::new(40),
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            interrupt: None,
+        })
+        .build()
+        .unwrap()
+}
+
 fn configured_sp804_device(base: Address) -> Sp804DualTimerMmioDevice {
     let mut timers = Sp804DualTimer::new(2, 4).unwrap();
     let timer0_control = Sp804TimerControl::default()
@@ -286,6 +305,23 @@ fn pl031_snapshot(
 
 fn sp804_snapshot(base: Address) -> Sp804DualTimerMmioSnapshot {
     configured_sp804_device(base).snapshot()
+}
+
+fn pl011_snapshot() -> Pl011UartSnapshot {
+    Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
+        tx_bytes: vec![UartTxByte::new(12, b'Z')],
+        rx_injected: vec![UartRxByte::new(13, b'A')],
+        rx_pending: vec![b'A'],
+        rx_consumed: vec![UartRxByte::new(14, b'B')],
+        interrupt_errors: Vec::new(),
+        control: 0x301,
+        integer_baud_divisor: 3,
+        fractional_baud_divisor: 2,
+        line_control: 0x70,
+        interrupt_fifo_level: 0x24,
+        interrupt_mask: 0x50,
+        raw_interrupt: 0x50,
+    })
 }
 
 #[test]
@@ -585,4 +621,104 @@ fn topology_host_controller_checkpoints_attached_sp804() {
         }
     );
     assert_eq!(timer.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_pl011() {
+    let topology = topology_with_rtc();
+    let uart_base = Address::new(0x1c09_0000);
+    let platform = platform_with_pl011(&topology, uart_base);
+    let source = GuestSourceId::new(55);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("pl011.1c090000").unwrap();
+    let captured = pl011_snapshot();
+    let empty = Pl011UartMmioDevice::new(UartId::new(40), uart_base).snapshot();
+    let uart = system
+        .platform()
+        .unwrap()
+        .pl011_uart(uart_base)
+        .unwrap()
+        .clone();
+    uart.restore(&captured);
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .pl011_uart_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        34,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(204),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-pl011".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .checkpoints()
+        .chunk(&component, "pl011")
+        .is_some());
+
+    uart.restore(&empty);
+    assert_ne!(uart.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        48,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(205),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 48,
+            event: GuestEventId::new(205),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(uart.snapshot(), captured);
 }

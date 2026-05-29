@@ -1257,7 +1257,40 @@ pub struct Pl011UartSnapshot {
     raw_interrupt: u16,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pl011UartSnapshotFields {
+    pub tx_bytes: Vec<UartTxByte>,
+    pub rx_injected: Vec<UartRxByte>,
+    pub rx_pending: Vec<u8>,
+    pub rx_consumed: Vec<UartRxByte>,
+    pub interrupt_errors: Vec<UartInterruptError>,
+    pub control: u16,
+    pub integer_baud_divisor: u16,
+    pub fractional_baud_divisor: u16,
+    pub line_control: u16,
+    pub interrupt_fifo_level: u16,
+    pub interrupt_mask: u16,
+    pub raw_interrupt: u16,
+}
+
 impl Pl011UartSnapshot {
+    pub fn from_fields(fields: Pl011UartSnapshotFields) -> Self {
+        Self {
+            tx_bytes: fields.tx_bytes,
+            rx_injected: fields.rx_injected,
+            rx_pending: fields.rx_pending,
+            rx_consumed: fields.rx_consumed,
+            interrupt_errors: fields.interrupt_errors,
+            control: fields.control,
+            integer_baud_divisor: fields.integer_baud_divisor,
+            fractional_baud_divisor: fields.fractional_baud_divisor,
+            line_control: fields.line_control,
+            interrupt_fifo_level: fields.interrupt_fifo_level,
+            interrupt_mask: fields.interrupt_mask,
+            raw_interrupt: fields.raw_interrupt,
+        }
+    }
+
     pub fn tx_bytes(&self) -> &[UartTxByte] {
         &self.tx_bytes
     }

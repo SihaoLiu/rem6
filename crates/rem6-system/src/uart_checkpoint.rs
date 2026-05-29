@@ -8,9 +8,13 @@ use rem6_interrupt::{
     InterruptTargetId,
 };
 use rem6_kernel::{PartitionId, SchedulerError};
-use rem6_uart::{UartInterruptError, UartMmioDevice, UartRxByte, UartSnapshot, UartTxByte};
+use rem6_uart::{
+    Pl011UartMmioDevice, Pl011UartSnapshot, Pl011UartSnapshotFields, UartInterruptError,
+    UartMmioDevice, UartRxByte, UartSnapshot, UartTxByte,
+};
 
 const UART_CHUNK: &str = "uart";
+const PL011_UART_CHUNK: &str = "pl011";
 const U8_BYTES: usize = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
@@ -211,6 +215,173 @@ impl fmt::Display for UartCheckpointError {
 
 impl Error for UartCheckpointError {}
 
+pub type Pl011UartCheckpointError = UartCheckpointError;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pl011UartCheckpointRecord {
+    component: CheckpointComponentId,
+    snapshot: Pl011UartSnapshot,
+}
+
+impl Pl011UartCheckpointRecord {
+    pub fn new(component: CheckpointComponentId, snapshot: Pl011UartSnapshot) -> Self {
+        Self {
+            component,
+            snapshot,
+        }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn snapshot(&self) -> &Pl011UartSnapshot {
+        &self.snapshot
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Pl011UartCheckpointPort {
+    component: CheckpointComponentId,
+    device: Pl011UartMmioDevice,
+}
+
+impl Pl011UartCheckpointPort {
+    pub const fn new(component: CheckpointComponentId, device: Pl011UartMmioDevice) -> Self {
+        Self { component, device }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn device(&self) -> Pl011UartMmioDevice {
+        self.device.clone()
+    }
+
+    pub fn register(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        registry.register(self.component.clone())
+    }
+
+    pub fn capture_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<Pl011UartCheckpointRecord, CheckpointError> {
+        let snapshot = self.device.snapshot();
+        registry.write_chunk(
+            &self.component,
+            PL011_UART_CHUNK,
+            encode_pl011_uart(&snapshot),
+        )?;
+        Ok(Pl011UartCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
+    }
+
+    pub fn restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Pl011UartCheckpointRecord, Pl011UartCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.device.restore(record.snapshot());
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Pl011UartCheckpointRecord, Pl011UartCheckpointError> {
+        let payload = registry
+            .chunk(&self.component, PL011_UART_CHUNK)
+            .ok_or_else(|| UartCheckpointError::MissingChunk {
+                component: self.component.clone(),
+                name: PL011_UART_CHUNK.to_string(),
+            })?;
+        let snapshot = decode_pl011_uart(&self.component, payload)?;
+        Ok(Pl011UartCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Pl011UartCheckpointBank {
+    ports: BTreeMap<CheckpointComponentId, Pl011UartCheckpointPort>,
+}
+
+impl Pl011UartCheckpointBank {
+    pub fn new<I>(ports: I) -> Result<Self, CheckpointError>
+    where
+        I: IntoIterator<Item = Pl011UartCheckpointPort>,
+    {
+        let mut by_component = BTreeMap::new();
+        for port in ports {
+            let component = port.component().clone();
+            if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            by_component.insert(component, port);
+        }
+
+        Ok(Self {
+            ports: by_component,
+        })
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.ports.len()
+    }
+
+    pub fn components(&self) -> Vec<CheckpointComponentId> {
+        self.ports.keys().cloned().collect()
+    }
+
+    pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        for port in self.ports.values() {
+            port.register(registry)?;
+        }
+        Ok(())
+    }
+
+    pub fn capture_all_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<Vec<Pl011UartCheckpointRecord>, CheckpointError> {
+        self.ports
+            .values()
+            .map(|port| port.capture_into(registry))
+            .collect()
+    }
+
+    pub fn restore_all_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Vec<Pl011UartCheckpointRecord>, Pl011UartCheckpointError> {
+        self.validate_restore_from(registry)?;
+        let records = self
+            .ports
+            .values()
+            .map(|port| port.decode_from(registry))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in self.ports.values().zip(&records) {
+            port.device.restore(record.snapshot());
+        }
+        Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), Pl011UartCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
+    }
+}
+
 fn encode_uart(snapshot: &UartSnapshot) -> Vec<u8> {
     let mut payload = Vec::new();
     write_uart_bytes(&mut payload, snapshot.tx_bytes());
@@ -222,6 +393,27 @@ fn encode_uart(snapshot: &UartSnapshot) -> Vec<u8> {
     for error in snapshot.interrupt_errors() {
         encode_uart_interrupt_error(&mut payload, error);
     }
+    payload
+}
+
+fn encode_pl011_uart(snapshot: &Pl011UartSnapshot) -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_uart_bytes(&mut payload, snapshot.tx_bytes());
+    write_uart_bytes(&mut payload, snapshot.rx_injected());
+    write_u64(&mut payload, snapshot.rx_pending().len() as u64);
+    payload.extend_from_slice(snapshot.rx_pending());
+    write_uart_bytes(&mut payload, snapshot.rx_consumed());
+    write_u64(&mut payload, snapshot.interrupt_errors().len() as u64);
+    for error in snapshot.interrupt_errors() {
+        encode_uart_interrupt_error(&mut payload, error);
+    }
+    write_u16(&mut payload, snapshot.control());
+    write_u16(&mut payload, snapshot.integer_baud_divisor());
+    write_u16(&mut payload, snapshot.fractional_baud_divisor());
+    write_u16(&mut payload, snapshot.line_control());
+    write_u16(&mut payload, snapshot.interrupt_fifo_level());
+    write_u16(&mut payload, snapshot.interrupt_mask());
+    write_u16(&mut payload, snapshot.raw_interrupt());
     payload
 }
 
@@ -286,6 +478,47 @@ fn decode_uart(
         rx_consumed,
         interrupt_errors,
     ))
+}
+
+fn decode_pl011_uart(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<Pl011UartSnapshot, Pl011UartCheckpointError> {
+    let mut cursor = PayloadCursor::new(component.clone(), payload);
+    let tx_bytes = read_tx_bytes(&mut cursor)?;
+    let rx_injected = read_rx_bytes(&mut cursor)?;
+    let pending_len = cursor.read_count("PL011 pending RX byte count")?;
+    let rx_pending = cursor
+        .read_bytes("PL011 pending RX bytes", pending_len)?
+        .to_vec();
+    let rx_consumed = read_rx_bytes(&mut cursor)?;
+    let error_count = cursor.read_count("PL011 interrupt error count")?;
+    let mut interrupt_errors = Vec::with_capacity(error_count);
+    for _ in 0..error_count {
+        interrupt_errors.push(decode_uart_interrupt_error(&mut cursor)?);
+    }
+    let control = read_u16(&mut cursor, "PL011 control")?;
+    let integer_baud_divisor = read_u16(&mut cursor, "PL011 integer baud divisor")?;
+    let fractional_baud_divisor = read_u16(&mut cursor, "PL011 fractional baud divisor")?;
+    let line_control = read_u16(&mut cursor, "PL011 line control")?;
+    let interrupt_fifo_level = read_u16(&mut cursor, "PL011 interrupt FIFO level")?;
+    let interrupt_mask = read_u16(&mut cursor, "PL011 interrupt mask")?;
+    let raw_interrupt = read_u16(&mut cursor, "PL011 raw interrupt")?;
+    cursor.finish()?;
+    Ok(Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
+        tx_bytes,
+        rx_injected,
+        rx_pending,
+        rx_consumed,
+        interrupt_errors,
+        control,
+        integer_baud_divisor,
+        fractional_baud_divisor,
+        line_control,
+        interrupt_fifo_level,
+        interrupt_mask,
+        raw_interrupt,
+    }))
 }
 
 fn read_tx_bytes(cursor: &mut PayloadCursor<'_>) -> Result<Vec<UartTxByte>, UartCheckpointError> {
@@ -683,12 +916,23 @@ fn write_u8(payload: &mut Vec<u8>, value: u8) {
     payload.push(value);
 }
 
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    write_u32(payload, value as u32);
+}
+
 fn write_u32(payload: &mut Vec<u8>, value: u32) {
     payload.extend_from_slice(&value.to_le_bytes());
 }
 
 fn write_u64(payload: &mut Vec<u8>, value: u64) {
     payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u16(cursor: &mut PayloadCursor<'_>, name: &str) -> Result<u16, UartCheckpointError> {
+    cursor
+        .read_u32(name)?
+        .try_into()
+        .map_err(|_| cursor.invalid(format!("{name} does not fit u16")))
 }
 
 struct PayloadCursor<'a> {
