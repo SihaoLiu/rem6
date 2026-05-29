@@ -4,6 +4,7 @@ mod dma_ops;
 mod dma_run;
 mod heterogeneous_run;
 mod host_checkpoint;
+mod storage_checkpoint;
 
 pub use dma_run::{
     RiscvTopologyDmaCopy, RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary,
@@ -80,6 +81,7 @@ pub struct RiscvTopologySystem {
     gpus: BTreeMap<GpuDeviceId, GpuTopologyDevice>,
     platform: Option<Platform>,
     memory: Option<RiscvTopologyMemoryBackend>,
+    storage_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::StorageImageCheckpointPort>,
     msi_data_cache: Option<RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<RiscvTopologyMoesiDataCache>,
@@ -685,6 +687,7 @@ impl RiscvTopologySystem {
             gpus: BTreeMap::new(),
             platform: None,
             memory: None,
+            storage_checkpoint_ports: BTreeMap::new(),
             msi_data_cache: None,
             mesi_data_cache: None,
             moesi_data_cache: None,
@@ -770,6 +773,7 @@ impl RiscvTopologySystem {
         self.attach_riscv_checkpoint_to_host()?;
         self.attach_heterogeneous_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
+        self.attach_storage_checkpoint_to_host()?;
         self.attach_platform_checkpoint_to_host()?;
         Ok(self)
     }

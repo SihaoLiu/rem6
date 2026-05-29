@@ -15,8 +15,8 @@ use crate::{
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
     PciHostCheckpointBank, Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank,
     RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank,
-    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, SystemError, TimerCheckpointBank,
-    UartCheckpointBank, VirtioSplitQueueCheckpointBank,
+    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -609,6 +609,19 @@ impl SystemActionExecutor {
         storage_image_checkpoints.register_all(&mut self.checkpoints)?;
         self.storage_image_checkpoints = Some(storage_image_checkpoints);
         Ok(())
+    }
+
+    pub fn attach_storage_image_checkpoint_port(
+        &mut self,
+        port: StorageImageCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(storage_image_checkpoints) = &mut self.storage_image_checkpoints {
+            storage_image_checkpoints.insert_port(port)
+        } else {
+            self.storage_image_checkpoints = Some(StorageImageCheckpointBank::new([port])?);
+            Ok(())
+        }
     }
 
     pub fn attach_accelerator_checkpoint_bank(
