@@ -1,4 +1,4 @@
-use crate::{IdeChannelId, IdeDeviceId, IdeTaskFile};
+use crate::{IdeChannelId, IdeDeviceId, IdeDmaDirection, IdeTaskFile};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IdeBmiSnapshot {
@@ -88,6 +88,11 @@ pub enum IdeDiskTransferSnapshot {
         cursor: usize,
         payload: Vec<u8>,
     },
+    Dma {
+        direction: IdeDmaDirection,
+        start_sector: u64,
+        sectors: u64,
+    },
 }
 
 impl IdeDiskTransferSnapshot {
@@ -99,6 +104,7 @@ impl IdeDiskTransferSnapshot {
             | Self::Output {
                 cursor, payload, ..
             } => (*cursor, payload),
+            Self::Dma { .. } => return Ok(()),
         };
         if cursor > payload.len() || cursor % 2 != 0 || payload.len() % 2 != 0 {
             return Err(IdeSnapshotError::InvalidTransferSnapshot {
@@ -112,12 +118,14 @@ impl IdeDiskTransferSnapshot {
     pub const fn cursor(&self) -> usize {
         match self {
             Self::Input { cursor, .. } | Self::Output { cursor, .. } => *cursor,
+            Self::Dma { .. } => 0,
         }
     }
 
     pub fn payload(&self) -> &[u8] {
         match self {
             Self::Input { payload, .. } | Self::Output { payload, .. } => payload,
+            Self::Dma { .. } => &[],
         }
     }
 }

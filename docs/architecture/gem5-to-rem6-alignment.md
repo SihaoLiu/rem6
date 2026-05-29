@@ -558,25 +558,31 @@ Implementation evidence through 2026-05-29:
   received, and returns typed unsupported-command, register-offset,
   data-direction, and storage errors instead of gem5 panic paths or raw
   `SimObject` state mutation. IDE disk snapshots now preserve task-file,
-  status, control, pending-interrupt, and explicit PIO transfer payload and
-  cursor state, so partial reads and writes restore without relying on hidden
-  chunk-generator or event-local state.
+  status, control, pending-interrupt, explicit PIO transfer payload and cursor
+  state, and active DMA requests, so partial reads, writes, and started DMA
+  transfers restore without relying on hidden chunk-generator or event-local
+  state.
   A typed `IdeController` core now covers gem5 `src/dev/storage/ide_ctrl.*`
   channel device selection, command and control register forwarding, absent
   selected-device reads as zero without panic, shared interrupt visibility
   across primary and secondary channels, BMI command and status registers, BMI
   interrupt write-one-to-clear behavior, PRD table alignment masking, and typed
-  unsupported-DMA errors. It also has typed BAR dispatch policy for gem5's
+  DMA readiness and direction errors. It also has typed BAR dispatch policy for gem5's
   primary command, primary control, secondary command, secondary control, and
   bus-master BAR windows, including `io_shift`, control-offset adjustment,
   command data-port word transfers, BMI primary/secondary window splitting,
-  and bus-master-disabled write ignores. IDE controller snapshots now preserve
-  channel identity, selected device, pending interrupt, BMI command/status/PRD
-  state, and attached disk snapshots with decode-first shape checks before live
-  mutation. This replaces gem5's fragile object-local serialize/unserialize
-  pattern for IDE state with explicit transfer and register records. PCI
-  endpoint identity, external interrupt delivery, timing delay, DMA transfer
-  execution, and checkpoint bank integration remain open.
+  and bus-master-disabled write ignores. IDE DMA execution now decodes PRD
+  tables into checked transfer plans, prevalidates guest-memory reads and
+  writes before mutating disk or guest state, executes READ DMA and WRITE DMA
+  against the shared storage image substrate, and updates BMI active,
+  interrupt, and command bits through typed state transitions. IDE controller
+  snapshots now preserve channel identity, selected device, pending interrupt,
+  BMI command/status/PRD state, and attached disk snapshots with decode-first
+  shape checks before live mutation. This replaces gem5's callback-heavy IDE
+  DMA event chain and fragile object-local serialize/unserialize pattern with
+  explicit transfer plans, guest-memory boundaries, and register records. PCI
+  endpoint identity, external interrupt delivery, timing delay, and checkpoint
+  bank integration remain open.
   `rem6-system` host checkpoint actions can attach those banks, stage their
   chunk capture with the rest of the system, and restore storage images only
   after decode-first validation has accepted every attached bank. RISC-V
@@ -2120,11 +2126,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   IDE controller tests cover selected primary-channel device PIO routing,
   shared primary/secondary interrupt visibility and clearing, missing selected
   device behavior, BMI capability and interrupt status, PRD table alignment,
-  typed unsupported-DMA start rejection, command/control BAR dispatch with
+  typed DMA readiness and direction rejection, command/control BAR dispatch with
   shifted command offsets and control offset adjustment, data-port word reads,
   secondary BMI window selection, bus-master-disabled write ignores, snapshot
   restore of channel selection, BMI PRD state, disk-transfer cursor state, and
-  shape mismatch rejection before mutation.
+  shape mismatch rejection before mutation. IDE DMA tests cover READ DMA from
+  disk to guest memory, WRITE DMA from guest memory to disk, active DMA
+  snapshot restore before execution, and malformed PRD rejection without disk
+  or guest-memory mutation.
   System checkpoint action tests cover storage image bank attachment, staged
   capture into host manifests, and malformed storage restore rejection without
   partial live-image mutation. Topology checkpoint tests cover storage image

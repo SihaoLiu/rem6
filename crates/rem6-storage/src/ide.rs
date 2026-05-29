@@ -1,10 +1,9 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 
 use crate::{
-    IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerSnapshot, IdeDiskSnapshot,
-    IdeDiskTransferSnapshot, IdeSnapshotError, StorageError, StorageImageLayer, StorageSectorId,
+    IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerError, IdeControllerGuestMemory,
+    IdeControllerSnapshot, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, IdeDmaDirection,
+    IdeDmaPlan, IdeDmaRequest, StorageError, StorageImageLayer, StorageSectorId,
     STORAGE_SECTOR_BYTES,
 };
 
@@ -37,6 +36,8 @@ pub const IDE_COMMAND_READ: u8 = 0x20;
 pub const IDE_COMMAND_WRITE: u8 = 0x30;
 pub const IDE_COMMAND_READ_MULTI: u8 = 0xc4;
 pub const IDE_COMMAND_WRITE_MULTI: u8 = 0xc5;
+pub const IDE_COMMAND_READ_DMA: u8 = 0xc8;
+pub const IDE_COMMAND_WRITE_DMA: u8 = 0xca;
 pub const IDE_COMMAND_IDENTIFY: u8 = 0xec;
 pub const IDE_COMMAND_ATAPI_IDENTIFY_DEVICE: u8 = 0xa1;
 pub const IDE_COMMAND_READ_NATIVE_MAX: u8 = 0xf8;
@@ -495,6 +496,64 @@ impl IdeController {
         }
     }
 
+    pub fn execute_dma(
+        &mut self,
+        channel: IdeChannelId,
+        guest: &mut impl IdeControllerGuestMemory,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel(channel);
+        let request = command_channel
+            .selected()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: command_channel.selected_device,
+            })?
+            .dma_request()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        if command_channel.bmi.command & IDE_BMI_COMMAND_START == 0 {
+            return Err(IdeControllerError::DmaNotActive { channel });
+        }
+        let expected_bytes = request
+            .bytes()
+            .ok_or(IdeControllerError::DmaByteCountOverflow { channel })?;
+        let plan = IdeDmaPlan::decode(
+            channel,
+            guest,
+            command_channel.bmi.prd_table,
+            expected_bytes,
+        )?;
+        plan.validate_access(request.direction(), guest)?;
+
+        let payload = match request.direction() {
+            IdeDmaDirection::ToGuest => self
+                .channel(channel)
+                .selected()
+                .unwrap()
+                .read_dma_payload(request)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?,
+            IdeDmaDirection::FromGuest => plan.read_payload(guest)?,
+        };
+
+        match request.direction() {
+            IdeDmaDirection::ToGuest => plan.write_payload(guest, &payload)?,
+            IdeDmaDirection::FromGuest => self
+                .channel(channel)
+                .selected()
+                .unwrap()
+                .commit_dma_payload(request, &payload)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?,
+        }
+
+        let command_channel = self.channel_mut(channel);
+        command_channel
+            .selected_mut()
+            .unwrap()
+            .complete_dma()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.complete_dma();
+        Ok(())
+    }
+
     fn validate_slot(
         slot: usize,
         expected: IdeDeviceId,
@@ -602,19 +661,35 @@ impl IdeChannel {
         let old_start = self.bmi.command & IDE_BMI_COMMAND_START != 0;
         let new_start = value & IDE_BMI_COMMAND_START != 0;
         if !old_start && new_start {
-            if self.selected().is_none() {
-                return Err(IdeControllerError::NoSelectedDevice {
+            let request = self
+                .selected()
+                .ok_or(IdeControllerError::NoSelectedDevice {
                     channel: self.id,
                     device: self.selected_device,
-                });
+                })?
+                .dma_request()
+                .map_err(|source| IdeControllerError::Disk {
+                    channel: self.id,
+                    source,
+                })?;
+            let host_to_device = value & IDE_BMI_COMMAND_RW == 0;
+            if host_to_device != (request.direction() == IdeDmaDirection::FromGuest) {
+                return Err(IdeControllerError::DmaDirectionMismatch { channel: self.id });
             }
-            return Err(IdeControllerError::DmaUnsupported { channel: self.id });
+            self.bmi.status |= IDE_BMI_STATUS_ACTIVE;
         }
         if old_start && !new_start {
             self.bmi.status &= !IDE_BMI_STATUS_ACTIVE;
         }
         self.bmi.command = value & (IDE_BMI_COMMAND_START | IDE_BMI_COMMAND_RW);
         Ok(())
+    }
+
+    fn complete_dma(&mut self) {
+        self.bmi.command &= !IDE_BMI_COMMAND_START;
+        self.bmi.status &= !IDE_BMI_STATUS_ACTIVE;
+        self.bmi.status |= IDE_BMI_STATUS_INTERRUPT;
+        self.pending_interrupt = true;
     }
 
     fn snapshot(&self) -> IdeChannelSnapshot {
@@ -1076,6 +1151,18 @@ impl IdeDisk {
                 self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
                 Ok(())
             }
+            IDE_COMMAND_READ_DMA | IDE_COMMAND_WRITE_DMA => {
+                let (start, sectors) = self.lba_transfer(command)?;
+                self.start_busy();
+                let direction = if command == IDE_COMMAND_READ_DMA {
+                    IdeDmaDirection::ToGuest
+                } else {
+                    IdeDmaDirection::FromGuest
+                };
+                self.transfer = Some(IdeTransfer::new_dma(direction, start, sectors)?);
+                self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
+                Ok(())
+            }
             _ => Err(IdeDiskError::UnsupportedCommand { command }),
         }
     }
@@ -1107,6 +1194,73 @@ impl IdeDisk {
         self.transfer = None;
         self.status = IDE_STATUS_DRDY | IDE_STATUS_SEEK;
         self.pending_interrupt = false;
+    }
+
+    fn dma_request(&self) -> Result<IdeDmaRequest, IdeDiskError> {
+        match self.transfer.as_ref() {
+            Some(transfer) => transfer.dma_request(),
+            None => Err(IdeDiskError::DmaNotReady {
+                command: self.registers.command,
+            }),
+        }
+    }
+
+    fn read_dma_payload(&self, request: IdeDmaRequest) -> Result<Vec<u8>, IdeDiskError> {
+        if request.direction() != IdeDmaDirection::ToGuest {
+            return Err(IdeDiskError::DmaDirectionMismatch {
+                command: self.registers.command,
+            });
+        }
+        let mut payload = Vec::with_capacity(request.bytes().unwrap_or(0) as usize);
+        for offset in 0..request.sectors() {
+            payload.extend_from_slice(
+                &self
+                    .image
+                    .read_sector(StorageSectorId::new(request.start_sector() + offset))?,
+            );
+        }
+        Ok(payload)
+    }
+
+    fn commit_dma_payload(
+        &self,
+        request: IdeDmaRequest,
+        payload: &[u8],
+    ) -> Result<(), IdeDiskError> {
+        if request.direction() != IdeDmaDirection::FromGuest {
+            return Err(IdeDiskError::DmaDirectionMismatch {
+                command: self.registers.command,
+            });
+        }
+        let expected = request.bytes().ok_or(IdeDiskError::TransferTooLarge {
+            sectors: request.sectors(),
+        })?;
+        if payload.len() as u64 != expected {
+            return Err(IdeDiskError::DmaByteCountMismatch {
+                expected_bytes: expected,
+                actual_bytes: payload.len() as u64,
+            });
+        }
+        for (offset, chunk) in payload
+            .chunks_exact(STORAGE_SECTOR_BYTES as usize)
+            .enumerate()
+        {
+            let mut sector = [0_u8; STORAGE_SECTOR_BYTES as usize];
+            sector.copy_from_slice(chunk);
+            self.image.write_sector(
+                StorageSectorId::new(request.start_sector() + offset as u64),
+                sector,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn complete_dma(&mut self) -> Result<(), IdeDiskError> {
+        self.dma_request()?;
+        self.transfer = None;
+        self.status = IDE_STATUS_DRDY | IDE_STATUS_SEEK;
+        self.pending_interrupt = !self.interrupts_disabled();
+        Ok(())
     }
 
     fn commit_write_transfer(&self, transfer: IdeTransfer) -> Result<(), IdeDiskError> {
@@ -1282,6 +1436,21 @@ impl IdeTransfer {
         })
     }
 
+    fn new_dma(
+        direction: IdeDmaDirection,
+        start_sector: u64,
+        sectors: u64,
+    ) -> Result<Self, IdeDiskError> {
+        let cursor =
+            usize::try_from(sectors).map_err(|_| IdeDiskError::TransferTooLarge { sectors })?;
+        Ok(Self {
+            direction: IdeTransferDirection::Dma(direction),
+            start_sector,
+            payload: Vec::new(),
+            cursor,
+        })
+    }
+
     fn read_word(&mut self) -> Result<u16, IdeDiskError> {
         if self.cursor + 2 > self.payload.len() {
             return Err(IdeDiskError::DataReadNotReady);
@@ -1326,6 +1495,11 @@ impl IdeTransfer {
                 cursor: self.cursor,
                 payload: self.payload.clone(),
             },
+            IdeTransferDirection::Dma(direction) => IdeDiskTransferSnapshot::Dma {
+                direction,
+                start_sector: self.start_sector,
+                sectors: self.cursor as u64,
+            },
         }
     }
 
@@ -1352,6 +1526,17 @@ impl IdeTransfer {
                 *cursor,
                 payload.clone(),
             ),
+            IdeDiskTransferSnapshot::Dma {
+                direction,
+                start_sector,
+                sectors,
+            } => (
+                IdeTransferDirection::Dma(*direction),
+                *start_sector,
+                usize::try_from(*sectors)
+                    .map_err(|_| IdeDiskError::TransferTooLarge { sectors: *sectors })?,
+                Vec::new(),
+            ),
         };
         Ok(Self {
             direction,
@@ -1360,12 +1545,24 @@ impl IdeTransfer {
             cursor,
         })
     }
+
+    fn dma_request(&self) -> Result<IdeDmaRequest, IdeDiskError> {
+        match self.direction {
+            IdeTransferDirection::Dma(direction) => Ok(IdeDmaRequest::new(
+                direction,
+                self.start_sector,
+                self.cursor as u64,
+            )),
+            _ => Err(IdeDiskError::DmaNotReady { command: 0 }),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum IdeTransferDirection {
     Input,
     Output,
+    Dma(IdeDmaDirection),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1402,246 +1599,6 @@ impl IdeGeometry {
             heads: heads as u8,
             sectors: sectors as u8,
         })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum IdeControllerError {
-    InvalidDispatch {
-        io_shift: u8,
-        control_offset: u64,
-    },
-    InvalidDeviceSlot {
-        slot: usize,
-        expected: IdeDeviceId,
-        actual: IdeDeviceId,
-    },
-    InvalidBarOffset {
-        bar: IdeControllerBar,
-        offset: u64,
-        width: u8,
-    },
-    BarOffsetOverflow {
-        bar: IdeControllerBar,
-        offset: u64,
-        addend: u64,
-    },
-    UnsupportedBarWidth {
-        bar: IdeControllerBar,
-        offset: u64,
-        width: u8,
-    },
-    SnapshotChannelMismatch {
-        channel: IdeChannelId,
-    },
-    SnapshotDeviceMismatch {
-        channel: IdeChannelId,
-        device: IdeDeviceId,
-    },
-    NoSelectedDevice {
-        channel: IdeChannelId,
-        device: IdeDeviceId,
-    },
-    InvalidBmiOffset {
-        channel: IdeChannelId,
-        offset: u8,
-        width: u8,
-    },
-    DmaUnsupported {
-        channel: IdeChannelId,
-    },
-    Disk {
-        channel: IdeChannelId,
-        source: IdeDiskError,
-    },
-}
-
-impl Display for IdeControllerError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDispatch {
-                io_shift,
-                control_offset,
-            } => write!(
-                formatter,
-                "invalid IDE controller dispatch io_shift {io_shift} control offset {control_offset:#x}"
-            ),
-            Self::InvalidDeviceSlot {
-                slot,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "IDE controller disk slot {slot} expected {expected:?}, got {actual:?}"
-            ),
-            Self::InvalidBarOffset { bar, offset, width } => write!(
-                formatter,
-                "invalid IDE controller {bar:?} BAR offset {offset:#x} for {width}-byte access"
-            ),
-            Self::BarOffsetOverflow {
-                bar,
-                offset,
-                addend,
-            } => write!(
-                formatter,
-                "IDE controller {bar:?} BAR offset {offset:#x} overflows with addend {addend:#x}"
-            ),
-            Self::UnsupportedBarWidth { bar, offset, width } => write!(
-                formatter,
-                "IDE controller {bar:?} BAR offset {offset:#x} does not support {width}-byte access"
-            ),
-            Self::SnapshotChannelMismatch { channel } => write!(
-                formatter,
-                "IDE controller snapshot does not match {channel:?} channel"
-            ),
-            Self::SnapshotDeviceMismatch { channel, device } => write!(
-                formatter,
-                "IDE controller snapshot does not match {channel:?} {device:?}"
-            ),
-            Self::NoSelectedDevice { channel, device } => write!(
-                formatter,
-                "IDE controller {channel:?} channel has no selected {device:?} disk"
-            ),
-            Self::InvalidBmiOffset {
-                channel,
-                offset,
-                width,
-            } => write!(
-                formatter,
-                "invalid IDE controller {channel:?} BMI offset {offset:#x} for {width}-byte access"
-            ),
-            Self::DmaUnsupported { channel } => {
-                write!(
-                    formatter,
-                    "IDE controller {channel:?} channel DMA is not implemented"
-                )
-            }
-            Self::Disk { channel, source } => {
-                write!(
-                    formatter,
-                    "IDE controller {channel:?} disk access failed: {source}"
-                )
-            }
-        }
-    }
-}
-
-impl Error for IdeControllerError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Disk { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum IdeDiskError {
-    InvalidCapacity {
-        sectors: u64,
-    },
-    SnapshotDeviceMismatch {
-        expected: IdeDeviceId,
-        actual: IdeDeviceId,
-    },
-    InvalidTransferSnapshot {
-        cursor: usize,
-        payload_bytes: usize,
-    },
-    InvalidCommandOffset {
-        offset: u8,
-    },
-    InvalidControlOffset {
-        offset: u8,
-    },
-    ChsAccessUnsupported {
-        command: u8,
-        drive: u8,
-    },
-    UnsupportedCommand {
-        command: u8,
-    },
-    DataReadNotReady,
-    DataWriteNotReady,
-    TransferTooLarge {
-        sectors: u64,
-    },
-    Storage(StorageError),
-}
-
-impl From<StorageError> for IdeDiskError {
-    fn from(error: StorageError) -> Self {
-        Self::Storage(error)
-    }
-}
-
-impl From<IdeSnapshotError> for IdeDiskError {
-    fn from(error: IdeSnapshotError) -> Self {
-        match error {
-            IdeSnapshotError::InvalidTransferSnapshot {
-                cursor,
-                payload_bytes,
-            } => Self::InvalidTransferSnapshot {
-                cursor,
-                payload_bytes,
-            },
-        }
-    }
-}
-
-impl Display for IdeDiskError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidCapacity { sectors } => {
-                write!(
-                    formatter,
-                    "IDE disk capacity {sectors} sectors is not supported"
-                )
-            }
-            Self::SnapshotDeviceMismatch { expected, actual } => write!(
-                formatter,
-                "IDE disk snapshot expected {expected:?} but found {actual:?}"
-            ),
-            Self::InvalidTransferSnapshot {
-                cursor,
-                payload_bytes,
-            } => write!(
-                formatter,
-                "IDE disk transfer snapshot cursor {cursor} is invalid for {payload_bytes} payload bytes"
-            ),
-            Self::InvalidCommandOffset { offset } => {
-                write!(formatter, "invalid IDE command register offset {offset:#x}")
-            }
-            Self::InvalidControlOffset { offset } => {
-                write!(formatter, "invalid IDE control register offset {offset:#x}")
-            }
-            Self::ChsAccessUnsupported { command, drive } => write!(
-                formatter,
-                "IDE command {command:#x} requested CHS access with drive register {drive:#x}"
-            ),
-            Self::UnsupportedCommand { command } => {
-                write!(formatter, "unsupported IDE command {command:#x}")
-            }
-            Self::DataReadNotReady => {
-                write!(formatter, "IDE data register is not ready for read")
-            }
-            Self::DataWriteNotReady => {
-                write!(formatter, "IDE data register is not ready for write")
-            }
-            Self::TransferTooLarge { sectors } => {
-                write!(formatter, "IDE transfer of {sectors} sectors is too large")
-            }
-            Self::Storage(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl Error for IdeDiskError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Storage(error) => Some(error),
-            _ => None,
-        }
     }
 }
 
