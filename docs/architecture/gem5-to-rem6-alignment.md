@@ -463,6 +463,14 @@ Implementation evidence through 2026-05-29:
   to stay out of the root, and enforce the hard per-source-file size budget, so
   DDR, HBM, LPDDR, NVM, QoS, and target-backed storage growth do not collapse
   into a gem5-style memory-controller monolith.
+- `rem6-coherence` now keeps harness error reporting, submit/result response
+  records, and partitioned route/cache/memory configuration in focused modules,
+  leaving the crate root centered on serial and partitioned MSI harness
+  orchestration. Coherence source-policy tests keep the root under the facade
+  budget, require those API surfaces to stay out of the root, and enforce the
+  hard per-source-file size budget, so MSI, MESI, MOESI, CHI, topology, QoS,
+  and DRAM-backed coherence growth cannot recreate a gem5 Ruby-style harness
+  monolith.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1844,13 +1852,16 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   focused module while enforcing the hard module-size budget across memory
   sources. DRAM source-policy tests keep public error state and target-backed
   memory-controller state in focused modules while enforcing the hard
-  module-size budget across DRAM sources. System source-policy tests keep
-  workload replay data-cache backend state in a focused module while enforcing
-  the hard module-size budget across system sources. Type-1 bridge tests cover
-  typed bridge header fields, Expansion ROM reads and writes, Expansion ROM
-  size probing, interrupt line/pin bytes, bridge-control writes, common command writes with
-  reserved-bit masking, common cache-line-size, latency-timer, and BIST byte
-  writes, common status writes that do not create guest-owned bits, bridge
+  module-size budget across DRAM sources. Coherence source-policy tests keep
+  harness errors, CPU response records, and partitioned configuration in focused
+  modules while enforcing the hard module-size budget across coherence sources.
+  System source-policy tests keep workload replay data-cache backend state in a
+  focused module while enforcing the hard module-size budget across system
+  sources. Type-1 bridge tests cover typed bridge header fields, Expansion ROM
+  reads and writes, Expansion ROM size probing, interrupt line/pin bytes,
+  bridge-control writes, common command writes with reserved-bit masking,
+  common cache-line-size, latency-timer, and BIST byte writes, common status
+  writes that do not create guest-owned bits, bridge
   BAR0/BAR1 install and command-bit-gated host mapping, snapshot restore of
   bridge config and BAR state, stable bridge BAR payload encoding for
   checkpoint audit, writable bus-number and memory-window registers,
