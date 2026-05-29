@@ -1,12 +1,8 @@
 use std::collections::VecDeque;
-use std::error::Error;
-use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{InterruptError, InterruptEventKind, InterruptLinePort, InterruptSourceId};
-use rem6_kernel::{
-    ParallelSchedulerContext, PartitionEventId, SchedulerContext, SchedulerError, Tick,
-};
+use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, SchedulerContext, Tick};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{
     MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse,
@@ -17,6 +13,14 @@ pub use rem6_amba::{
     AMBA_CELL_ID3_OFFSET, AMBA_PERIPHERAL_ID0_OFFSET, AMBA_PERIPHERAL_ID1_OFFSET,
     AMBA_PERIPHERAL_ID2_OFFSET, AMBA_PERIPHERAL_ID3_OFFSET,
 };
+
+mod error;
+mod event;
+mod snapshot;
+
+pub use error::{Pl011Error, UartError};
+pub use event::{UartId, UartInterruptError, UartRxByte, UartTxByte};
+pub use snapshot::{Pl011UartSnapshot, Pl011UartSnapshotFields, UartSnapshot};
 
 pub const UART_MMIO_REGISTER_BYTES: u64 = 1;
 pub const UART_MMIO_DATA_OFFSET: u64 = 0x00;
@@ -59,59 +63,6 @@ pub const PL011_INT_FRAME: u16 = 1 << 7;
 pub const PL011_INT_PARITY: u16 = 1 << 8;
 pub const PL011_INT_BREAK: u16 = 1 << 9;
 pub const PL011_INT_OVERRUN: u16 = 1 << 10;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct UartId(u64);
-
-impl UartId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct UartTxByte {
-    tick: Tick,
-    byte: u8,
-}
-
-impl UartTxByte {
-    pub const fn new(tick: Tick, byte: u8) -> Self {
-        Self { tick, byte }
-    }
-
-    pub const fn tick(self) -> Tick {
-        self.tick
-    }
-
-    pub const fn byte(self) -> u8 {
-        self.byte
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct UartRxByte {
-    tick: Tick,
-    byte: u8,
-}
-
-impl UartRxByte {
-    pub const fn new(tick: Tick, byte: u8) -> Self {
-        Self { tick, byte }
-    }
-
-    pub const fn tick(self) -> Tick {
-        self.tick
-    }
-
-    pub const fn byte(self) -> u8 {
-        self.byte
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct UartMmioDevice {
@@ -1124,244 +1075,10 @@ impl MmioDevice for UartMmioDevice {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UartSnapshot {
-    tx_bytes: Vec<UartTxByte>,
-    rx_injected: Vec<UartRxByte>,
-    rx_pending: Vec<u8>,
-    rx_consumed: Vec<UartRxByte>,
-    interrupt_errors: Vec<UartInterruptError>,
-}
-
-impl UartSnapshot {
-    pub fn new(
-        tx_bytes: Vec<UartTxByte>,
-        rx_injected: Vec<UartRxByte>,
-        rx_pending: Vec<u8>,
-        rx_consumed: Vec<UartRxByte>,
-        interrupt_errors: Vec<UartInterruptError>,
-    ) -> Self {
-        Self {
-            tx_bytes,
-            rx_injected,
-            rx_pending,
-            rx_consumed,
-            interrupt_errors,
-        }
-    }
-
-    pub fn tx_bytes(&self) -> &[UartTxByte] {
-        &self.tx_bytes
-    }
-
-    pub fn rx_injected(&self) -> &[UartRxByte] {
-        &self.rx_injected
-    }
-
-    pub fn rx_pending(&self) -> &[u8] {
-        &self.rx_pending
-    }
-
-    pub fn rx_consumed(&self) -> &[UartRxByte] {
-        &self.rx_consumed
-    }
-
-    pub fn interrupt_errors(&self) -> &[UartInterruptError] {
-        &self.interrupt_errors
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum UartError {
-    EmptyReceiveQueue,
-    Scheduler(SchedulerError),
-}
-
-impl fmt::Display for UartError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyReceiveQueue => write!(formatter, "UART receive queue is empty"),
-            Self::Scheduler(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl Error for UartError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Scheduler(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct UartInterrupt {
     source: InterruptSourceId,
     port: InterruptLinePort,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UartInterruptError {
-    tick: Tick,
-    source: InterruptSourceId,
-    kind: InterruptEventKind,
-    error: InterruptError,
-}
-
-impl UartInterruptError {
-    pub const fn new(
-        tick: Tick,
-        source: InterruptSourceId,
-        kind: InterruptEventKind,
-        error: InterruptError,
-    ) -> Self {
-        Self {
-            tick,
-            source,
-            kind,
-            error,
-        }
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub const fn source(&self) -> InterruptSourceId {
-        self.source
-    }
-
-    pub const fn kind(&self) -> InterruptEventKind {
-        self.kind
-    }
-
-    pub const fn error(&self) -> &InterruptError {
-        &self.error
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Pl011UartSnapshot {
-    tx_bytes: Vec<UartTxByte>,
-    rx_injected: Vec<UartRxByte>,
-    rx_pending: Vec<u8>,
-    rx_consumed: Vec<UartRxByte>,
-    interrupt_errors: Vec<UartInterruptError>,
-    control: u16,
-    integer_baud_divisor: u16,
-    fractional_baud_divisor: u16,
-    line_control: u16,
-    interrupt_fifo_level: u16,
-    interrupt_mask: u16,
-    raw_interrupt: u16,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Pl011UartSnapshotFields {
-    pub tx_bytes: Vec<UartTxByte>,
-    pub rx_injected: Vec<UartRxByte>,
-    pub rx_pending: Vec<u8>,
-    pub rx_consumed: Vec<UartRxByte>,
-    pub interrupt_errors: Vec<UartInterruptError>,
-    pub control: u16,
-    pub integer_baud_divisor: u16,
-    pub fractional_baud_divisor: u16,
-    pub line_control: u16,
-    pub interrupt_fifo_level: u16,
-    pub interrupt_mask: u16,
-    pub raw_interrupt: u16,
-}
-
-impl Pl011UartSnapshot {
-    pub fn from_fields(fields: Pl011UartSnapshotFields) -> Self {
-        Self {
-            tx_bytes: fields.tx_bytes,
-            rx_injected: fields.rx_injected,
-            rx_pending: fields.rx_pending,
-            rx_consumed: fields.rx_consumed,
-            interrupt_errors: fields.interrupt_errors,
-            control: fields.control,
-            integer_baud_divisor: fields.integer_baud_divisor,
-            fractional_baud_divisor: fields.fractional_baud_divisor,
-            line_control: fields.line_control,
-            interrupt_fifo_level: fields.interrupt_fifo_level,
-            interrupt_mask: fields.interrupt_mask,
-            raw_interrupt: fields.raw_interrupt,
-        }
-    }
-
-    pub fn tx_bytes(&self) -> &[UartTxByte] {
-        &self.tx_bytes
-    }
-
-    pub fn rx_injected(&self) -> &[UartRxByte] {
-        &self.rx_injected
-    }
-
-    pub fn rx_pending(&self) -> &[u8] {
-        &self.rx_pending
-    }
-
-    pub fn rx_consumed(&self) -> &[UartRxByte] {
-        &self.rx_consumed
-    }
-
-    pub fn interrupt_errors(&self) -> &[UartInterruptError] {
-        &self.interrupt_errors
-    }
-
-    pub const fn control(&self) -> u16 {
-        self.control
-    }
-
-    pub const fn integer_baud_divisor(&self) -> u16 {
-        self.integer_baud_divisor
-    }
-
-    pub const fn fractional_baud_divisor(&self) -> u16 {
-        self.fractional_baud_divisor
-    }
-
-    pub const fn line_control(&self) -> u16 {
-        self.line_control
-    }
-
-    pub const fn interrupt_fifo_level(&self) -> u16 {
-        self.interrupt_fifo_level
-    }
-
-    pub const fn interrupt_mask(&self) -> u16 {
-        self.interrupt_mask
-    }
-
-    pub const fn raw_interrupt(&self) -> u16 {
-        self.raw_interrupt
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Pl011Error {
-    DmaUnsupported,
-    Scheduler(SchedulerError),
-}
-
-impl fmt::Display for Pl011Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DmaUnsupported => write!(formatter, "PL011 DMA is not supported"),
-            Self::Scheduler(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl Error for Pl011Error {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Scheduler(error) => Some(error),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1434,7 +1151,7 @@ impl Pl011State {
     }
 
     fn snapshot(&self) -> Pl011UartSnapshot {
-        Pl011UartSnapshot {
+        Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
             tx_bytes: self.tx_bytes.clone(),
             rx_injected: self.rx_injected.clone(),
             rx_pending: self.rx_pending.iter().copied().collect(),
@@ -1447,7 +1164,7 @@ impl Pl011State {
             interrupt_fifo_level: self.interrupt_fifo_level,
             interrupt_mask: self.interrupt_mask,
             raw_interrupt: self.raw_interrupt,
-        }
+        })
     }
 
     fn from_snapshot(snapshot: &Pl011UartSnapshot) -> Self {

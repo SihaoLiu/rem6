@@ -523,6 +523,16 @@ Implementation evidence through 2026-05-29:
   enforce the hard per-source-file size budget, so block, queue, PCI transport,
   shared-memory, and future network/console/rng VirtIO work does not recreate
   gem5-style mixed device, queue, and transport monoliths.
+- `rem6-uart` now keeps UART ids, TX/RX byte records, interrupt-delivery error
+  records, UART/PL011 snapshot records, and UART/PL011 error reporting in
+  focused `event`, `snapshot`, and `error` modules while leaving the crate root
+  centered on 8250-style UART and PL011 MMIO state machines, interrupt route
+  prevalidation, and PrimeCell register handling. UART source-policy tests keep
+  the crate root under the facade budget, require event, snapshot, and error
+  contracts to stay out of the root, and enforce the hard per-source-file size
+  budget, so broader serial, terminal, and PL011 platform work does not
+  recreate gem5-style mixed device, stream, and object-local serialization
+  monoliths.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1922,6 +1932,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   accelerator sources.
   VirtIO source-policy tests keep queue contracts and error reporting in focused
   modules while enforcing the facade and hard module-size budgets across VirtIO
+  sources.
+  UART source-policy tests keep event, snapshot, and error contracts in focused
+  modules while enforcing the facade and hard module-size budgets across UART
   sources.
   System source-policy tests keep workload replay data-cache backend state in a
   focused module while enforcing the hard module-size budget across system
