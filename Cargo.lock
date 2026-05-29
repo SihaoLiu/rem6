@@ -227,6 +227,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-storage"
+version = "0.1.0"
+
+[[package]]
 name = "rem6-system"
 version = "0.1.0"
 dependencies = [
