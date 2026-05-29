@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 mod checkpoint;
 mod ide;
+mod ide_snapshot;
 mod simple_disk;
 
 pub use checkpoint::{
@@ -17,7 +18,7 @@ pub use checkpoint::{
 };
 pub use ide::{
     IdeBarWriteOutcome, IdeChannelId, IdeController, IdeControllerBar, IdeControllerDispatch,
-    IdeControllerError, IdeDeviceId, IdeDisk, IdeDiskError, IDE_ALTSTAT_OFFSET,
+    IdeControllerError, IdeDeviceId, IdeDisk, IdeDiskError, IdeTaskFile, IDE_ALTSTAT_OFFSET,
     IDE_BMI_CHANNEL_BYTES, IDE_BMI_COMMAND_OFFSET, IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START,
     IDE_BMI_PRD_TABLE_OFFSET, IDE_BMI_STATUS_ACTIVE, IDE_BMI_STATUS_DMA_CAP0,
     IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT,
@@ -28,6 +29,11 @@ pub use ide::{
     IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_FEATURES_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET,
     IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_BSY, IDE_STATUS_DF, IDE_STATUS_DRDY,
     IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
+};
+pub(crate) use ide_snapshot::IdeSnapshotError;
+pub use ide_snapshot::{
+    IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerSnapshot, IdeDiskSnapshot,
+    IdeDiskTransferSnapshot,
 };
 pub use simple_disk::{SimpleDisk, SimpleDiskError, SimpleDiskGuestMemory, SimpleDiskTransfer};
 

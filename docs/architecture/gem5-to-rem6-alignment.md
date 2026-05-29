@@ -557,7 +557,10 @@ Implementation evidence through 2026-05-29:
   before setting busy state, stages PIO writes until the full payload has been
   received, and returns typed unsupported-command, register-offset,
   data-direction, and storage errors instead of gem5 panic paths or raw
-  `SimObject` state mutation.
+  `SimObject` state mutation. IDE disk snapshots now preserve task-file,
+  status, control, pending-interrupt, and explicit PIO transfer payload and
+  cursor state, so partial reads and writes restore without relying on hidden
+  chunk-generator or event-local state.
   A typed `IdeController` core now covers gem5 `src/dev/storage/ide_ctrl.*`
   channel device selection, command and control register forwarding, absent
   selected-device reads as zero without panic, shared interrupt visibility
@@ -567,9 +570,13 @@ Implementation evidence through 2026-05-29:
   primary command, primary control, secondary command, secondary control, and
   bus-master BAR windows, including `io_shift`, control-offset adjustment,
   command data-port word transfers, BMI primary/secondary window splitting,
-  and bus-master-disabled write ignores. PCI endpoint identity, external
-  interrupt delivery, timing delay, DMA transfer execution, and checkpoint
-  chunks remain open.
+  and bus-master-disabled write ignores. IDE controller snapshots now preserve
+  channel identity, selected device, pending interrupt, BMI command/status/PRD
+  state, and attached disk snapshots with decode-first shape checks before live
+  mutation. This replaces gem5's fragile object-local serialize/unserialize
+  pattern for IDE state with explicit transfer and register records. PCI
+  endpoint identity, external interrupt delivery, timing delay, DMA transfer
+  execution, and checkpoint bank integration remain open.
   `rem6-system` host checkpoint actions can attach those banks, stage their
   chunk capture with the rest of the system, and restore storage images only
   after decode-first validation has accepted every attached bank. RISC-V
@@ -2107,13 +2114,17 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   ATA-version, and DMA-mode fields, LBA PIO read and write sector transfers,
   CHS rejection before busy state is exposed, range rejection before mutation,
   ATAPI identify abort status, data-direction rejection, software reset, and
-  read-native-max task-file updates.
+  read-native-max task-file updates. IDE disk snapshot tests cover restore of
+  task-file state and a partial PIO write transfer, plus mismatch rejection
+  before mutation.
   IDE controller tests cover selected primary-channel device PIO routing,
   shared primary/secondary interrupt visibility and clearing, missing selected
   device behavior, BMI capability and interrupt status, PRD table alignment,
   typed unsupported-DMA start rejection, command/control BAR dispatch with
   shifted command offsets and control offset adjustment, data-port word reads,
-  secondary BMI window selection, and bus-master-disabled write ignores.
+  secondary BMI window selection, bus-master-disabled write ignores, snapshot
+  restore of channel selection, BMI PRD state, disk-transfer cursor state, and
+  shape mismatch rejection before mutation.
   System checkpoint action tests cover storage image bank attachment, staged
   capture into host manifests, and malformed storage restore rejection without
   partial live-image mutation. Topology checkpoint tests cover storage image

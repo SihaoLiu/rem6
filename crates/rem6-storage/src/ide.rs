@@ -2,7 +2,11 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 
-use crate::{StorageError, StorageImageLayer, StorageSectorId, STORAGE_SECTOR_BYTES};
+use crate::{
+    IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerSnapshot, IdeDiskSnapshot,
+    IdeDiskTransferSnapshot, IdeSnapshotError, StorageError, StorageImageLayer, StorageSectorId,
+    STORAGE_SECTOR_BYTES,
+};
 
 pub const IDE_DATA_OFFSET: u8 = 0;
 pub const IDE_ERROR_OFFSET: u8 = 1;
@@ -76,7 +80,7 @@ pub enum IdeChannelId {
 }
 
 impl IdeChannelId {
-    const fn index(self) -> usize {
+    pub(crate) const fn index(self) -> usize {
         match self {
             Self::Primary => 0,
             Self::Secondary => 1,
@@ -146,6 +150,24 @@ impl IdeController {
                 IdeChannel::new(IdeChannelId::Secondary, secondary0, secondary1),
             ],
         })
+    }
+
+    pub fn snapshot(&self) -> IdeControllerSnapshot {
+        IdeControllerSnapshot {
+            channels: [
+                self.channel(IdeChannelId::Primary).snapshot(),
+                self.channel(IdeChannelId::Secondary).snapshot(),
+            ],
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &IdeControllerSnapshot) -> Result<(), IdeControllerError> {
+        self.validate_snapshot(snapshot)?;
+        for channel_snapshot in &snapshot.channels {
+            let channel = self.channel_mut(channel_snapshot.id);
+            channel.restore(channel_snapshot)?;
+        }
+        Ok(())
     }
 
     pub fn read_bar_u8(
@@ -498,6 +520,27 @@ impl IdeController {
     fn channel_mut(&mut self, channel: IdeChannelId) -> &mut IdeChannel {
         &mut self.channels[channel.index()]
     }
+
+    fn validate_snapshot(
+        &self,
+        snapshot: &IdeControllerSnapshot,
+    ) -> Result<(), IdeControllerError> {
+        if snapshot.channels[0].id != IdeChannelId::Primary {
+            return Err(IdeControllerError::SnapshotChannelMismatch {
+                channel: IdeChannelId::Primary,
+            });
+        }
+        if snapshot.channels[1].id != IdeChannelId::Secondary {
+            return Err(IdeControllerError::SnapshotChannelMismatch {
+                channel: IdeChannelId::Secondary,
+            });
+        }
+        for channel_snapshot in snapshot.channels() {
+            self.channel(channel_snapshot.id)
+                .validate_snapshot(channel_snapshot)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -573,6 +616,78 @@ impl IdeChannel {
         self.bmi.command = value & (IDE_BMI_COMMAND_START | IDE_BMI_COMMAND_RW);
         Ok(())
     }
+
+    fn snapshot(&self) -> IdeChannelSnapshot {
+        IdeChannelSnapshot {
+            id: self.id,
+            selected_device: self.selected_device,
+            pending_interrupt: self.pending_interrupt,
+            bmi: self.bmi.snapshot(),
+            device0: self.device0.as_ref().map(IdeDisk::snapshot),
+            device1: self.device1.as_ref().map(IdeDisk::snapshot),
+        }
+    }
+
+    fn validate_snapshot(&self, snapshot: &IdeChannelSnapshot) -> Result<(), IdeControllerError> {
+        if snapshot.id != self.id {
+            return Err(IdeControllerError::SnapshotChannelMismatch { channel: self.id });
+        }
+        validate_channel_device_snapshot(
+            self.id,
+            IdeDeviceId::Device0,
+            &self.device0,
+            &snapshot.device0,
+        )?;
+        validate_channel_device_snapshot(
+            self.id,
+            IdeDeviceId::Device1,
+            &self.device1,
+            &snapshot.device1,
+        )?;
+        Ok(())
+    }
+
+    fn restore(&mut self, snapshot: &IdeChannelSnapshot) -> Result<(), IdeControllerError> {
+        self.selected_device = snapshot.selected_device;
+        self.pending_interrupt = snapshot.pending_interrupt;
+        self.bmi.restore(snapshot.bmi);
+        if let (Some(device), Some(device_snapshot)) = (&mut self.device0, &snapshot.device0) {
+            device
+                .restore(device_snapshot)
+                .map_err(|source| IdeControllerError::Disk {
+                    channel: self.id,
+                    source,
+                })?;
+        }
+        if let (Some(device), Some(device_snapshot)) = (&mut self.device1, &snapshot.device1) {
+            device
+                .restore(device_snapshot)
+                .map_err(|source| IdeControllerError::Disk {
+                    channel: self.id,
+                    source,
+                })?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_channel_device_snapshot(
+    channel: IdeChannelId,
+    device: IdeDeviceId,
+    live: &Option<IdeDisk>,
+    snapshot: &Option<IdeDiskSnapshot>,
+) -> Result<(), IdeControllerError> {
+    match (live, snapshot) {
+        (Some(live), Some(snapshot)) => {
+            if snapshot.device_id() != live.device_id() || snapshot.device_id() != device {
+                return Err(IdeControllerError::SnapshotDeviceMismatch { channel, device });
+            }
+            live.validate_snapshot(snapshot)
+                .map_err(|source| IdeControllerError::Disk { channel, source })
+        }
+        (None, None) => Ok(()),
+        _ => Err(IdeControllerError::SnapshotDeviceMismatch { channel, device }),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -628,6 +743,20 @@ impl IdeBmiRegisters {
             status &= !IDE_BMI_STATUS_DMA_ERROR;
         }
         self.status = status | IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1;
+    }
+
+    const fn snapshot(self) -> IdeBmiSnapshot {
+        IdeBmiSnapshot {
+            command: self.command,
+            status: self.status,
+            prd_table: self.prd_table,
+        }
+    }
+
+    fn restore(&mut self, snapshot: IdeBmiSnapshot) {
+        self.command = snapshot.command;
+        self.status = snapshot.status | IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1;
+        self.prd_table = snapshot.prd_table & !0x3;
     }
 }
 
@@ -737,6 +866,45 @@ impl IdeDisk {
             pending_interrupt: false,
             transfer: None,
         })
+    }
+
+    pub fn snapshot(&self) -> IdeDiskSnapshot {
+        IdeDiskSnapshot {
+            device_id: self.device_id,
+            task_file: self.registers,
+            status: self.status,
+            control: self.control,
+            pending_interrupt: self.pending_interrupt,
+            transfer: self.transfer.as_ref().map(IdeTransfer::snapshot),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: &IdeDiskSnapshot) -> Result<(), IdeDiskError> {
+        self.validate_snapshot(snapshot)?;
+        self.device_id = snapshot.device_id;
+        self.registers = snapshot.task_file;
+        self.status = snapshot.status;
+        self.control = snapshot.control;
+        self.pending_interrupt = snapshot.pending_interrupt;
+        self.transfer = snapshot
+            .transfer
+            .as_ref()
+            .map(IdeTransfer::from_snapshot)
+            .transpose()?;
+        Ok(())
+    }
+
+    fn validate_snapshot(&self, snapshot: &IdeDiskSnapshot) -> Result<(), IdeDiskError> {
+        if snapshot.device_id != self.device_id {
+            return Err(IdeDiskError::SnapshotDeviceMismatch {
+                expected: self.device_id,
+                actual: snapshot.device_id,
+            });
+        }
+        if let Some(transfer) = &snapshot.transfer {
+            transfer.validate()?;
+        }
+        Ok(())
     }
 
     pub const fn device_id(&self) -> IdeDeviceId {
@@ -1023,7 +1191,7 @@ impl IdeDisk {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct IdeTaskFile {
+pub struct IdeTaskFile {
     error: u8,
     sector_count: u8,
     sector_number: u8,
@@ -1051,6 +1219,34 @@ impl IdeTaskFile {
             | (u64::from(self.cylinder_high) << 16)
             | (u64::from(self.cylinder_low) << 8)
             | u64::from(self.sector_number)
+    }
+
+    pub const fn error(self) -> u8 {
+        self.error
+    }
+
+    pub const fn sector_count(self) -> u8 {
+        self.sector_count
+    }
+
+    pub const fn sector_number(self) -> u8 {
+        self.sector_number
+    }
+
+    pub const fn cylinder_low(self) -> u8 {
+        self.cylinder_low
+    }
+
+    pub const fn cylinder_high(self) -> u8 {
+        self.cylinder_high
+    }
+
+    pub const fn drive(self) -> u8 {
+        self.drive
+    }
+
+    pub const fn command(self) -> u8 {
+        self.command
     }
 }
 
@@ -1116,6 +1312,53 @@ impl IdeTransfer {
         self.cursor > 0
             && self.cursor.is_multiple_of(STORAGE_SECTOR_BYTES as usize)
             && !self.is_complete()
+    }
+
+    fn snapshot(&self) -> IdeDiskTransferSnapshot {
+        match self.direction {
+            IdeTransferDirection::Input => IdeDiskTransferSnapshot::Input {
+                start_sector: self.start_sector,
+                cursor: self.cursor,
+                payload: self.payload.clone(),
+            },
+            IdeTransferDirection::Output => IdeDiskTransferSnapshot::Output {
+                start_sector: self.start_sector,
+                cursor: self.cursor,
+                payload: self.payload.clone(),
+            },
+        }
+    }
+
+    fn from_snapshot(snapshot: &IdeDiskTransferSnapshot) -> Result<Self, IdeDiskError> {
+        snapshot.validate()?;
+        let (direction, start_sector, cursor, payload) = match snapshot {
+            IdeDiskTransferSnapshot::Input {
+                start_sector,
+                cursor,
+                payload,
+            } => (
+                IdeTransferDirection::Input,
+                *start_sector,
+                *cursor,
+                payload.clone(),
+            ),
+            IdeDiskTransferSnapshot::Output {
+                start_sector,
+                cursor,
+                payload,
+            } => (
+                IdeTransferDirection::Output,
+                *start_sector,
+                *cursor,
+                payload.clone(),
+            ),
+        };
+        Ok(Self {
+            direction,
+            start_sector,
+            payload,
+            cursor,
+        })
     }
 }
 
@@ -1188,6 +1431,13 @@ pub enum IdeControllerError {
         offset: u64,
         width: u8,
     },
+    SnapshotChannelMismatch {
+        channel: IdeChannelId,
+    },
+    SnapshotDeviceMismatch {
+        channel: IdeChannelId,
+        device: IdeDeviceId,
+    },
     NoSelectedDevice {
         channel: IdeChannelId,
         device: IdeDeviceId,
@@ -1240,6 +1490,14 @@ impl Display for IdeControllerError {
                 formatter,
                 "IDE controller {bar:?} BAR offset {offset:#x} does not support {width}-byte access"
             ),
+            Self::SnapshotChannelMismatch { channel } => write!(
+                formatter,
+                "IDE controller snapshot does not match {channel:?} channel"
+            ),
+            Self::SnapshotDeviceMismatch { channel, device } => write!(
+                formatter,
+                "IDE controller snapshot does not match {channel:?} {device:?}"
+            ),
             Self::NoSelectedDevice { channel, device } => write!(
                 formatter,
                 "IDE controller {channel:?} channel has no selected {device:?} disk"
@@ -1279,20 +1537,55 @@ impl Error for IdeControllerError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IdeDiskError {
-    InvalidCapacity { sectors: u64 },
-    InvalidCommandOffset { offset: u8 },
-    InvalidControlOffset { offset: u8 },
-    ChsAccessUnsupported { command: u8, drive: u8 },
-    UnsupportedCommand { command: u8 },
+    InvalidCapacity {
+        sectors: u64,
+    },
+    SnapshotDeviceMismatch {
+        expected: IdeDeviceId,
+        actual: IdeDeviceId,
+    },
+    InvalidTransferSnapshot {
+        cursor: usize,
+        payload_bytes: usize,
+    },
+    InvalidCommandOffset {
+        offset: u8,
+    },
+    InvalidControlOffset {
+        offset: u8,
+    },
+    ChsAccessUnsupported {
+        command: u8,
+        drive: u8,
+    },
+    UnsupportedCommand {
+        command: u8,
+    },
     DataReadNotReady,
     DataWriteNotReady,
-    TransferTooLarge { sectors: u64 },
+    TransferTooLarge {
+        sectors: u64,
+    },
     Storage(StorageError),
 }
 
 impl From<StorageError> for IdeDiskError {
     fn from(error: StorageError) -> Self {
         Self::Storage(error)
+    }
+}
+
+impl From<IdeSnapshotError> for IdeDiskError {
+    fn from(error: IdeSnapshotError) -> Self {
+        match error {
+            IdeSnapshotError::InvalidTransferSnapshot {
+                cursor,
+                payload_bytes,
+            } => Self::InvalidTransferSnapshot {
+                cursor,
+                payload_bytes,
+            },
+        }
     }
 }
 
@@ -1305,6 +1598,17 @@ impl Display for IdeDiskError {
                     "IDE disk capacity {sectors} sectors is not supported"
                 )
             }
+            Self::SnapshotDeviceMismatch { expected, actual } => write!(
+                formatter,
+                "IDE disk snapshot expected {expected:?} but found {actual:?}"
+            ),
+            Self::InvalidTransferSnapshot {
+                cursor,
+                payload_bytes,
+            } => write!(
+                formatter,
+                "IDE disk transfer snapshot cursor {cursor} is invalid for {payload_bytes} payload bytes"
+            ),
             Self::InvalidCommandOffset { offset } => {
                 write!(formatter, "invalid IDE command register offset {offset:#x}")
             }

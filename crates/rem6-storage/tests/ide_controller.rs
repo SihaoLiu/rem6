@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use rem6_storage::{
     IdeBarWriteOutcome, IdeChannelId, IdeController, IdeControllerBar, IdeControllerDispatch,
-    IdeControllerError, IdeDeviceId, IdeDisk, RawStorageImage, StorageImageLayer,
-    IDE_BMI_CHANNEL_BYTES, IDE_BMI_COMMAND_OFFSET, IDE_BMI_PRD_TABLE_OFFSET,
+    IdeControllerError, IdeControllerSnapshot, IdeDeviceId, IdeDisk, RawStorageImage,
+    StorageImageLayer, IDE_BMI_CHANNEL_BYTES, IDE_BMI_COMMAND_OFFSET, IDE_BMI_PRD_TABLE_OFFSET,
     IDE_BMI_STATUS_DMA_CAP0, IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_INTERRUPT,
     IDE_BMI_STATUS_OFFSET, IDE_COMMAND_IDENTIFY, IDE_COMMAND_READ, IDE_CONTROL_OFFSET,
     IDE_DRIVE_DEVICE1, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET,
@@ -383,4 +383,114 @@ fn ide_controller_ignores_bus_master_writes_when_disabled() {
         ),
         Ok(0)
     );
+}
+
+#[test]
+fn ide_controller_snapshot_restores_channel_selection_bmi_and_disk_transfer() {
+    let primary0 = disk(0x10, IdeDeviceId::Device0);
+    let primary1 = disk(0x20, IdeDeviceId::Device1);
+    let secondary0 = disk(0x30, IdeDeviceId::Device0);
+    let mut controller =
+        IdeController::new([Some(primary0), Some(primary1), Some(secondary0), None]).unwrap();
+    let dispatch = IdeControllerDispatch::new(0, u64::from(IDE_CONTROL_OFFSET))
+        .unwrap()
+        .with_bus_master_enabled(true);
+
+    controller
+        .write_command_u8(
+            IdeChannelId::Primary,
+            IDE_DRIVE_OFFSET,
+            IDE_DRIVE_LBA | IDE_DRIVE_DEVICE1,
+        )
+        .unwrap();
+    controller
+        .write_bar_u8(
+            dispatch,
+            IdeControllerBar::SecondaryCommand,
+            u64::from(IDE_DRIVE_OFFSET),
+            IDE_DRIVE_LBA,
+        )
+        .unwrap();
+    controller
+        .write_bar_u8(
+            dispatch,
+            IdeControllerBar::SecondaryCommand,
+            u64::from(IDE_NSECTOR_OFFSET),
+            1,
+        )
+        .unwrap();
+    controller
+        .write_bar_u8(
+            dispatch,
+            IdeControllerBar::SecondaryCommand,
+            u64::from(IDE_SECTOR_OFFSET),
+            0,
+        )
+        .unwrap();
+    controller
+        .write_bar_u8(
+            dispatch,
+            IdeControllerBar::SecondaryCommand,
+            u64::from(IDE_STATUS_OFFSET),
+            IDE_COMMAND_READ,
+        )
+        .unwrap();
+    controller
+        .write_bar_u32(
+            dispatch,
+            IdeControllerBar::BusMaster,
+            u64::from(IDE_BMI_CHANNEL_BYTES + IDE_BMI_PRD_TABLE_OFFSET),
+            0x1234_5678,
+        )
+        .unwrap();
+
+    let snapshot = controller.snapshot();
+    assert_eq!(
+        snapshot.channel(IdeChannelId::Primary).selected_device(),
+        IdeDeviceId::Device1
+    );
+    assert_eq!(
+        snapshot.channel(IdeChannelId::Secondary).bmi().prd_table(),
+        0x1234_5678
+    );
+
+    assert_eq!(
+        controller.read_bar_u16(dispatch, IdeControllerBar::SecondaryCommand, 0),
+        Ok(0x3030)
+    );
+    controller
+        .write_command_u8(IdeChannelId::Primary, IDE_DRIVE_OFFSET, IDE_DRIVE_LBA)
+        .unwrap();
+    controller.restore(&snapshot).unwrap();
+
+    assert_eq!(
+        controller
+            .snapshot()
+            .channel(IdeChannelId::Primary)
+            .selected_device(),
+        IdeDeviceId::Device1
+    );
+    assert_eq!(
+        controller.read_bar_u16(dispatch, IdeControllerBar::SecondaryCommand, 0),
+        Ok(0x3030)
+    );
+}
+
+#[test]
+fn ide_controller_restore_rejects_shape_mismatch_before_mutation() {
+    let primary0 = disk(0x10, IdeDeviceId::Device0);
+    let mut controller = IdeController::new([Some(primary0), None, None, None]).unwrap();
+    let before = controller.snapshot();
+    let wrong = IdeControllerSnapshot::from_channels([
+        before.channel(IdeChannelId::Primary).clone(),
+        before.channel(IdeChannelId::Primary).clone(),
+    ]);
+
+    assert!(matches!(
+        controller.restore(&wrong),
+        Err(IdeControllerError::SnapshotChannelMismatch {
+            channel: IdeChannelId::Secondary,
+        })
+    ));
+    assert_eq!(controller.snapshot(), before);
 }

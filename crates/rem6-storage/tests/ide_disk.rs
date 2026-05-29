@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use rem6_storage::{
-    IdeDeviceId, IdeDisk, IdeDiskError, RawStorageImage, StorageError, StorageImageLayer,
-    StorageSectorId, IDE_COMMAND_ATAPI_IDENTIFY_DEVICE, IDE_COMMAND_IDENTIFY, IDE_COMMAND_READ,
-    IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE, IDE_CONTROL_OFFSET, IDE_CONTROL_RST,
-    IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_HCYL_OFFSET,
-    IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_DRDY, IDE_STATUS_DRQ,
-    IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
+    IdeDeviceId, IdeDisk, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, RawStorageImage,
+    StorageError, StorageImageLayer, StorageSectorId, IDE_COMMAND_ATAPI_IDENTIFY_DEVICE,
+    IDE_COMMAND_IDENTIFY, IDE_COMMAND_READ, IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE,
+    IDE_CONTROL_OFFSET, IDE_CONTROL_RST, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_ERROR_ABORT,
+    IDE_ERROR_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET,
+    IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
 };
 
 fn sector(byte: u8) -> [u8; 512] {
@@ -187,4 +187,78 @@ fn ide_disk_control_reset_and_native_max_are_typed() {
     assert_eq!(disk.read_command_u8(IDE_HCYL_OFFSET).unwrap(), 0);
     assert_eq!(disk.read_command_u8(IDE_DRIVE_OFFSET).unwrap() & 0x0f, 0);
     assert_eq!(disk.status(), IDE_STATUS_DRDY | IDE_STATUS_SEEK);
+}
+
+#[test]
+fn ide_disk_snapshot_restores_task_file_and_partial_write_transfer() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01, 0x02])).unwrap());
+    let mut disk = IdeDisk::new(
+        image.clone() as Arc<dyn StorageImageLayer>,
+        IdeDeviceId::Device0,
+    )
+    .unwrap();
+
+    disk.write_command_u8(IDE_DRIVE_OFFSET, IDE_DRIVE_LBA)
+        .unwrap();
+    disk.write_command_u8(IDE_NSECTOR_OFFSET, 1).unwrap();
+    disk.write_command_u8(IDE_SECTOR_OFFSET, 0).unwrap();
+    disk.write_command_u8(IDE_LCYL_OFFSET, 0).unwrap();
+    disk.write_command_u8(IDE_HCYL_OFFSET, 0).unwrap();
+    disk.write_command_u8(IDE_STATUS_OFFSET, IDE_COMMAND_WRITE)
+        .unwrap();
+    disk.write_data_u16(0xaaaa).unwrap();
+    disk.write_data_u16(0xbbbb).unwrap();
+
+    let snapshot = disk.snapshot();
+    assert_eq!(snapshot.device_id(), IdeDeviceId::Device0);
+    assert_eq!(snapshot.task_file().sector_count(), 1);
+    assert_eq!(snapshot.status(), IDE_STATUS_DRDY | IDE_STATUS_DRQ);
+    assert!(matches!(
+        snapshot.transfer(),
+        Some(IdeDiskTransferSnapshot::Output {
+            start_sector: 0,
+            cursor: 4,
+            payload
+        }) if payload[0..4] == [0xaa, 0xaa, 0xbb, 0xbb]
+    ));
+
+    disk.write_data_u16(0xcccc).unwrap();
+    disk.write_control_u8(IDE_CONTROL_OFFSET, IDE_CONTROL_RST)
+        .unwrap();
+    disk.write_control_u8(IDE_CONTROL_OFFSET, 0).unwrap();
+    disk.restore(&snapshot).unwrap();
+
+    for _ in 0..254 {
+        disk.write_data_u16(0xdddd).unwrap();
+    }
+
+    let mut expected = vec![0xaa, 0xaa, 0xbb, 0xbb];
+    expected.extend(vec![0xdd; 508]);
+    expected.extend(sector(0x02));
+    assert_eq!(image.read(StorageSectorId::new(0), 2).unwrap(), expected);
+    assert_eq!(disk.status(), IDE_STATUS_DRDY | IDE_STATUS_SEEK);
+}
+
+#[test]
+fn ide_disk_restore_rejects_mismatched_snapshot_before_mutation() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device1,
+        *before.task_file(),
+        before.status(),
+        before.control(),
+        before.pending_interrupt(),
+        before.transfer().cloned(),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::SnapshotDeviceMismatch {
+            expected: IdeDeviceId::Device0,
+            actual: IdeDeviceId::Device1,
+        })
+    ));
+    assert_eq!(disk.snapshot(), before);
 }
